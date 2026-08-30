@@ -1,0 +1,8 @@
+{
+  "name": "Sutradhar Multi-Agent Swarm",
+  "description": "Autonomous multi-agent swarm orchestrator with DAG task scheduling, Ed25519 security gatekeeper, self-healing sandbox, and live cluster dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
