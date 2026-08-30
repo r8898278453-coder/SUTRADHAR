@@ -1,0 +1,252 @@
+================================================================================
+           SUTRADHAR AUTONOMOUS MULTI-AGENT SWARM (v5.3 PRODUCTION BLUEPRINT)
+================================================================================
+Date: August 2026 | Owner: Sahil Khan | Execution Target: Zero-Infra Cost Swarm[cite: 1]
+
+--------------------------------------------------------------------------------
+1. ARCHITECTURE OVERVIEW & TOPOLOGY
+--------------------------------------------------------------------------------
+
+                ┌─────────────────────────────────────────┐
+                │   TELEGRAM EVENT HUB & LIVE DASHBOARD   │
+                │ • Pinned Message: 20s Live Cluster State│
+                │ • Direct Alerts: P0 / RFC Escalations   │
+                └────────────────────┬────────────────────┘
+                                     │ Heartbeat (30s) / Epoch Sync
+     ┌───────────────────────────────┼───────────────────────────────┐
+     ▼                               ▼                               ▼
+┌───────────────────────────┐ ┌──────────────┐                ┌──────────────┐
+│  ACTIVE MASTER (HYBRID)   │ │ STANDBY #1   │                │ STANDBY #2   │
+│ • Process 1: Orchestrator │ │ (Mirror DB)  │                │ (Mirror DB)  │
+│ • Process 2: Local Exec   │ └──────────────┘                └──────────────┘
+└─────────────┬─────────────┘
+              │ DAG Task + Allowed Files Whitelist + Ed25519 Token
+              ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    DISTRIBUTED HETEROGENEOUS WORKERS                       │
+│  [Node A (Auth)]            [Node B (Matrimony)]     [Node C (Media)]      │
+│  • Ephemeral Git Worktree   • Bot-to-Bot RFC         • Allowed Files Lock  │
+└─────────────┬──────────────────────────────────────────────────────────────┘
+              │ 1. Unified Diff Synthesis (diff --git)
+              │ 2. 3-Tier Patch Normalizer & AST Signature Gatekeeper
+              ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                EPHEMERAL SANDBOX & CLOSED-LOOP SELF-HEALING                │
+│  Isolated Docker Container (--network="none", --memory="512m", 45s timeout)│
+│  • Exit == 0 -> Commit with Ed25519 Token Header -> Push to ai/TKT-XXX     │[cite: 1]
+│  • Exit != 0 -> Extract stderr -> Re-prompt LLM (Max 3 Retries)            │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      │ Git Pre-Receive Gatekeeper
+                                      ▼
+                        ┌───────────────────────────┐
+                        │   REMOTE GIT REPOSITORY   │
+                        │      (tested/TKT-XXX)     │[cite: 1]
+                        └───────────────────────────┘
+
+--------------------------------------------------------------------------------
+2. WORKER IDENTITY, SSH PROVISIONING & PRE-FLIGHT VERIFICATION
+--------------------------------------------------------------------------------
+
+A. Deterministic Identity Generation:
+- Every node calculates a unique ID upon first boot using its MAC address:
+  Node ID: NODE-<SHA256(MAC)[:8]>
+  Git Author: Sutradhar-<Node_ID> <<node_id>@cluster.internal>
+
+B. Non-Interactive SSH Configuration:
+- Workers authenticate exclusively via passwordless Ed25519 deploy keys.
+- Interactive terminal prompts are strictly disabled:
+  export GIT_SSH_COMMAND="ssh -i /opt/sutradhar/secrets/id_ed25519_worker \
+    -o StrictHostKeyChecking=accept-new \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10"
+  * BatchMode=yes: Drops instantly on auth failure (Exit 255); no password prompt.
+  * ConnectTimeout=10: Kills stalled handshakes after 10s.
+
+C. 5-Point Pre-Flight Health Matrix:
+1. DNS/Network: Ping api.telegram.org (HTTP 200 / RTT < 500ms).
+2. Git SSH Auth: Check remote HEAD sha via git ls-remote.
+3. Docker Service: Verify docker info returns Exit 0.
+4. Storage/RAM: Verify >500MB free memory; prune dangling containers.
+5. LLM API Key: Verify API endpoint connectivity; cascade if rate-limited[cite: 1].
+
+--------------------------------------------------------------------------------
+3. CONSENSUS, MONOTONIC EPOCH & HYBRID MASTER EXECUTION
+--------------------------------------------------------------------------------
+
+A. Bootstrap & Dynamic Hierarchy:
+- Daily bootstrap (08:00 AM) broadcasts: HELO: {node_id, uptime_seconds, epoch_id}.
+- Dynamic sorting: Sort by (uptime_seconds DESC, node_id ASC).
+  * Rank #1: Active Master Coordinator.
+  * Rank #2 & #3: Standby Masters (Mirror state; monitor master liveness).
+
+B. Split-Brain Lock (Monotonic Epoch Counter):
+- Every leadership election increments the immutable Epoch_ID (e.g., 14 -> 15).
+- If Master misses 3 heartbeats (>90s), Standby #1 claims leadership:
+  PROMOTED_MASTER: {node_id: Node_Beta, epoch_id: 15}
+- Reconnecting nodes compare local epoch with Telegram state. If local < cluster,
+  the node instantly self-demotes to Standby mode.
+
+C. Dual-Process Hybrid Master Engine:
+- Process 1 (Orchestrator Daemon): Async thread running heartbeats, lease
+  issuance, and Telegram card updates. Never blocks.
+- Process 2 (Local Worker Core): Self-executes tasks if external workers == 0
+  or when P0 Hotfixes (/urgent TKT-999) are triggered. Master self-signs an
+  Ed25519 token (worker_id = "MASTER_LOCAL") to maintain Git security rules.
+
+--------------------------------------------------------------------------------
+4. DAG TASK SCHEDULING & DOMAIN BOUNDARY ISOLATION
+--------------------------------------------------------------------------------
+
+A. DAG Task Graph:
+- Child tasks remain in BLOCKED_ON_PARENT state until all parent tasks are
+  tested and merged into tested/[cite: 1].
+
+B. Blast-Radius Boundary (allowed_files Whitelist):
+- Every ticket defines a strict mutable file list:
+  {
+    "ticket_id": "TKT-104",
+    "assigned_to": "NODE-B7A9",
+    "allowed_files": [
+      "modules/matrimony/ProfileController.php",
+      "tests/Unit/ProfileTest.php"
+    ],
+    "read_only_contracts": ["contracts/AuthInterface.php"]
+  }
+- Diffs touching unapproved files are rejected before running Docker compute.
+
+C. Module Ownership & Bot-to-Bot RFC Protocol:
+- If Node B (Matrimony) requires changes in Node A's module (Auth):
+  1. Node B emits RFC_DELEGATION_REQUIRED event.
+  2. Master pauses Node B's lease and creates sub-task TKT-104-SUB1 for Node A.
+  3. Master alerts Telegram: "@Node_A: Update AuthInterface for Node_B."
+  4. Node B resumes once Node A's sub-task is merged.
+
+D. AST Breaking-Change Static Analysis:
+- Sandboxed linters block breaking signature changes (altered public methods,
+  missing params) to ensure backward compatibility across branches.
+
+--------------------------------------------------------------------------------
+5. ASYMMETRIC CRYPTOGRAPHY & GIT PRE-RECEIVE GATEKEEPER
+--------------------------------------------------------------------------------
+
+A. Ed25519 Key-Pair Authentication:
+- Master Node: Holds secrets/master_private_key.pem (signs leases).
+- Git Server & Workers: Hold only secrets/master_public_key.pub (verifies leases).
+
+B. Cryptographic Token Payload:
+- Payload = ticket_id | worker_id | epoch_id | expiry_timestamp | files_hash
+- Token Header = SEC-<Base64(Payload)>.<Base64(Ed25519_Signature)>
+
+C. Server-Side Git Hook (hooks/pre-receive Logic):
+1. Intercepts push requests on ai/TKT-* branches[cite: 1].
+2. Extracts Security-Token header from the commit message.
+3. Verifies Ed25519 signature against master_public_key.pub.
+4. Confirms current_time < expiry_timestamp.
+5. Verifies pushed branch matches ticket_id inside token.
+6. Rejects with Exit 1 ("403_STALE_OR_FORGED_LEASE") if any check fails.
+
+--------------------------------------------------------------------------------
+6. MULTI-TIER LLM CASCADING & LEAKY-BUCKET RATE LIMITING
+--------------------------------------------------------------------------------
+
+A. Rate Limiting:
+- Master queues all LLM calls through an async token-bucket (Max 10 RPM).
+
+B. Fallback Cascade:
+1. Primary: Direct Google AI Studio (gemini-1.5-pro / gemini-2.0-pro) via secrets/.gemini_pro_key[cite: 1].
+2. Backup #1: deepseek/deepseek-r1:free (OpenRouter)[cite: 1]
+3. Backup #2: qwen/qwen-2.5-coder-32b:free (OpenRouter)[cite: 1]
+4. Backup #3: meta-llama/llama-3.1-70b:free (OpenRouter)[cite: 1]
+5. Backup #4: google/gemini-flash-1.5-8b:free (OpenRouter)[cite: 1]
+
+C. Context-Preserved Cascade:
+- Full debugging session (original prompt, failing diff, stderr stacktrace) is
+  preserved across provider switches to prevent repetitive bugs.
+
+--------------------------------------------------------------------------------
+7. EPHEMERAL SANDBOXING & CLOSED-LOOP SELF-HEALING
+--------------------------------------------------------------------------------
+
+A. Disposable Git Worktrees:
+- git worktree add /opt/sutradhar/workspaces/TKT-104 -b ai/TKT-104 origin/main[cite: 1]
+- Worktree is completely purged (--force) upon completion or failure.
+
+B. 3-Tier Patch Normalizer:
+- Tier 1: git apply --check patch.diff
+- Tier 2: git apply --ignore-whitespace --ignore-space-change patch.diff
+- Tier 3: git apply --3way patch.diff
+
+C. Hard-Capped Docker Sandbox:
+- docker run --rm --memory="512m" --cpus="1.0" --pids-limit=100 --network="none" \
+    --stop-timeout=5 -v /workspace:/workspace sutradhar-runner \
+    sh -c "timeout 45s pytest /workspace/tests/"
+
+D. Self-Healing Feedback Loop (Max 3 Retries):
+- Fail (Exit != 0): Capture stderr -> Re-prompt LLM with exact stacktrace.
+- Pass (Exit == 0): Sign commit with token -> Push to ai/TKT-XXX[cite: 1].
+- Exhausted (3 Retries): Flag ticket NEEDS_HUMAN_REVIEW -> Push to failed/TKT-XXX.
+
+--------------------------------------------------------------------------------
+8. TELEGRAM DUAL-CHANNEL INTERFACE
+--------------------------------------------------------------------------------
+
+A. Pinned Live Dashboard (Updated every 20s via edit_message_text):
+┌─────────────────────────────────────────────────────────────┐
+│ 🟢 SUTRADHAR CLUSTER DASHBOARD (v5.3 LIVE CARD)             │
+│ 👑 Active Master: Node_Alpha (Epoch: 15 | Uptime: 8h 12m)   │
+│ 🛠️ Master Mode: ⚡ Local Hybrid [TKT-999 (URGENT HOTFIX)]   │
+│ 🛡️ Standby Tier: Node_Beta (R2) | Node_Gamma (R3)           │
+│ ⚙️ Rate Limiter: 4.8 RPM | Cluster Workers: 3 Online        │
+│                                                             │
+│ 📋 ACTIVE PIPELINE (DAG & Domain Isolated):                 │
+│ • [TKT-104] Node_Worker_02 ──► 🟡 Synthesizing Patch        │
+│ • [TKT-105] Node_Worker_01 ──► 🔵 Docker Test (Retry 1/3)   │
+│ • [TKT-106] Node_Worker_03 ──► 🟢 Committed & Pushed        │
+│ • [TKT-107] BLOCKED (Waiting on TKT-105 Merge)              │
+│                                                             │
+│ ⚠️ Node_Worker_04: 🔴 OFFLINE (Lease Revoked & Recycled)    │
+└─────────────────────────────────────────────────────────────┘
+
+B. Direct Alerts (Audio Notification on Critical Events Only):
+- Master Failovers / Promotions.
+- Bot-to-Bot RFC Sub-Task Assignments.
+- Verified Task Merges (tested/TKT-XXX)[cite: 1].
+- 3x Self-Healing Failures requiring human review.
+
+--------------------------------------------------------------------------------
+9. REPOSITORY STRUCTURE
+--------------------------------------------------------------------------------
+
+sutradhar-swarm/
+├── config/
+│   ├── cluster_config.json        # Epoch rules, heartbeat intervals, lease TTL
+│   ├── domain_registry.json       # Module ownership & allowed_files mappings
+│   └── llm_config.json            # Gemini Pro & OpenRouter fallback priorities[cite: 1]
+├── secrets/
+│   ├── master_private_key.pem     # Ed25519 Private Key (Master only, chmod 600)
+│   ├── master_public_key.pub      # Ed25519 Public Key (Distributed to all nodes)
+│   ├── id_ed25519_worker          # Passwordless SSH Deploy Key for Git pushes
+│   ├── .gemini_pro_key            # Isolated Google AI Studio Key (chmod 600)[cite: 1]
+│   └── .openrouter_key            # Isolated OpenRouter API Key (chmod 600)[cite: 1]
+├── core/
+│   ├── master_orchestrator.py     # Heartbeat + DAG Task Allocator
+│   ├── local_worker_core.py       # Master local execution engine (P0/idle fallback)
+│   ├── leader_election.py         # Monotonic Epoch monitor & watchdog failover
+│   ├── crypto_signer.py           # Ed25519 lease token signer & verifier
+│   ├── task_dag.py                # DAG dependency graph & domain whitelist mapper
+│   ├── rate_limiter.py            # Master leaky-bucket LLM throttling engine
+│   ├── llm_router.py              # Context-preserving LLM cascade runner[cite: 1]
+│   ├── patch_validator.py         # 3-tier diff normalizer & AST signature analyzer
+│   ├── identity.py                # Deterministic node UUID & pre-flight health checks
+│   └── telegram_hub.py            # Pinned live card updater & alert broadcaster
+├── sandbox/
+│   ├── Dockerfile.runner          # Hardened non-root ephemeral test container
+│   └── run_sandbox.sh             # Execution wrapper with 45s hard timeout
+├── hooks/
+│   └── pre-receive                # Git server-side Ed25519 token gatekeeper
+├── sequential_runner.py           # Worker daemon: worktree manager + self-healing loop[cite: 1]
+└── requirements.txt               # aiogram, httpx, cryptography, pydantic
+
+================================================================================
+                           END OF BLUEPRINT v5.3
+================================================================================
