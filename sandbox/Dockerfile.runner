@@ -1,0 +1,22 @@
+# ==============================================================================
+# SUTRADHAR CLUSTER - HARDENED EPHEMERAL SANDBOX RUNNER (v5.3)
+# Fully unprivileged, non-root, air-gapped test container.
+# ==============================================================================
+FROM python:3.11-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    coreutils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir pytest pytest-timeout
+
+RUN groupadd -g 10001 runnergroup && \
+    useradd -u 10001 -g runnergroup -m -s /bin/bash runneruser
+
+WORKDIR /workspace
+RUN chown -R runneruser:runnergroup /workspace
+
+USER 10001:10001
+
+ENTRYPOINT ["/bin/bash", "-c"]

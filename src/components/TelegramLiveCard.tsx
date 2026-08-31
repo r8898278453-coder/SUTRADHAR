@@ -139,6 +139,27 @@ export const TelegramLiveCard: React.FC<TelegramLiveCardProps> = ({
                 Sync Now
               </button>
               <button
+                id="btn-test-telegram-ping"
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/telegram/test-ping', { method: 'POST' });
+                    const data = await res.json();
+                    if (data.success) {
+                      alert('✅ Message sent to Telegram: Check your Telegram channel/chat!');
+                    } else {
+                      alert(`ℹ️ Telegram Status: ${data.error}\n\nHint: ${data.hint || ''}`);
+                    }
+                  } catch (e: any) {
+                    alert(`Network error testing Telegram: ${e.message}`);
+                  }
+                }}
+                className="px-2.5 py-1 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded font-mono text-[11px] flex items-center gap-1 transition"
+                title="Send test message to your configured Telegram bot"
+              >
+                <Send className="w-3 h-3 text-cyan-400" />
+                Send Bot Ping
+              </button>
+              <button
                 id="btn-quick-p0"
                 onClick={onInjectP0}
                 className="px-2.5 py-1 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 rounded font-mono text-[11px] flex items-center gap-1 transition"

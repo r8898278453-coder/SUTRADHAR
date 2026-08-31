@@ -42,6 +42,20 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
 
   const getStatusBadge = (status: Ticket['status']) => {
     switch (status) {
+      case 'HEALING_RETRY':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+            <RotateCw className="w-3 h-3 text-amber-400 animate-spin" />
+            HEALING RETRY
+          </span>
+        );
+      case 'DEAD_LETTER_QUEUE':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-rose-950/80 text-rose-300 border border-rose-600 animate-pulse">
+            <ShieldAlert className="w-3 h-3 text-rose-400" />
+            DEAD LETTER QUEUE (HITL)
+          </span>
+        );
       case 'COMMITTED_PUSHED':
         return (
           <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">

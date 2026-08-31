@@ -29,7 +29,9 @@ export type TicketStatus =
   | 'LEASED'
   | 'SYNTHESIZING_DIFF'
   | 'TESTING_SANDBOX'
+  | 'HEALING_RETRY'
   | 'COMMITTED_PUSHED'
+  | 'DEAD_LETTER_QUEUE'
   | 'NEEDS_HUMAN_REVIEW';
 
 export type TicketPriority = 'P0_URGENT' | 'P1_HIGH' | 'P2_NORMAL';

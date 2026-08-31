@@ -1,0 +1,48 @@
+name: Sutradhar Cryptographic Gatekeeper
+
+on:
+  push:
+    branches:
+      - 'ai/**'
+
+jobs:
+  verify-lease:
+    name: Verify Ed25519 Security Token
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Cryptography Module
+        run: pip install --no-cache-dir cryptography
+
+      - name: Validate Ed25519 Leases across Commit Range
+        env:
+          MASTER_PUBLIC_KEY: ${{ secrets.MASTER_PUBLIC_KEY }}
+        run: |
+          mkdir -p /tmp/secrets
+          echo "${MASTER_PUBLIC_KEY}" > /tmp/secrets/master_public_key.pub
+          export SUTRADHAR_PUBKEY_PATH="/tmp/secrets/master_public_key.pub"
+          
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          TICKET_ID="${BRANCH_NAME#ai/}"
+          
+          echo "[*] Auditing pushed branch: ${BRANCH_NAME} (Ticket: ${TICKET_ID})"
+          
+          COMMITS=$(git rev-list ${{ github.event.before }}..${{ github.event.after }} 2>/dev/null || git rev-list HEAD -n 1)
+          
+          for COMMIT_SHA in ${COMMITS}; do
+            echo "[*] Verifying Commit: ${COMMIT_SHA}"
+            COMMIT_MSG=$(git log -1 --format=%B "${COMMIT_SHA}")
+            
+            python3 core/crypto_signer.py "${TICKET_ID}" "${COMMIT_SHA}" <<< "${COMMIT_MSG}"
+          done
+          
+          echo "[+] Cryptographic verification passed for all commits in push."

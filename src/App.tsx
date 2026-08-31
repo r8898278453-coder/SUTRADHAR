@@ -8,12 +8,13 @@ import { CryptoGatekeeper } from './components/CryptoGatekeeper.tsx';
 import { LLMCascadeView } from './components/LLMCascadeView.tsx';
 import { P0HotfixModal } from './components/P0HotfixModal.tsx';
 import { RFCDelegationModal } from './components/RFCDelegationModal.tsx';
+import { fallbackClusterState } from './data/fallbackClusterState.ts';
 import type { ClusterState, Ticket } from './types.ts';
 
 export const App: React.FC = () => {
-  const [state, setState] = useState<ClusterState | null>(null);
+  const [state, setState] = useState<ClusterState>(fallbackClusterState);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
-  const [activeTicket, setActiveTicket] = useState<Ticket | null>(null);
+  const [activeTicket, setActiveTicket] = useState<Ticket | null>(fallbackClusterState.tickets[2] || fallbackClusterState.tickets[0]);
   const [isP0ModalOpen, setIsP0ModalOpen] = useState(false);
   const [isRFCModalOpen, setIsRFCModalOpen] = useState(false);
   const [liveCardText, setLiveCardText] = useState<string>('');
@@ -28,7 +29,8 @@ export const App: React.FC = () => {
   const fetchState = useCallback(async () => {
     try {
       const res = await fetch('/api/cluster/state');
-      if (res.ok) {
+      const contentType = res.headers.get('content-type');
+      if (res.ok && contentType && contentType.includes('application/json')) {
         const data = await res.json();
         setState(data);
         setLiveCardText(data.liveCardText || '');
@@ -37,7 +39,7 @@ export const App: React.FC = () => {
         }
       }
     } catch (e) {
-      console.error('Failed to fetch cluster state:', e);
+      console.warn('Live API syncing unavailable, using reactive state:', e);
     }
   }, [activeTicket]);
 

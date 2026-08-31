@@ -318,9 +318,9 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
                 <span className="text-emerald-400 flex items-center gap-1 font-semibold">
                   <CheckCircle className="w-4 h-4" /> Ready for Git Push
                 </span>
-              ) : activeTicket.retryCount >= activeTicket.maxRetries ? (
-                <span className="text-rose-400 flex items-center gap-1 font-semibold">
-                  <AlertTriangle className="w-4 h-4" /> Flagged: Human Review
+              ) : activeTicket.status === 'DEAD_LETTER_QUEUE' || activeTicket.retryCount >= activeTicket.maxRetries ? (
+                <span className="text-rose-400 bg-rose-950/60 px-2 py-1 rounded border border-rose-800/80 flex items-center gap-1 font-semibold animate-pulse">
+                  <AlertTriangle className="w-4 h-4 text-rose-400" /> DEAD-LETTER QUEUE (Frozen for HITL Review)
                 </span>
               ) : null}
             </div>

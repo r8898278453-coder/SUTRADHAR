@@ -481,15 +481,34 @@ app.post('/api/cluster/ticket/create', (req, res) => {
   clusterState.tickets.unshift(newTicket);
 
   // Add Telegram Alert
+  const alertText = isP0 
+    ? `🚨 [P0 HOTFIX] Master Node triggered Local Hybrid Execution for ${ticketId}: ${newTicket.title}!`
+    : `📋 Dispatched ${ticketId} to ${clusterState.nodes.find(n => n.id === assignedNodeId)?.name || assignedNodeId}.`;
+
   clusterState.telegramFeed.unshift({
     id: `tg-${Date.now()}`,
     timestamp: new Date().toLocaleTimeString(),
     type: isP0 ? 'ALERT_P0' : 'ALERT_RFC',
     urgent: isP0,
-    text: isP0 
-      ? `🚨 [P0 HOTFIX] Master Node triggered Local Hybrid Execution for ${ticketId}: ${newTicket.title}!`
-      : `📋 Dispatched ${ticketId} to ${clusterState.nodes.find(n => n.id === assignedNodeId)?.name}.`
+    text: alertText
   });
+
+  // Broadcast to Real Telegram Channel if configured
+  broadcastToTelegram(
+    isP0 
+      ? `🚨 <b>[URGENT P0 HOTFIX TRIGGERED]</b>\n\n` +
+        `🎫 <b>Ticket:</b> ${ticketId}\n` +
+        `📝 <b>Title:</b> ${newTicket.title}\n` +
+        `🛡️ <b>Assigned Node:</b> ${assignedNodeId} (Master Local Exec)\n` +
+        `🔑 <b>Security Token:</b> ${tokenHeader.substring(0, 24)}...\n` +
+        `⚡ <b>Status:</b> Synthesizing with Closed-Loop Self-Healing`
+      : `📋 <b>[NEW RFC TICKET DISPATCHED]</b>\n\n` +
+        `🎫 <b>Ticket:</b> ${ticketId}\n` +
+        `📝 <b>Title:</b> ${newTicket.title}\n` +
+        `🎯 <b>Domain:</b> ${newTicket.domain}\n` +
+        `🤖 <b>Worker:</b> ${assignedNodeId}\n` +
+        `🔒 <b>Whitelist:</b> <code>${newTicket.allowedFiles.join(', ')}</code>`
+  );
 
   res.json({ success: true, ticket: newTicket, state: clusterState });
 });
@@ -621,21 +640,31 @@ Stacktrace:
   File "/workspace/${ticket.allowedFiles[0]}", line 14, in executeSafeContract`;
 
     if (ticket.retryCount >= ticket.maxRetries) {
-      ticket.status = 'NEEDS_HUMAN_REVIEW';
+      ticket.status = 'DEAD_LETTER_QUEUE';
       ticket.logs.push({
         timestamp: new Date().toLocaleTimeString(),
         level: 'ERROR',
-        message: `Self-healing retry limit reached (${ticket.retryCount}/${ticket.maxRetries}). Ticket flagged NEEDS_HUMAN_REVIEW.`
+        message: `Self-healing retry limit reached (${ticket.retryCount}/${ticket.maxRetries}). State frozen and moved to DEAD_LETTER_QUEUE for Human-in-the-Loop (HITL) review.`
       });
+      
+      const dlqAlert = `🚨 [DEAD_LETTER_QUEUE] Ticket ${ticket.id} (${ticket.title}) failed 3x self-healing retries across cascade tiers. State frozen for HITL review.`;
       clusterState.telegramFeed.unshift({
         id: `tg-${Date.now()}`,
         timestamp: new Date().toLocaleTimeString(),
         type: 'ALERT_HEALING',
         urgent: true,
-        text: `🚨 [${ticket.id}] 3x Self-Healing Failures reached! Escalating to Telegram Admin for Human Review.`
+        text: dlqAlert
       });
+
+      broadcastToTelegram(
+        `🚨 <b>[DEAD_LETTER_QUEUE ESCALATION]</b>\n\n` +
+        `🎫 <b>Ticket:</b> ${ticket.id}\n` +
+        `📝 <b>Title:</b> ${ticket.title}\n` +
+        `❌ <b>Failure:</b> 3x Self-Healing Retries Exhausted\n` +
+        `🛑 <b>Action:</b> State frozen, AST report generated, requesting Human-in-the-Loop (HITL) intervention.`
+      );
     } else {
-      ticket.status = 'TESTING_SANDBOX';
+      ticket.status = 'HEALING_RETRY';
       ticket.logs.push({
         timestamp: new Date().toLocaleTimeString(),
         level: 'WARN',
@@ -851,6 +880,38 @@ app.post('/api/cluster/rfc/delegate', (req, res) => {
   res.json({ success: true, subTask, state: clusterState });
 });
 
+// Helper: Send Real Telegram Broadcast / Pinned Edit if token and chat_id are present
+async function broadcastToTelegram(text: string, isSilent = false): Promise<{ sent: boolean; reason?: string }> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+
+  if (!token || !chatId) {
+    return { sent: false, reason: 'TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured in environment/secrets' };
+  }
+
+  try {
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: text,
+        parse_mode: 'HTML',
+        disable_notification: isSilent,
+      }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      return { sent: true };
+    }
+    return { sent: false, reason: data.description || 'Telegram API rejected payload' };
+  } catch (err: any) {
+    console.warn('[Telegram Broadcast] Delivery failed:', err.message);
+    return { sent: false, reason: err.message };
+  }
+}
+
 // 9. Reset cluster to initial blueprint state
 app.post('/api/cluster/reset', (req, res) => {
   clusterState = {
@@ -879,7 +940,43 @@ app.post('/api/cluster/reset', (req, res) => {
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: '5.3.0', app: 'Sutradhar Swarm' });
+  res.json({
+    status: 'ok',
+    version: '5.3.0',
+    app: 'Sutradhar Swarm',
+    hasGeminiKey: !!process.env.GEMINI_API_KEY,
+    hasTelegramToken: !!process.env.TELEGRAM_BOT_TOKEN,
+    hasTelegramChatId: !!process.env.TELEGRAM_CHAT_ID,
+  });
+});
+
+// Telegram Direct Test Endpoint
+app.post('/api/telegram/test-ping', async (req, res) => {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+
+  if (!token || !chatId) {
+    return res.status(400).json({
+      success: false,
+      configured: false,
+      error: 'TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing in Settings > Secrets.',
+      hint: 'Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in AI Studio Secrets menu to receive real Telegram messages.'
+    });
+  }
+
+  const message = `🚀 <b>Sutradhar Swarm Control Plane v5.3 Online</b>\n\n` +
+    `👑 <b>Active Master:</b> Node_Alpha (Epoch: #${clusterState.epochId})\n` +
+    `⚡ <b>Mode:</b> Autonomous Orchestrator\n` +
+    `🛡️ <b>Gatekeeper:</b> Ed25519 Token Signed\n` +
+    `📡 <b>Timestamp:</b> ${new Date().toUTCString()}\n\n` +
+    `<i>Cluster live card & alert stream active.</i>`;
+
+  const result = await broadcastToTelegram(message);
+  if (result.sent) {
+    return res.json({ success: true, configured: true, message: 'Message sent successfully to Telegram!' });
+  } else {
+    return res.status(502).json({ success: false, configured: true, error: result.reason });
+  }
 });
 
 // Vite Middleware for Development / Static serving for production

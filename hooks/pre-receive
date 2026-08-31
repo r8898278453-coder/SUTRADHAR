@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# SUTRADHAR CLUSTER - PRODUCTION GIT PRE-RECEIVE GATEKEEPER HOOK (v5.3)
+# Zero external dependency, fail-closed server-side verification hook.
+# ==============================================================================
+set -euo pipefail
+
+GIT_DIR="${GIT_DIR:-$(git rev-parse --git-dir)}"
+PUBLIC_KEY_PATH="${GIT_DIR}/hooks/secrets/master_public_key.pub"
+PYTHON_BIN="$(command -v python3 || command -v python)"
+
+if [[ -z "${PYTHON_BIN}" ]]; then
+    echo "[FATAL][PRE-RECEIVE] Python 3 runtime not found on Git server." >&2
+    exit 1
+fi
+
+if [[ ! -f "${PUBLIC_KEY_PATH}" ]]; then
+    echo "[FATAL][PRE-RECEIVE] Master public key not provisioned at ${PUBLIC_KEY_PATH}" >&2
+    exit 1
+fi
+
+export SUTRADHAR_PUBKEY_PATH="${PUBLIC_KEY_PATH}"
+
+while read -r oldrev newrev refname; do
+    if [[ "${newrev}" =~ ^0+$ ]]; then
+        if [[ "${refname}" =~ ^refs/heads/ai/ ]] || [[ "${refname}" =~ ^refs/heads/tested/ ]]; then
+            echo "[REJECTED][PRE-RECEIVE] Deletion of protected branch ${refname} is forbidden." >&2
+            exit 1
+        fi
+        continue
+    fi
+
+    if [[ "${refname}" =~ ^refs/heads/ai/ ]]; then
+        TICKET_ID="${refname#refs/heads/ai/}"
+        
+        if [[ "${oldrev}" =~ ^0+$ ]]; then
+            COMMIT_RANGE=$(git rev-list "${newrev}" --not --branches=main 2>/dev/null || git rev-list "${newrev}" -n 50)
+        else
+            COMMIT_RANGE=$(git rev-list "${oldrev}..${newrev}")
+        fi
+
+        if [[ -z "${COMMIT_RANGE}" ]]; then
+            echo "[REJECTED][PRE-RECEIVE] Empty commit range received for ${refname}." >&2
+            exit 1
+        fi
+
+        for COMMIT_SHA in ${COMMIT_RANGE}; do
+            COMMIT_MSG="$(git log -1 --format=%B "${COMMIT_SHA}")"
+            
+            if ! "${PYTHON_BIN}" "${GIT_DIR}/hooks/verify_commit.py" "${TICKET_ID}" "${COMMIT_SHA}" <<< "${COMMIT_MSG}"; then
+                echo "================================================================================" >&2
+                echo "[REJECTED] Cryptographic verification failed for commit ${COMMIT_SHA:0:8}" >&2
+                echo "Reason: 403_STALE_OR_FORGED_LEASE (Invalid Ed25519 signature / Expired Lease)" >&2
+                echo "Branch: ${refname} | Target Ticket: ${TICKET_ID}" >&2
+                echo "================================================================================" >&2
+                exit 1
+            fi
+        done
+        
+        echo "[ACCEPTED][PRE-RECEIVE] All commits in ${refname} cryptographically verified against master key." >&2
+    fi
+done
+
+exit 0
