@@ -1,0 +1,26 @@
+{
+  "test_profiles": [
+    {
+      "id": "USR-8821",
+      "name": "Priya Sharma",
+      "bio": "Software Architect in Mumbai <script>alert('xss')</script> Loves reading and classical music.",
+      "expected_sanitized_bio": "Software Architect in Mumbai  Loves reading and classical music.",
+      "age": 28,
+      "horoscope_vector": [0.82, 0.45, 0.91, 0.12]
+    },
+    {
+      "id": "USR-9942",
+      "name": "Rahul Verma",
+      "bio": "Product Lead, passionate traveler. <b>Clean bio</b>.",
+      "expected_sanitized_bio": "Product Lead, passionate traveler. Clean bio.",
+      "age": 30,
+      "horoscope_vector": [0.79, 0.48, 0.88, 0.15]
+    }
+  ],
+  "mock_db_contracts": {
+    "ProfileInterface": {
+      "methods": ["getProfile", "saveBio", "calculateCompatibilityScore"],
+      "strict_immutability": true
+    }
+  }
+}

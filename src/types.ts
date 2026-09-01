@@ -9,6 +9,18 @@ export interface HealthMatrix {
   llm: { ok: boolean; provider: string };
 }
 
+export interface QuotaUsage {
+  geminiProDailyCalls: number;
+  geminiProLimit: number;
+  openrouterDailyCalls: number;
+  isExhausted: boolean;
+}
+
+export interface GitHubIdentity {
+  username: string;
+  email: string;
+}
+
 export interface SwarmNode {
   id: string; // e.g. NODE-A9F34B21
   name: string;
@@ -19,6 +31,8 @@ export interface SwarmNode {
   gitAuthor: string;
   uptimeSeconds: number;
   health: HealthMatrix;
+  quotaUsage?: QuotaUsage;
+  githubIdentity?: GitHubIdentity;
   currentTicketId?: string;
   isHybridLocal?: boolean;
 }
@@ -31,10 +45,29 @@ export type TicketStatus =
   | 'TESTING_SANDBOX'
   | 'HEALING_RETRY'
   | 'COMMITTED_PUSHED'
-  | 'DEAD_LETTER_QUEUE'
-  | 'NEEDS_HUMAN_REVIEW';
+  | 'BLOCKED_CLARIFICATION'
+  | 'NEEDS_HUMAN_REVIEW'
+  | 'DEAD_LETTER_QUEUE';
 
 export type TicketPriority = 'P0_URGENT' | 'P1_HIGH' | 'P2_NORMAL';
+
+export interface ClarificationQuestion {
+  question: string;
+  askedBy: string;
+  askedAt: number;
+  answer?: string;
+  answeredBy?: string;
+  answeredAt?: number;
+  remindersSent: number;
+}
+
+export interface CryptoTokenPayload {
+  ticketId: string;
+  workerId: string;
+  epochId: number;
+  expiryTimestamp: number;
+  filesHash: string;
+}
 
 export interface Ticket {
   id: string; // e.g. TKT-104
@@ -45,6 +78,7 @@ export interface Ticket {
   status: TicketStatus;
   assignedTo?: string; // Node ID
   parentTicketIds: string[];
+  dependsOn?: string; // Dependency constraint (Section 11 Gap #3)
   allowedFiles: string[];
   readOnlyContracts: string[];
   retryCount: number;
@@ -59,23 +93,100 @@ export interface Ticket {
   llmUsed?: string;
   createdAt: string;
   updatedAt: string;
+  clarificationQuestion?: ClarificationQuestion;
+  rollbackCommit?: string;
   logs: Array<{ timestamp: string; level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS'; message: string }>;
 }
 
-export interface CryptoTokenPayload {
-  ticketId: string;
-  workerId: string;
-  epochId: number;
-  expiryTimestamp: number;
-  filesHash: string;
+export interface AuditLogEntry {
+  logId: string;
+  timestamp: number;
+  actor: string;
+  action: string;
+  ticketId?: string;
+  reasoning: string;
+  details: Record<string, any>;
 }
+
+export interface ProjectInfo {
+  id: string;
+  name: string;
+  gitRepoUrl: string;
+  priority: string;
+  status: 'ACTIVE' | 'PAUSED' | 'COMPLETED';
+  createdAt: string;
+  configHash: string;
+}
+
+export interface SystemStateDB {
+  currentMaster: {
+    workerId: string;
+    sinceTimestamp: number;
+    lastHeartbeat: number;
+    epoch: number;
+  };
+  globalStatus: 'RUNNING' | 'PAUSED' | 'MAINTENANCE';
+  maxConcurrentWorkers: number;
+  activeProjectId: string;
+}
+
+export interface PromptTemplateConfig {
+  activeVersion: 'v1' | 'v2';
+  v1: { ticketGeneration: string; workerBuilder: string };
+  v2: { ticketGeneration: string; workerBuilder: string };
+}
+
+export interface OperationalGap {
+  id: number;
+  title: string;
+  riskDescription: string;
+  solutionArchitecture: string;
+  status: 'IMPLEMENTED' | 'ACTIVE' | 'VERIFIED';
+}
+
+export type TelegramMessageType = 
+  | 'PINNED_CARD' 
+  | 'ALERT_P0' 
+  | 'ALERT_RFC' 
+  | 'ALERT_MERGE' 
+  | 'ALERT_FAILOVER' 
+  | 'ALERT_HEALING'
+  | 'WIRE_PROTOCOL'
+  | 'WATCHDOG_REVOKE'
+  | 'CLARIFICATION_BLOCKED'
+  | 'KILL_SWITCH';
 
 export interface TelegramMessage {
   id: string;
   timestamp: string;
-  type: 'PINNED_CARD' | 'ALERT_P0' | 'ALERT_RFC' | 'ALERT_MERGE' | 'ALERT_FAILOVER' | 'ALERT_HEALING';
+  type: TelegramMessageType;
   text: string;
   urgent?: boolean;
+  rawWireProtocol?: string;
+  structuredJson?: Record<string, any>;
+}
+
+export interface WatchdogLease {
+  ticketId: string;
+  workerId: string;
+  leasedAt: number;
+  expiresAt: number;
+  lastHeartbeatAt: number;
+  missedHeartbeats: number;
+  maxMissedHeartbeats: number;
+  progressPct: number;
+  lastStep: string;
+  isRevoked: boolean;
+}
+
+export interface SplitBrainHealth {
+  isStable: boolean;
+  localMasterId: string;
+  telegramPinnedMasterId: string;
+  currentEpoch: number;
+  consensusDivergence: boolean;
+  lastReverificationTimestamp: number;
+  statusMessage: string;
 }
 
 export interface LLMCascadeTier {
@@ -85,6 +196,7 @@ export interface LLMCascadeTier {
   provider: 'Google AI Studio' | 'OpenRouter';
   status: 'READY' | 'ACTIVE' | 'RATE_LIMITED' | 'FALLBACK';
   rpmCost: number;
+  isPinnedForTicketGen?: boolean;
 }
 
 export interface ClusterState {
@@ -92,8 +204,16 @@ export interface ClusterState {
   epochId: number;
   activeMasterId: string;
   masterMode: 'ORCHESTRATOR' | 'HYBRID_LOCAL' | 'FAILOVER';
+  killSwitchActive: boolean;
+  killSwitchReason?: string;
+  splitBrain: SplitBrainHealth;
+  watchdogLeases: WatchdogLease[];
   nodes: SwarmNode[];
   tickets: Ticket[];
+  projects?: ProjectInfo[];
+  auditLogs?: AuditLogEntry[];
+  operationalGaps?: OperationalGap[];
+  promptConfig?: PromptTemplateConfig;
   rpm: number;
   maxRpm: number;
   telegramFeed: TelegramMessage[];

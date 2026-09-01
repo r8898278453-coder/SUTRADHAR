@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header.tsx';
 import { TelegramLiveCard } from './components/TelegramLiveCard.tsx';
+import { TelegramWireWatchdogView } from './components/TelegramWireWatchdogView.tsx';
 import { TopologyView } from './components/TopologyView.tsx';
 import { TaskDAGView } from './components/TaskDAGView.tsx';
 import { SandboxSelfHealingConsole } from './components/SandboxSelfHealingConsole.tsx';
 import { CryptoGatekeeper } from './components/CryptoGatekeeper.tsx';
 import { LLMCascadeView } from './components/LLMCascadeView.tsx';
+import { SharedStateBrainView } from './components/SharedStateBrainView.tsx';
 import { P0HotfixModal } from './components/P0HotfixModal.tsx';
 import { RFCDelegationModal } from './components/RFCDelegationModal.tsx';
 import { fallbackClusterState } from './data/fallbackClusterState.ts';
@@ -230,12 +232,28 @@ export const App: React.FC = () => {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
+        {activeTab === 'brain' && (
+          <SharedStateBrainView
+            clusterState={state}
+            onRefresh={fetchState}
+            showToast={showToast}
+          />
+        )}
+
         {activeTab === 'dashboard' && (
           <TelegramLiveCard
             state={state}
             liveCardText={liveCardText}
             onRefreshCard={fetchState}
             onInjectP0={() => setIsP0ModalOpen(true)}
+          />
+        )}
+
+        {activeTab === 'watchdog_protocol' && (
+          <TelegramWireWatchdogView
+            state={state}
+            onRefresh={fetchState}
+            onShowToast={showToast}
           />
         )}
 

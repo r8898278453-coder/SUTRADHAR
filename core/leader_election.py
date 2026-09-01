@@ -43,6 +43,8 @@ class ClusterStateManager:
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     current_epoch INTEGER NOT NULL,
                     active_master_id TEXT NOT NULL,
+                    pinned_message_id INTEGER DEFAULT 0,
+                    kill_switch_active INTEGER DEFAULT 0,
                     updated_at INTEGER NOT NULL
                 );
             """)
@@ -56,25 +58,52 @@ class ClusterStateManager:
                 );
             """)
             conn.execute("""
-                INSERT OR IGNORE INTO cluster_meta (id, current_epoch, active_master_id, updated_at)
-                VALUES (1, 1, 'UNINITIALIZED', ?);
+                INSERT OR IGNORE INTO cluster_meta (id, current_epoch, active_master_id, pinned_message_id, kill_switch_active, updated_at)
+                VALUES (1, 1, 'UNINITIALIZED', 0, 0, ?);
             """, (int(time.time()),))
 
-    def get_cluster_epoch(self) -> Tuple[int, str]:
+    def get_cluster_epoch(self) -> Tuple[int, str, bool]:
         with self._get_conn() as conn:
-            cursor = conn.execute("SELECT current_epoch, active_master_id FROM cluster_meta WHERE id = 1;")
+            cursor = conn.execute("SELECT current_epoch, active_master_id, kill_switch_active FROM cluster_meta WHERE id = 1;")
             row = cursor.fetchone()
-            return row[0], row[1]
+            return row[0], row[1], bool(row[2])
+
+    def set_kill_switch(self, active: bool) -> None:
+        now = int(time.time())
+        with self._get_conn() as conn:
+            conn.execute("UPDATE cluster_meta SET kill_switch_active = ?, updated_at = ? WHERE id = 1;", (1 if active else 0, now))
+            logger.warning(f"[CONSENSUS] Emergency Kill-Switch set to {active}")
+
+    def verify_split_brain_status(self, my_node_id: str, telegram_pinned_master_id: Optional[str]) -> Tuple[bool, str]:
+        """
+        Periodically invoked by current master to verify if it is still the legitimate leader
+        in both local database and the authoritative Telegram pinned message.
+        """
+        curr_epoch, active_master, is_killed = self.get_cluster_epoch()
+        if is_killed:
+            return False, "EMERGENCY_KILL_SWITCH_ACTIVE"
+
+        if telegram_pinned_master_id and telegram_pinned_master_id != my_node_id:
+            logger.critical(f"[SPLIT_BRAIN] Detected divergence! Telegram pinned master is '{telegram_pinned_master_id}', but local master is '{my_node_id}'. Initiating self-demotion.")
+            return False, f"TELEGRAM_PINNED_MISMATCH (Pinned: {telegram_pinned_master_id})"
+
+        if active_master != my_node_id and active_master != "UNINITIALIZED":
+            logger.critical(f"[SPLIT_BRAIN] Database master is '{active_master}', not '{my_node_id}'. Self-demoting.")
+            return False, f"DB_MASTER_MISMATCH (Active: {active_master})"
+
+        return True, "LEADER_STABLE"
 
     def register_heartbeat(self, node_id: str, role: str, uptime: int, epoch_id: int) -> Tuple[int, str, bool]:
         now = int(time.time())
         with self._get_conn() as conn:
-            cursor = conn.execute("SELECT current_epoch, active_master_id FROM cluster_meta WHERE id = 1;")
-            curr_epoch, master_id = cursor.fetchone()
+            cursor = conn.execute("SELECT current_epoch, active_master_id, kill_switch_active FROM cluster_meta WHERE id = 1;")
+            curr_epoch, master_id, is_killed = cursor.fetchone()
 
             must_demote = False
             if role == "MASTER" and (epoch_id < curr_epoch or (master_id != node_id and master_id != "UNINITIALIZED")):
                 must_demote = True
+
+            assigned_role = "STANDBY" if must_demote else role
 
             conn.execute("""
                 INSERT INTO node_registry (node_id, role, uptime_seconds, last_heartbeat, epoch_id)
@@ -84,7 +113,7 @@ class ClusterStateManager:
                     uptime_seconds=excluded.uptime_seconds,
                     last_heartbeat=excluded.last_heartbeat,
                     epoch_id=excluded.epoch_id;
-            """, (node_id, "STANDBY" if must_demote else role, uptime, now, curr_epoch))
+            """, (node_id, assigned_role, uptime, now, curr_epoch))
 
             return curr_epoch, master_id, must_demote
 

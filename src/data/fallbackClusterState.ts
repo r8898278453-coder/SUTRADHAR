@@ -239,12 +239,85 @@ export const fallbackClusterState: ClusterState = {
   ],
   rpm: 4.8,
   maxRpm: 10.0,
+  killSwitchActive: false,
+  killSwitchReason: undefined,
+  splitBrain: {
+    isStable: true,
+    localMasterId: 'NODE-E78A1201',
+    telegramPinnedMasterId: 'NODE-E78A1201',
+    currentEpoch: 15,
+    consensusDivergence: false,
+    lastReverificationTimestamp: Date.now(),
+    statusMessage: 'Consensus synchronized. Active leader Node_Alpha verified against Telegram pinned card at Epoch #15.'
+  },
+  watchdogLeases: [
+    {
+      ticketId: 'TKT-104',
+      workerId: 'NODE-B7A93310',
+      leasedAt: Date.now() - 180000,
+      expiresAt: Date.now() + 720000,
+      lastHeartbeatAt: Date.now() - 15000,
+      missedHeartbeats: 0,
+      maxMissedHeartbeats: 3,
+      progressPct: 65,
+      lastStep: 'Testing Matrimony Profile diff patch in sandbox',
+      isRevoked: false
+    },
+    {
+      ticketId: 'TKT-105',
+      workerId: 'NODE-A8F24C09',
+      leasedAt: Date.now() - 320000,
+      expiresAt: Date.now() + 580000,
+      lastHeartbeatAt: Date.now() - 25000,
+      missedHeartbeats: 0,
+      maxMissedHeartbeats: 3,
+      progressPct: 40,
+      lastStep: 'Closed-loop healing retry 1/3',
+      isRevoked: false
+    }
+  ],
   telegramFeed: [
+    {
+      id: 'tg-proto-01',
+      timestamp: '13:22:00',
+      type: 'WIRE_PROTOCOL',
+      text: '👑 [MASTER LEASE ALLOCATED]\n🎫 Ticket: TKT-104 - Matrimony Profile Updates\n🤖 Worker: NODE-B7A93310\n⏱️ TTL: 15m\n🔐 Ed25519 Token: SEC-eyJ0aWNrZXRfaWQiOiJUS1QtMTA0In0=...',
+      rawWireProtocol: `👑 [MASTER LEASE ALLOCATED]
+🎫 Ticket: TKT-104 - Matrimony Profile Updates
+🤖 Assigned Worker: NODE-B7A93310
+🌿 Work Branch: backup/TKT-104-worker02
+📁 Allowed Files: modules/matrimony/ProfileController.php, tests/Unit/ProfileTest.php
+⏱️ Lease Expiry: 900s
+🔐 Ed25519 Signature: Verified
+
+\`\`\`sutradhar_protocol
+{
+  "version": "1.0",
+  "msg_type": "TICKET_LEASE_GRANTED",
+  "msg_id": "lease_TKT-104_1725114600",
+  "timestamp": 1725114600,
+  "sender": {
+    "node_id": "NODE-E78A1201",
+    "role": "MASTER",
+    "epoch_id": 15
+  },
+  "payload": {
+    "ticket_id": "TKT-104",
+    "worker_id": "NODE-B7A93310",
+    "allowed_files": ["modules/matrimony/ProfileController.php", "tests/Unit/ProfileTest.php"],
+    "base_branch": "main",
+    "work_branch": "backup/TKT-104-worker02",
+    "expires_at": 1725115500,
+    "ttl_seconds": 900
+  }
+}
+\`\`\``
+    },
     {
       id: 'tg-1',
       timestamp: '13:20:30',
       type: 'PINNED_CARD',
-      text: '🟡 [Node_Worker_02] Synthesizing unified diff patch for TKT-104 (Matrimony Profile Controller) via Gemini Pro.'
+      text: '🟡 [Node_Worker_02] Synthesizing unified diff patch for TKT-104 (Matrimony Profile Controller) via Gemini 3.7 Flash.'
     },
     {
       id: 'tg-2',
@@ -257,21 +330,15 @@ export const fallbackClusterState: ClusterState = {
       timestamp: '12:31:22',
       type: 'ALERT_MERGE',
       text: '🟢 [Node_Worker_03] TKT-106 passed ephemeral sandbox tests (0 errors). Ed25519 Token verified & pushed to tested/TKT-106.'
-    },
-    {
-      id: 'tg-4',
-      timestamp: '11:15:42',
-      type: 'ALERT_MERGE',
-      text: '🟢 [Node_Worker_01] TKT-102 (Session Token Rotation) verified & merged into tested branch.'
     }
   ],
   lastTelegramCardUpdate: new Date().toISOString(),
   llmCascade: [
-    { priority: 1, name: 'Gemini 2.0 Pro / Flash', model: 'gemini-2.0-pro-exp-02-05', provider: 'Google AI Studio', status: 'ACTIVE', rpmCost: 1 },
+    { priority: 1, name: 'Gemini 3.7 Flash', model: 'gemini-3.7-flash', provider: 'Google AI Studio', status: 'ACTIVE', rpmCost: 1 },
     { priority: 2, name: 'DeepSeek R1', model: 'deepseek/deepseek-r1:free', provider: 'OpenRouter', status: 'READY', rpmCost: 1 },
     { priority: 3, name: 'Qwen 2.5 Coder 32B', model: 'qwen/qwen-2.5-coder-32b:free', provider: 'OpenRouter', status: 'READY', rpmCost: 1 },
-    { priority: 4, name: 'LLaMA 3.1 70B', model: 'meta-llama/llama-3.1-70b:free', provider: 'OpenRouter', status: 'READY', rpmCost: 1 },
-    { priority: 5, name: 'Gemini Flash (Backup)', model: 'google/gemini-2.0-flash-exp:free', provider: 'OpenRouter', status: 'READY', rpmCost: 1 },
+    { priority: 4, name: 'LLaMA 3.3 70B', model: 'meta-llama/llama-3.3-70b-instruct:free', provider: 'OpenRouter', status: 'READY', rpmCost: 1 },
+    { priority: 5, name: 'Gemini Flash Backup', model: 'gemini-3.7-flash', provider: 'Google AI Studio', status: 'READY', rpmCost: 1 },
   ],
   isLiveSimulation: true
 };

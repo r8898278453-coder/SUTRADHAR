@@ -8,7 +8,8 @@ import {
   Activity, 
   Layers, 
   GitPullRequest,
-  Gauge
+  Gauge,
+  Clock
 } from 'lucide-react';
 import type { ClusterState } from '../types.ts';
 
@@ -49,7 +50,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <h1 className="font-bold text-lg text-slate-100 tracking-tight flex items-center gap-2">
                   SUTRADHAR
                   <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 font-mono font-normal">
-                    v5.3 SWARM
+                    v6.0 PRODUCTION
                   </span>
                 </h1>
                 <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
@@ -151,7 +152,9 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Navigation Tabs */}
         <div className="flex items-center gap-1 mt-3 pt-2 border-t border-slate-800/60 overflow-x-auto">
           {[
+            { id: 'brain', label: '🧠 Shared State DB (Brain)', icon: Layers },
             { id: 'dashboard', label: 'Telegram & Live Overview', icon: Radio },
+            { id: 'watchdog_protocol', label: 'Protocol & Watchdog', icon: Clock },
             { id: 'topology', label: 'Swarm Nodes & Pre-Flight', icon: Cpu },
             { id: 'dag', label: 'DAG Tasks & Whitelists', icon: Layers },
             { id: 'sandbox', label: 'Ephemeral Sandbox & Self-Healing', icon: Zap },

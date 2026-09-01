@@ -20,7 +20,7 @@ interface LLMCascadeViewProps {
 
 export const LLMCascadeView: React.FC<LLMCascadeViewProps> = ({ state }) => {
   const [testPrompt, setTestPrompt] = useState('Implement sanitized user bio updates for Matrimony ProfileController with 1000 char constraint.');
-  const [selectedProvider, setSelectedProvider] = useState<string>('Google AI Studio (Gemini 2.0 Pro)');
+  const [selectedProvider, setSelectedProvider] = useState<string>('Google AI Studio (Gemini 3.7 Flash)');
   const [isSimulating, setIsSimulating] = useState(false);
   const [cascadeLog, setCascadeLog] = useState<string[]>([]);
 
@@ -30,7 +30,7 @@ export const LLMCascadeView: React.FC<LLMCascadeViewProps> = ({ state }) => {
 
     const steps = [
       'Token Bucket: Consumed 1 token (Current RPM: 4.8 / 10.0)',
-      'Primary [Tier 1]: Attempting Google AI Studio (gemini-2.0-pro)...',
+      'Primary [Tier 1]: Attempting Google AI Studio (gemini-3.7-flash)...',
       'Context Preserved: Preserved initial system blueprint prompt & allowed_files whitelist.',
       'Primary Tier Success: HTTP 200 OK received in 1.14s. Synthesis complete.'
     ];

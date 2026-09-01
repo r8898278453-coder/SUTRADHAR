@@ -57,11 +57,11 @@ class TokenBucketLimiter:
 
 class LLMRouter:
     CASCADE_TIERS = [
-        {"provider": "gemini", "model": "gemini-2.0-pro-exp-02-05", "env_key": "GEMINI_API_KEY"},
+        {"provider": "gemini", "model": "gemini-3.7-flash", "env_key": "GEMINI_API_KEY"},
         {"provider": "openrouter", "model": "deepseek/deepseek-r1:free", "env_key": "OPENROUTER_API_KEY"},
         {"provider": "openrouter", "model": "qwen/qwen-2.5-coder-32b-instruct:free", "env_key": "OPENROUTER_API_KEY"},
         {"provider": "openrouter", "model": "meta-llama/llama-3.3-70b-instruct:free", "env_key": "OPENROUTER_API_KEY"},
-        {"provider": "openrouter", "model": "google/gemini-2.0-flash-exp:free", "env_key": "OPENROUTER_API_KEY"},
+        {"provider": "openrouter", "model": "google/gemini-flash-1.5-8b:free", "env_key": "OPENROUTER_API_KEY"},
     ]
 
     def __init__(self, limiter: Optional[TokenBucketLimiter] = None):
