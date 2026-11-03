@@ -13,7 +13,12 @@ import {
   RotateCw,
   GitBranch,
   ShieldCheck,
-  Filter
+  Filter,
+  MessageSquare,
+  Undo2,
+  Send,
+  AlertCircle,
+  UserCheck
 } from 'lucide-react';
 import type { Ticket, ClusterState } from '../types.ts';
 
@@ -23,6 +28,10 @@ interface TaskDAGViewProps {
   onTest: (ticketId: string, simulateFailure?: boolean) => void;
   onVerifyPush: (ticketId: string) => void;
   onSelectTicketForConsole: (ticket: Ticket) => void;
+  onClaimTicket?: (ticketId: string, workerId: string) => void;
+  onBlockClarification?: (ticketId: string, question: string, reason?: string) => void;
+  onAnswerClarification?: (ticketId: string, answer: string) => void;
+  onRollback?: (ticketId: string, reason?: string) => void;
 }
 
 export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
@@ -30,10 +39,26 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
   onSynthesize,
   onTest,
   onVerifyPush,
-  onSelectTicketForConsole
+  onSelectTicketForConsole,
+  onClaimTicket,
+  onBlockClarification,
+  onAnswerClarification,
+  onRollback
 }) => {
   const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
-  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(state.tickets[2] || state.tickets[0]);
+  const [selectedTicketId, setSelectedTicketId] = useState<string>(state.tickets[2]?.id || state.tickets[0]?.id || 'TKT-104');
+  
+  // Interactive form states
+  const workerNodes = state.nodes.filter(n => n.role.startsWith('WORKER') || n.role === 'STANDBY');
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string>(workerNodes[0]?.id || state.nodes[1]?.id || 'NODE-A8F24C09');
+  const [clarificationQuestionInput, setClarificationQuestionInput] = useState<string>('');
+  const [isClarifyFormOpen, setIsClarifyFormOpen] = useState<boolean>(false);
+  const [answerInput, setAnswerInput] = useState<string>('');
+  const [rollbackReasonInput, setRollbackReasonInput] = useState<string>('');
+  const [isRollbackOpen, setIsRollbackOpen] = useState<boolean>(false);
+
+  // Reactive ticket resolution
+  const selectedTicket = state.tickets.find(t => t.id === selectedTicketId) || state.tickets[0];
 
   const filteredTickets = state.tickets.filter(t => {
     if (selectedDomain === 'ALL') return true;
@@ -161,7 +186,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
             return (
               <div
                 key={ticket.id}
-                onClick={() => setSelectedTicket(ticket)}
+                onClick={() => setSelectedTicketId(ticket.id)}
                 className={`p-4 rounded-xl border transition cursor-pointer relative ${
                   isSelected 
                     ? 'bg-slate-900 border-cyan-500 ring-1 ring-cyan-500/30' 
@@ -199,7 +224,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                   <div className="flex items-center gap-1.5">
                     <span>Assigned:</span>
                     <span className="text-slate-200 font-semibold">
-                      {assignedNode?.name || 'Waiting for Parent'}
+                      {assignedNode?.name || (ticket.status === 'PENDING' ? 'Ready to Claim' : 'Waiting for Parent')}
                     </span>
                   </div>
 
@@ -283,57 +308,280 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                 </div>
               </div>
 
-              {/* Action Pipeline Buttons */}
-              <div className="space-y-2 pt-2 border-t border-slate-800">
-                <span className="text-[10px] font-mono text-slate-400 block uppercase tracking-wider">
-                  Swarm Execution Controls:
-                </span>
-                
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <button
-                    id={`btn-synth-${selectedTicket.id}`}
-                    onClick={() => onSynthesize(selectedTicket.id)}
-                    className="px-3 py-2 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
-                  >
-                    <Zap className="w-3.5 h-3.5 text-amber-400" />
-                    1. LLM Diff
-                  </button>
-
-                  <button
-                    id={`btn-test-${selectedTicket.id}`}
-                    onClick={() => onTest(selectedTicket.id, false)}
-                    className="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
-                  >
-                    <Play className="w-3.5 h-3.5 text-cyan-400" />
-                    2. Sandbox Test
-                  </button>
-
-                  <button
-                    id={`btn-verify-${selectedTicket.id}`}
-                    onClick={() => onVerifyPush(selectedTicket.id)}
-                    className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                    3. Git Push
-                  </button>
+              {/* STATE-SPECIFIC EXECUTION CONTROLS */}
+              
+              {/* Case 1: PENDING TICKET CLAIM */}
+              {selectedTicket.status === 'PENDING' && (
+                <div className="bg-slate-950 border border-cyan-500/40 p-4 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-mono font-bold text-cyan-400 flex items-center gap-1.5">
+                      <UserCheck className="w-4 h-4" />
+                      Worker Ticket Claim (Section 7, Gap #3 & Gap #10)
+                    </span>
+                    <span className="text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-800/60 px-2 py-0.5 rounded">
+                      OPEN FOR CLAIM
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Dependencies are satisfied. Select an idle worker node to atomically reserve an ephemeral worktree branch and start diff synthesis.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedWorkerId}
+                      onChange={e => setSelectedWorkerId(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+                    >
+                      {workerNodes.map(node => (
+                        <option key={node.id} value={node.id}>
+                          {node.name} ({node.id}) - {node.status}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => onClaimTicket && onClaimTicket(selectedTicket.id, selectedWorkerId)}
+                      className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold font-mono rounded-lg flex items-center gap-1.5 transition active:scale-95"
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      Claim Ticket (Atomic CAS)
+                    </button>
+                  </div>
                 </div>
+              )}
 
-                <div className="flex items-center justify-between pt-2">
-                  <button
-                    onClick={() => onTest(selectedTicket.id, true)}
-                    className="text-[11px] font-mono text-rose-400 hover:text-rose-300 underline"
-                  >
-                    Simulate Docker Test Failure (Self-Healing Trigger)
-                  </button>
-
-                  <button
-                    onClick={() => onSelectTicketForConsole(selectedTicket)}
-                    className="text-[11px] font-mono text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
-                  >
-                    Open in Terminal Console <ArrowRight className="w-3 h-3" />
-                  </button>
+              {/* Case 2: BLOCKED ON PARENT */}
+              {selectedTicket.status === 'BLOCKED_ON_PARENT' && (
+                <div className="bg-slate-950 border border-slate-800 p-4 rounded-lg space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-mono text-amber-400 font-bold">
+                    <Lock className="w-4 h-4" />
+                    Blocked on Parent Dependencies (Section 4.A & Gap #3)
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    This task is waiting for parent tasks to pass isolated Docker tests and merge into <code className="text-emerald-400">tested/</code>.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {selectedTicket.parentTicketIds.map(pid => {
+                      const parent = state.tickets.find(t => t.id === pid);
+                      return (
+                        <span key={pid} className="px-2 py-1 bg-slate-900 border border-slate-700 rounded text-[11px] font-mono text-slate-300 flex items-center gap-1.5">
+                          <span>{pid}:</span>
+                          <span className={parent?.status === 'COMMITTED_PUSHED' ? 'text-emerald-400 font-bold' : 'text-amber-400'}>
+                            {parent?.status || 'UNKNOWN'}
+                          </span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-slate-500 italic mt-1">
+                    ⚡ Auto-Unblock: Once all parent tasks reach COMMITTED_PUSHED, this ticket automatically transitions to OPEN/PENDING.
+                  </p>
                 </div>
-              </div>
+              )}
+
+              {/* Case 3: BLOCKED CLARIFICATION CHECKPOINT */}
+              {selectedTicket.status === 'BLOCKED_CLARIFICATION' && (
+                <div className="bg-slate-950 border border-amber-500/50 p-4 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-mono font-bold text-amber-400 flex items-center gap-1.5">
+                      <MessageSquare className="w-4 h-4" />
+                      Clarification Protocol (Zero Assumption Checkpoint)
+                    </span>
+                    <span className="text-[10px] font-mono bg-amber-950/60 text-amber-300 border border-amber-800/60 px-2 py-0.5 rounded">
+                      BLOCKED
+                    </span>
+                  </div>
+                  <div className="bg-slate-900 border border-slate-800 p-3 rounded text-xs text-slate-300">
+                    <span className="text-amber-400 font-semibold block mb-1">
+                      🤖 Question from {selectedTicket.clarificationQuestion?.askedBy || 'Worker'}:
+                    </span>
+                    <p className="italic">"{selectedTicket.clarificationQuestion?.question}"</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Type architectural guidance to unblock worker..."
+                      value={answerInput}
+                      onChange={e => setAnswerInput(e.target.value)}
+                      className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                    />
+                    <button
+                      onClick={() => {
+                        if (onAnswerClarification && answerInput.trim()) {
+                          onAnswerClarification(selectedTicket.id, answerInput.trim());
+                          setAnswerInput('');
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      Answer & Resume
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Case 4: COMMITTED_PUSHED ROLLBACK OPTION */}
+              {selectedTicket.status === 'COMMITTED_PUSHED' && (
+                <div className="bg-slate-950 border border-emerald-500/30 p-4 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-mono font-bold text-emerald-400 flex items-center gap-1.5">
+                      <CheckCircle className="w-4 h-4" />
+                      tested/ Branch Merged & Verified
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      Commit: <code className="text-slate-200">{selectedTicket.rollbackCommit || 'HEAD~1'}</code>
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    All unit and integration tests passed in ephemeral Docker container. Ed25519 token was validated by the Git pre-receive hook.
+                  </p>
+
+                  <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                    <span className="text-[11px] text-slate-500">Need emergency rollback?</span>
+                    <button
+                      onClick={() => setIsRollbackOpen(!isRollbackOpen)}
+                      className="px-2.5 py-1 bg-red-950/40 hover:bg-red-900/50 text-red-300 border border-red-800/40 rounded text-[11px] font-mono flex items-center gap-1 transition"
+                    >
+                      <Undo2 className="w-3 h-3" />
+                      {isRollbackOpen ? 'Cancel' : 'Rollback Bad Merge (Gap #5)'}
+                    </button>
+                  </div>
+
+                  {isRollbackOpen && (
+                    <div className="pt-2 space-y-2 border-t border-red-950/80">
+                      <input
+                        type="text"
+                        placeholder="Reason for rollback (e.g. Memory regression under load)..."
+                        value={rollbackReasonInput}
+                        onChange={e => setRollbackReasonInput(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-red-500"
+                      />
+                      <button
+                        onClick={() => {
+                          if (onRollback) {
+                            onRollback(selectedTicket.id, rollbackReasonInput || 'Regression detected post-merge');
+                            setIsRollbackOpen(false);
+                            setRollbackReasonInput('');
+                          }
+                        }}
+                        className="w-full py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition"
+                      >
+                        <Undo2 className="w-3.5 h-3.5" />
+                        Execute Revert & Auto-Spawn Hotfix
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Case 5: ACTIVE PIPELINE (SYNTHESIZING, TESTING, HEALING) */}
+              {(selectedTicket.status === 'SYNTHESIZING_DIFF' || 
+                selectedTicket.status === 'TESTING_SANDBOX' || 
+                selectedTicket.status === 'HEALING_RETRY') && (
+                <div className="space-y-3 pt-2 border-t border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                      Swarm Execution Controls:
+                    </span>
+                    <button
+                      onClick={() => setIsClarifyFormOpen(!isClarifyFormOpen)}
+                      className="text-[11px] font-mono text-amber-400 hover:text-amber-300 flex items-center gap-1"
+                    >
+                      <MessageSquare className="w-3 h-3" />
+                      {isClarifyFormOpen ? 'Close Clarification' : 'Raise Clarification (Zero Assumption)'}
+                    </button>
+                  </div>
+
+                  {/* Clarification Trigger Form */}
+                  {isClarifyFormOpen && (
+                    <div className="bg-slate-950 border border-amber-500/40 p-3 rounded-lg space-y-2">
+                      <span className="text-[11px] font-mono text-amber-300 font-bold block">
+                        Forced Checkpoint: Halt assumptions & ask human architect:
+                      </span>
+                      <input
+                        type="text"
+                        placeholder="e.g. How should expired auth tokens behave during media upload?"
+                        value={clarificationQuestionInput}
+                        onChange={e => setClarificationQuestionInput(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setClarificationQuestionInput('Database transaction lock semantics unclear: should we lock row or use optimistic concurrency?')}
+                          className="text-[10px] font-mono bg-slate-900 text-slate-400 px-2 py-0.5 rounded border border-slate-800 hover:text-slate-200"
+                        >
+                          DB Concurrency Preset
+                        </button>
+                        <button
+                          onClick={() => setClarificationQuestionInput('Null payload behavior: throw 422 Unprocessable or return default fallback profile?')}
+                          className="text-[10px] font-mono bg-slate-900 text-slate-400 px-2 py-0.5 rounded border border-slate-800 hover:text-slate-200"
+                        >
+                          Payload Preset
+                        </button>
+                      </div>
+                      <div className="flex justify-end pt-1">
+                        <button
+                          onClick={() => {
+                            if (onBlockClarification && clarificationQuestionInput.trim()) {
+                              onBlockClarification(selectedTicket.id, clarificationQuestionInput.trim());
+                              setIsClarifyFormOpen(false);
+                              setClarificationQuestionInput('');
+                            }
+                          }}
+                          className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition"
+                        >
+                          <Send className="w-3 h-3" />
+                          Halt & Block Ticket
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button
+                      id={`btn-synth-${selectedTicket.id}`}
+                      onClick={() => onSynthesize(selectedTicket.id)}
+                      className="px-3 py-2 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      1. LLM Diff
+                    </button>
+
+                    <button
+                      id={`btn-test-${selectedTicket.id}`}
+                      onClick={() => onTest(selectedTicket.id, false)}
+                      className="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
+                    >
+                      <Play className="w-3.5 h-3.5 text-cyan-400" />
+                      2. Sandbox Test
+                    </button>
+
+                    <button
+                      id={`btn-verify-${selectedTicket.id}`}
+                      onClick={() => onVerifyPush(selectedTicket.id)}
+                      className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      3. Git Push
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2">
+                    <button
+                      onClick={() => onTest(selectedTicket.id, true)}
+                      className="text-[11px] font-mono text-rose-400 hover:text-rose-300 underline"
+                    >
+                      Simulate Docker Test Failure (Self-Healing Trigger)
+                    </button>
+
+                    <button
+                      onClick={() => onSelectTicketForConsole(selectedTicket)}
+                      className="text-[11px] font-mono text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+                    >
+                      Open in Terminal Console <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Execution Logs */}
               <div className="space-y-1.5 pt-2 border-t border-slate-800">

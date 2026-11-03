@@ -147,6 +147,84 @@ export const App: React.FC = () => {
     }
   };
 
+  // Handler: Claim Ticket
+  const handleClaimTicket = async (ticketId: string, workerId: string) => {
+    showToast(`⚡ Worker ${workerId} claiming ${ticketId}...`);
+    try {
+      const res = await fetch('/api/tickets/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId, workerId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`✅ Claimed ${ticketId}! Branch ${data.ticket.branch} allocated.`);
+        await fetchState();
+      } else {
+        showToast(`❌ Claim Failed: ${data.error}`);
+      }
+    } catch (e) {
+      showToast(`Claim error: ${e}`);
+    }
+  };
+
+  // Handler: Block Clarification
+  const handleBlockClarification = async (ticketId: string, question: string, reason?: string) => {
+    showToast(`❓ Halting ${ticketId} for clarification...`);
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/block-clarification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, workerId: 'Worker-Node', reasoning: reason })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`⚠️ ${ticketId} halted: Question posted to Telegram wire.`);
+        await fetchState();
+      }
+    } catch (e) {
+      showToast(`Clarify error: ${e}`);
+    }
+  };
+
+  // Handler: Answer Clarification
+  const handleAnswerClarification = async (ticketId: string, answer: string) => {
+    showToast(`💬 Submitting architectural answer for ${ticketId}...`);
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/answer-clarification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer, answeredBy: 'Master Architect' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`✅ ${ticketId} unblocked! Worker resuming diff synthesis.`);
+        await fetchState();
+      }
+    } catch (e) {
+      showToast(`Answer error: ${e}`);
+    }
+  };
+
+  // Handler: Rollback Bad Merge
+  const handleRollback = async (ticketId: string, reason?: string) => {
+    showToast(`🚨 Initiating emergency revert for ${ticketId}...`);
+    try {
+      const res = await fetch('/api/master/rollback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId, reason, actor: 'Master Process 2' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`🔄 Revert issued! Hotfix ticket ${data.hotfixTicket.id} spawned.`);
+        await fetchState();
+      }
+    } catch (e) {
+      showToast(`Rollback error: ${e}`);
+    }
+  };
+
   // Handler: P0 Hotfix submit
   const handleSubmitP0 = async (formData: { title: string; description: string; allowedFiles: string[] }) => {
     showToast(`🚨 Dispatching P0 Hotfix to Master Process 2 (Local Hybrid)...`);
@@ -274,6 +352,10 @@ export const App: React.FC = () => {
               setActiveTicket(t);
               setActiveTab('sandbox');
             }}
+            onClaimTicket={handleClaimTicket}
+            onBlockClarification={handleBlockClarification}
+            onAnswerClarification={handleAnswerClarification}
+            onRollback={handleRollback}
           />
         )}
 

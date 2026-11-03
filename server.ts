@@ -866,11 +866,78 @@ app.post('/api/cluster/ticket/verify-push', (req, res) => {
       });
     }
 
+    // Update ticket state to COMMITTED_PUSHED (Blueprint Section 5 & 12)
+    ticket.status = 'COMMITTED_PUSHED';
+    ticket.rollbackCommit = `rev-${ticket.id.toLowerCase()}-${Math.random().toString(16).substring(2, 8)}`;
+    ticket.logs.push({
+      timestamp: new Date().toLocaleTimeString(),
+      level: 'SUCCESS',
+      message: `[GIT PUSH VERIFIED] Ed25519 token verified. Branch merged into tested/${ticket.id}. Commit: ${ticket.rollbackCommit}`
+    });
+
+    // Free assigned worker node
+    if (ticket.assignedTo) {
+      const workerNode = clusterState.nodes.find(n => n.id === ticket.assignedTo);
+      if (workerNode) {
+        workerNode.status = 'IDLE';
+        workerNode.currentTicketId = undefined;
+      }
+    }
+
+    // Check dependent child tickets (Blueprint Section 4.A & Section 11 Gap #3)
+    const newlyUnblockedTickets: string[] = [];
+    clusterState.tickets.forEach(child => {
+      if (child.status === 'BLOCKED_ON_PARENT') {
+        const parents = child.parentTicketIds || (child.dependsOn ? [child.dependsOn] : []);
+        const allParentsDone = parents.length > 0 && parents.every(pid => {
+          const p = clusterState.tickets.find(t => t.id === pid);
+          return p && p.status === 'COMMITTED_PUSHED';
+        });
+        if (allParentsDone) {
+          child.status = 'PENDING';
+          child.logs.push({
+            timestamp: new Date().toLocaleTimeString(),
+            level: 'INFO',
+            message: `[DEPENDENCY UNBLOCKED] All parents (${parents.join(', ')}) merged! Ticket is now OPEN for worker claim.`
+          });
+          newlyUnblockedTickets.push(child.id);
+        }
+      }
+    });
+
+    clusterState.telegramFeed.unshift({
+      id: `tg-merge-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString(),
+      type: 'ALERT_MERGE',
+      text: `🚀 [TICKET MERGED] ${ticket.id} (${ticket.title}) pushed to tested/! ${newlyUnblockedTickets.length > 0 ? `Unblocked: ${newlyUnblockedTickets.join(', ')}` : ''}`
+    });
+
+    broadcastToTelegram(
+      `🚀 <b>[TICKET MERGED & TESTED]</b>\n\n` +
+      `🎫 <b>Ticket:</b> ${ticket.id}: ${ticket.title}\n` +
+      `🌿 <b>Branch:</b> <code>tested/${ticket.id}</code>\n` +
+      `🔐 <b>Commit Hash:</b> <code>${ticket.rollbackCommit}</code>\n` +
+      `🛡️ <b>Ed25519 Token:</b> Verified by Git Pre-Receive Gatekeeper\n` +
+      (newlyUnblockedTickets.length > 0 ? `\n🔓 <b>Unblocked Children:</b> <code>${newlyUnblockedTickets.join(', ')}</code> (Now PENDING for workers)` : '')
+    );
+
+    sharedStateDB.audit_log.unshift({
+      logId: `LOG-${Date.now().toString().slice(-4)}`,
+      timestamp: Date.now(),
+      actor: ticket.assignedTo || 'Worker',
+      action: 'GIT_PUSH_VERIFIED_MERGED',
+      ticketId: ticket.id,
+      reasoning: 'Ed25519 token valid. Closed-loop sandbox testing passed with zero exit code.',
+      details: { rollbackCommit: ticket.rollbackCommit, newlyUnblockedTickets }
+    });
+
     return res.json({
       verified: true,
       exitCode: 0,
       message: `200_OK: Ed25519 signature valid. Branch ${ticket.branch} accepted into tested/${ticket.id}.`,
-      payload
+      payload,
+      ticket,
+      newlyUnblockedTickets
     });
   } catch (err: any) {
     return res.status(403).json({
@@ -1794,37 +1861,60 @@ app.get('/api/db/all', (req, res) => {
   });
 });
 
-// POST Atomic Ticket Claim (Section 7, Section 11 Gap #3)
+// POST Atomic Ticket Claim (Section 7, Section 11 Gap #3 & Gap #10)
 app.post('/api/tickets/claim', (req, res) => {
   const { workerId, ticketId } = req.body;
   const ticket = clusterState.tickets.find(t => t.id === ticketId);
   if (!ticket) return res.status(404).json({ success: false, error: 'Ticket not found' });
 
-  // 1. Status Check
-  if (ticket.status !== 'PENDING' && ticket.status !== 'BLOCKED_ON_PARENT') {
-    return res.status(400).json({ success: false, error: `Ticket status is '${ticket.status}', not pending` });
+  // 1. Concurrency Cap Check (Section 11 Gap #10)
+  const activeCount = clusterState.tickets.filter(t => 
+    t.status === 'SYNTHESIZING_DIFF' || t.status === 'TESTING_SANDBOX' || t.status === 'HEALING_RETRY'
+  ).length;
+  const maxCap = sharedStateDB.system_state.max_concurrent_workers || 6;
+  if (activeCount >= maxCap) {
+    return res.status(429).json({
+      success: false,
+      error: `MAX_WORKERS_CAP_EXCEEDED: Swarm limit is ${maxCap} parallel workers (Gap #10). Current active: ${activeCount}. Wait for in-flight tickets to merge.`
+    });
   }
 
-  // 2. Dependency Check (Section 11 Gap #3)
-  if (ticket.dependsOn) {
-    const parent = clusterState.tickets.find(t => t.id === ticket.dependsOn);
-    if (parent && parent.status !== 'COMMITTED_PUSHED') {
+  // 2. Status Check
+  if (ticket.status !== 'PENDING' && ticket.status !== 'BLOCKED_ON_PARENT') {
+    return res.status(400).json({ success: false, error: `Ticket status is '${ticket.status}', not eligible for claim` });
+  }
+
+  // 3. Dependency Check (Section 11 Gap #3)
+  const parents = ticket.parentTicketIds || (ticket.dependsOn ? [ticket.dependsOn] : []);
+  if (parents.length > 0) {
+    const unmergedParents = parents.filter(pid => {
+      const p = clusterState.tickets.find(t => t.id === pid);
+      return !p || p.status !== 'COMMITTED_PUSHED';
+    });
+    if (unmergedParents.length > 0) {
       return res.status(400).json({ 
         success: false, 
-        error: `Dependency ${ticket.dependsOn} is '${parent.status}', must be COMMITTED_PUSHED first.` 
+        error: `Parent dependencies [${unmergedParents.join(', ')}] are not COMMITTED_PUSHED yet. Task remains BLOCKED_ON_PARENT.` 
       });
     }
   }
 
-  // 3. Claim
+  // 4. Claim & Branch allocation
   ticket.status = 'SYNTHESIZING_DIFF';
   ticket.assignedTo = workerId;
   ticket.branch = `worker-${workerId.slice(-4)}/ticket-${ticket.id.toLowerCase().replace('tkt-', '')}`;
   ticket.logs.push({
     timestamp: new Date().toLocaleTimeString(),
     level: 'INFO',
-    message: `[ATOMIC CLAIM] Claimed by ${workerId}. Branch ${ticket.branch} created.`
+    message: `[ATOMIC CLAIM] Claimed by ${workerId}. Ephemeral worktree branch ${ticket.branch} reserved.`
   });
+
+  // Update Worker Node status
+  const workerNode = clusterState.nodes.find(n => n.id === workerId);
+  if (workerNode) {
+    workerNode.status = 'SYNTHESIZING';
+    workerNode.currentTicketId = ticket.id;
+  }
 
   sharedStateDB.audit_log.unshift({
     logId: `LOG-${Date.now().toString().slice(-4)}`,
@@ -1832,8 +1922,8 @@ app.post('/api/tickets/claim', (req, res) => {
     actor: workerId,
     action: 'TICKET_CLAIMED_ATOMIC',
     ticketId: ticket.id,
-    reasoning: 'Dependency check satisfied. Atomic claim acquired.',
-    details: { branch: ticket.branch }
+    reasoning: 'Dependency check satisfied. Concurrency cap verified. Atomic claim acquired.',
+    details: { branch: ticket.branch, workerNode: workerNode?.name }
   });
 
   res.json({ success: true, ticket });
@@ -2114,4 +2204,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('[Sutradhar Swarm] Failed to start server:', err);
+  process.exit(1);
+});
