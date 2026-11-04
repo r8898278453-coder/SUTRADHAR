@@ -71,56 +71,70 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
         return (
           <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
             <RotateCw className="w-3 h-3 text-amber-400 animate-spin" />
-            HEALING RETRY
+            [HEALING] RETRY
           </span>
         );
       case 'DEAD_LETTER_QUEUE':
         return (
           <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-rose-950/80 text-rose-300 border border-rose-600 animate-pulse">
             <ShieldAlert className="w-3 h-3 text-rose-400" />
-            DEAD LETTER QUEUE (HITL)
+            [FAILED] DEAD LETTER QUEUE (HITL)
           </span>
         );
       case 'COMMITTED_PUSHED':
         return (
           <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
             <CheckCircle className="w-3 h-3 text-emerald-400" />
-            tested/ MERGED
+            [VERIFIED] tested/ MERGED
           </span>
         );
       case 'TESTING_SANDBOX':
         return (
           <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
             <Play className="w-3 h-3 text-cyan-400 animate-spin" />
-            SANDBOX DOCKER
+            [TESTING] SANDBOX
           </span>
         );
       case 'SYNTHESIZING_DIFF':
         return (
           <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
             <Zap className="w-3 h-3 text-amber-400 animate-pulse" />
-            SYNTHESIZING
+            [SYNTHESIZING]
           </span>
         );
       case 'BLOCKED_ON_PARENT':
         return (
           <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
             <Lock className="w-3 h-3 text-slate-500" />
-            BLOCKED ON PARENT
+            [BLOCKED] ON PARENT
+          </span>
+        );
+      case 'BLOCKED_CLARIFICATION':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse">
+            <MessageSquare className="w-3 h-3 text-amber-400" />
+            [BLOCKED] CLARIFICATION
           </span>
         );
       case 'LEASED':
         return (
           <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
             <Clock className="w-3 h-3 text-indigo-400" />
-            LEASED
+            [LEASED] ACTIVE
+          </span>
+        );
+      case 'PENDING':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+            <Clock className="w-3 h-3 text-slate-400" />
+            [OPEN] PENDING
           </span>
         );
       case 'NEEDS_HUMAN_REVIEW':
         return (
           <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
             <ShieldAlert className="w-3 h-3 text-rose-400" />
-            NEEDS HUMAN REVIEW
+            [REVIEW] HUMAN NEEDED
           </span>
         );
       default:

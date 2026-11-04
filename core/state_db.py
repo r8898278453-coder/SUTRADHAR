@@ -13,14 +13,17 @@ from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger("sutradhar.brain")
 
+import sqlite3
+
 STATE_DIR = os.path.join(os.path.dirname(__file__), "..", ".sutradhar_state")
 CACHE_FILE = os.path.join(STATE_DIR, "db_cache.json")
+SQLITE_FILE = os.path.join(STATE_DIR, "cluster.db")
 
 
 class StateDatabase:
     """
     Central Database Client for Sutradhar Cluster State.
-    Implements Firestore-compatible Atomic CAS schema + Local HA Cache Fallback.
+    Implements Shared SQLite Database + Local HA Cache Fallback.
     Collections:
       - system_state: { current_master, global_status, max_concurrent_workers, epoch }
       - workers: { worker_id: { role, status, current_ticket, quota_usage, last_seen, machine_info } }
@@ -30,10 +33,21 @@ class StateDatabase:
       - config: { prompts: { v1, v2, active_version }, model_quotas, shared_env }
     """
 
-    def __init__(self, persistence_file: Optional[str] = None):
+    def __init__(self, persistence_file: Optional[str] = None, sqlite_file: Optional[str] = None):
         self.persistence_file = persistence_file or CACHE_FILE
+        self.sqlite_file = sqlite_file or SQLITE_FILE
         os.makedirs(os.path.dirname(self.persistence_file), exist_ok=True)
         self._memory_db: Dict[str, Any] = self._load_from_disk()
+
+    def _get_sqlite_conn(self) -> Optional[sqlite3.Connection]:
+        if os.path.exists(self.sqlite_file):
+            try:
+                conn = sqlite3.connect(self.sqlite_file, timeout=10.0)
+                conn.row_factory = sqlite3.Row
+                return conn
+            except Exception as e:
+                logger.warning(f"Failed to connect to SQLite {self.sqlite_file}: {e}")
+        return None
 
     def _default_state(self) -> Dict[str, Any]:
         return {
@@ -231,15 +245,111 @@ class StateDatabase:
         return self._memory_db.get(collection_name, {})
 
     def get_system_state(self) -> Dict[str, Any]:
+        conn = self._get_sqlite_conn()
+        if conn:
+            try:
+                row = conn.execute("SELECT * FROM system_state WHERE id = 1").fetchone()
+                if row:
+                    return {
+                        "current_master": {
+                            "worker_id": row["current_master_id"],
+                            "epoch": row["epoch_id"],
+                            "last_heartbeat": row["last_heartbeat"],
+                            "since_timestamp": row["updated_at"]
+                        },
+                        "global_status": row["global_status"],
+                        "max_concurrent_workers": row["max_concurrent_workers"],
+                        "active_project_id": row["active_project_id"],
+                        "kill_switch_active": bool(row["kill_switch_active"]),
+                    }
+            except Exception as e:
+                logger.warning(f"Error querying system_state from SQLite: {e}")
+            finally:
+                conn.close()
         return self._memory_db.get("system_state", {})
 
     def get_workers(self) -> Dict[str, Any]:
+        conn = self._get_sqlite_conn()
+        if conn:
+            try:
+                rows = conn.execute("SELECT * FROM workers").fetchall()
+                if rows:
+                    workers = {}
+                    for r in rows:
+                        w_id = r["worker_id"]
+                        workers[w_id] = {
+                            "worker_id": w_id,
+                            "name": r["name"],
+                            "role": r["role"],
+                            "status": r["status"],
+                            "current_ticket": r["current_ticket_id"],
+                            "last_seen": r["last_seen"],
+                        }
+                    return workers
+            except Exception as e:
+                logger.warning(f"Error querying workers from SQLite: {e}")
+            finally:
+                conn.close()
         return self._memory_db.get("workers", {})
 
     def get_tickets(self) -> Dict[str, Any]:
+        conn = self._get_sqlite_conn()
+        if conn:
+            try:
+                rows = conn.execute("SELECT * FROM tickets").fetchall()
+                if rows:
+                    tickets = {}
+                    for r in rows:
+                        t_id = r["ticket_id"]
+                        allowed = json.loads(r["allowed_files_json"] or "[]")
+                        read_only = json.loads(r["read_only_contracts_json"] or "[]")
+                        clarification = json.loads(r["clarification_question_json"]) if r["clarification_question_json"] else None
+                        tickets[t_id] = {
+                            "ticket_id": t_id,
+                            "project_id": r["project_id"],
+                            "title": r["title"],
+                            "description": r["description"],
+                            "scope": {
+                                "allowed_files": allowed,
+                                "read_only_contracts": read_only,
+                            },
+                            "status": r["status"],
+                            "claimed_by": r["assigned_to"],
+                            "retry_count": r["retry_count"],
+                            "max_attempts": r["max_retries"],
+                            "branch_name": r["branch"],
+                            "clarification_question": clarification,
+                            "rollback_commit": r["rollback_commit"],
+                        }
+                    return tickets
+            except Exception as e:
+                logger.warning(f"Error querying tickets from SQLite: {e}")
+            finally:
+                conn.close()
         return self._memory_db.get("tickets", {})
 
     def get_audit_log(self, limit: int = 50) -> List[Dict[str, Any]]:
+        conn = self._get_sqlite_conn()
+        if conn:
+            try:
+                rows = conn.execute("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+                if rows:
+                    return [
+                        {
+                            "log_id": r["log_id"],
+                            "timestamp": r["timestamp"],
+                            "actor": r["actor"],
+                            "action": r["action"],
+                            "ticket_id": r["ticket_id"],
+                            "reasoning": r["reasoning"],
+                            "details": json.loads(r["details_json"]) if r["details_json"] else {}
+                        }
+                        for r in rows
+                    ]
+            except Exception as e:
+                logger.warning(f"Error querying audit_log from SQLite: {e}")
+            finally:
+                conn.close()
         logs = self._memory_db.get("audit_log", [])
         return logs[-limit:]
 

@@ -25,8 +25,16 @@ class NodeRecord:
 
 
 class ClusterStateManager:
-    def __init__(self, db_path: str = "/opt/sutradhar/data/cluster_state.db"):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path:
+            self.db_path = Path(db_path)
+        else:
+            default_local = Path(__file__).resolve().parent.parent / ".sutradhar_state" / "cluster_state.db"
+            try:
+                Path("/opt/sutradhar/data").mkdir(parents=True, exist_ok=True)
+                self.db_path = Path("/opt/sutradhar/data/cluster_state.db")
+            except Exception:
+                self.db_path = default_local
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -144,5 +152,5 @@ class ClusterStateManager:
 
 if __name__ == "__main__":
     mgr = ClusterStateManager("/opt/sutradhar/data/cluster_state.db")
-    epoch, master = mgr.get_cluster_epoch()
-    print(f"[+] Cluster State SQLite Initialized: Epoch #{epoch} | Master: {master}")
+    epoch, master, is_killed = mgr.get_cluster_epoch()
+    print(f"[+] Cluster State SQLite Initialized: Epoch #{epoch} | Master: {master} | Kill-Switch: {is_killed}")

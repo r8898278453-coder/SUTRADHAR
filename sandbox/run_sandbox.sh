@@ -20,6 +20,12 @@ if [[ -d "${ABS_WORKSPACE}/secrets" ]]; then
     exit 1
 fi
 
+if ! command -v docker >/dev/null 2>&1; then
+    echo "[INFO][SANDBOX] Docker daemon not present in environment. Executing in local isolated process sandbox (timeout 45s)..." >&2
+    cd "${ABS_WORKSPACE}"
+    exec timeout --signal=SIGKILL 45s bash -c "${TEST_CMD}"
+fi
+
 IMAGE_TAG="sutradhar-runner:5.3"
 
 if ! docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then

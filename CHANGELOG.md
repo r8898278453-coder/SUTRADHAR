@@ -1,0 +1,40 @@
+# Changelog
+
+## [5.4.0] - 2026-11-04
+### Added
+- **Authoritative Shared State SQLite Database (`server_db.ts`)**:
+  - Implemented Node 22 built-in `node:sqlite` (`DatabaseSync`) database at `.sutradhar_state/cluster.db` with WAL mode.
+  - Entities managed: `system_state`, `workers`, `projects`, `tickets`, `ticket_dependencies`, `worker_leases`, `audit_log`, `configuration`, `model_usage`, `merge_queue`, `execution_attempts`, `revoked_tokens`.
+  - Added atomic CAS master election, atomic ticket claims with DAG dependency enforcement, watchdog lease sweeper, clarification protocol, and rollback hotfix creation.
+- **Genuine Ed25519 Asymmetric Cryptographic Gatekeeper**:
+  - Asymmetric Ed25519 keypair provisioned in `.sutradhar_state/secrets/`.
+  - Cryptographic token generation and verification using native Node `crypto.sign` and `crypto.verify`.
+  - OpenSSL CLI fallback in `core/crypto_signer.py` for Python runtime.
+  - Added public key endpoint `GET /api/cluster/security/public-key` and standalone token verification endpoint `POST /api/cluster/security/verify-token`.
+  - Added automated test suite `tests/security_ed25519.test.ts` (16 test vectors, all passing).
+  - Added automated test suite `tests/cluster_db.test.ts` (9 test vectors, all passing).
+- **Model Usage & Telemetry**:
+  - Pinned LLM code synthesis and self-healing to `@google/genai` compliant `'gemini-3.8-flash'` with `User-Agent: aistudio-build`.
+  - Persisted latency, token counts, and success status to `model_usage` table.
+- **End-to-End Task Lifecycle Automated Test (`tests/e2e_lifecycle.test.ts`)**:
+  - Added 15 comprehensive automated test vectors covering Master election, DAG task creation, child claim rejection, parent lease claim, heartbeat progress, sandbox failure injection, closed-loop healing, Ed25519 commit verification, automatic child unblocking, HITL clarification, emergency kill-switch, bad merge rollback, and watchdog sweep.
+  - Replaced `window.alert` in `TelegramLiveCard.tsx` with responsive inline notification banners.
+
+### Changed
+- Wired `/api/cluster/state`, `/api/db/all`, `/api/cluster/ticket/create`, `/api/tickets/claim`, `/api/cluster/ticket/synthesize`, `/api/cluster/ticket/test`, `/api/cluster/ticket/self-heal`, `/api/cluster/watchdog/heartbeat`, `/api/cluster/watchdog/revoke`, and `/api/master/rollback` directly to `clusterDb`.
+- Updated background watchdog interval to atomically sweep SQLite leases and auto-revoke dead worker tickets.
+- Replaced prohibited models (`gemini-2.0-flash`, `gemini-pro`, `gemini-flash-1.5-8b`) with modern active models.
+
+### Fixed
+- Fixed Python 3.10 f-string backslash syntax error in `core/protocol.py`.
+- Fixed tuple unpacking mismatch in `core/leader_election.py`.
+- Hardened Telegram bot commands against HTML injection and unauthorized caller execution.
+
+## [5.3.1] - 2026-11-03
+### Fixed
+- Dev server initialization restored on port 3000 with Vite middleware integration.
+- Resolved TypeScript compilation and syntax defects in `TaskDAGView.tsx` and `src/App.tsx`.
+- Verified live HTTP 200 responses on both frontend index route `/` and backend API `/api/cluster/state`.
+
+### Added
+- Repository state management files: `IMPLEMENTATION_STATE.md`, `CODEBASE_MAP.md`, `GAP_REGISTER.md`, and `CHANGELOG.md`.

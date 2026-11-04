@@ -53,9 +53,20 @@ export const Header: React.FC<HeaderProps> = ({
                     v6.0 PRODUCTION
                   </span>
                 </h1>
-                <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  LIVE
+                {state.killSwitchActive ? (
+                  <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/30 font-mono animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                    PAUSED (KILL-SWITCH)
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    LIVE
+                  </span>
+                )}
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-700/60 text-slate-400 hidden sm:inline-flex items-center gap-1">
+                  <span className="w-1 h-1 rounded-full bg-cyan-400"></span>
+                  DB: VERIFIED
                 </span>
               </div>
               <p className="text-xs text-slate-400">

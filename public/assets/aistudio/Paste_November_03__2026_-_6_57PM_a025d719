@@ -1,0 +1,1461 @@
+# SUTRADHAR v7.0 — COMPLETE REPOSITORY ENGINEERING, SECURITY HARDENING & AUTONOMOUS MULTI-AGENT SYSTEM IMPLEMENTATION
+
+## 1. YOUR ROLE AND RESPONSIBILITY
+
+You are acting as a team of highly experienced software engineers responsible for transforming an existing autonomous AI development platform into a real, reliable, secure, production-capable system.
+
+Simultaneously assume the responsibilities of:
+
+- Principal Software Architect
+- Senior Full-Stack Engineer
+- Python Backend Engineer
+- Distributed Systems Architect
+- AI Agent Orchestration Engineer
+- DevOps and Infrastructure Engineer
+- Application Security Engineer
+- Database and Transaction Engineer
+- Git Automation Engineer
+- Quality Assurance and Testing Engineer
+- Site Reliability Engineer
+
+You must reason carefully about interactions between components rather than fixing isolated symptoms.
+
+Your responsibility is to inspect, understand, repair, integrate, test, and improve the existing repository while preserving the intended architecture and user experience.
+
+**IMPORTANT: Do not create another attractive simulation. Build real, verifiable functionality.**
+
+---
+
+# 2. PROJECT REPOSITORY
+
+Repository:
+
+https://github.com/r8898278453-coder/SUTRADHAR.git
+
+Project name:
+
+**SUTRADHAR — Autonomous Multi-Agent Software Development Swarm**
+
+Existing technologies include:
+
+**Frontend**
+- React
+- TypeScript
+- Vite
+- Tailwind CSS
+- Lucide React
+
+**Backend**
+- Node.js
+- Express
+- TypeScript
+
+**Agent Execution**
+- Python
+- Gemini API
+- OpenRouter API
+- Git
+- Docker
+
+**Communication**
+- Telegram Bot API
+
+**Existing Security Components**
+- Ed25519 cryptographic signing
+- Git gatekeeper
+- File modification whitelists
+- AST-based validation
+
+**Existing State Components**
+- JavaScript in-memory state
+- Python JSON persistence
+- SQLite-based leader election
+
+**Target Architecture**
+- Distributed autonomous master/worker orchestration
+- Transactional shared state
+- Secure worker leases
+- Dependency-aware task scheduling
+- Real code generation
+- Isolated Docker testing
+- Verified Git commits and merges
+- Durable failure recovery
+- Human-in-the-loop supervision
+
+---
+
+# 3. PRIMARY OBJECTIVE
+
+Transform SUTRADHAR from a partially simulated orchestration dashboard into a genuinely functioning autonomous multi-agent development platform.
+
+The completed system should support the following workflow:
+
+```text
+HUMAN REQUIREMENT
+       |
+       v
+MASTER ORCHESTRATOR
+       |
+       v
+PROJECT REPOSITORY ANALYSIS
+       |
+       v
+AI-POWERED TASK DECOMPOSITION
+       |
+       v
+DEPENDENCY-AWARE TASK DAG
+       |
+       v
+TRANSACTIONAL SHARED DATABASE
+       |
+       v
+ATOMIC WORKER CLAIMS
+       |
+       v
+ISOLATED GIT WORKTREES
+       |
+       v
+LLM CODE GENERATION
+       |
+       v
+STRICT PATCH VALIDATION
+       |
+       v
+DOCKER SANDBOX TESTING
+       |
+       +------ FAILURE ------+
+       |                     |
+       |                     v
+       |                ERROR ANALYSIS
+       |                     |
+       |                LLM SELF-HEALING
+       |                     |
+       |                BOUNDED RETRY
+       |                     |
+       |<--------------------+
+       |
+       v
+WORKER COMMIT / PUSH
+       |
+       v
+MASTER REVIEW / MERGE QUEUE
+       |
+       v
+INDEPENDENT QA VERIFICATION
+       |
+       v
+GIT SECURITY GATEKEEPER
+       |
+       v
+VERIFIED MERGE / PULL REQUEST
+       |
+       v
+DATABASE STATE UPDATE
+       |
+       v
+TELEGRAM NOTIFICATION
+       |
+       v
+LIVE DASHBOARD UPDATE
+```
+
+Every transition must represent an actual operation and a verified state change.
+
+Never claim that an operation succeeded merely because an API endpoint returned successfully.
+
+---
+
+# 4. MANDATORY REPOSITORY INSPECTION
+
+Before implementing changes, inspect the actual repository.
+
+Read every tracked file completely.
+
+Do not limit inspection to the README, package.json, or main application component.
+
+The repository previously contained 45 tracked files.
+
+Verify the current tree against that baseline and inspect all additional or modified files.
+
+### Root and configuration files
+
+```text
+.env.example
+Project Blue Print.txt
+index.html
+metadata.json
+package.json
+postcss.config.js
+sequential_runner.py
+server.ts
+tailwind.config.js
+tsconfig.json
+vite.config.ts
+```
+
+### Python orchestration files
+
+```text
+core/__init__.py
+core/ast_guard.py
+core/crypto_signer.py
+core/leader_election.py
+core/llm_router.py
+core/merge_queue.py
+core/patch_validator.py
+core/protocol.py
+core/repo_mapper.py
+core/state_db.py
+core/telegram_hub.py
+core/watchdog.py
+core/worker_agent.py
+```
+
+### Security, infrastructure, and fixtures
+
+```text
+.github/workflows/gatekeeper.yml
+hooks/pre-receive
+sandbox/Dockerfile.runner
+sandbox/run_sandbox.sh
+fixtures/seed_profiles.json
+```
+
+### Frontend application
+
+```text
+src/App.tsx
+src/index.css
+src/main.tsx
+src/types.ts
+src/data/fallbackClusterState.ts
+```
+
+### Frontend components
+
+```text
+src/components/CryptoGatekeeper.tsx
+src/components/Header.tsx
+src/components/LLMCascadeView.tsx
+src/components/P0HotfixModal.tsx
+src/components/RFCDelegationModal.tsx
+src/components/SandboxSelfHealingConsole.tsx
+src/components/SharedStateBrainView.tsx
+src/components/TaskDAGView.tsx
+src/components/TelegramLiveCard.tsx
+src/components/TelegramWireWatchdogView.tsx
+src/components/TopologyView.tsx
+```
+
+### Inspection requirements
+
+For every file:
+
+1. Identify its responsibility.
+2. Understand its dependencies.
+3. Identify its exported interfaces.
+4. Identify relevant security boundaries.
+5. Identify where the component is invoked.
+6. Verify whether its functionality is real, simulated, incomplete, or unused.
+7. Check compatibility with related components.
+8. Identify defects, missing integrations, and opportunities for improvement.
+9. Record which other files must change to implement a safe fix.
+10. Identify appropriate automated tests.
+
+Do not claim to have inspected any file that you could not actually access.
+
+If repository access is unavailable, explicitly identify what is missing. Do not invent source code or silently create a replacement project.
+
+---
+
+# 5. CRITICAL ENGINEERING RULES
+
+These rules are mandatory.
+
+### Rule 1 — Preserve the existing project
+
+Do not delete or rebuild the application from scratch.
+
+Do not replace the existing React dashboard with a generic interface.
+
+Preserve the existing navigation, core screens, styling direction, and useful components.
+
+Refactor when necessary, but avoid unnecessary rewrites.
+
+### Rule 2 — No fake functionality
+
+Never fabricate:
+
+- Docker test results
+- Git commit hashes
+- Git merge results
+- Worker availability
+- Database transaction results
+- Cryptographic verification
+- Master election success
+- API usage measurements
+- Agent execution logs
+- Telegram delivery confirmations
+
+If an operation cannot be performed, return a truthful error or unavailable state.
+
+Keep any demonstration features clearly labeled **DEMO** and completely isolated from production execution.
+
+### Rule 3 — No unverified assumptions
+
+If a requirement is ambiguous, inspect the blueprint, implementation, configuration, and related code.
+
+If the ambiguity still cannot be resolved safely, document the decision required.
+
+Choose secure, reversible defaults only when appropriate.
+
+Do not invent API keys, credentials, cloud resources, or external infrastructure.
+
+### Rule 4 — Security before automation
+
+Do not enable automated repository modifications, merges, or administrative commands until the required authentication and authorization controls exist.
+
+### Rule 5 — No destructive external operations without authorization
+
+You may create and modify code in the provided development workspace.
+
+Do not deploy to production, modify remote repository settings, rotate secrets, force-push, delete branches, or merge into protected branches without explicit authorization.
+
+### Rule 6 — Real validation
+
+Never describe a check as passing unless it actually executed successfully.
+
+Distinguish between:
+
+- Implemented
+- Unit-tested
+- Integration-tested
+- Environment-dependent
+- Not tested
+- Failed
+- Blocked
+
+---
+
+# 6. PHASE 1 — SECURITY FOUNDATION
+
+Security hardening must be prioritized before enabling autonomous execution.
+
+## 6.1 Fix Ed25519 implementation
+
+The existing TypeScript backend contains a function named:
+
+`generateEd25519Token()`
+
+However, its implementation uses a SHA-256 digest with a hardcoded string instead of genuine Ed25519 signing.
+
+The `/api/cluster/ticket/verify-push` endpoint does not verify the signature.
+
+Correct this architecture.
+
+Requirements:
+
+- Use genuine Ed25519 signing and verification.
+- Keep the private signing key exclusively in the trusted signer service.
+- Never expose private keys through APIs, frontend bundles, Telegram, or worker logs.
+- Use a canonical serialized token format.
+- Bind each token to its worker, ticket, permitted files, epoch, and expiration.
+- Include a unique token identifier to support revocation and replay protection.
+- Reject malformed, forged, expired, revoked, or mismatched tokens.
+- Enforce current-epoch validation.
+- Verify actual changed files independently of the token claims.
+- Never allow a successful token check to substitute for proof of a Git merge.
+
+Reuse or improve `core/crypto_signer.py` where appropriate.
+
+Create automated tests covering valid tokens, invalid signatures, tampered payloads, expired leases, stale epochs, and unauthorized file modifications.
+
+## 6.2 Secure administrative APIs
+
+Implement proper authentication and role-based authorization.
+
+Define permissions for:
+
+- Human administrator
+- Master orchestrator
+- Worker
+- Read-only dashboard user
+
+Protect all state-changing administrative endpoints.
+
+Use secure session or token handling appropriate to the architecture.
+
+Validate incoming data with explicit schemas.
+
+Add suitable rate limiting and request-size limits.
+
+Protect against unauthorized cross-origin requests and relevant CSRF risks.
+
+Do not expose privileged credentials to frontend JavaScript.
+
+## 6.3 Secure Telegram commands
+
+Restrict sensitive commands using verified Telegram user IDs and approved chat IDs.
+
+Commands include:
+
+```text
+/status
+/pause
+/resume
+/hotfix
+/rollback
+/force_master
+/clarify
+/stop_after_current
+```
+
+Never authorize commands merely because the sender claims to be an administrator.
+
+Do not automatically authorize arbitrary chats that contact the bot.
+
+Escape untrusted content before inserting it into Telegram HTML messages.
+
+Ensure Telegram messages are notifications and authorized control requests, not the authoritative state database.
+
+---
+
+# 7. PHASE 2 — IMPLEMENT A REAL SHARED STATE DATABASE
+
+The existing system has multiple independent state implementations.
+
+Unify them into a single authoritative state layer.
+
+Prefer PostgreSQL for production if no established external database is already configured.
+
+A lightweight local development adapter may be provided, but it must have clearly documented limitations.
+
+Avoid introducing unnecessary infrastructure dependencies.
+
+### Required entities
+
+```text
+system_state
+workers
+projects
+tickets
+ticket_dependencies
+worker_leases
+audit_log
+configuration
+model_usage
+merge_queue
+execution_attempts
+```
+
+### Required guarantees
+
+**Atomic ticket claiming**
+
+Two workers must never successfully claim the same available ticket simultaneously.
+
+Use real database transactions and conditional updates.
+
+**Master leadership**
+
+Only one valid master may hold the current leadership lease.
+
+Use atomic election with monotonically increasing epochs and fencing tokens.
+
+**Durability**
+
+State must survive process restarts.
+
+**Recovery**
+
+Expired worker leases must be recovered without losing completed work or creating concurrent ownership.
+
+**Auditability**
+
+Record important decisions, state transitions, errors, and ownership changes.
+
+**Consistency**
+
+The React dashboard, Node backend, and Python workers must read from the same authoritative system.
+
+### Important
+
+Remove the architectural dependency on fabricated initial cluster state.
+
+Demo seed data may remain available only when an explicit demo mode is enabled.
+
+Production mode should not display simulated workers as real connected machines.
+
+---
+
+# 8. PHASE 3 — REAL MASTER/WORKER ORCHESTRATION
+
+Implement the complete master and worker lifecycle.
+
+## Master responsibilities
+
+The master must:
+
+1. Register and maintain its leadership lease.
+2. Load active projects and outstanding tickets.
+3. Analyze requested features.
+4. Generate scoped implementation tickets.
+5. Construct a dependency graph.
+6. Detect dependency cycles.
+7. Determine claimable work.
+8. Assign work through transactional leases.
+9. Monitor worker execution.
+10. Receive completed changes.
+11. Trigger independent verification.
+12. Coordinate safe merges.
+13. Manage retries and escalations.
+14. Recover failed or expired work.
+15. Provide auditable state updates.
+
+## Worker responsibilities
+
+Every worker must:
+
+1. Register its identity.
+2. Report actual capabilities and health.
+3. Receive a scoped ticket.
+4. Validate its lease.
+5. Fetch the correct repository revision.
+6. Create an isolated Git worktree.
+7. Build repository-aware LLM context.
+8. Generate a patch.
+9. Validate patch boundaries.
+10. Apply the patch safely.
+11. Run actual sandbox tests.
+12. Retry safely when failures occur.
+13. Commit verified changes.
+14. Push to an authorized working branch.
+15. Report the actual Git SHA and execution results.
+16. Release or renew its lease appropriately.
+
+### Important execution requirements
+
+Prevent duplicate claims.
+
+Prevent concurrent ownership after lease expiration.
+
+Ensure stale workers cannot commit results after ownership has been revoked.
+
+Use idempotent operations wherever practical.
+
+Handle worker crashes and interrupted Git operations.
+
+Preserve relevant debugging history.
+
+Do not allow retries to reuse a contaminated workspace.
+
+Support safe shutdown and recovery.
+
+---
+
+# 9. PHASE 4 — REAL LLM INTEGRATION
+
+Improve and connect:
+
+`core/llm_router.py`
+
+The existing Python router has partial support for Gemini and OpenRouter.
+
+Create a real orchestration integration rather than duplicating disconnected LLM logic in TypeScript.
+
+### Requirements
+
+Use environment-configurable model IDs.
+
+Do not assume a specific model name is currently available.
+
+Support:
+
+**Primary provider:** Google Gemini API.
+
+**Fallback provider:** OpenRouter.
+
+Implement:
+
+- Provider availability checks
+- API error handling
+- Configurable timeouts
+- Exponential backoff with jitter
+- Quota tracking
+- Rate-limit handling
+- Token and request usage accounting
+- Per-agent model configuration
+- Structured logging
+- Context preservation
+- Safe fallback behavior
+
+### Ticket generation policy
+
+The blueprint requires high-quality reasoning for task decomposition.
+
+Make the ticket-generation model explicitly configurable and pinned.
+
+Do not silently downgrade ticket generation to another model.
+
+If the selected model is unavailable, queue or block the operation with an accurate status.
+
+### Worker synthesis policy
+
+Worker coding requests may use configured fallback models.
+
+Preserve:
+
+- Ticket specification
+- Allowed files
+- Read-only contracts
+- Repository context
+- Previous patch
+- Test failures
+- Error messages
+- Relevant execution history
+
+Never replace a failed real model request with an arbitrary fabricated patch.
+
+### Required result
+
+The dashboard must display the actual model used, real request status, and meaningful usage information.
+
+---
+
+# 10. PHASE 5 — REPOSITORY CONTEXT AND PATCH SAFETY
+
+Review and improve:
+
+```text
+core/repo_mapper.py
+core/ast_guard.py
+core/patch_validator.py
+```
+
+### Repository context engine
+
+Support accurate source inspection and symbol extraction.
+
+Improve Python analysis.
+
+Use a proper parser for PHP and other supported languages when needed.
+
+Avoid treating approximate regex matches as authoritative AST results.
+
+Provide useful context without overflowing model limits.
+
+### Patch validation
+
+Enforce the exact allowed-files whitelist.
+
+Prevent:
+
+- Path traversal
+- Absolute-path modification
+- Symlink-based boundary escapes
+- Unauthorized renames
+- Unauthorized file deletion
+- Unauthorized file creation
+- Unauthorized file mode changes
+- Modification of protected contracts
+- Modification of unrelated files
+
+Check both patch metadata and the actual final repository diff.
+
+### Critical requirement
+
+Do not blindly use a three-way Git apply operation as an automatic recovery mechanism.
+
+Ensure fallback patch strategies cannot bypass boundaries.
+
+If a merge introduces conflicts or unexpected modifications, reject the attempt and return a structured error.
+
+Run relevant syntax, formatting, static-analysis, and compatibility checks before accepting changes.
+
+---
+
+# 11. PHASE 6 — REAL DOCKER SANDBOX EXECUTION
+
+Improve:
+
+```text
+sandbox/Dockerfile.runner
+sandbox/run_sandbox.sh
+sequential_runner.py
+```
+
+Connect the actual sandbox runner to the orchestration backend.
+
+The current web API simulates test outcomes.
+
+Remove this behavior from production execution.
+
+### Required sandbox properties
+
+- Disposable execution environment
+- Non-root process
+- Restricted CPU and memory
+- Restricted process count
+- No unnecessary capabilities
+- No privileged Docker execution
+- Network disabled by default
+- Execution timeout
+- No host credentials inside the sandbox
+- No access to signing keys
+- No Docker socket exposure
+- Controlled filesystem permissions
+- Isolated disposable workspace
+
+Treat generated code and tests as untrusted.
+
+Do not mount the main working repository read-write into untrusted containers.
+
+Use an isolated copy or carefully restricted worktree and validate the resulting changes.
+
+### Required output
+
+Return the actual:
+
+```text
+Execution ID
+Container ID
+Exit code
+Test command
+Test summary
+STDOUT
+STDERR
+Start timestamp
+End timestamp
+Duration
+Resource usage when available
+```
+
+Only mark tests as passed if the actual test process exits successfully and the required checks were executed.
+
+---
+
+# 12. PHASE 7 — GIT MERGE QUEUE AND GATEKEEPER
+
+Review:
+
+```text
+core/merge_queue.py
+.github/workflows/gatekeeper.yml
+hooks/pre-receive
+```
+
+Implement a durable and secure Git workflow.
+
+### Required flow
+
+```text
+WORKER PATCH
+     |
+     v
+FILE SCOPE VERIFICATION
+     |
+     v
+SANDBOX TESTS
+     |
+     v
+SIGNED EXECUTION ATTESTATION
+     |
+     v
+WORKER COMMIT
+     |
+     v
+WORKING BRANCH PUSH
+     |
+     v
+MASTER QA REVIEW
+     |
+     v
+REBASE / MERGE CONFLICT CHECK
+     |
+     v
+INDEPENDENT TEST EXECUTION
+     |
+     v
+PROTECTED MERGE PROCESS
+     |
+     v
+VERIFIED GIT SHA
+     |
+     v
+DATABASE COMPLETION
+```
+
+### GitHub-specific requirements
+
+Do not assume that a committed `hooks/pre-receive` script automatically executes on GitHub-hosted repositories.
+
+Use GitHub-supported branch protection, rulesets, pull requests, and required status checks.
+
+Document repository settings that must be configured by an authorized administrator.
+
+### Merge guarantees
+
+- Never force-push protected branches.
+- Never bypass required checks.
+- Never mark a ticket complete before verification.
+- Never generate fake commit hashes.
+- Never silently ignore push failures.
+- Record actual commit SHAs.
+- Detect stale branches and merge conflicts.
+- Respect file ownership constraints.
+- Use durable merge queue entries.
+- Ensure only one coordinated merge operation proceeds against a shared target at a time.
+
+Implement rollback using a real, verified Git revert workflow.
+
+---
+
+# 13. PHASE 8 — WATCHDOG, FAILOVER AND RECOVERY
+
+Review:
+
+```text
+core/watchdog.py
+core/leader_election.py
+core/state_db.py
+```
+
+The current implementation contains local-only state and incomplete distributed fencing.
+
+Implement:
+
+- Real worker heartbeats
+- Configurable heartbeat intervals
+- Lease expiration
+- Durable lease ownership
+- Safe ticket requeueing
+- Bounded retry policies
+- Dead-letter queues
+- Human escalation
+- Master election
+- Master lease renewal
+- Epoch fencing
+- Crash recovery
+- Idempotent state transitions
+
+Fix the Python bugs encountered during inspection, including the incorrect return-value unpacking in `core/leader_election.py`.
+
+### Split-brain prevention
+
+Do not treat Telegram pinned messages as an authoritative consensus mechanism.
+
+Leadership must come from the transactional state store.
+
+Telegram should only display the result.
+
+A stale master must be prevented from issuing valid new operations.
+
+---
+
+# 14. PHASE 9 — TELEGRAM COMMUNICATION
+
+Review:
+
+```text
+core/telegram_hub.py
+core/protocol.py
+server.ts
+```
+
+Fix syntax and runtime defects.
+
+In particular, inspect the malformed f-string regex in `core/protocol.py`.
+
+Implement a robust Telegram communication layer.
+
+Requirements:
+
+- Authorized commands
+- Structured messages
+- Safe JSON decoding
+- Protocol version validation
+- Message size limits
+- Duplicate message handling
+- Telegram retry-after handling
+- Connection failure recovery
+- Durable polling offsets or webhook handling
+- Correct HTML escaping
+- Controlled notifications
+- Human-in-the-loop clarification
+- Accurate cluster status
+
+Use a single clear Telegram integration architecture or clearly separate its responsibilities.
+
+Avoid having independent Python and Node Telegram services consume the same update stream unintentionally.
+
+### Human commands
+
+Ensure `/pause` and `/resume` modify authoritative shared state.
+
+Ensure `/stop_after_current` actually prevents new claims while allowing safe completion of already-running work.
+
+Ensure `/rollback` accurately reports whether a real Git rollback occurred.
+
+---
+
+# 15. PHASE 10 — FRONTEND INTEGRATION
+
+Preserve and improve the existing React dashboard.
+
+Important components include:
+
+```text
+Header
+TelegramLiveCard
+TelegramWireWatchdogView
+TopologyView
+TaskDAGView
+SandboxSelfHealingConsole
+CryptoGatekeeper
+LLMCascadeView
+SharedStateBrainView
+P0HotfixModal
+RFCDelegationModal
+```
+
+Do not remove existing functionality merely to simplify implementation.
+
+### Dashboard requirements
+
+Replace simulated operational information with real backend-derived data in production mode.
+
+Implement accurate displays for:
+
+- Master identity
+- Master epoch
+- Connected workers
+- Worker availability
+- Worker health
+- Active projects
+- Task DAG
+- Ticket ownership
+- LLM model usage
+- Sandbox execution
+- Test results
+- Git commit status
+- Merge queue
+- Audit logs
+- Telegram connectivity
+- Clarification requests
+- Recovery events
+- Emergency stop status
+
+### UI behavior
+
+Use existing visual design wherever possible.
+
+Add appropriate loading, success, error, and unavailable states.
+
+Keep selected tickets synchronized when backend state changes.
+
+Provide reliable refresh mechanisms.
+
+Avoid displaying simulated information as live infrastructure measurements.
+
+### Important labels
+
+Clearly distinguish:
+
+```text
+LIVE
+DEMO
+DISCONNECTED
+UNAVAILABLE
+TESTING
+FAILED
+BLOCKED
+VERIFIED
+```
+
+Never display **VERIFIED**, **MERGED**, or **COMPLETED** without authoritative backend evidence.
+
+---
+
+# 16. PHASE 11 — FIX DATA MODEL AND WORKFLOW INCONSISTENCIES
+
+The repository contains inconsistent versions and ticket state models.
+
+Unify them.
+
+Create a clearly defined ticket state machine.
+
+Suggested conceptual lifecycle:
+
+```text
+OPEN
+  |
+  v
+CLAIMED
+  |
+  v
+IN_PROGRESS
+  |
+  v
+TESTING
+  |
+  v
+READY_FOR_REVIEW
+  |
+  v
+REVIEWING
+  |
+  v
+MERGING
+  |
+  v
+COMPLETED
+```
+
+Additional states may include:
+
+```text
+BLOCKED_DEPENDENCY
+BLOCKED_CLARIFICATION
+RETRY_PENDING
+FAILED
+NEEDS_HUMAN_REVIEW
+CANCELLED
+```
+
+Every transition must have:
+
+- Valid source state
+- Authorized actor
+- Required preconditions
+- Durable database update
+- Audit record
+- Idempotency protection where appropriate
+
+Prevent arbitrary status changes through frontend requests.
+
+### Ticket identity
+
+Replace predictable or collision-prone ticket ID generation with a reliable unique identifier strategy.
+
+Support multiple projects and repositories.
+
+Validate dependency relationships.
+
+Detect dependency cycles.
+
+Do not allow a child task to execute before required dependencies are complete.
+
+---
+
+# 17. PHASE 12 — AUTOMATED TESTING AND QUALITY ASSURANCE
+
+The repository needs a real automated test suite.
+
+Build tests for the most important behaviors.
+
+### Backend tests
+
+- API authentication
+- Role authorization
+- Request validation
+- Ticket creation
+- Ticket claiming
+- Dependency resolution
+- Lease expiration
+- Master election
+- Kill switch
+- Audit logging
+- Durable persistence
+- Failure recovery
+
+### Security tests
+
+- Invalid Ed25519 signature
+- Expired token
+- Modified payload
+- Incorrect worker
+- Incorrect ticket
+- Incorrect epoch
+- Unauthorized Git branch
+- Unauthorized file modifications
+- Path traversal
+- Symlink escapes
+- Unauthorized Telegram sender
+- Unauthorized API requests
+
+### Worker tests
+
+- Successful code generation
+- Provider failure
+- Model fallback
+- Patch validation failure
+- Sandbox failure
+- Self-healing retry
+- Retry exhaustion
+- Worker crash
+- Lease revocation
+- Git conflict
+- Git push rejection
+
+### Integration tests
+
+Test the complete lifecycle:
+
+```text
+Create ticket
+   |
+   v
+Claim ticket
+   |
+   v
+Generate patch
+   |
+   v
+Validate patch
+   |
+   v
+Run sandbox
+   |
+   v
+Produce verified commit
+   |
+   v
+Submit for review
+   |
+   v
+Execute required checks
+   |
+   v
+Complete merge
+   |
+   v
+Update database
+   |
+   v
+Update dashboard
+```
+
+Use disposable local repositories and mock external providers where appropriate.
+
+Never run destructive tests against real production repositories.
+
+---
+
+# 18. PHASE 13 — CONFIGURATION AND DEPLOYMENT
+
+Create or improve:
+
+```text
+README.md
+.env.example
+requirements.txt or pyproject.toml
+dependency lockfiles
+Docker Compose configuration
+database migration files
+CI workflows
+deployment documentation
+```
+
+Use the simplest deployment architecture that reliably supports the requirements.
+
+Document:
+
+1. Local installation
+2. Environment variables
+3. Database initialization
+4. API server startup
+5. Worker startup
+6. Master orchestration startup
+7. Telegram configuration
+8. Gemini configuration
+9. OpenRouter configuration
+10. GitHub authentication
+11. Signing key provisioning
+12. Sandbox configuration
+13. Test execution
+14. Failure recovery
+15. Production deployment prerequisites
+
+Do not hardcode secrets.
+
+Do not commit generated private keys.
+
+Do not rely on deprecated or assumed API model names.
+
+Use pinned compatible dependency versions when practical.
+
+---
+
+# 19. PRESERVE EXISTING DESIGN PHILOSOPHY
+
+The original SUTRADHAR architecture contains important design decisions that must be retained.
+
+### Principle A — Database is authoritative
+
+Telegram communicates state.
+
+The shared database owns state.
+
+### Principle B — One valid master
+
+Leader election must prevent split-brain execution.
+
+### Principle C — Independent workers
+
+Workers should execute scoped tickets in isolated environments.
+
+### Principle D — Minimal blast radius
+
+Workers may modify only explicitly authorized files.
+
+### Principle E — No uncontrolled assumptions
+
+Ambiguity requires clarification rather than speculative implementation.
+
+### Principle F — Independent verification
+
+Worker-generated code must pass actual tests and security verification.
+
+### Principle G — Human oversight
+
+Administrators retain control over emergency pauses, critical changes, and exceptional failures.
+
+### Principle H — Auditable automation
+
+Every important state change must be explainable and traceable.
+
+---
+
+# 20. REQUIRED IMPLEMENTATION STRATEGY
+
+Do not attempt to rewrite the entire repository in a single uncontrolled operation.
+
+Work in dependency-aware implementation stages.
+
+For each stage:
+
+**Step A — Inspect**
+
+Read all relevant files and their dependencies.
+
+**Step B — Design**
+
+Identify the smallest coherent architectural change.
+
+**Step C — Implement**
+
+Modify actual repository files.
+
+**Step D — Validate**
+
+Run relevant type checks, syntax checks, and tests.
+
+**Step E — Integrate**
+
+Confirm the component works with existing code.
+
+**Step F — Report**
+
+Document exactly what changed and what remains.
+
+### Prioritization
+
+Implement in this order:
+
+```text
+P0 — Security vulnerabilities and false success reporting
+
+P1 — Shared transactional state and valid state transitions
+
+P2 — Real worker orchestration and LLM integration
+
+P3 — Real Docker execution and Git verification
+
+P4 — Recovery, failover, and resilient scheduling
+
+P5 — Dashboard and Telegram integration
+
+P6 — Comprehensive testing, documentation, and deployment
+```
+
+Never sacrifice security for apparent feature completion.
+
+If execution time or context limits prevent completion, leave the codebase in a coherent state and provide an exact continuation checkpoint.
+
+Do not falsely report unfinished work as complete.
+
+---
+
+# 21. DEFINITION OF DONE
+
+SUTRADHAR is considered functionally complete only when the following criteria are satisfied.
+
+### Architecture
+
+- One authoritative shared state layer exists.
+- Node.js and Python components communicate through defined interfaces.
+- Worker ownership is transactionally enforced.
+- Master election uses reliable fencing.
+
+### Intelligence
+
+- Real Gemini requests work when correctly configured.
+- Real OpenRouter fallback works when configured.
+- Model unavailability is handled safely.
+- Repository context reaches the worker model.
+- LLM outputs are validated before execution.
+
+### Execution
+
+- Tickets are actually claimed.
+- Real Git worktrees are created.
+- Real patches are applied.
+- Real Docker tests execute.
+- Failed tests block completion.
+- Successful results produce actual Git commits.
+- Protected repository changes follow enforced review and merge policies.
+
+### Security
+
+- Administrative actions require authorization.
+- Telegram administrative commands require authorization.
+- Tokens use genuine Ed25519 signatures.
+- Forged tokens are rejected.
+- Stale workers are fenced.
+- File modification boundaries are enforced.
+- Secrets are isolated.
+
+### Reliability
+
+- State survives restarts.
+- Worker failures are recoverable.
+- Duplicate claims are prevented.
+- Retries are bounded.
+- Dead-letter handling works.
+- Kill-switch behavior is enforced.
+- Rollback produces a real, verified Git result.
+
+### User Interface
+
+- Production metrics reflect real system state.
+- Demo information is clearly labeled.
+- Execution results are authentic.
+- The existing dashboard remains usable.
+
+### Verification
+
+- Applicable automated tests execute.
+- Build and type checks pass.
+- Security tests pass.
+- Integration checks validate real state transitions.
+- Unverified external dependencies are clearly documented.
+
+---
+
+# 22. REQUIRED OUTPUT FORMAT
+
+For each implementation stage, provide the following:
+
+## A. Repository understanding
+
+Explain the actual architecture and relevant execution paths.
+
+## B. Findings
+
+Identify defects with exact file paths, functions, and relevant lines.
+
+Classify each issue:
+
+```text
+CRITICAL
+HIGH
+MEDIUM
+LOW
+```
+
+## C. Implementation plan
+
+Explain the intended fixes and dependencies.
+
+## D. Actual code modifications
+
+Apply the modifications using available repository-editing tools.
+
+If direct editing is unavailable, provide complete, applicable file contents or patches.
+
+Do not substitute pseudocode for implementation.
+
+## E. Validation results
+
+Report commands executed, their exit codes, and observed results.
+
+Distinguish real results from proposed checks.
+
+## F. Remaining limitations
+
+Document anything not yet implemented or verified.
+
+## G. Continuation checkpoint
+
+Provide the exact current stage and the next technically necessary action.
+
+---
+
+# 23. FINAL INSTRUCTIONS
+
+You are responsible for improving an existing engineering system, not generating a new concept demonstration.
+
+Do not replace security mechanisms with mock implementations.
+
+Do not claim that a fake Docker test is a real test.
+
+Do not treat a fabricated commit hash as a real Git commit.
+
+Do not treat an unverified lease token as a valid authorization.
+
+Do not describe in-memory state as a distributed transactional database.
+
+Do not report that rollback succeeded if Git was not reverted.
+
+Do not introduce new distributed components merely for architectural appearance.
+
+Prefer minimal, reliable, testable integrations over unnecessary complexity.
+
+Preserve working functionality.
+
+Repair broken components.
+
+Remove misleading production claims.
+
+Build an operational, maintainable, security-conscious system.
+
+**The goal is not to make SUTRADHAR look autonomous. The goal is to make it genuinely autonomous within explicitly authorized and verifiable boundaries.**
+
+---
+
+# 24. START EXECUTION NOW
+
+Begin by accessing the actual repository.
+
+First, establish repository availability and read the project blueprint.
+
+Then inspect the entire tracked file tree and identify the current architecture.
+
+Produce a concise implementation dependency map.
+
+After the initial inspection, begin the highest-priority security repairs, starting with:
+
+1. API authentication and authorization boundaries.
+2. Genuine Ed25519 verification.
+3. Removal or explicit isolation of misleading simulated success behavior.
+4. Python syntax and startup-blocking defects.
+
+Apply real code changes when editing tools are available.
+
+Run the appropriate checks after each coherent change.
+
+Continue through the implementation phases in dependency order.
+
+Do not declare production readiness until all acceptance criteria are supported by actual verification evidence.
+
+**START WITH THE REAL SOURCE CODE. PRESERVE THE EXISTING PROJECT. IMPLEMENT, INTEGRATE, TEST, AND REPORT TRUTHFULLY.**

@@ -27,6 +27,7 @@ export const TelegramLiveCard: React.FC<TelegramLiveCardProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [secondsUntilSync, setSecondsUntilSync] = useState(20);
+  const [pingNotification, setPingNotification] = useState<{ text: string; isError?: boolean } | null>(null);
 
   // 20s live countdown loop
   useEffect(() => {
@@ -145,13 +146,14 @@ export const TelegramLiveCard: React.FC<TelegramLiveCardProps> = ({
                     const res = await fetch('/api/telegram/test-ping', { method: 'POST' });
                     const data = await res.json();
                     if (data.success) {
-                      alert('✅ Message sent to Telegram: Check your Telegram channel/chat!');
+                      setPingNotification({ text: '✅ Message sent to Telegram: Check your Telegram channel/chat!' });
                     } else {
-                      alert(`ℹ️ Telegram Status: ${data.error}\n\nHint: ${data.hint || ''}`);
+                      setPingNotification({ text: `ℹ️ Telegram Status: ${data.error}${data.hint ? ` • ${data.hint}` : ''}`, isError: true });
                     }
                   } catch (e: any) {
-                    alert(`Network error testing Telegram: ${e.message}`);
+                    setPingNotification({ text: `Network error testing Telegram: ${e.message}`, isError: true });
                   }
+                  setTimeout(() => setPingNotification(null), 6000);
                 }}
                 className="px-2.5 py-1 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded font-mono text-[11px] flex items-center gap-1 transition"
                 title="Send test message to your configured Telegram bot"
@@ -169,6 +171,17 @@ export const TelegramLiveCard: React.FC<TelegramLiveCardProps> = ({
               </button>
             </div>
           </div>
+
+          {pingNotification && (
+            <div className={`px-4 py-2 border-t text-xs font-mono flex items-center justify-between ${
+              pingNotification.isError 
+                ? 'bg-amber-950/40 border-amber-800/40 text-amber-300' 
+                : 'bg-emerald-950/40 border-emerald-800/40 text-emerald-300'
+            }`}>
+              <span>{pingNotification.text}</span>
+              <button onClick={() => setPingNotification(null)} className="text-slate-400 hover:text-slate-200 ml-2">✕</button>
+            </div>
+          )}
 
         </div>
 

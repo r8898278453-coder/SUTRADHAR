@@ -108,7 +108,9 @@ class ProtocolCodec:
         if not raw_text:
             return None, None
 
-        pattern = re.compile(rf"{re.escape(PROTOCOL_MARKER_START)}\s*(\{.*?\})\s*{re.escape(PROTOCOL_MARKER_END)}", re.DOTALL)
+        start_marker = re.escape(PROTOCOL_MARKER_START)
+        end_marker = re.escape(PROTOCOL_MARKER_END)
+        pattern = re.compile(start_marker + r"\s*(\{[\s\S]*?\})\s*" + end_marker)
         match = pattern.search(raw_text)
 
         if not match:

@@ -62,6 +62,7 @@ export interface ClarificationQuestion {
 }
 
 export interface CryptoTokenPayload {
+  tokenId?: string;
   ticketId: string;
   workerId: string;
   epochId: number;

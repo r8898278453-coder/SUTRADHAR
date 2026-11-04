@@ -32,11 +32,17 @@ class WorktreeManager:
         self._force_cleanup(worktree_dir, branch_name)
 
         try:
+            base_ref = "origin/main"
+            try:
+                subprocess.run(["git", "rev-parse", "--verify", "origin/main"], cwd=self.repo_root, check=True, capture_output=True)
+            except Exception:
+                base_ref = "HEAD"
+
             cmd = [
                 "git", "worktree", "add",
                 "-B", branch_name,
                 str(worktree_dir),
-                "origin/main"
+                base_ref
             ]
             subprocess.run(cmd, cwd=self.repo_root, check=True, capture_output=True, text=True)
             yield worktree_dir

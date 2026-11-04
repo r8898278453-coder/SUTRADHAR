@@ -36,17 +36,23 @@ export const App: React.FC = () => {
         const data = await res.json();
         setState(data);
         setLiveCardText(data.liveCardText || '');
-        if (!activeTicket && data.tickets && data.tickets.length > 0) {
-          setActiveTicket(data.tickets[2] || data.tickets[0]);
+        if (data.tickets && data.tickets.length > 0) {
+          setActiveTicket(prev => {
+            if (!prev) return data.tickets[2] || data.tickets[0];
+            const refreshed = data.tickets.find((t: Ticket) => t.id === prev.id);
+            return refreshed || prev;
+          });
         }
       }
     } catch (e) {
       console.warn('Live API syncing unavailable, using reactive state:', e);
     }
-  }, [activeTicket]);
+  }, []);
 
   useEffect(() => {
     fetchState();
+    const interval = setInterval(fetchState, 5000);
+    return () => clearInterval(interval);
   }, [fetchState]);
 
   // Handler: Synthesize patch
