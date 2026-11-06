@@ -115,7 +115,7 @@ class WorkerLifecycleAgent:
         allowed_files = set()
         for name in self.current_ticket.allowed_files:
             p = PurePosixPath(name)
-            if p.is_absolute() or ".." in p.parts or not name or "\\x00" in name:
+            if p.is_absolute() or ".." in p.parts or not name or "\x00" in name:
                 return False, f"INVALID_ALLOWED_PATH: {name}"
             allowed_files.add(str(p))
 
@@ -127,7 +127,7 @@ class WorkerLifecycleAgent:
         rc, output, err = self.execute_git_cmd(["diff", "--cached", "--name-only", "--no-renames", "-z"])
         if rc != 0:
             return False, f"GIT_DIFF_FAILED: {err}"
-        changed = {p for p in output.split("\\x00") if p}
+        changed = {p for p in output.split("\x00") if p}
         if not changed or not changed.issubset(allowed_files):
             return False, f"UNAUTHORIZED_STAGED_FILES: {sorted(changed - allowed_files)}"
 
