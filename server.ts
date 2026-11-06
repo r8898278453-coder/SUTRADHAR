@@ -985,12 +985,13 @@ app.post('/api/cluster/ticket/create', authRole(['ADMIN']), (req, res) => {
 
 // Helper: Verify if Docker daemon is running and accessible
 export function isDockerAvailable(): boolean {
-  try {
-    child_process.execSync('docker info', { stdio: 'ignore', timeout: 3000 });
-    return true;
-  } catch {
-    return false;
-  }
+  // Docker on CI/worker hosts can be slow to respond immediately after startup.
+  // Use argv execution (no host shell) and allow a bounded readiness probe.
+  const probe = child_process.spawnSync('docker', ['info'], {
+    stdio: 'ignore',
+    timeout: 15000
+  });
+  return probe.status === 0 && !probe.error;
 }
 
 // Helper: Real OpenRouter fallback API call
