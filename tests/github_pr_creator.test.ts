@@ -15,6 +15,7 @@ type Options = {
   existing?: boolean;
   closedPr?: boolean;
   changedOnPost?: boolean;
+  baseChangedOnPost?: boolean;
   networkFailure?: boolean;
 };
 
@@ -51,7 +52,7 @@ function fixture(options: Options = {}) {
         number: 42, html_url: 'https://github.com/acme/widgets/pull/42',
         state: options.closedPr ? 'closed' : 'open', draft: true,
         head: { ref: BRANCH, sha: HEAD, repo: { full_name: 'acme/widgets' } },
-        base: { ref: 'main', repo: { full_name: 'acme/widgets' } }
+        base: { ref: 'main', sha: BASE, repo: { full_name: 'acme/widgets' } }
       }] : []);
     }
     if (pathname.endsWith('/pulls') && method === 'POST') {
@@ -60,7 +61,8 @@ function fixture(options: Options = {}) {
         state: 'open', draft: body?.draft,
         head: { ref: BRANCH, sha: options.changedOnPost ? 'e'.repeat(40) : HEAD,
           repo: { full_name: 'acme/widgets' } },
-        base: { ref: 'main', repo: { full_name: 'acme/widgets' } }
+        base: { ref: 'main', sha: options.baseChangedOnPost ? 'f'.repeat(40) : BASE,
+          repo: { full_name: 'acme/widgets' } }
       });
     }
     throw new Error('Unexpected mock route: ' + pathname);
@@ -108,6 +110,7 @@ for (const [name, opts, expected] of [
   ['extra commit', { extraCommit: true }, 'DRAFT_PR_TESTED_COMMIT_MISMATCH'],
   ['closed PR already uses branch', { existing: true, closedPr: true }, 'DRAFT_PR_BRANCH_ALREADY_USED'],
   ['branch changed before PR creation', { changedOnPost: true }, 'DRAFT_PR_RESPONSE_HEAD_CHANGED_MANUAL_REVIEW'],
+  ['base moved during PR creation', { baseChangedOnPost: true }, 'DRAFT_PR_RESPONSE_HEAD_CHANGED_MANUAL_REVIEW'],
   ['GitHub unavailable', { networkFailure: true }, 'DRAFT_PR_GITHUB_API_UNAVAILABLE']
 ] as const) {
   test('fail closed: ' + name, async () => {
