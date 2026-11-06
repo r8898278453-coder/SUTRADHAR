@@ -1564,7 +1564,8 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res
     ticketId, repo: evidence.repo, prNumber: evidence.prNumber,
     branch: evidence.branch, headSha: evidence.headSha,
     mergeSha: evidence.mergeSha, treeSha: evidence.treeSha,
-    patchSha256: attestation.patchSha256, epochId: snapshot.epochId
+    patchSha256: attestation.patchSha256, epochId: snapshot.epochId,
+    workerId: payload.workerId, tokenId: payload.tokenId!
   });
   if (!committed) {
     return res.status(409).json({ verified: false, error: 'GITHUB_MERGE_EVIDENCE_STALE' });
