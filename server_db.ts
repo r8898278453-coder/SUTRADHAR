@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { 
   ClusterState, 
@@ -184,6 +185,40 @@ export class ClusterDatabase {
         token_id TEXT PRIMARY KEY,
         revoked_at INTEGER NOT NULL,
         reason TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS sandbox_attestations (
+        ticket_id TEXT PRIMARY KEY,
+        patch_sha256 TEXT NOT NULL,
+        baseline_commit TEXT NOT NULL,
+        candidate_tree_sha TEXT NOT NULL,
+        changed_files_json TEXT NOT NULL,
+        worker_id TEXT NOT NULL,
+        epoch_id INTEGER NOT NULL,
+        verified_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS verified_git_merges (
+        ticket_id TEXT PRIMARY KEY,
+        repo TEXT NOT NULL,
+        pr_number INTEGER NOT NULL,
+        branch TEXT NOT NULL,
+        head_sha TEXT NOT NULL,
+        merge_sha TEXT NOT NULL,
+        tree_sha TEXT NOT NULL,
+        verified_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS draft_pr_submissions (
+        ticket_id TEXT PRIMARY KEY,
+        repo TEXT NOT NULL,
+        pr_number INTEGER NOT NULL,
+        branch TEXT NOT NULL,
+        head_sha TEXT NOT NULL,
+        tree_sha TEXT NOT NULL,
+        patch_sha256 TEXT NOT NULL,
+        epoch_id INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
       );
     `);
 
@@ -431,6 +466,18 @@ export class ClusterDatabase {
   }
 
   // Durable Token Revocation (Task 9)
+  public getActiveLeaseAuth(ticketId: string): {
+    workerId: string; tokenId: string; epochId: number; expiresAt: number;
+  } | null {
+    const lease = this.db.prepare(`SELECT worker_id, token_id, epoch_id, expires_at
+      FROM worker_leases WHERE ticket_id = ? AND is_revoked = 0`).get(ticketId) as any;
+    if (!lease) return null;
+    return {
+      workerId: lease.worker_id, tokenId: lease.token_id,
+      epochId: Number(lease.epoch_id), expiresAt: Number(lease.expires_at)
+    };
+  }
+
   public revokeToken(tokenId: string, reason: string = 'Token explicitly revoked'): void {
     const now = Date.now();
     this.db.prepare(`
@@ -607,57 +654,27 @@ export class ClusterDatabase {
     return true;
   }
 
-  // Rollback Bad Merge
+  // Rollback is a request until an independently verified Git revert has merged.
+  // Never treat hotfix creation or a database write as proof that code was reverted.
   public rollbackMerge(ticketId: string, reason: string, actor: string = 'Master'): { success: boolean; hotfixId?: string } {
-    const row = this.db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId) as any;
-    if (!row) return { success: false };
-
-    const now = Date.now();
-    const hotfixId = `TKT-HOTFIX-${Math.floor(100 + Math.random() * 900)}`;
-    const rollbackCommit = row.rollback_commit || 'HEAD~1';
-
-    const hotfixLogs = [{
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'WARN',
-      message: `Emergency rollback hotfix spawned. Reverting commit ${rollbackCommit} of ${ticketId}.`
-    }];
+    const row = this.db.prepare('SELECT status FROM tickets WHERE ticket_id = ?').get(ticketId) as { status: string } | undefined;
+    if (!row || (row.status !== 'COMMITTED_PUSHED' && row.status !== 'ROLLBACK_REQUESTED')) {
+      return { success: false };
+    }
 
     this.db.prepare(`
-      INSERT INTO tickets (
-        ticket_id, project_id, title, description, priority, domain, status,
-        assigned_to, retry_count, max_retries, current_tier, branch, allowed_files_json,
-        read_only_contracts_json, logs_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'P0_URGENT', ?, 'SYNTHESIZING_DIFF', ?, 0, 3, 1, ?, ?, ?, ?, ?, ?)
-    `).run(
-      hotfixId,
-      row.project_id,
-      `[ROLLBACK HOTFIX] Revert ${ticketId}: ${row.title}`,
-      `Emergency rollback: ${reason}. Reverting commit ${rollbackCommit}.`,
-      row.domain,
-      'NODE-E78A1201',
-      `ai/${hotfixId}`,
-      row.allowed_files_json,
-      row.read_only_contracts_json || '[]',
-      JSON.stringify(hotfixLogs),
-      now,
-      now
-    );
-
-    this.db.prepare(`
-      UPDATE tickets
-      SET status = 'ROLLBACK_COMPLETED', updated_at = ?
+      UPDATE tickets SET status = 'ROLLBACK_REQUESTED', updated_at = ?
       WHERE ticket_id = ?
-    `).run(now, ticketId);
+    `).run(Date.now(), ticketId);
 
     this.appendAuditLog({
       actor,
-      action: 'MERGE_ROLLBACK',
+      action: 'ROLLBACK_REQUESTED',
       ticketId,
-      reasoning: `Bad merge identified: ${reason}. Commit ${rollbackCommit} scheduled for git revert. Auto-spawned ${hotfixId}.`,
-      details: { rollbackCommit, hotfixId, reason }
+      reasoning: `Rollback requested: ${reason}. No Git revert has been executed or merged.`
     });
 
-    return { success: true, hotfixId };
+    return { success: true };
   }
 
   // Heartbeat & Watchdog Sweeper
@@ -740,7 +757,7 @@ export class ClusterDatabase {
     reasoning: string;
     details?: Record<string, any>;
   }): void {
-    const logId = `LOG-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
+    const logId = `LOG-${crypto.randomUUID()}`;
     const now = Date.now();
     this.db.prepare(`
       INSERT INTO audit_log (log_id, timestamp, actor, action, ticket_id, reasoning, details_json)
@@ -1034,7 +1051,7 @@ export class ClusterDatabase {
     stderr?: string;
     durationMs?: number;
   }): void {
-    const id = attempt.attemptId || `ATT-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
+    const id = attempt.attemptId || `ATT-${crypto.randomUUID()}`;
     this.db.prepare(`
       INSERT INTO execution_attempts (
         attempt_id, ticket_id, worker_id, attempt_number, tier_used, patch_valid,
@@ -1053,6 +1070,224 @@ export class ClusterDatabase {
       attempt.durationMs || 1500,
       Date.now()
     );
+  }
+
+  /**
+   * A successful Docker run is not a merge. Store its immutable tree identity
+   * while atomically transitioning the matching persisted candidate to review.
+   */
+  public recordVerifiedSandboxPass(input: {
+    ticketId: string;
+    patchSha256: string;
+    baselineCommit: string;
+    candidateTreeSha: string;
+    changedFiles: string[];
+    epochId: number;
+    workerId: string;
+    stdout: string;
+    stderr: string;
+  }): boolean {
+    const sha1 = /^[0-9a-f]{40}$/;
+    const sha256 = /^[0-9a-f]{64}$/;
+    if (!sha1.test(input.baselineCommit) || !sha1.test(input.candidateTreeSha) ||
+        !sha256.test(input.patchSha256) || !input.changedFiles.length) return false;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const ticket = this.db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(input.ticketId) as any;
+      const system = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id = 1').get() as any;
+      if (!ticket || !system || system.kill_switch_active ||
+          !['TESTING_SANDBOX', 'HEALING_RETRY'].includes(ticket.status) ||
+          Number(system.epoch_id) !== input.epochId ||
+          !ticket.diff_patch ||
+          crypto.createHash('sha256').update(ticket.diff_patch).digest('hex') !== input.patchSha256 ||
+          (ticket.assigned_to && ticket.assigned_to !== input.workerId)) {
+        this.db.exec('ROLLBACK');
+        return false;
+      }
+      const allowed = JSON.parse(ticket.allowed_files_json || '[]') as string[];
+      if (!input.changedFiles.every(file => allowed.includes(file))) {
+        this.db.exec('ROLLBACK');
+        return false;
+      }
+      const now = Date.now();
+      const logs = JSON.parse(ticket.logs_json || '[]') as any[];
+      logs.push({
+        timestamp: new Date().toLocaleTimeString(),
+        level: 'SUCCESS',
+        message: `Real Docker test passed for tree ${input.candidateTreeSha.slice(0, 12)}. Git merge not yet verified.`
+      });
+      this.db.prepare(`UPDATE tickets
+        SET status = 'READY_FOR_REVIEW', test_stdout = ?, test_stderr = ?, logs_json = ?, updated_at = ?
+        WHERE ticket_id = ?`).run(input.stdout, input.stderr, JSON.stringify(logs), now, input.ticketId);
+      this.db.prepare(`INSERT INTO sandbox_attestations
+        (ticket_id, patch_sha256, baseline_commit, candidate_tree_sha, changed_files_json, worker_id, epoch_id, verified_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ticket_id) DO UPDATE SET
+          patch_sha256=excluded.patch_sha256, baseline_commit=excluded.baseline_commit,
+          candidate_tree_sha=excluded.candidate_tree_sha, changed_files_json=excluded.changed_files_json,
+          worker_id=excluded.worker_id, epoch_id=excluded.epoch_id, verified_at=excluded.verified_at
+      `).run(input.ticketId, input.patchSha256, input.baselineCommit,
+        input.candidateTreeSha, JSON.stringify(input.changedFiles), input.workerId, input.epochId, now);
+      this.appendAuditLog({
+        actor: input.workerId, action: 'SANDBOX_TREE_ATTESTED', ticketId: input.ticketId,
+        reasoning: 'Real Docker exit 0; candidate tree persisted for independent remote Git verification.',
+        details: { baselineCommit: input.baselineCommit, candidateTreeSha: input.candidateTreeSha,
+          patchSha256: input.patchSha256, changedFiles: input.changedFiles, epochId: input.epochId }
+      });
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  public getSandboxAttestation(ticketId: string): {
+    patchSha256: string; baselineCommit: string; candidateTreeSha: string;
+    changedFiles: string[]; workerId: string; epochId: number; verifiedAt: number;
+  } | null {
+    const r = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id = ?').get(ticketId) as any;
+    return r ? {
+      patchSha256: r.patch_sha256, baselineCommit: r.baseline_commit,
+      candidateTreeSha: r.candidate_tree_sha, changedFiles: JSON.parse(r.changed_files_json),
+      workerId: r.worker_id, epochId: Number(r.epoch_id), verifiedAt: Number(r.verified_at)
+    } : null;
+  }
+
+  /**
+   * Persist PR draft submission only if all attested state and the signed
+   * ticket lease still match. This never marks a ticket merged or complete.
+   */
+  public recordVerifiedDraftPr(input: {
+    ticketId: string; repo: string; prNumber: number; branch: string;
+    headSha: string; treeSha: string; patchSha256: string;
+    epochId: number; workerId: string; tokenId: string;
+  }): boolean {
+    if (!/^[0-9a-f]{40}$/.test(input.headSha) ||
+        !/^[0-9a-f]{40}$/.test(input.treeSha) ||
+        !/^[0-9a-f]{64}$/.test(input.patchSha256) ||
+        !Number.isSafeInteger(input.prNumber) || input.prNumber < 1) return false;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT status, branch, assigned_to, diff_patch FROM tickets WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const a = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const lease = this.db.prepare('SELECT * FROM worker_leases WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id = 1')
+        .get() as any;
+      if (!row || !a || !lease || !sys || sys.kill_switch_active ||
+          row.status !== 'READY_FOR_REVIEW' || row.branch !== input.branch ||
+          row.assigned_to !== input.workerId ||
+          a.worker_id !== input.workerId || a.candidate_tree_sha !== input.treeSha ||
+          a.patch_sha256 !== input.patchSha256 ||
+          Number(a.epoch_id) !== input.epochId || Number(sys.epoch_id) !== input.epochId ||
+          Number(lease.epoch_id) !== input.epochId || lease.is_revoked ||
+          lease.worker_id !== input.workerId || lease.token_id !== input.tokenId ||
+          Number(lease.expires_at) <= Date.now() || this.isTokenRevoked(input.tokenId) ||
+          !row.diff_patch ||
+          crypto.createHash('sha256').update(row.diff_patch).digest('hex') !== input.patchSha256) {
+        this.db.exec('ROLLBACK');
+        return false;
+      }
+      const existing = this.db.prepare('SELECT * FROM draft_pr_submissions WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      if (existing) {
+        const identical = existing.repo === input.repo &&
+          existing.pr_number === input.prNumber &&
+          existing.branch === input.branch &&
+          existing.head_sha === input.headSha &&
+          existing.tree_sha === input.treeSha &&
+          existing.patch_sha256 === input.patchSha256 &&
+          Number(existing.epoch_id) === input.epochId;
+        this.db.exec('COMMIT');
+        return identical;
+      }
+      this.db.prepare(`INSERT INTO draft_pr_submissions
+        (ticket_id, repo, pr_number, branch, head_sha, tree_sha, patch_sha256, epoch_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        input.ticketId, input.repo, input.prNumber, input.branch,
+        input.headSha, input.treeSha, input.patchSha256, input.epochId, Date.now()
+      );
+      this.appendAuditLog({
+        actor: 'GitHub Draft PR Gatekeeper', action: 'DRAFT_PR_VERIFIED_SUBMITTED',
+        ticketId: input.ticketId,
+        reasoning: 'Exact tested tree and signed lease confirmed. Human review required; not merged.',
+        details: { repo: input.repo, prNumber: input.prNumber, headSha: input.headSha,
+          candidateTreeSha: input.treeSha, branch: input.branch }
+      });
+      this.db.exec('COMMIT');
+      return true;
+    } catch (e) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw e;
+    }
+  }
+
+  public getDraftPrSubmission(ticketId: string): {
+    repo: string; prNumber: number; branch: string; headSha: string; treeSha: string;
+  } | null {
+    const row = this.db.prepare('SELECT * FROM draft_pr_submissions WHERE ticket_id = ?')
+      .get(ticketId) as any;
+    return row ? {
+      repo: row.repo, prNumber: row.pr_number, branch: row.branch,
+      headSha: row.head_sha, treeSha: row.tree_sha
+    } : null;
+  }
+
+  /** CAS: no status update unless the matching attestation and live epoch still exist. */
+  public recordVerifiedGitMerge(input: {
+    ticketId: string; repo: string; prNumber: number; branch: string;
+    headSha: string; mergeSha: string; treeSha: string;
+    patchSha256: string; epochId: number; workerId: string; tokenId: string;
+  }): boolean {
+    const sha1 = /^[0-9a-f]{40}$/;
+    if (![input.headSha, input.mergeSha, input.treeSha].every(x => sha1.test(x)) ||
+        !Number.isSafeInteger(input.prNumber) || input.prNumber < 1) return false;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const t = this.db.prepare('SELECT status, diff_patch, branch, logs_json FROM tickets WHERE ticket_id = ?').get(input.ticketId) as any;
+      const a = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id = ?').get(input.ticketId) as any;
+      const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id = 1').get() as any;
+      const lease = this.db.prepare(`SELECT worker_id, token_id, epoch_id, expires_at, is_revoked
+        FROM worker_leases WHERE ticket_id = ?`).get(input.ticketId) as any;
+      const tokenRevoked = this.isTokenRevoked(input.tokenId);
+      if (!t || !a || !sys || sys.kill_switch_active || !lease || tokenRevoked ||
+          lease.is_revoked || Number(lease.epoch_id) !== input.epochId ||
+          lease.worker_id !== input.workerId || a.worker_id !== input.workerId ||
+          lease.token_id !== input.tokenId || Number(lease.expires_at) <= Date.now() ||
+          t.status !== 'READY_FOR_REVIEW' || t.branch !== input.branch ||
+          Number(sys.epoch_id) !== input.epochId || Number(a.epoch_id) !== input.epochId ||
+          a.candidate_tree_sha !== input.treeSha || a.patch_sha256 !== input.patchSha256 ||
+          !t.diff_patch || crypto.createHash('sha256').update(t.diff_patch).digest('hex') !== input.patchSha256) {
+        this.db.exec('ROLLBACK');
+        return false;
+      }
+      const now = Date.now();
+      const logs = JSON.parse(t.logs_json || '[]') as any[];
+      logs.push({ timestamp: new Date().toLocaleTimeString(), level: 'SUCCESS',
+        message: `GitHub PR #${input.prNumber} verified merged at ${input.mergeSha.slice(0, 12)}; tested tree matched.` });
+      this.db.prepare(`UPDATE tickets SET status = 'COMMITTED_PUSHED', rollback_commit = ?,
+        logs_json = ?, updated_at = ? WHERE ticket_id = ?`).run(input.mergeSha, JSON.stringify(logs), now, input.ticketId);
+      this.db.prepare(`INSERT INTO verified_git_merges
+        (ticket_id, repo, pr_number, branch, head_sha, merge_sha, tree_sha, verified_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          input.ticketId, input.repo, input.prNumber, input.branch,
+          input.headSha, input.mergeSha, input.treeSha, now
+      );
+      this.appendAuditLog({
+        actor: 'GitHub Merge Gatekeeper', action: 'REMOTE_MERGE_VERIFIED',
+        ticketId: input.ticketId, reasoning: 'GitHub merged PR, independent CI, review, file scope and exact tested tree verified.',
+        details: { repo: input.repo, prNumber: input.prNumber, headSha: input.headSha,
+          mergeSha: input.mergeSha, treeSha: input.treeSha }
+      });
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
   }
 
   public seedBaselineIfEmpty(initialNodes: SwarmNode[], initialTickets: Ticket[]): void {

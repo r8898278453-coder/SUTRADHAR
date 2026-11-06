@@ -76,7 +76,7 @@ class ClusterStateManager:
                     1, 'NODE-E78A1201', 15, 'ORCHESTRATOR', 'RUNNING',
                     0, NULL, 6, 'PRJ-MATRIMONY-01', 4.8, 10.0, ?, ?
                 );
-            """, (int(time.time()), int(time.time())))
+            """, (int(time.time() * 1000), int(time.time() * 1000)))
 
     def get_cluster_epoch(self) -> Tuple[int, str, bool]:
         with self._get_conn() as conn:
@@ -87,7 +87,7 @@ class ClusterStateManager:
             return 1, "NODE-E78A1201", False
 
     def set_kill_switch(self, active: bool) -> None:
-        now = int(time.time())
+        now = int(time.time() * 1000)
         with self._get_conn() as conn:
             conn.execute("UPDATE system_state SET kill_switch_active = ?, updated_at = ? WHERE id = 1;", (1 if active else 0, now))
             logger.warning(f"[CONSENSUS] Emergency Kill-Switch set to {active}")
@@ -112,7 +112,7 @@ class ClusterStateManager:
         return True, "LEADER_STABLE"
 
     def register_heartbeat(self, node_id: str, role: str, uptime: int, epoch_id: int) -> Tuple[int, str, bool]:
-        now = int(time.time())
+        now = int(time.time() * 1000)
         with self._get_conn() as conn:
             cursor = conn.execute("SELECT epoch_id, current_master_id, kill_switch_active FROM system_state WHERE id = 1;")
             row = cursor.fetchone()
@@ -137,15 +137,16 @@ class ClusterStateManager:
             return curr_epoch, master_id, must_demote
 
     def elect_new_master(self, candidate_node_id: str) -> Optional[int]:
-        now = int(time.time())
+        now = int(time.time() * 1000)
         with self._get_conn() as conn:
+            conn.execute('BEGIN IMMEDIATE')
             cursor = conn.execute("SELECT epoch_id, current_master_id, updated_at FROM system_state WHERE id = 1;")
             row = cursor.fetchone()
             if not row:
                 return None
             curr_epoch, current_master, last_updated = row
 
-            if current_master != "UNINITIALIZED" and (now - last_updated) < 90 and current_master != candidate_node_id:
+            if current_master != "UNINITIALIZED" and (now - last_updated) < 90_000 and current_master != candidate_node_id:
                 logger.warning(f"[CONSENSUS] Master {current_master} is still alive. Refusing election.")
                 return None
 

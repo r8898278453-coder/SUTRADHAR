@@ -2,11 +2,14 @@ import express from 'express';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import * as os from 'os';
 import * as child_process from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import type { ClusterState, SwarmNode, Ticket, LLMCascadeTier, TelegramMessage, CryptoTokenPayload } from './src/types.ts';
 import { clusterDb } from './server_db.ts';
+import { verifyGitHubMergeEvidence } from './github_merge_verifier.ts';
+import { createVerifiedDraftPr } from './github_pr_creator.ts';
 
 const app = express();
 const PORT = 3000;
@@ -671,7 +674,8 @@ if (!SUTRADHAR_ADMIN_KEY) {
   }
 }
 
-export const SUTRADHAR_WORKER_KEY = process.env.SUTRADHAR_WORKER_KEY || 'sutradhar_worker_token_secret_v1';
+export const SUTRADHAR_WORKER_KEY = process.env.SUTRADHAR_WORKER_KEY?.trim() || '';
+export const SUTRADHAR_WORKER_ID = process.env.SUTRADHAR_WORKER_ID?.trim() || '';
 
 // Session store for verified human admin sessions
 export const activeAdminSessions = new Map<string, { createdAt: number; expiresAt: number }>();
@@ -700,12 +704,27 @@ export function verifyAdminSession(token?: string): boolean {
 export function resolveCallerRole(req: express.Request): ClusterRole {
   const authHeader = req.headers['authorization'];
   const sessionHeader = req.headers['x-sutradhar-session'] as string | undefined;
+  const cookieSession = (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith('sutradhar_session='))?.slice('sutradhar_session='.length);
   const adminKeyHeader = req.headers['x-admin-key'] as string | undefined;
   const workerKeyHeader = req.headers['x-worker-key'] as string | undefined;
 
   let bearerToken: string | undefined;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     bearerToken = authHeader.substring(7).trim();
+  }
+
+  // Browser sessions use HttpOnly SameSite=Strict cookies. Cross-origin mutations are rejected.
+  if (cookieSession && verifyAdminSession(cookieSession)) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      const origin = req.headers.origin;
+      if (!origin) return 'READONLY';
+      try {
+        const parsed = new URL(origin);
+        if (parsed.host !== req.get('host')) return 'READONLY';
+        if (process.env.NODE_ENV === 'production' && parsed.protocol !== 'https:') return 'READONLY';
+      } catch { return 'READONLY'; }
+    }
+    return 'ADMIN';
   }
 
   // 1. Check for verified Admin credentials (env key, admin file key, or active admin session)
@@ -720,33 +739,17 @@ export function resolveCallerRole(req: express.Request): ClusterRole {
 
   // 2. Check for verified Worker credentials (worker key or valid Ed25519 token)
   if (
-    (bearerToken && bearerToken === SUTRADHAR_WORKER_KEY) ||
-    (workerKeyHeader && workerKeyHeader === SUTRADHAR_WORKER_KEY)
+    SUTRADHAR_WORKER_KEY.length >= 32 &&
+    SUTRADHAR_WORKER_ID &&
+    (bearerToken === SUTRADHAR_WORKER_KEY || workerKeyHeader === SUTRADHAR_WORKER_KEY)
   ) {
+    (req as any).authenticatedWorkerId = SUTRADHAR_WORKER_ID;
     return 'WORKER';
   }
 
-  // Check if Bearer token is a valid unrevoked Ed25519 lease token
-  if (bearerToken && bearerToken.startsWith('SEC-')) {
-    const v = verifyEd25519Token(bearerToken, '');
-    if (v.verified && v.payload && (!v.payload.tokenId || !clusterDb.isTokenRevoked(v.payload.tokenId))) {
-      return 'WORKER';
-    }
-  }
-
-  // Check for worker lease token header
-  const leaseHeader = req.headers['x-worker-lease'] as string | undefined;
-  if (leaseHeader && leaseHeader.startsWith('SEC-')) {
-    const v = verifyEd25519Token(leaseHeader, '');
-    if (v.verified && v.payload && (!v.payload.tokenId || !clusterDb.isTokenRevoked(v.payload.tokenId))) {
-      return 'WORKER';
-    }
-  }
-
-  // Local loopback development mode can be allowed if explicitly enabled by environment
-  if (process.env.NODE_ENV !== 'production' && process.env.SUTRADHAR_ALLOW_LOCAL_DEV_ADMIN === 'true') {
-    return 'ADMIN';
-  }
+  // An Ed25519 lease is ticket-scoped, not a global API credential.
+  // A later worker-auth integration must bind the authenticated worker to each lease.
+  // Local development must not silently elevate arbitrary callers to ADMIN.
 
   // NON-NEGOTIABLE: x-sutradhar-role is NEVER trusted as proof of identity!
   // Any unauthenticated or unrecognized caller strictly receives READONLY role.
@@ -780,6 +783,18 @@ export function authRole(allowedRoles: ClusterRole[]) {
     (req as any).clientRole = role;
     next();
   };
+}
+
+// Only the worker holding the active SQLite lease may operate on its ticket.
+function workerMayOperateTicket(req: express.Request, ticketId: string): boolean {
+  if ((req as any).clientRole !== 'WORKER') return true;
+  const workerId = (req as any).authenticatedWorkerId;
+  if (!workerId) return false;
+  const ticket = clusterDb.getAllTickets().find(t => t.id === ticketId);
+  const lease = clusterDb.getAllLeases().find(l => l.ticketId === ticketId);
+  return !!ticket && ticket.assignedTo === workerId &&
+    !!lease && lease.workerId === workerId && !lease.isRevoked &&
+    lease.expiresAt > Date.now();
 }
 
 // Generate Pinned Telegram Live Card ASCII text
@@ -822,7 +837,7 @@ ${offlineNotice}
 // -------------------------------------------------------------
 
 // 1. Get current cluster state
-app.get('/api/cluster/state', (req, res) => {
+app.get('/api/cluster/state', authRole(['ADMIN']), (req, res) => {
   // Authoritative sync from SQLite Cluster DB
   try {
     const sysState = clusterDb.getSystemState();
@@ -860,16 +875,24 @@ app.post('/api/auth/login', (req, res) => {
     });
   }
   const session = createAdminSession();
-  res.json({
-    success: true,
-    token: session.token,
-    role: 'ADMIN',
-    expiresIn: session.expiresIn
-  });
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `sutradhar_session=${session.token}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=${session.expiresIn}${secure}`);
+  res.json({ success: true, role: 'ADMIN', expiresIn: session.expiresIn });
+});
+
+app.get('/api/auth/session', authRole(['ADMIN']), (_req, res) => {
+  res.json({ authenticated: true, role: 'ADMIN' });
+});
+
+app.post('/api/auth/logout', authRole(['ADMIN']), (req, res) => {
+  const token = (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith('sutradhar_session='))?.slice('sutradhar_session='.length);
+  if (token) activeAdminSessions.delete(token);
+  res.setHeader('Set-Cookie', 'sutradhar_session=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0');
+  res.json({ success: true });
 });
 
 // 2. Inject Ticket (Normal or P0 Hotfix)
-app.post('/api/cluster/ticket/create', authRole(['ADMIN', 'WORKER']), (req, res) => {
+app.post('/api/cluster/ticket/create', authRole(['ADMIN']), (req, res) => {
   const { title, description, domain, priority, allowedFiles, isP0 } = req.body;
   const currentTickets = clusterDb.getAllTickets();
   const ticketCount = currentTickets.length + 101;
@@ -964,12 +987,13 @@ app.post('/api/cluster/ticket/create', authRole(['ADMIN', 'WORKER']), (req, res)
 
 // Helper: Verify if Docker daemon is running and accessible
 export function isDockerAvailable(): boolean {
-  try {
-    child_process.execSync('docker info', { stdio: 'ignore', timeout: 3000 });
-    return true;
-  } catch {
-    return false;
-  }
+  // Docker on CI/worker hosts can be slow to respond immediately after startup.
+  // Use argv execution (no host shell) and allow a bounded readiness probe.
+  const probe = child_process.spawnSync('docker', ['info'], {
+    stdio: 'ignore',
+    timeout: 15000
+  });
+  return probe.status === 0 && !probe.error;
 }
 
 // Helper: Real OpenRouter fallback API call
@@ -1008,6 +1032,10 @@ app.post('/api/cluster/ticket/synthesize', authRole(['ADMIN', 'WORKER']), async 
   if (!ticket) {
     return res.status(404).json({ error: 'Ticket not found' });
   }
+  if (!workerMayOperateTicket(req, ticketId)) {
+    return res.status(403).json({ success: false, error: '403_WORKER_LEASE_REQUIRED' });
+  }
+
 
   ticket.status = 'SYNTHESIZING_DIFF';
   clusterState.rpm = Math.min(clusterState.maxRpm, clusterState.rpm + 0.5);
@@ -1078,7 +1106,7 @@ Output ONLY the raw unified diff (starting with diff --git or --- / +++).`;
   }
 
   // 3. Fallback Evaluation: If neither provider responded, enforce truth in production
-  const isTestOrDemo = isDemoMode === true || process.env.NODE_ENV === 'test' || req.headers['x-sutradhar-demo-mode'] === 'true';
+  const isTestOrDemo = process.env.NODE_ENV === 'test';
 
   if (!generatedDiff) {
     if (!isTestOrDemo) {
@@ -1134,141 +1162,214 @@ Output ONLY the raw unified diff (starting with diff --git or --- / +++).`;
   res.json({ success: true, ticket, generatedDiff, providerUsed });
 });
 
-// 4. Run Ephemeral Docker Sandbox Test (Task 4)
-app.post('/api/cluster/ticket/test', authRole(['ADMIN', 'WORKER']), (req, res) => {
-  const { ticketId, simulateFailure, isDemoMode } = req.body;
-  const ticket = clusterState.tickets.find(t => t.id === ticketId);
-  if (!ticket) {
-    return res.status(404).json({ error: 'Ticket not found' });
-  }
+// 4. Real sandbox execution: Git snapshot -> scope-checked patch -> disposable Docker.
+// Never accept caller-supplied test commands, simulated results, or a fake pass.
+type SandboxResult = {
+  status: 'TEST_PASSED' | 'TEST_FAILED' | 'PATCH_REJECTED' |
+    'SANDBOX_UNAVAILABLE' | 'SANDBOX_NOT_CONFIGURED' | 'PREPARE_FAILED' | 'RUNNER_ERROR';
+  patchValid: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  changedFiles: string[];
+  baselineCommit: string | null;
+  patchSha256: string | null;
+  candidateTreeSha: string | null;
+  durationMs: number;
+};
+const activeSandboxTests = new Set<string>();
 
-  const isTestOrDemo = isDemoMode === true || process.env.NODE_ENV === 'test' || req.headers['x-sutradhar-demo-mode'] === 'true';
-
-  // Task 4: In production mode, if Docker is absent, return SANDBOX_UNAVAILABLE
-  if (!isTestOrDemo && !isDockerAvailable()) {
-    ticket.logs.push({
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'ERROR',
-      message: '[SANDBOX_UNAVAILABLE] Docker daemon is absent or not running. Untrusted code cannot be executed on the host system.'
-    });
-    clusterDb.updateTicket(ticket.id, {
-      logMessage: { level: 'ERROR', message: '[SANDBOX_UNAVAILABLE] Docker daemon is absent or not running.' }
-    });
-    return res.status(503).json({
-      success: false,
-      error: 'SANDBOX_UNAVAILABLE',
-      message: 'Docker daemon is unavailable. Untrusted generated code must not execute directly on the host.'
-    });
-  }
-
-  ticket.currentTier = simulateFailure ? 2 : 1;
-  const exitCode = simulateFailure ? 1 : 0;
-  const executionDurationMs = 1480;
-
-  if (exitCode === 0) {
-    // A passing test moves a ticket to READY_FOR_REVIEW, NEVER directly to COMMITTED_PUSHED!
-    ticket.status = 'READY_FOR_REVIEW';
-    ticket.testStderr = undefined;
-    ticket.testStdout = `[EPHEMERAL DOCKER SANDBOX (Mem: 512MB, Net: None, Timeout: 45s)]
-Applying patch with Tier ${ticket.currentTier} (git apply --check) -> OK
-Running pytest suite on /workspace/tests/...
-tests/Unit/ModuleTest.php ........... [100%]
-12 passed in 1.48s
-Exit Code: 0 (PASSED)`;
-    ticket.logs.push({
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'SUCCESS',
-      message: 'Ephemeral Sandbox test PASSED with Exit 0. Ticket is READY_FOR_REVIEW for gatekeeper commit push.'
-    });
-
-    // Record verified sandbox test in SQLite execution_attempts
-    clusterDb.recordExecutionAttempt({
-      ticketId: ticket.id,
-      workerId: ticket.assignedTo || 'NODE-E78A1201',
-      attemptNumber: ticket.retryCount + 1,
-      tierUsed: ticket.currentTier,
-      patchValid: true,
-      sandboxExitCode: 0,
-      stdout: ticket.testStdout,
-      stderr: '',
-      durationMs: executionDurationMs
-    });
-
-    clusterDb.updateTicket(ticket.id, {
-      status: 'READY_FOR_REVIEW',
-      logMessage: { level: 'SUCCESS', message: 'Ephemeral Sandbox test PASSED with Exit 0. Ready for review.' }
-    });
-
-  } else {
-    // Sandbox Failure -> Trigger Self-Healing Loop
-    ticket.retryCount += 1;
-    ticket.testStderr = `AssertionError: Assertion failed in test_contract_execution()
-Expected: HTTP 200 OK with sanitized payload
-Actual: HTTP 500 TypeError: undefined method guardAllowedFiles() on line 14
-Stacktrace:
-  File "/workspace/tests/Unit/Test.php", line 42, in test_contract_execution
-  File "/workspace/${ticket.allowedFiles[0] || 'modules/core/Handler.php'}", line 14, in executeSafeContract`;
-
-    clusterDb.recordExecutionAttempt({
-      ticketId: ticket.id,
-      workerId: ticket.assignedTo || 'NODE-E78A1201',
-      attemptNumber: ticket.retryCount,
-      tierUsed: ticket.currentTier,
-      patchValid: true,
-      sandboxExitCode: 1,
-      stdout: '',
-      stderr: ticket.testStderr,
-      durationMs: 950
-    });
-
-    if (ticket.retryCount >= ticket.maxRetries) {
-      ticket.status = 'DEAD_LETTER_QUEUE';
-      ticket.logs.push({
-        timestamp: new Date().toLocaleTimeString(),
-        level: 'ERROR',
-        message: `Self-healing retry limit reached (${ticket.retryCount}/${ticket.maxRetries}). State frozen and moved to DEAD_LETTER_QUEUE for Human-in-the-Loop (HITL) review.`
-      });
-      
-      const dlqAlert = `🚨 [DEAD_LETTER_QUEUE] Ticket ${ticket.id} (${ticket.title}) failed 3x self-healing retries across cascade tiers. State frozen for HITL review.`;
-      clusterState.telegramFeed.unshift({
-        id: `tg-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
-        type: 'ALERT_HEALING',
-        urgent: true,
-        text: dlqAlert
-      });
-
-      broadcastToTelegram(
-        `🚨 <b>[DEAD_LETTER_QUEUE ESCALATION]</b>\n\n` +
-        `🎫 <b>Ticket:</b> ${ticket.id}\n` +
-        `📝 <b>Title:</b> ${ticket.title}\n` +
-        `❌ <b>Failure:</b> 3x Self-Healing Retries Exhausted\n` +
-        `🛑 <b>Action:</b> State frozen, AST report generated, requesting Human-in-the-Loop (HITL) intervention.`
+function executeRealSandbox(ticket: Ticket, repoRoot: string, testCommand: string): Promise<SandboxResult> {
+  return new Promise((resolve, reject) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sutradhar-test-'));
+    const patchFile = path.join(tempDir, 'candidate.patch');
+    let finished = false;
+    const finish = (err: Error | null, data?: SandboxResult) => {
+      if (finished) return;
+      finished = true;
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+      if (err) reject(err);
+      else if (data) resolve(data);
+      else reject(new Error('SANDBOX_RESULT_MISSING'));
+    };
+    try {
+      fs.writeFileSync(patchFile, ticket.diffPatch || '', { mode: 0o600 });
+      const commandArgs = [
+        path.join(process.cwd(), 'sandbox', 'execute_ticket.py'),
+        '--repo-root', repoRoot, '--patch-file', patchFile,
+        '--test-command', testCommand,
+        ...ticket.allowedFiles.flatMap(file => ['--allowed-file', file])
+      ];
+      child_process.execFile(
+        process.env.SUTRADHAR_PYTHON || 'python3', commandArgs,
+        { cwd: process.cwd(), timeout: 220000, maxBuffer: 1024 * 1024 },
+        (err, stdout, stderr) => {
+          if (err) {
+            finish(new Error(`SANDBOX_RUNNER_PROCESS_FAILED: ${err.message}; ${stderr.slice(-500)}`));
+            return;
+          }
+          try {
+            const result = JSON.parse(stdout.trim()) as SandboxResult;
+            if (!result || typeof result.status !== 'string' || typeof result.patchValid !== 'boolean' ||
+                !Array.isArray(result.changedFiles) || typeof result.durationMs !== 'number' ||
+                typeof result.stdout !== 'string' || typeof result.stderr !== 'string') {
+              throw new Error('Unexpected runner response schema');
+            }
+            finish(null, result);
+          } catch (parseError: any) {
+            finish(new Error(`SANDBOX_INVALID_RESULT: ${parseError.message}`));
+          }
+        }
       );
+    } catch (err: any) {
+      finish(err);
+    }
+  });
+}
 
-      clusterDb.updateTicket(ticket.id, {
-        status: 'DEAD_LETTER_QUEUE',
-        retryCount: ticket.retryCount,
-        logMessage: { level: 'ERROR', message: `Self-healing retry limit reached (${ticket.retryCount}/${ticket.maxRetries}).` }
-      });
-    } else {
-      ticket.status = 'HEALING_RETRY';
-      ticket.logs.push({
-        timestamp: new Date().toLocaleTimeString(),
-        level: 'WARN',
-        message: `Docker test failed (Exit 1). Stacktrace captured. Initiating Closed-Loop Self-Healing Retry ${ticket.retryCount}/${ticket.maxRetries}.`
-      });
+app.post('/api/cluster/ticket/test', authRole(['ADMIN', 'WORKER']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string') {
+    return res.status(400).json({ success: false, error: 'INVALID_TICKET_ID' });
+  }
+  const ticket = clusterState.tickets.find(t => t.id === ticketId);
+  if (!ticket) return res.status(404).json({ success: false, error: 'TICKET_NOT_FOUND' });
+  if (!workerMayOperateTicket(req, ticketId)) {
+    return res.status(403).json({ success: false, error: '403_WORKER_LEASE_REQUIRED' });
+  }
 
-      clusterDb.updateTicket(ticket.id, {
-        status: 'HEALING_RETRY',
-        retryCount: ticket.retryCount,
-        logMessage: { level: 'WARN', message: `Docker test failed (Exit 1). Retry ${ticket.retryCount}/${ticket.maxRetries}.` }
+  // Only authenticated control-plane configuration chooses repo and test command.
+  // simulateFailure, isDemoMode and x-sutradhar-demo-mode are intentionally ignored.
+  const repoRoot = process.env.SUTRADHAR_TARGET_REPO_ROOT?.trim();
+  const testCommand = process.env.SUTRADHAR_SANDBOX_TEST_COMMAND?.trim();
+  if (!repoRoot || !testCommand) {
+    return res.status(503).json({
+      success: false, error: 'SANDBOX_NOT_CONFIGURED',
+      message: 'Set SUTRADHAR_TARGET_REPO_ROOT and SUTRADHAR_SANDBOX_TEST_COMMAND on the server.'
+    });
+  }
+  if (!isDockerAvailable()) {
+    return res.status(503).json({ success: false, error: 'SANDBOX_UNAVAILABLE',
+      message: 'Docker daemon is unavailable. Generated code cannot run on the host.' });
+  }
+  if (clusterDb.getSystemState().killSwitchActive) {
+    return res.status(423).json({ success: false, error: 'CLUSTER_PAUSED' });
+  }
+  if (!ticket.diffPatch || typeof ticket.diffPatch !== 'string') {
+    return res.status(409).json({ success: false, error: 'PATCH_NOT_GENERATED' });
+  }
+  if (!['TESTING_SANDBOX', 'HEALING_RETRY'].includes(ticket.status)) {
+    return res.status(409).json({ success: false, error: 'INVALID_TICKET_TEST_STATE', currentStatus: ticket.status });
+  }
+  if (activeSandboxTests.has(ticket.id)) {
+    return res.status(409).json({ success: false, error: 'TEST_ALREADY_RUNNING' });
+  }
+
+  // Pin the tested patch and active epoch to prevent concurrent state changes
+  // from accidentally marking a different candidate READY_FOR_REVIEW.
+  const originalPatch = ticket.diffPatch;
+  const startEpoch = clusterDb.getSystemState().epochId;
+  activeSandboxTests.add(ticket.id);
+  try {
+    const result = await executeRealSandbox(ticket, repoRoot, testCommand);
+    const stillAuthorized = ticket.diffPatch === originalPatch &&
+      clusterDb.getSystemState().epochId === startEpoch &&
+      !clusterDb.getSystemState().killSwitchActive &&
+      workerMayOperateTicket(req, ticketId);
+
+    if (!stillAuthorized) {
+      clusterDb.appendAuditLog({
+        actor: 'Sandbox Gatekeeper', action: 'SANDBOX_RESULT_FENCED',
+        ticketId, reasoning: 'Candidate patch, epoch, pause state or worker lease changed while Docker was running.'
+      });
+      return res.status(409).json({ success: false, error: 'SANDBOX_RESULT_STALE',
+        message: 'Test evidence was not accepted after candidate/lease/epoch change.' });
+    }
+
+    const actualTestRun = result.status === 'TEST_PASSED' || result.status === 'TEST_FAILED';
+    if (actualTestRun) {
+      clusterDb.recordExecutionAttempt({
+        ticketId,
+        workerId: ticket.assignedTo || 'ADMIN',
+        attemptNumber: ticket.retryCount + 1,
+        tierUsed: ticket.currentTier || 1,
+        patchValid: result.patchValid,
+        sandboxExitCode: result.exitCode ?? -1,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        durationMs: result.durationMs
       });
     }
-  }
 
-  ticket.updatedAt = new Date().toISOString();
-  res.json({ success: true, ticket, exitCode });
+    clusterDb.appendAuditLog({
+      actor: 'Sandbox Gatekeeper',
+      action: 'SANDBOX_EXECUTION_RESULT',
+      ticketId,
+      reasoning: `Runner result: ${result.status}. No Git push or merge claimed.`,
+      details: {
+        status: result.status, changedFiles: result.changedFiles,
+        baselineCommit: result.baselineCommit, patchSha256: result.patchSha256,
+        candidateTreeSha: result.candidateTreeSha,
+        exitCode: result.exitCode, durationMs: result.durationMs
+      }
+    });
+
+    ticket.testStdout = result.stdout;
+    ticket.testStderr = result.stderr;
+    ticket.updatedAt = new Date().toISOString();
+
+    if (result.status === 'TEST_PASSED' && result.patchValid === true && result.exitCode === 0) {
+      // Do not call updateTicket separately; a single SQLite transaction must
+      // bind READY_FOR_REVIEW to the exact Git tree that actually passed Docker.
+      if (!result.baselineCommit || !result.candidateTreeSha || !result.patchSha256) {
+        return res.status(502).json({ success: false, error: 'SANDBOX_TREE_EVIDENCE_MISSING' });
+      }
+      const accepted = clusterDb.recordVerifiedSandboxPass({
+        ticketId, patchSha256: result.patchSha256,
+        baselineCommit: result.baselineCommit, candidateTreeSha: result.candidateTreeSha,
+        changedFiles: result.changedFiles, workerId: ticket.assignedTo || 'ADMIN',
+        epochId: startEpoch, stdout: result.stdout, stderr: result.stderr
+      });
+      if (!accepted) {
+        return res.status(409).json({ success: false, error: 'SANDBOX_ATTESTATION_CONFLICT' });
+      }
+      ticket.status = 'READY_FOR_REVIEW';
+      return res.json({ success: true, status: result.status, ticket, exitCode: 0,
+        evidence: { baselineCommit: result.baselineCommit, patchSha256: result.patchSha256,
+          candidateTreeSha: result.candidateTreeSha,
+          changedFiles: result.changedFiles, durationMs: result.durationMs } });
+    }
+
+    if (result.status === 'TEST_FAILED' && result.patchValid) {
+      ticket.retryCount += 1;
+      ticket.status = ticket.retryCount >= ticket.maxRetries ? 'DEAD_LETTER_QUEUE' : 'HEALING_RETRY';
+      clusterDb.updateTicket(ticket.id, {
+        status: ticket.status, retryCount: ticket.retryCount,
+        testStdout: result.stdout, testStderr: result.stderr,
+        logMessage: { level: 'ERROR', message: `Real Docker test failed (exit ${result.exitCode}); retry ${ticket.retryCount}/${ticket.maxRetries}.` }
+      });
+      return res.json({ success: true, status: result.status, ticket,
+        exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr });
+    }
+
+    // Patch/sandbox setup errors do not prove a test passed or failed.
+    clusterDb.updateTicket(ticket.id, {
+      testStderr: result.stderr,
+      logMessage: { level: 'ERROR', message: `Sandbox blocked: ${result.status}; no validated test result.` }
+    });
+    const code = result.status === 'PATCH_REJECTED' ? 422 :
+      result.status === 'SANDBOX_UNAVAILABLE' || result.status === 'SANDBOX_NOT_CONFIGURED' ? 503 : 502;
+    return res.status(code).json({ success: false, error: result.status,
+      message: result.stderr.slice(-1000), exitCode: result.exitCode });
+  } catch (err: any) {
+    clusterDb.updateTicket(ticket.id, {
+      logMessage: { level: 'ERROR', message: 'Sandbox runner failed without trusted execution evidence.' }
+    });
+    return res.status(502).json({ success: false, error: 'SANDBOX_RUNNER_FAILED',
+      message: String(err?.message || err).slice(0, 500) });
+  } finally {
+    activeSandboxTests.delete(ticket.id);
+  }
 });
 
 // 5. Closed-Loop Self-Healing Re-prompting (Task 5)
@@ -1278,6 +1379,10 @@ app.post('/api/cluster/ticket/self-heal', authRole(['ADMIN', 'WORKER']), async (
   if (!ticket) {
     return res.status(404).json({ error: 'Ticket not found' });
   }
+  if (!workerMayOperateTicket(req, ticketId)) {
+    return res.status(403).json({ success: false, error: '403_WORKER_LEASE_REQUIRED' });
+  }
+
 
   ticket.status = 'SYNTHESIZING_DIFF';
   const ai = getAI();
@@ -1335,7 +1440,7 @@ Fix the code error and output a working unified diff patch.`;
     }
   }
 
-  const isTestOrDemo = isDemoMode === true || process.env.NODE_ENV === 'test' || req.headers['x-sutradhar-demo-mode'] === 'true';
+  const isTestOrDemo = process.env.NODE_ENV === 'test';
 
   if (!healedDiff) {
     if (!isTestOrDemo) {
@@ -1385,158 +1490,197 @@ Fix the code error and output a working unified diff patch.`;
   res.json({ success: true, ticket, healedDiff });
 });
 
-// 6. Git Pre-Receive Gatekeeper Verification Hook (Task 6)
-app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN', 'WORKER']), (req, res) => {
-  const { ticketId, tokenHeader, branch } = req.body;
-  const ticket = clusterState.tickets.find(t => t.id === ticketId);
-  if (!ticket) {
-    return res.status(404).json({ error: 'Ticket not found' });
+// 6. GitHub independent read-only merge verifier.
+// This endpoint NEVER pushes to a branch, merges a PR or creates Git commits.
+app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string') {
+    return res.status(400).json({ verified: false, error: 'INVALID_TICKET_ID' });
   }
-
-  const tokenToVerify = tokenHeader || ticket.ed25519Token || '';
-  
-  // 1. Genuine Asymmetric Ed25519 Verification against Master Public Key
-  const verification = verifyEd25519Token(
-    tokenToVerify, 
-    ticket.id, 
-    clusterState.epochId, 
-    ticket.allowedFiles
-  );
-
+  const ticket = clusterDb.getAllTickets().find(t => t.id === ticketId);
+  if (!ticket) return res.status(404).json({ verified: false, error: 'TICKET_NOT_FOUND' });
+  const active = clusterState.tickets.find(t => t.id === ticketId);
+  const snapshot = clusterDb.getSystemState();
+  const tokenToVerify = req.body?.tokenHeader || ticket.ed25519Token || '';
+  const verification = verifyEd25519Token(tokenToVerify, ticket.id, snapshot.epochId, ticket.allowedFiles);
   if (!verification.verified || !verification.payload) {
-    return res.status(403).json({
-      verified: false,
-      exitCode: 1,
-      error: verification.error || '403_CRYPTOGRAPHIC_VERIFICATION_FAILED'
-    });
+    return res.status(403).json({ verified: false, error: verification.error || 'INVALID_LEASE_SIGNATURE' });
   }
-
   const payload = verification.payload;
-
-  // 2. Check durable SQLite token revocation
   if (payload.tokenId && clusterDb.isTokenRevoked(payload.tokenId)) {
-    return res.status(403).json({
-      verified: false,
-      exitCode: 1,
-      error: `403_REVOKED_TOKEN: Token ${payload.tokenId} has been revoked in cluster state`
+    return res.status(403).json({ verified: false, error: '403_REVOKED_TOKEN' });
+  }
+  if (req.body?.branch && req.body.branch !== ticket.branch) {
+    return res.status(403).json({ verified: false, error: '403_BRANCH_MISMATCH' });
+  }
+  if (snapshot.killSwitchActive) {
+    return res.status(423).json({ verified: false, error: 'CLUSTER_PAUSED' });
+  }
+
+  const githubRepo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const githubToken = process.env.SUTRADHAR_GITHUB_TOKEN?.trim() || '';
+  // Check-run names often contain commas; use semicolons as the delimiter.
+  const requiredChecks = (process.env.SUTRADHAR_REQUIRED_CHECKS || '')
+    .split(';').map(s => s.trim()).filter(Boolean);
+  if (!githubRepo || !githubToken || !requiredChecks.length) {
+    return res.status(503).json({
+      verified: false, error: 'GITHUB_VERIFICATION_NOT_CONFIGURED',
+      message: 'Configure a GitHub repository, read-only API token and explicit required CI check names.'
     });
   }
 
-  // 3. Branch verification
-  const pushedBranch = branch || `ai/${ticket.id}`;
-  if (pushedBranch !== `ai/${ticket.id}` && pushedBranch !== ticket.branch) {
-    return res.status(403).json({
-      verified: false,
-      exitCode: 1,
-      error: `403_BRANCH_MISMATCH: Pushed branch (${pushedBranch}) does not match authorized ticket branch (${ticket.branch || `ai/${ticket.id}`})`
-    });
+  if (ticket.status !== 'READY_FOR_REVIEW' || !ticket.diffPatch) {
+    return res.status(409).json({ verified: false, error: 'VERIFIED_SANDBOX_PASS_REQUIRED' });
+  }
+  const attestation = clusterDb.getSandboxAttestation(ticketId);
+  if (!attestation || attestation.epochId !== snapshot.epochId ||
+      attestation.patchSha256 !== crypto.createHash('sha256').update(ticket.diffPatch).digest('hex') ||
+      attestation.workerId !== payload.workerId) {
+    return res.status(409).json({ verified: false, error: 'TESTED_PATCH_ATTESTATION_REQUIRED' });
+  }
+  const lease = clusterDb.getActiveLeaseAuth(ticketId);
+  // The exact signed token ID must be the one the authoritative DB leased
+  // to this worker in this epoch; arbitrary historical tokens cannot pass.
+  if (!lease || !payload.tokenId || lease.tokenId !== payload.tokenId ||
+      lease.workerId !== payload.workerId || lease.epochId !== snapshot.epochId ||
+      lease.expiresAt <= Date.now()) {
+    return res.status(403).json({ verified: false, error: 'WORKER_LEASE_NOT_CURRENT' });
   }
 
-  // 4. Require verified sandbox test pass before accepting push
-  if (ticket.status !== 'READY_FOR_REVIEW' && ticket.status !== 'TESTING_SANDBOX') {
-    return res.status(403).json({
-      verified: false,
-      exitCode: 1,
-      error: `403_TEST_NOT_PASSED: Ticket must pass ephemeral sandbox test before gatekeeper accepts push (current status: ${ticket.status})`
-    });
+  const requiredApprovals = Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS || '1');
+  const evidence = await verifyGitHubMergeEvidence({
+    repo: githubRepo, token: githubToken, branch: ticket.branch || `ai/${ticketId}`,
+    allowedFiles: ticket.allowedFiles,
+    baselineCommit: attestation.baselineCommit,
+    candidateTreeSha: attestation.candidateTreeSha,
+    requiredChecks, requiredApprovals
+  });
+  if (!evidence.verified) {
+    const httpStatus = evidence.error === 'GITHUB_API_UNAVAILABLE' ? 502 :
+      evidence.error === 'GITHUB_VERIFICATION_NOT_CONFIGURED' ? 503 : 409;
+    return res.status(httpStatus).json({ verified: false, error: evidence.error });
   }
 
-  // 5. Real Git Commit SHA (Eliminated fake sha256 fallback)
-  let verifiedCommitSha = '';
-  try {
-    const gitHead = child_process.execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
-    verifiedCommitSha = gitHead;
-  } catch (e: any) {
-    return res.status(400).json({
-      verified: false,
-      exitCode: 1,
-      error: `400_GIT_COMMIT_NOT_FOUND: Authoritative Git commit could not be verified from repository: ${e.message}`
-    });
+  // Fail closed if a new patch, epoch or state update happened during GitHub IO.
+  const committed = clusterDb.recordVerifiedGitMerge({
+    ticketId, repo: evidence.repo, prNumber: evidence.prNumber,
+    branch: evidence.branch, headSha: evidence.headSha,
+    mergeSha: evidence.mergeSha, treeSha: evidence.treeSha,
+    patchSha256: attestation.patchSha256, epochId: snapshot.epochId,
+    workerId: payload.workerId, tokenId: payload.tokenId!
+  });
+  if (!committed) {
+    return res.status(409).json({ verified: false, error: 'GITHUB_MERGE_EVIDENCE_STALE' });
   }
-
-  // Update ticket state to COMMITTED_PUSHED
-  ticket.status = 'COMMITTED_PUSHED';
-  ticket.rollbackCommit = verifiedCommitSha;
-  ticket.logs.push({
-    timestamp: new Date().toLocaleTimeString(),
-    level: 'SUCCESS',
-    message: `[GIT PUSH VERIFIED] Ed25519 token verified. Branch merged into tested/${ticket.id}. Verified Commit SHA: ${verifiedCommitSha.substring(0, 8)}`
-  });
-
-  // Free assigned worker node
-  if (ticket.assignedTo) {
-    const workerNode = clusterState.nodes.find(n => n.id === ticket.assignedTo);
-    if (workerNode) {
-      workerNode.status = 'IDLE';
-      workerNode.currentTicketId = undefined;
-    }
+  if (active) {
+    active.status = 'COMMITTED_PUSHED';
+    active.rollbackCommit = evidence.mergeSha;
   }
-
-  // Persist to transactional database
-  clusterDb.updateTicket(ticket.id, {
-    status: 'COMMITTED_PUSHED',
-    rollbackCommit: verifiedCommitSha,
-    assignedTo: undefined,
-    logMessage: {
-      level: 'SUCCESS',
-      message: `[GIT PUSH VERIFIED] Ed25519 token verified. Merged into tested/${ticket.id}. SHA: ${verifiedCommitSha.substring(0, 8)}`
-    }
-  });
-
-  // Check dependent child tickets (Blueprint Section 4.A & Section 11 Gap #3)
-  const newlyUnblockedTickets: string[] = [];
-  clusterState.tickets.forEach(child => {
-    if (child.status === 'BLOCKED_ON_PARENT') {
-      const parents = child.parentTicketIds || (child.dependsOn ? [child.dependsOn] : []);
-      const allParentsDone = parents.length > 0 && parents.every(pid => {
-        const p = clusterState.tickets.find(t => t.id === pid);
-        return p && p.status === 'COMMITTED_PUSHED';
-      });
-      if (allParentsDone) {
-        child.status = 'PENDING';
-        child.logs.push({
-          timestamp: new Date().toLocaleTimeString(),
-          level: 'INFO',
-          message: `[DEPENDENCY UNBLOCKED] All parents (${parents.join(', ')}) merged! Ticket is now OPEN for worker claim.`
-        });
-        clusterDb.updateTicket(child.id, { status: 'PENDING' });
-        newlyUnblockedTickets.push(child.id);
-      }
-    }
-  });
-
-  clusterState.telegramFeed.unshift({
-    id: `tg-merge-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'ALERT_MERGE',
-    text: `🚀 [TICKET MERGED] ${ticket.id} (${ticket.title}) pushed to tested/! ${newlyUnblockedTickets.length > 0 ? `Unblocked: ${newlyUnblockedTickets.join(', ')}` : ''}`
-  });
-
-  broadcastToTelegram(
-    `🚀 <b>[TICKET MERGED & TESTED]</b>\n\n` +
-    `🎫 <b>Ticket:</b> ${ticket.id}: ${ticket.title}\n` +
-    `🌿 <b>Branch:</b> <code>tested/${ticket.id}</code>\n` +
-    `🔐 <b>Commit Hash:</b> <code>${verifiedCommitSha}</code>\n` +
-    `🛡️ <b>Ed25519 Token:</b> Verified by Git Pre-Receive Gatekeeper\n` +
-    (newlyUnblockedTickets.length > 0 ? `\n🔓 <b>Unblocked Children:</b> <code>${newlyUnblockedTickets.join(', ')}</code> (Now PENDING for workers)` : '')
-  );
-
-  clusterDb.appendAuditLog({
-    actor: ticket.assignedTo || 'Worker',
-    action: 'GIT_PUSH_VERIFIED_MERGED',
-    ticketId: ticket.id,
-    reasoning: 'Ed25519 asymmetric signature verified. Tested diff merged with zero exit code.',
-    details: { rollbackCommit: verifiedCommitSha, newlyUnblockedTickets, tokenId: payload.tokenId }
-  });
-
   return res.json({
-    verified: true,
-    exitCode: 0,
-    message: `200_OK: Ed25519 signature valid. Branch accepted into tested/${ticket.id}.`,
-    payload,
-    ticket,
-    newlyUnblockedTickets
+    success: true, verified: true, status: 'COMMITTED_PUSHED',
+    ticketId, repository: evidence.repo, pullRequest: evidence.prNumber,
+    headSha: evidence.headSha, mergedCommit: evidence.mergeSha,
+    verifiedTreeSha: evidence.treeSha
   });
+});
+
+// Explicit, administrator-triggered draft PR creation for an already pushed
+// worker branch. No GitHub merge endpoint is invoked by this route.
+const activeDraftPrCreations = new Set<string>();
+app.post('/api/cluster/ticket/create-draft-pr', authRole(['ADMIN']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string' || !ticketId.trim()) {
+    return res.status(400).json({ success: false, error: 'INVALID_TICKET_ID' });
+  }
+  if (process.env.SUTRADHAR_ENABLE_PR_CREATION !== 'true') {
+    return res.status(503).json({ success: false, error: 'DRAFT_PR_CREATION_DISABLED' });
+  }
+  const repo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const token = process.env.SUTRADHAR_GITHUB_PR_TOKEN?.trim() || '';
+  const requiredChecks = (process.env.SUTRADHAR_REQUIRED_CHECKS || '')
+    .split(';').map(x => x.trim()).filter(Boolean);
+  const requiredApprovals = Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS || '1');
+  if (!repo || !token || !requiredChecks.length ||
+      !Number.isSafeInteger(requiredApprovals) || requiredApprovals < 1 ||
+      requiredApprovals > 5) {
+    return res.status(503).json({ success: false, error: 'DRAFT_PR_CONFIGURATION_MISSING' });
+  }
+  if (activeDraftPrCreations.has(ticketId)) {
+    return res.status(409).json({ success: false, error: 'DRAFT_PR_ALREADY_IN_PROGRESS' });
+  }
+  const ticket = clusterDb.getAllTickets().find(t => t.id === ticketId);
+  if (!ticket) return res.status(404).json({ success: false, error: 'TICKET_NOT_FOUND' });
+  const snapshot = clusterDb.getSystemState();
+  if (snapshot.killSwitchActive) {
+    return res.status(423).json({ success: false, error: 'CLUSTER_PAUSED' });
+  }
+  if (ticket.status !== 'READY_FOR_REVIEW' || !ticket.diffPatch || !ticket.branch) {
+    return res.status(409).json({ success: false, error: 'VERIFIED_DOCKER_TEST_REQUIRED' });
+  }
+  const attestation = clusterDb.getSandboxAttestation(ticketId);
+  const hash = crypto.createHash('sha256').update(ticket.diffPatch).digest('hex');
+  if (!attestation || attestation.epochId !== snapshot.epochId ||
+      attestation.patchSha256 !== hash || !attestation.changedFiles.length) {
+    return res.status(409).json({ success: false, error: 'TESTED_TREE_ATTESTATION_MISSING' });
+  }
+  const verified = verifyEd25519Token(ticket.ed25519Token || '', ticketId,
+    snapshot.epochId, ticket.allowedFiles);
+  if (!verified.verified || !verified.payload || !verified.payload.tokenId) {
+    return res.status(403).json({ success: false, error: 'DRAFT_PR_LEASE_SIGNATURE_INVALID' });
+  }
+  const signed = verified.payload;
+  const lease = clusterDb.getActiveLeaseAuth(ticketId);
+  if (!lease || lease.workerId !== signed.workerId ||
+      lease.workerId !== attestation.workerId ||
+      ticket.assignedTo !== signed.workerId ||
+      lease.tokenId !== signed.tokenId ||
+      lease.epochId !== snapshot.epochId || lease.expiresAt <= Date.now() ||
+      clusterDb.isTokenRevoked(signed.tokenId)) {
+    return res.status(403).json({ success: false, error: 'DRAFT_PR_LEASE_NOT_CURRENT' });
+  }
+
+  activeDraftPrCreations.add(ticketId);
+  try {
+    const outcome = await createVerifiedDraftPr({
+      repo, token, branch: ticket.branch, ticketId,
+      baselineCommit: attestation.baselineCommit,
+      candidateTreeSha: attestation.candidateTreeSha,
+      changedFiles: attestation.changedFiles,
+      allowedFiles: ticket.allowedFiles,
+      title: `[${ticketId}] ${ticket.title}`.slice(0, 160),
+      description: ticket.description || ''
+    });
+    if (!outcome.created) {
+      const code = outcome.error === 'DRAFT_PR_GITHUB_API_UNAVAILABLE' ? 502 :
+        outcome.error === 'DRAFT_PR_CONFIGURATION_INVALID' ? 503 : 409;
+      return res.status(code).json({ success: false, error: outcome.error });
+    }
+    const recorded = clusterDb.recordVerifiedDraftPr({
+      ticketId, repo: outcome.repo, prNumber: outcome.prNumber,
+      branch: outcome.branch, headSha: outcome.headSha,
+      treeSha: outcome.treeSha, patchSha256: attestation.patchSha256,
+      epochId: snapshot.epochId,
+      workerId: signed.workerId, tokenId: signed.tokenId
+    });
+    if (!recorded) {
+      // GitHub may already contain a draft PR: do not mislabel the ticket.
+      return res.status(409).json({ success: false,
+        error: 'DRAFT_PR_STATE_CHANGED_MANUAL_RECONCILIATION',
+        message: 'A draft PR might exist on GitHub, but current ticket/lease evidence no longer matches.' });
+    }
+    return res.status(outcome.existing ? 200 : 201).json({
+      success: true, status: 'READY_FOR_REVIEW',
+      draft: true, existing: outcome.existing,
+      ticketId, repository: repo, prNumber: outcome.prNumber,
+      pullRequestUrl: outcome.url, headSha: outcome.headSha,
+      testedTreeSha: outcome.treeSha,
+      message: 'Draft PR opened for human review. No merge or push to main was performed.'
+    });
+  } catch {
+    return res.status(502).json({ success: false, error: 'DRAFT_PR_OPERATION_FAILED' });
+  } finally {
+    activeDraftPrCreations.delete(ticketId);
+  }
 });
 
 // Master Public Key Endpoint
@@ -1596,7 +1740,7 @@ app.post('/api/cluster/node/failover', authRole(['ADMIN']), (req, res) => {
 });
 
 // 8. Bot-to-Bot RFC Delegation Protocol
-app.post('/api/cluster/rfc/delegate', authRole(['ADMIN', 'WORKER']), (req, res) => {
+app.post('/api/cluster/rfc/delegate', authRole(['ADMIN']), (req, res) => {
   const { fromNodeId, toNodeId, interfaceName, reason } = req.body;
   const fromNode = clusterState.nodes.find(n => n.id === fromNodeId) || clusterState.nodes[4];
   const toNode = clusterState.nodes.find(n => n.id === toNodeId) || clusterState.nodes[3];
@@ -1863,6 +2007,9 @@ async function handleTelegramIncomingMessage(chatId: string | number, rawText: s
     if (!auth.isAdmin) {
       replyText = `🚫 <b>[UNAUTHORIZED]</b> Sender <code>${escapeTelegramHtml(senderName)}</code> is not authorized to command graceful shutdown.`;
     } else {
+      clusterState.killSwitchActive = true;
+      clusterState.killSwitchReason = 'GRACEFUL_STOP_AFTER_CURRENT';
+      clusterDb.setKillSwitch(true, clusterState.killSwitchReason, senderName);
       clusterDb.appendAuditLog({
         actor: senderName,
         action: 'GRACEFUL_SHUTDOWN_TRIGGERED',
@@ -1925,17 +2072,16 @@ async function handleTelegramIncomingMessage(chatId: string | number, rawText: s
       const tktId = cleanText.replace(/^\/rollback\s*/i, '').trim().toUpperCase();
       const ticket = clusterState.tickets.find(t => t.id.toUpperCase() === tktId);
       if (ticket) {
-        const rollbackRes = clusterDb.rollbackMerge(ticket.id, `Triggered via Telegram rollback command by ${senderName}`, senderName);
-        const hotfixId = rollbackRes.hotfixId || `TKT-ROLLBACK-${Math.floor(100 + Math.random() * 900)}`;
-
-        clusterState.telegramFeed.unshift({
-          id: `tg-rollback-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'ALERT_P0',
-          urgent: true,
-          text: `🚨 [ROLLBACK EXECUTED] ${ticket.id} rolled back. Auto-created hotfix ${hotfixId}.`
-        });
-        replyText = `🚨 <b>Rollback Executed!</b>\n\nTarget commit reverted. Auto-spawned hotfix ticket <code>${hotfixId}</code> assigned to Master.`;
+        if (ticket.status !== 'COMMITTED_PUSHED' && ticket.status !== 'ROLLBACK_REQUESTED') {
+          replyText = '⚠️ Rollback requires a verified merged ticket.';
+        } else {
+          ticket.status = 'ROLLBACK_REQUESTED';
+          clusterDb.updateTicket(ticket.id, {
+            status: 'ROLLBACK_REQUESTED',
+            logMessage: { level: 'WARN', message: `Rollback requested by Telegram admin ${senderName}; Git revert NOT executed.` }
+          });
+          replyText = `⚠️ <b>Rollback REQUESTED</b> for <code>${escapeTelegramHtml(ticket.id)}</code>. No Git revert has been executed. Awaiting verified Git pipeline.`;
+        }
       } else {
         replyText = `⚠️ Usage: <code>/rollback &lt;TICKET-ID&gt;</code>`;
       }
@@ -2158,12 +2304,11 @@ app.post('/api/telegram/config', authRole(['ADMIN']), (req, res) => {
 });
 
 // Get Telegram Config Status (Redacting sensitive botToken for non-admins)
-app.get('/api/telegram/config', (req, res) => {
-  const role = resolveCallerRole(req);
+app.get('/api/telegram/config', authRole(['ADMIN']), (req, res) => {
   res.json({ 
     configured: !!(telegramConfig.botToken || process.env.TELEGRAM_BOT_TOKEN),
     chatId: telegramConfig.chatId || process.env.TELEGRAM_CHAT_ID || undefined,
-    botToken: role === 'ADMIN' ? telegramConfig.botToken : (telegramConfig.botToken ? '••••••••' : undefined),
+    botToken: telegramConfig.botToken ? '••••••••' : undefined,
     isPolling: telegramConfig.isPolling,
     knownChatsCount: telegramConfig.knownChatIds.size
   });
@@ -2275,10 +2420,18 @@ app.post('/api/cluster/kill-switch', authRole(['ADMIN']), (req, res) => {
 // 11. Watchdog Heartbeat Endpoint
 app.post('/api/cluster/watchdog/heartbeat', authRole(['ADMIN', 'WORKER']), (req, res) => {
   const { ticketId, workerId, progressPct, currentStep } = req.body;
+  if ((req as any).clientRole === 'WORKER' && workerId !== (req as any).authenticatedWorkerId) {
+    return res.status(403).json({ success: false, error: '403_WORKER_ID_MISMATCH' });
+  }
   const lease = clusterState.watchdogLeases.find(l => l.ticketId === ticketId);
   
   if (!lease) {
-    return res.status(404).json({ success: false, error: `No active lease for ticket ${ticketId}` });
+    return res.status(403).json({ success: false, error: '403_INVALID_OR_REVOKED_LEASE' });
+  }
+
+  // Durable lease ownership is authoritative, not the request's asserted workerId.
+  if (!workerId || !clusterDb.recordLeaseHeartbeat(ticketId, workerId, typeof progressPct === 'number' ? progressPct : lease.progressPct, currentStep || lease.lastStep)) {
+    return res.status(403).json({ success: false, error: '403_INVALID_OR_REVOKED_LEASE' });
   }
 
   // Task 8: Reject wrong-worker heartbeats
@@ -2295,8 +2448,6 @@ app.post('/api/cluster/watchdog/heartbeat', authRole(['ADMIN', 'WORKER']), (req,
   if (currentStep) lease.lastStep = currentStep;
 
   // Persist heartbeat to SQLite clusterDb
-  clusterDb.recordLeaseHeartbeat(ticketId, workerId || lease.workerId, typeof progressPct === 'number' ? progressPct : lease.progressPct, currentStep || lease.lastStep);
-
   // Add telegram progress feed item periodically
   clusterState.telegramFeed.unshift({
     id: `tg-hb-${Date.now()}`,
@@ -2534,7 +2685,7 @@ const sharedStateDB = {
 };
 
 // GET all 6 DB collections
-app.get('/api/db/all', (req, res) => {
+app.get('/api/db/all', authRole(['ADMIN']), (req, res) => {
   res.json({
     success: true,
     system_state: clusterDb.getSystemState(),
@@ -2550,6 +2701,9 @@ app.get('/api/db/all', (req, res) => {
 // POST Atomic Ticket Claim (Section 7, Section 11 Gap #3 & Gap #10)
 app.post('/api/tickets/claim', authRole(['ADMIN', 'WORKER']), (req, res) => {
   const { workerId, ticketId } = req.body;
+  if ((req as any).clientRole === 'WORKER' && workerId !== (req as any).authenticatedWorkerId) {
+    return res.status(403).json({ success: false, error: '403_WORKER_ID_MISMATCH' });
+  }
   const ticket = clusterState.tickets.find(t => t.id === ticketId);
   if (!ticket) return res.status(404).json({ success: false, error: 'Ticket not found' });
 
@@ -2562,8 +2716,11 @@ app.post('/api/tickets/claim', authRole(['ADMIN', 'WORKER']), (req, res) => {
   }
 
   // Invoke atomic SQLite transaction with concurrency and dependency checks
-  const tokenId = `SEC-CLAIM-${Date.now()}`;
-  const claimResult = clusterDb.tryClaimTicket(workerId, ticketId, tokenId);
+  // The same signed token ID must be persisted in the durable worker lease.
+  // An arbitrary client-provided or synthetic token ID never grants Git access.
+  const claimEpoch = clusterDb.getSystemState().epochId;
+  const issued = generateEd25519Token(ticketId, workerId, claimEpoch, ticket.allowedFiles, 900);
+  const claimResult = clusterDb.tryClaimTicket(workerId, ticketId, issued.tokenId, 900);
 
   if (!claimResult.success) {
     const isCapExceeded = claimResult.error?.includes('MAX_WORKERS_CAP_EXCEEDED');
@@ -2576,6 +2733,9 @@ app.post('/api/tickets/claim', authRole(['ADMIN', 'WORKER']), (req, res) => {
   // Synchronize local in-memory clusterState
   ticket.status = 'SYNTHESIZING_DIFF';
   ticket.assignedTo = workerId;
+  ticket.ed25519Token = issued.tokenHeader;
+  ticket.tokenExpiresAt = issued.expiresAt;
+  clusterDb.updateTicket(ticketId, { ed25519Token: issued.tokenHeader, tokenExpiresAt: issued.expiresAt });
   ticket.branch = claimResult.branch || `worker-${workerId.slice(-4).toLowerCase()}/ticket-${ticket.id.toLowerCase().replace('tkt-', '')}`;
   ticket.logs.push({
     timestamp: new Date().toLocaleTimeString(),
@@ -2603,7 +2763,7 @@ app.post('/api/tickets/claim', authRole(['ADMIN', 'WORKER']), (req, res) => {
 });
 
 // POST Block Ticket for Clarification (Section 3.3)
-app.post('/api/tickets/:id/block-clarification', authRole(['ADMIN', 'WORKER']), (req, res) => {
+app.post('/api/tickets/:id/block-clarification', authRole(['ADMIN']), (req, res) => {
   const { id } = req.params;
   const { question, workerId, reasoning } = req.body;
   const ticket = clusterState.tickets.find(t => t.id === id);
@@ -2679,60 +2839,23 @@ app.post('/api/tickets/:id/answer-clarification', authRole(['ADMIN']), (req, res
 
 // POST Rollback Bad Merge (Section 11 Gap #5 - Admin Only)
 app.post('/api/master/rollback', authRole(['ADMIN']), (req, res) => {
-  const { ticketId, reason, actor } = req.body;
+  const { ticketId, reason } = req.body;
   const ticket = clusterState.tickets.find(t => t.id === ticketId);
   if (!ticket) return res.status(404).json({ success: false, error: 'Ticket not found' });
-
-  // Task 12: Transition to ROLLBACK_REQUESTED then ROLLBACK_COMPLETED
+  if (ticket.status !== 'COMMITTED_PUSHED' && ticket.status !== 'ROLLBACK_REQUESTED') {
+    return res.status(409).json({ success: false, error: 'ROLLBACK_REQUIRES_VERIFIED_MERGE' });
+  }
   ticket.status = 'ROLLBACK_REQUESTED';
-
-  // Execute rollback in SQLite clusterDb
-  const rollbackResult = clusterDb.rollbackMerge(ticketId, reason || 'Regression detected in QA', actor || 'Master');
-  const hotfixId = rollbackResult.hotfixId || `TKT-HOTFIX-${Math.floor(100 + Math.random() * 900)}`;
-
-  ticket.status = 'ROLLBACK_COMPLETED';
-
-  const hotfixTicket: Ticket = {
-    id: hotfixId,
-    title: `[ROLLBACK HOTFIX] Revert ${ticket.id}: ${ticket.title}`,
-    description: `Emergency rollback: ${reason || 'Regression detected in QA'}. Reverting commit ${ticket.rollbackCommit || 'HEAD~1'}.`,
-    priority: 'P0_URGENT',
-    domain: ticket.domain,
-    status: 'SYNTHESIZING_DIFF',
-    assignedTo: clusterState.activeMasterId,
-    parentTicketIds: [],
-    allowedFiles: ticket.allowedFiles,
-    readOnlyContracts: ticket.readOnlyContracts,
-    retryCount: 0,
-    maxRetries: 3,
-    branch: `ai/${hotfixId}`,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    logs: [{
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'WARN',
-      message: `Rollback triggered for ${ticket.id}. Reverting commit ${ticket.rollbackCommit || 'HEAD~1'}.`
-    }]
-  };
-
-  clusterState.tickets.unshift(hotfixTicket);
-  clusterState.telegramFeed.unshift({
-    id: `tg-rollback-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'ALERT_P0',
-    urgent: true,
-    text: `🚨 [ROLLBACK EXECUTED] ${ticket.id} rolled back. Hotfix ${hotfixId} auto-spawned.`
+  clusterDb.updateTicket(ticket.id, {
+    status: 'ROLLBACK_REQUESTED',
+    logMessage: { level: 'WARN', message: `Rollback requested: ${String(reason || 'Regression detected')}. Awaiting verified Git revert and merge.` }
   });
-
-  broadcastToTelegram(
-    `🚨 <b>[BAD MERGE ROLLBACK EXECUTED]</b>\n\n` +
-    `🎫 <b>Reverted Ticket:</b> ${ticket.id}\n` +
-    `⚡ <b>Commit Reverted:</b> <code>${ticket.rollbackCommit || 'HEAD~1'}</code>\n` +
-    `📝 <b>Reason:</b> ${reason || 'Regression discovered post-merge'}\n` +
-    `🔥 <b>Auto Hotfix Created:</b> <code>${hotfixId}</code>`
-  );
-
-  res.json({ success: true, hotfixTicket });
+  return res.status(202).json({
+    success: true,
+    status: 'ROLLBACK_REQUESTED',
+    ticketId,
+    message: 'No Git revert or merge was executed; rollback requires the real Git pipeline.'
+  });
 });
 
 // POST Update Prompt Version (Section 11 Gap #9 - Admin Only)
@@ -2795,9 +2918,7 @@ app.post('/api/telegram/test-ping', authRole(['ADMIN']), async (req, res) => {
 
 // Background Watchdog & Split-Brain Evaluation Loop (Runs every 10s)
 setInterval(() => {
-  if (!clusterState.isLiveSimulation || clusterState.killSwitchActive) {
-    return;
-  }
+  // Lease expiry must continue even when the system is paused or demo mode is disabled.
 
   const now = Date.now();
 

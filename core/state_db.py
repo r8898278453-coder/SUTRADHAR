@@ -368,9 +368,10 @@ class StateDatabase:
             logger.error("Authoritative SQLite DB unavailable. Refusing master election from local cache.")
             return False, "UNAVAILABLE", 0
 
-        now = int(time.time())
+        now = int(time.time() * 1000)  # Node SQLite timestamps are milliseconds
         try:
             with conn:
+                conn.execute('BEGIN IMMEDIATE')  # serialize reads and CAS writes
                 row = conn.execute("SELECT epoch_id, current_master_id, last_heartbeat FROM system_state WHERE id = 1").fetchone()
                 if not row:
                     return False, "UNINITIALIZED", 0
@@ -383,7 +384,7 @@ class StateDatabase:
                     conn.execute("UPDATE system_state SET last_heartbeat = ?, updated_at = ? WHERE id = 1", (now, now))
                     return True, worker_id, curr_epoch
 
-                if (now - last_hb) < heartbeat_ttl_seconds and curr_master != "UNINITIALIZED":
+                if (now - last_hb) < heartbeat_ttl_seconds * 1000 and curr_master != "UNINITIALIZED":
                     return False, curr_master, curr_epoch
 
                 new_epoch = curr_epoch + 1
@@ -419,9 +420,10 @@ class StateDatabase:
         if not conn:
             return False, "AUTHORITATIVE_DB_UNAVAILABLE: Cannot grant leases without authoritative SQLite database"
 
-        now = int(time.time())
+        now = int(time.time() * 1000)  # Node SQLite timestamps are milliseconds
         try:
             with conn:
+                conn.execute('BEGIN IMMEDIATE')  # serialize reads and CAS writes
                 sys_row = conn.execute("SELECT kill_switch_active, max_concurrent_workers, epoch_id FROM system_state WHERE id = 1").fetchone()
                 if sys_row and sys_row["kill_switch_active"]:
                     return False, "KILL_SWITCH_ACTIVE: Cluster execution is paused."

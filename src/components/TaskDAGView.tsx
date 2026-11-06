@@ -25,8 +25,9 @@ import type { Ticket, ClusterState } from '../types.ts';
 interface TaskDAGViewProps {
   state: ClusterState;
   onSynthesize: (ticketId: string) => void;
-  onTest: (ticketId: string, simulateFailure?: boolean) => void;
+  onTest: (ticketId: string) => void;
   onVerifyPush: (ticketId: string) => void;
+  onCreateDraftPr: (ticketId: string) => void;
   onSelectTicketForConsole: (ticket: Ticket) => void;
   onClaimTicket?: (ticketId: string, workerId: string) => void;
   onBlockClarification?: (ticketId: string, question: string, reason?: string) => void;
@@ -39,6 +40,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
   onSynthesize,
   onTest,
   onVerifyPush,
+  onCreateDraftPr,
   onSelectTicketForConsole,
   onClaimTicket,
   onBlockClarification,
@@ -584,7 +586,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
 
                     <button
                       id={`btn-test-${selectedTicket.id}`}
-                      onClick={() => onTest(selectedTicket.id, false)}
+                      onClick={() => onTest(selectedTicket.id)}
                       className="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
                     >
                       <Play className="w-3.5 h-3.5 text-cyan-400" />
@@ -592,22 +594,26 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                     </button>
 
                     <button
+                      onClick={() => onCreateDraftPr(selectedTicket.id)}
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="A branch containing the exact Docker-tested commit must already be pushed"
+                    >
+                      <GitBranch className="w-3.5 h-3.5" />
+                      3. Create Draft PR
+                    </button>
+                    <button
                       id={`btn-verify-${selectedTicket.id}`}
                       onClick={() => onVerifyPush(selectedTicket.id)}
-                      className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                      3. Git Push
+                      4. Verify GitHub Merge
                     </button>
                   </div>
 
                   <div className="flex items-center justify-between pt-2">
-                    <button
-                      onClick={() => onTest(selectedTicket.id, true)}
-                      className="text-[11px] font-mono text-rose-400 hover:text-rose-300 underline"
-                    >
-                      Simulate Docker Test Failure (Self-Healing Trigger)
-                    </button>
 
                     <button
                       onClick={() => onSelectTicketForConsole(selectedTicket)}

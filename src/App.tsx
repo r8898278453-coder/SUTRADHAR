@@ -21,10 +21,51 @@ export const App: React.FC = () => {
   const [isRFCModalOpen, setIsRFCModalOpen] = useState(false);
   const [liveCardText, setLiveCardText] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [adminKey, setAdminKey] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  useEffect(() => {
+    fetch('/api/auth/session', { credentials: 'same-origin' })
+      .then(res => setAuthenticated(res.ok))
+      .catch(() => setAuthenticated(false))
+      .finally(() => setCheckingAuth(false));
+  }, []);
+
+  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoggingIn(true);
+    setLoginError('');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminKey })
+      });
+      if (!res.ok) {
+        setLoginError('Invalid admin key or login unavailable.');
+        return;
+      }
+      setAdminKey('');
+      setAuthenticated(true);
+    } catch {
+      setLoginError('Cannot contact the control plane.');
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); }
+    finally { setAuthenticated(false); setState(fallbackClusterState); setActiveTicket(null); }
   };
 
   // Fetch cluster state
@@ -50,10 +91,11 @@ export const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!authenticated) return;
     fetchState();
     const interval = setInterval(fetchState, 5000);
     return () => clearInterval(interval);
-  }, [fetchState]);
+  }, [fetchState, authenticated]);
 
   // Handler: Synthesize patch
   const handleSynthesize = async (ticketId: string) => {
@@ -74,26 +116,28 @@ export const App: React.FC = () => {
     }
   };
 
-  // Handler: Ephemeral Sandbox Test
-  const handleTestSandbox = async (ticketId: string, simulateFailure = false) => {
-    showToast(simulateFailure ? `Running Sandbox test with injected failure...` : `Running Ephemeral Docker sandbox pytest suite...`);
+  // Handler: Actual isolated Docker test (no simulated pass/fail path)
+  const handleTestSandbox = async (ticketId: string) => {
+    showToast(`Running real isolated Docker tests for ${ticketId}...`);
     try {
       const res = await fetch('/api/cluster/ticket/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticketId, simulateFailure })
+        body: JSON.stringify({ ticketId })
       });
       const data = await res.json();
-      if (data.success) {
-        if (data.exitCode === 0) {
-          showToast(`✅ Sandbox test passed (Exit 0)! Ready for Ed25519 push.`);
-        } else {
-          showToast(`⚠️ Docker Sandbox failed (Exit 1). Triggering Self-Healing loop.`);
-        }
-        await fetchState();
+      if (!res.ok || !data.success) {
+        showToast(`Sandbox blocked: ${data.error || data.message || res.status}`);
+      } else if (data.status === 'TEST_PASSED' && data.exitCode === 0) {
+        showToast(`Docker tests passed (exit 0); ready for review, NOT merged.`);
+      } else if (data.status === 'TEST_FAILED') {
+        showToast(`Docker tests failed (exit ${data.exitCode}); self-healing can use actual stderr.`);
+      } else {
+        showToast(`Sandbox status: ${data.status || 'unknown'}`);
       }
-    } catch (e) {
-      showToast(`Sandbox test error: ${e}`);
+      await fetchState();
+    } catch (error) {
+      showToast(`Sandbox request error: ${error}`);
     }
   };
 
@@ -116,7 +160,27 @@ export const App: React.FC = () => {
     }
   };
 
-  // Handler: Verify & Git Push
+  // Submit only an existing, exact Docker-tested branch as a draft GitHub PR.
+  const handleCreateDraftPr = async (ticketId: string) => {
+    try {
+      const response = await fetch('/api/cluster/ticket/create-draft-pr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId })
+      });
+      const data = await response.json();
+      if (response.ok && data.success && data.draft) {
+        showToast(`GitHub draft PR #${data.prNumber} ${data.existing ? 'already exists' : 'created'}; awaiting human review, not merged.`);
+      } else {
+        showToast(`Draft PR blocked: ${data.error || response.status}`);
+      }
+      await fetchState();
+    } catch (error) {
+      showToast(`Draft PR error: ${error}`);
+    }
+  };
+
+  // Handler: Verify merged GitHub PR
   const handleVerifyPush = async (ticketId: string) => {
     try {
       const res = await fetch('/api/cluster/ticket/verify-push', {
@@ -126,9 +190,9 @@ export const App: React.FC = () => {
       });
       const data = await res.json();
       if (data.verified) {
-        showToast(`✅ Ed25519 Token Verified! Push accepted into tested/${ticketId}.`);
+        showToast(`Verified remote Git merge evidence for ${ticketId}.`);
       } else {
-        showToast(`❌ Git Hook Rejected: ${data.error}`);
+        showToast(`Git merge not verified: ${data.error || 'Missing remote evidence'}`);
       }
       await fetchState();
     } catch (e) {
@@ -214,7 +278,7 @@ export const App: React.FC = () => {
 
   // Handler: Rollback Bad Merge
   const handleRollback = async (ticketId: string, reason?: string) => {
-    showToast(`🚨 Initiating emergency revert for ${ticketId}...`);
+    showToast(`Requesting rollback review for ${ticketId}...`);
     try {
       const res = await fetch('/api/master/rollback', {
         method: 'POST',
@@ -223,7 +287,7 @@ export const App: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        showToast(`🔄 Revert issued! Hotfix ticket ${data.hotfixTicket.id} spawned.`);
+        showToast(`Rollback requested for ${ticketId}; no Git revert has executed yet.`);
         await fetchState();
       }
     } catch (e) {
@@ -287,6 +351,26 @@ export const App: React.FC = () => {
     }
   };
 
+  if (checkingAuth) {
+    return <div className="min-h-screen bg-[#080d17] text-slate-100 flex items-center justify-center">Checking control plane session…</div>;
+  }
+
+  if (!authenticated) {
+    return (
+      <div className="min-h-screen bg-[#080d17] text-slate-100 flex items-center justify-center p-6">
+        <form onSubmit={handleLogin} className="w-full max-w-md rounded-2xl border border-slate-700 bg-[#101a2b] p-8 shadow-2xl space-y-5">
+          <h1 className="text-2xl font-bold">SUTRADHAR Control Plane</h1>
+          <p className="text-sm text-slate-400">Administrator authentication is required to view cluster state or operate workers.</p>
+          <label className="block text-sm text-slate-200" htmlFor="adminKey">Administrator key</label>
+          <input id="adminKey" type="password" autoComplete="current-password" value={adminKey} onChange={e => setAdminKey(e.target.value)} required className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-3 text-white" />
+          {loginError && <p role="alert" className="text-sm text-red-400">{loginError}</p>}
+          <button type="submit" disabled={loggingIn || !adminKey.trim()} className="w-full rounded-lg bg-cyan-500 px-4 py-3 font-semibold text-slate-950 disabled:opacity-50">{loggingIn ? 'Signing in…' : 'Sign in securely'}</button>
+          <p className="text-xs text-slate-500">The key is verified by the backend. The browser receives only an HttpOnly session cookie.</p>
+        </form>
+      </div>
+    );
+  }
+
   if (!state) {
     return (
       <div className="min-h-screen bg-[#070b12] text-slate-100 flex items-center justify-center font-mono">
@@ -303,6 +387,8 @@ export const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#080d17] text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-white">
       
+      <div className="absolute right-4 top-2 z-50"><button type="button" onClick={handleLogout} className="rounded border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-300">Sign out</button></div>
+
       {/* Top Header & Metrics */}
       <Header
         state={state}
@@ -353,6 +439,7 @@ export const App: React.FC = () => {
             state={state}
             onSynthesize={handleSynthesize}
             onTest={handleTestSandbox}
+            onCreateDraftPr={handleCreateDraftPr}
             onVerifyPush={handleVerifyPush}
             onSelectTicketForConsole={(t) => {
               setActiveTicket(t);
@@ -372,6 +459,7 @@ export const App: React.FC = () => {
             onSynthesize={handleSynthesize}
             onTestSandbox={handleTestSandbox}
             onSelfHeal={handleSelfHeal}
+            onCreateDraftPr={handleCreateDraftPr}
             onVerifyPush={handleVerifyPush}
             onSelectTicket={(t) => setActiveTicket(t)}
           />

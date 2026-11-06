@@ -1,37 +1,39 @@
-# Implementation State
+# Implementation State — 2026-11-06
 
-## Current Status: ACTIVE & VERIFIED
-- **Target Platform**: React 18 SPA + Express.js backend on Vite via `tsx server.ts` running on port 3000 (Node 22.x).
-- **Dev Server Status**: LIVE (listening on `0.0.0.0:3000`, responding with HTTP 200 to root `/`, `/api/health`, `/api/cluster/state`, and `/api/db/all`).
-- **Compilation Status**: Clean build passing `tsc --noEmit` and `compile_applet`.
-- **Security & Integrity**: 16/16 Ed25519 gatekeeper test vectors PASSED (`tests/security_ed25519.test.ts`).
-- **Database & State**: 9/9 SQLite atomic state test vectors PASSED (`tests/cluster_db.test.ts`).
-- **End-to-End Lifecycle**: 15/15 full lifecycle test vectors PASSED (`tests/e2e_lifecycle.test.ts`).
-- **Total Automated Tests**: 40/40 assertions PASSED (100% pass rate).
-- **Python Runtime**: Python 3.10 py_compile verified across all `core/*.py` modules.
+**Status: REAL DOCKER CI VERIFIED; GITHUB MERGE GATE CODE-TESTED; LIVE MERGE/ROLLBACK NOT VERIFIED — NOT PRODUCTION READY**
 
-## Modules & Execution Paths
-1. **Authoritative Shared State Database (`server_db.ts`)**
-   - Status: VERIFIED & LIVE
-   - Storage: `.sutradhar_state/cluster.db` managed via Node 22 built-in `node:sqlite` (`DatabaseSync`) in WAL mode.
-   - Entities: `system_state`, `workers`, `projects`, `tickets`, `ticket_dependencies`, `worker_leases`, `audit_log`, `configuration`, `model_usage`, `merge_queue`, `execution_attempts`, `revoked_tokens`.
-   - Operations: Atomic master CAS election, atomic ticket claims with DAG dependency resolution, watchdog sweep and auto-revocation, clarification pause/resume, and merge rollback.
-2. **Cryptographic Gatekeeper (`core/crypto_signer.py` & `server.ts`)**
-   - Status: VERIFIED
-   - Keys: Asymmetric Ed25519 keypair in `.sutradhar_state/secrets/`.
-   - Gatekeeper: Base64URL-encoded `SEC-<payload>.<signature>` tokens verified against master public key, checking ticket binding, epoch fencing, expiration timestamp, and SHA-256 allowed file whitelist hash.
-3. **LLM Orchestration & Self-Healing (`server.ts` & `core/llm_router.py`)**
-   - Status: LIVE & VERIFIED
-   - SDK: Modern `@google/genai` with pinned `'gemini-3.8-flash'` and `User-Agent: aistudio-build` telemetry header.
-   - Fallbacks: OpenRouter cascade (DeepSeek R1, Qwen 2.5 Coder 32B, LLaMA 3.3 70B).
-   - Telemetry: Latency, token metrics, and success flags persisted into `model_usage` table.
-4. **Control Plane & Express Backend (`server.ts`)**
-   - Status: LIVE
-   - Port: 3000
-   - Integrated routes: `/api/cluster/state`, `/api/cluster/ticket/create`, `/api/cluster/ticket/synthesize`, `/api/cluster/ticket/test`, `/api/cluster/ticket/self-heal`, `/api/cluster/ticket/verify-push`, `/api/tickets/claim`, `/api/db/all`, `/api/cluster/watchdog/heartbeat`, `/api/cluster/watchdog/revoke`, `/api/master/rollback`.
-5. **Frontend UI (`src/App.tsx`, `src/components/*`)**
-   - Status: LIVE
-   - Components: `TaskDAGView`, `ClusterNodeGrid`, `TelegramFeed`, `SecurityAuditView`, `SharedStateInspector`, `ArchitectureBlueprintModal`.
-6. **Telegram Hub & Wire Protocol (`server.ts` & `core/telegram_hub.py`)**
-   - Status: VERIFIED
-   - Escapes HTML injection, restricts administrative commands to approved chat and user IDs, supports live ASCII card broadcasting and long polling.
+The prior text in this file incorrectly equated manually persisted fixture data with verified Docker execution, Git push and remote merge. It has been superseded by evidence-based tracking.
+
+See:
+- [Implementation Tracker](docs/IMPLEMENTATION_TRACKER.md) — module-level implementation/remaining status.
+- [Implementation Log](docs/IMPLEMENTATION_LOG_2026-11-06.md) — changes and validation history.
+- [Real Sandbox Execution](docs/SANDBOX_EXECUTION.md) — runtime configuration, evidence, isolation and limitations.
+- [GitHub Merge Verification](docs/GITHUB_MERGE_VERIFICATION.md) — read-only delivery evidence and limitations.
+- [7 November Implementation Log](docs/IMPLEMENTATION_LOG_2026-11-07.md) — this continuation slice.
+- [GitHub Actions](https://github.com/r8898278453-coder/SUTRADHAR/actions) — check results for the specific commit.
+
+## Implemented foundations
+
+- React control plane and Express REST surface.
+- Real Ed25519 payload signing and verification.
+- SQLite storage with Node-side `BEGIN IMMEDIATE` claims and election.
+- Python SQLite CAS and clock normalization on the fix branch.
+- Gemini and OpenRouter API call code (runtime provider availability not proven here).
+- Telegram chat + admin user allowlisting.
+- Admin session login with HttpOnly SameSite cookie and same-origin mutations.
+- Real Docker test endpoint: Git HEAD snapshot + scoped patch validation + disposable nonroot Docker execution + SQLite test outcomes. Both real runner and HTTP integration pass/fail tests have passed in CI.
+- CI workflow and test entry points on the fix branch.
+
+## Deliberately blocked until integrated
+
+- HTTP Docker testing runs only when `SUTRADHAR_TARGET_REPO_ROOT` and `SUTRADHAR_SANDBOX_TEST_COMMAND` are configured and Docker is available. Missing prerequisites return 503; invalid patch scope returns 422. Production deployment is still unverified.
+- GitHub merge verification now reads actual GitHub REST data when configured: merged PR, single commit, exact tested and merged tree, file scope, required CI checks and independent review. SQLite CAS checks live token/epoch again. Without configuration or trustworthy evidence it fails closed. **No real merged target PR has been acceptance-tested.**
+- Rollback is `ROLLBACK_REQUESTED` until a verified revert merges.
+- The old fixture-based `tests/e2e_lifecycle.test.ts` remains fixture-only for Git/merge. Separate real Docker integration suites now verify patch validation, passing/failing containers, Express API state transitions and SQLite writes.
+- Legacy direct-main Python queue is disabled. Explicit administrator draft PR creation is implemented for an already-pushed exact tested branch (off by default). Live GitHub PR creation acceptance, worker branch push integration, durable merge queue, production branch protection and real rollback remain incomplete.
+
+## Mandatory owner actions
+
+Rotate the historically committed private signing key and invalidate legacy tokens; decide Git history cleanup separately. Configure production HTTPS, administrator credentials, authorized workers, Telegram admin allowlist, and required GitHub checks.
+
+**Do not report 100% completion or deployment readiness based on unit tests alone.**

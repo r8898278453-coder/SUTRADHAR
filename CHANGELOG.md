@@ -1,5 +1,53 @@
 # Changelog
 
+## [Unreleased — protected draft PR creation] - 2026-11-07
+
+### Added
+- Explicit administrator-only draft PR submission, disabled by default and
+  controlled with separate write-scoped GitHub token.
+- Exact tested tree, parent baseline, branch commit count and file-scope
+  verification before draft PR creation; no automatic branch push or merge.
+- Idempotent existing-draft handling, durable draft submission audit record,
+  current signed worker lease / epoch / patch CAS checks.
+- Positive/negative GitHub REST fixtures, API and SQLite regression tests;
+  truthful Create Draft PR / Verify GitHub Merge UI buttons.
+
+### Still pending
+- Live GitHub target branch + draft PR acceptance, protected main configuration,
+  real automated worker push, durable distributed queue, and rollback.
+- No merge/deploy performed and no exposed signing key rotated.
+
+## [Unreleased — GitHub verification slice] - 2026-11-07
+
+### Added
+- Immutable Git tree SHA attestation from a real Docker-tested snapshot; successful test and provenance are stored atomically in SQLite.
+- Read-only GitHub REST merge verifier: single-commit PR parent/baseline, tested head/merged tree equality, allowed-file boundary, successful required GitHub Actions checks, independent human approval and merged-commit ancestry on main.
+- Durable signed worker lease identity: master-issued token ID stored on claim and rechecked in the final SQLite CAS alongside current epoch/revocation/expiry.
+- Verified merge evidence audit table; `COMMITTED_PUSHED` is written only for a genuinely validated remote PR and matching tested artifact.
+- Mocked-GitHub API acceptance/denial tests, HTTP endpoint mocked-REST integration, SQLite CAS regression tests and Python queue safety tests.
+- Operator documentation: [GitHub Merge Verification](docs/GITHUB_MERGE_VERIFICATION.md) and [7 November Log](docs/IMPLEMENTATION_LOG_2026-11-07.md).
+
+### Safety and remaining work
+- Disabled legacy in-process Git `checkout main` / `merge` / `push main` path; no implicit PR merge.
+- **Live target-project GitHub PR acceptance remains unverified.** Tests use controlled REST fixtures and real SQLite, not an actual merged PR.
+- Owner must configure read-only GitHub token, required checks, independent reviewers and branch protection, rotate the previously exposed signer, and complete real revert/rollback and protected PR creation.
+
+## [Unreleased — fix branch] - 2026-11-06
+
+### Implemented and CI-verified
+- Default-deny admin APIs, browser login with HttpOnly session cookie, no hardcoded worker secret, stricter worker identity/lease checks.
+- Actual HTTP-to-Docker test execution: clean `git archive HEAD` snapshot, unified patch validation against allowed files, isolated non-root Docker process, real exit codes, stdout/stderr, retry/DLQ transitions, SQLite attempt/audit persistence and stale-epoch/patch fencing.
+- GitHub Actions now runs real Docker positive, negative and out-of-scope tests, including an Express HTTP-to-Docker-to-SQLite integration.
+- TypeScript, React dashboard, state and worker safety fixes and evidence-based documentation.
+
+### Deliberately blocked / still required
+- No fabricated remote Git merge; `/api/cluster/ticket/verify-push` remains HTTP 501 until real PR/merge evidence is implemented.
+- Rollback is only `ROLLBACK_REQUESTED`, not an actual Git revert.
+- Historical signing-key leak requires owner rotation/revocation.
+- No production readiness claim: real PHP/Node target images, GitHub merge queue, branch protection, multi-worker identities and production dashboard demo isolation remain.
+
+**Documentation:** [Implementation Tracker](docs/IMPLEMENTATION_TRACKER.md) · [Sandbox Execution](docs/SANDBOX_EXECUTION.md) · [Implementation Log](docs/IMPLEMENTATION_LOG_2026-11-06.md).
+
 ## [5.4.0] - 2026-11-04
 ### Added
 - **Authoritative Shared State SQLite Database (`server_db.ts`)**:
