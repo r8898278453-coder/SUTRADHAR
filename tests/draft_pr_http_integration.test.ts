@@ -82,7 +82,7 @@ test('admin-only HTTP draft PR creation is scope/lease gated and never merges', 
         number: 74, html_url: 'https://github.com/acme/widgets/pull/74',
         state: 'open', draft: true,
         head: { ref: claim.branch, sha: HEAD, repo: { full_name: 'acme/widgets' } },
-        base: { ref: 'main', repo: { full_name: 'acme/widgets' } }
+        base: { ref: 'main', sha: BASE, repo: { full_name: 'acme/widgets' } }
       }] : []);
     }
     if (pathname.endsWith('/pulls') && method === 'POST') {
@@ -96,7 +96,7 @@ test('admin-only HTTP draft PR creation is scope/lease gated and never merges', 
         number: 74, html_url: 'https://github.com/acme/widgets/pull/74',
         state: 'open', draft: true,
         head: { ref: claim.branch, sha: HEAD, repo: { full_name: 'acme/widgets' } },
-        base: { ref: 'main', repo: { full_name: 'acme/widgets' } }
+        base: { ref: 'main', sha: BASE, repo: { full_name: 'acme/widgets' } }
       });
     }
     throw new Error('Unexpected fixture GitHub path: ' + pathname);
