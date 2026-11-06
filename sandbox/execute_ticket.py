@@ -32,14 +32,14 @@ class RunnerFailure(Exception):
         self.status = status
 
 
-def scoped_path(raw: str) -> str:
+def scoped_path(raw: str, *, allow_example_file: bool = False) -> str:
     if not raw or "\x00" in raw or "\\" in raw:
         raise RunnerFailure("PATCH_REJECTED", "Invalid scoped file path")
     path = PurePosixPath(raw)
     if path.is_absolute() or ".." in path.parts or str(path) != raw or raw.startswith("-"):
         raise RunnerFailure("PATCH_REJECTED", "Unsafe path or traversal")
     forbidden = {".git", ".sutradhar_state", "secrets", "__pycache__", "node_modules"}
-    if forbidden.intersection(path.parts) or path.name == ".env" or path.name.startswith(".env.") or path.suffix in {".pem", ".key", ".p12", ".pfx"}:
+    if forbidden.intersection(path.parts) or path.name == ".env" or (path.name.startswith(".env.") and not (allow_example_file and path.name == ".env.example")) or path.suffix in {".pem", ".key", ".p12", ".pfx"}:
         raise RunnerFailure("PATCH_REJECTED", "Protected file path")
     return str(path)
 
@@ -66,14 +66,14 @@ def extract_safe_snapshot(archive: Path, destination: Path) -> None:
             if member.name in {".", "./"}:
                 continue
             name = member.name.removeprefix("./").rstrip("/")
-            # Never copy runtime credentials into a runnable code snapshot.
-            parts = PurePosixPath(name).parts
-            if ({".sutradhar_state", "secrets", "node_modules", "__pycache__"} & set(parts)
-                    or PurePosixPath(name).name == ".env"
-                    or PurePosixPath(name).name.startswith(".env.")
-                    or PurePosixPath(name).suffix in {".pem", ".key", ".p12", ".pfx"}):
-                continue
-            safe = scoped_path(name)
+            # The Git tree SHA must cover ALL committed files. Reject tracked
+            # credentials rather than silently omitting them from the hash.
+            # Safe sample config (.env.example) is retained but unmodifiable.
+            try:
+                safe = scoped_path(name, allow_example_file=True)
+            except RunnerFailure as exc:
+                raise RunnerFailure("PREPARE_FAILED",
+                                    "Protected or unsafe tracked file in Git snapshot") from exc
             count += 1
             total += member.size
             if count > MAX_FILES or total > MAX_ARCHIVE_BYTES:
