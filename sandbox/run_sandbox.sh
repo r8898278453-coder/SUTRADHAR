@@ -58,8 +58,15 @@ tar -C "${ABS_WORKSPACE}" \
     --exclude='*.db' --exclude='*.db-wal' --exclude='*.db-shm' \
     -cf - . | tar -C "${STAGING_DIR}" -xf -
 
-# The isolated container uses a non-root UID; only the disposable copy becomes writable.
-chmod -R a+rwX "${STAGING_DIR}"
+# Preserve private staging-directory permissions. Match host UID if non-root;
+# if the launcher runs as root, delegate only the disposable copy to UID 10001.
+if [[ "$(id -u)" -eq 0 ]]; then
+    chown -R 10001:10001 "${STAGING_DIR}"
+    CONTAINER_USER="10001:10001"
+else
+    chmod -R u+rwX "${STAGING_DIR}"
+    CONTAINER_USER="$(id -u):$(id -g)"
+fi
 
 set +e
 timeout --signal=SIGKILL 45s docker run \
@@ -71,7 +78,7 @@ timeout --signal=SIGKILL 45s docker run \
     --cpus="1.0" \
     --pids-limit=100 \
     --stop-timeout=3 \
-    --user 10001:10001 \
+    --user "${CONTAINER_USER}" \
     --security-opt="no-new-privileges:true" \
     --cap-drop=ALL \
     --read-only \
