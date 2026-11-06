@@ -36,7 +36,7 @@ async function runSecurityTestSuite() {
       body: body ? JSON.stringify(body) : undefined
     });
     const json = await res.json().catch(() => ({}));
-    return { status: res.status, body: json };
+    return { status: res.status, body: json, headers: res.headers };
   }
 
   let passed = 0;
@@ -98,19 +98,22 @@ async function runSecurityTestSuite() {
       assert.strictEqual(res.body.success, true);
     });
 
-    await test('Admin session login -> issues verified session token', async () => {
+    await test('Admin login issues a HttpOnly cookie and protects state reads', async () => {
+      const anon = await apiRequest('GET', '/api/cluster/state');
+      assert.strictEqual(anon.status, 401);
       const loginRes = await apiRequest('POST', '/api/auth/login', {}, { adminKey: SUTRADHAR_ADMIN_KEY });
       assert.strictEqual(loginRes.status, 200);
-      assert.ok(loginRes.body.token?.startsWith('adm_sess_'));
-
-      // Use session token
-      const res = await apiRequest(
-        'POST', 
-        '/api/cluster/kill-switch', 
-        { 'x-sutradhar-session': loginRes.body.token }, 
-        { action: 'RESUME' }
-      );
-      assert.strictEqual(res.status, 200);
+      assert.strictEqual(loginRes.body.token, undefined, 'Session token must not be exposed in JSON');
+      const cookie = loginRes.headers.get('set-cookie') || '';
+      assert.ok(cookie.includes('sutradhar_session='));
+      assert.ok(cookie.includes('HttpOnly') && cookie.includes('SameSite=Strict'));
+      const cookieValue = cookie.split(';')[0];
+      const allowed = await apiRequest('POST', '/api/cluster/kill-switch', { Cookie: cookieValue, Origin: BASE_URL }, { action: 'RESUME' });
+      assert.strictEqual(allowed.status, 200);
+      const csrf = await apiRequest('POST', '/api/cluster/kill-switch', { Cookie: cookieValue, Origin: 'https://untrusted.example' }, { action: 'PAUSE' });
+      assert.strictEqual(csrf.status, 401, 'Cross-origin cookie request must be blocked');
+      const state = await apiRequest('GET', '/api/cluster/state', { Cookie: cookieValue });
+      assert.strictEqual(state.status, 200);
     });
 
     await test('Worker calling admin-only route -> DENIED (403_ADMIN_ONLY)', async () => {
@@ -288,19 +291,35 @@ async function runSecurityTestSuite() {
       assert.ok(res.body.error?.includes('403_WRONG_WORKER'));
     });
 
-    await test('Rollback transitions ticket to ROLLBACK_COMPLETED and spawns hotfix', async () => {
+    await test('Rollback endpoint only records REQUESTED, not completed', async () => {
       const ticket106 = clusterState.tickets.find(t => t.id === 'TKT-106');
-      if (ticket106) ticket106.rollbackCommit = 'd8471e9a';
-
+      assert.ok(ticket106, 'Seed test ticket must exist');
+      ticket106.status = 'COMMITTED_PUSHED';
       const res = await apiRequest(
-        'POST',
-        '/api/master/rollback',
-        { 'Authorization': `Bearer ${SUTRADHAR_ADMIN_KEY}` },
-        { ticketId: 'TKT-106', reason: 'Regression test failure', actor: 'Lead Admin' }
+        'POST', '/api/master/rollback',
+        { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}` },
+        { ticketId: 'TKT-106', reason: 'Regression test failure' }
       );
-      assert.strictEqual(res.status, 200);
-      assert.ok(res.body.hotfixTicket?.id?.startsWith('TKT-HOTFIX-'));
-      assert.strictEqual(ticket106?.status, 'ROLLBACK_COMPLETED');
+      assert.strictEqual(res.status, 202);
+      assert.strictEqual(res.body.status, 'ROLLBACK_REQUESTED');
+      assert.strictEqual(ticket106.status, 'ROLLBACK_REQUESTED');
+      assert.strictEqual(res.body.hotfixTicket, undefined);
+    });
+
+    await test('Caller-provided demo flags cannot fabricate production test success', async () => {
+      const oldMode = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        const res = await apiRequest(
+          'POST', '/api/cluster/ticket/test',
+          { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}`, 'x-sutradhar-demo-mode': 'true' },
+          { ticketId: 'TKT-104', simulateFailure: false, isDemoMode: true }
+        );
+        assert.ok([501, 503].includes(res.status), `Expected blocked test, got ${res.status}`);
+        assert.notStrictEqual(res.body.ticket?.status, 'COMMITTED_PUSHED');
+      } finally {
+        process.env.NODE_ENV = oldMode;
+      }
     });
 
   } finally {
