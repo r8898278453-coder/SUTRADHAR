@@ -100,7 +100,7 @@ def run(args: argparse.Namespace) -> dict:
         "status": "PREPARE_FAILED", "patchValid": False,
         "exitCode": None, "stdout": "", "stderr": "",
         "changedFiles": [], "baselineCommit": None,
-        "patchSha256": None, "durationMs": 0
+        "patchSha256": None, "candidateTreeSha": None, "durationMs": 0
     }
     try:
         repo = Path(args.repo_root).expanduser().resolve(strict=True)
@@ -175,6 +175,9 @@ def run(args: argparse.Namespace) -> dict:
                     raise RunnerFailure("PATCH_REJECTED", "Unsafe staged file type")
             result["patchValid"] = True
             result["changedFiles"] = sorted(changed)
+            # Exact tree identity of the candidate that enters the real Docker test.
+            # GitHub merge verification later requires this immutable tree hash.
+            result["candidateTreeSha"] = run_git(workspace, "write-tree")
 
             if not shutil.which("docker"):
                 raise RunnerFailure("SANDBOX_UNAVAILABLE", "Docker executable not found")
