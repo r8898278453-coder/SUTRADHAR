@@ -23,6 +23,7 @@ interface SandboxProps {
   onTestSandbox: (ticketId: string) => void;
   onSelfHeal: (ticketId: string) => void;
   onVerifyPush: (ticketId: string) => void;
+  onCreateDraftPr: (ticketId: string) => void;
   onSelectTicket: (ticket: Ticket) => void;
 }
 
@@ -33,6 +34,7 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
   onTestSandbox,
   onSelfHeal,
   onVerifyPush,
+  onCreateDraftPr,
   onSelectTicket
 }) => {
   const [selectedTier, setSelectedTier] = useState<1 | 2 | 3>(activeTicket.currentTier || 1);
@@ -308,9 +310,20 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
                 )}
               </div>
 
-              {activeTicket.status === 'COMMITTED_PUSHED' ? (
+              {activeTicket.status === 'READY_FOR_REVIEW' ? (
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => onCreateDraftPr(activeTicket.id)}
+                    className="rounded border border-indigo-600 bg-indigo-950/30 px-3 py-1 text-indigo-300">
+                    Create Draft PR
+                  </button>
+                  <button type="button" onClick={() => onVerifyPush(activeTicket.id)}
+                    className="rounded border border-emerald-600 bg-emerald-950/30 px-3 py-1 text-emerald-300">
+                    Verify GitHub Merge
+                  </button>
+                </div>
+              ) : activeTicket.status === 'COMMITTED_PUSHED' ? (
                 <span className="text-emerald-400 flex items-center gap-1 font-semibold">
-                  <CheckCircle className="w-4 h-4" /> Ready for Git Push
+                  <CheckCircle className="w-4 h-4" /> GitHub Merge Verified
                 </span>
               ) : activeTicket.status === 'DEAD_LETTER_QUEUE' || activeTicket.retryCount >= activeTicket.maxRetries ? (
                 <span className="text-rose-400 bg-rose-950/60 px-2 py-1 rounded border border-rose-800/80 flex items-center gap-1 font-semibold animate-pulse">
