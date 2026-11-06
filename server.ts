@@ -9,6 +9,7 @@ import { GoogleGenAI } from '@google/genai';
 import type { ClusterState, SwarmNode, Ticket, LLMCascadeTier, TelegramMessage, CryptoTokenPayload } from './src/types.ts';
 import { clusterDb } from './server_db.ts';
 import { verifyGitHubMergeEvidence } from './github_merge_verifier.ts';
+import { createVerifiedDraftPr } from './github_pr_creator.ts';
 
 const app = express();
 const PORT = 3000;
@@ -1581,6 +1582,103 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res
     headSha: evidence.headSha, mergedCommit: evidence.mergeSha,
     verifiedTreeSha: evidence.treeSha
   });
+});
+
+// Explicit, administrator-triggered draft PR creation for an already pushed
+// worker branch. No GitHub merge endpoint is invoked by this route.
+const activeDraftPrCreations = new Set<string>();
+app.post('/api/cluster/ticket/create-draft-pr', authRole(['ADMIN']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string' || !ticketId.trim()) {
+    return res.status(400).json({ success: false, error: 'INVALID_TICKET_ID' });
+  }
+  if (process.env.SUTRADHAR_ENABLE_PR_CREATION !== 'true') {
+    return res.status(503).json({ success: false, error: 'DRAFT_PR_CREATION_DISABLED' });
+  }
+  const repo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const token = process.env.SUTRADHAR_GITHUB_PR_TOKEN?.trim() || '';
+  const requiredChecks = (process.env.SUTRADHAR_REQUIRED_CHECKS || '')
+    .split(';').map(x => x.trim()).filter(Boolean);
+  if (!repo || !token || !requiredChecks.length ||
+      Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS || '1') < 1) {
+    return res.status(503).json({ success: false, error: 'DRAFT_PR_CONFIGURATION_MISSING' });
+  }
+  if (activeDraftPrCreations.has(ticketId)) {
+    return res.status(409).json({ success: false, error: 'DRAFT_PR_ALREADY_IN_PROGRESS' });
+  }
+  const ticket = clusterDb.getAllTickets().find(t => t.id === ticketId);
+  if (!ticket) return res.status(404).json({ success: false, error: 'TICKET_NOT_FOUND' });
+  const snapshot = clusterDb.getSystemState();
+  if (snapshot.killSwitchActive) {
+    return res.status(423).json({ success: false, error: 'CLUSTER_PAUSED' });
+  }
+  if (ticket.status !== 'READY_FOR_REVIEW' || !ticket.diffPatch || !ticket.branch) {
+    return res.status(409).json({ success: false, error: 'VERIFIED_DOCKER_TEST_REQUIRED' });
+  }
+  const attestation = clusterDb.getSandboxAttestation(ticketId);
+  const hash = crypto.createHash('sha256').update(ticket.diffPatch).digest('hex');
+  if (!attestation || attestation.epochId !== snapshot.epochId ||
+      attestation.patchSha256 !== hash || !attestation.changedFiles.length) {
+    return res.status(409).json({ success: false, error: 'TESTED_TREE_ATTESTATION_MISSING' });
+  }
+  const verified = verifyEd25519Token(ticket.ed25519Token || '', ticketId,
+    snapshot.epochId, ticket.allowedFiles);
+  if (!verified.verified || !verified.payload || !verified.payload.tokenId) {
+    return res.status(403).json({ success: false, error: 'DRAFT_PR_LEASE_SIGNATURE_INVALID' });
+  }
+  const signed = verified.payload;
+  const lease = clusterDb.getActiveLeaseAuth(ticketId);
+  if (!lease || lease.workerId !== signed.workerId ||
+      lease.workerId !== attestation.workerId ||
+      ticket.assignedTo !== signed.workerId ||
+      lease.tokenId !== signed.tokenId ||
+      lease.epochId !== snapshot.epochId || lease.expiresAt <= Date.now() ||
+      clusterDb.isTokenRevoked(signed.tokenId)) {
+    return res.status(403).json({ success: false, error: 'DRAFT_PR_LEASE_NOT_CURRENT' });
+  }
+
+  activeDraftPrCreations.add(ticketId);
+  try {
+    const outcome = await createVerifiedDraftPr({
+      repo, token, branch: ticket.branch, ticketId,
+      baselineCommit: attestation.baselineCommit,
+      candidateTreeSha: attestation.candidateTreeSha,
+      changedFiles: attestation.changedFiles,
+      allowedFiles: ticket.allowedFiles,
+      title: `[${ticketId}] ${ticket.title}`.slice(0, 160),
+      description: ticket.description || ''
+    });
+    if (!outcome.created) {
+      const code = outcome.error === 'DRAFT_PR_GITHUB_API_UNAVAILABLE' ? 502 :
+        outcome.error === 'DRAFT_PR_CONFIGURATION_INVALID' ? 503 : 409;
+      return res.status(code).json({ success: false, error: outcome.error });
+    }
+    const recorded = clusterDb.recordVerifiedDraftPr({
+      ticketId, repo: outcome.repo, prNumber: outcome.prNumber,
+      branch: outcome.branch, headSha: outcome.headSha,
+      treeSha: outcome.treeSha, patchSha256: attestation.patchSha256,
+      epochId: snapshot.epochId,
+      workerId: signed.workerId, tokenId: signed.tokenId
+    });
+    if (!recorded) {
+      // GitHub may already contain a draft PR: do not mislabel the ticket.
+      return res.status(409).json({ success: false,
+        error: 'DRAFT_PR_STATE_CHANGED_MANUAL_RECONCILIATION',
+        message: 'A draft PR might exist on GitHub, but current ticket/lease evidence no longer matches.' });
+    }
+    return res.status(outcome.existing ? 200 : 201).json({
+      success: true, status: 'READY_FOR_REVIEW',
+      draft: true, existing: outcome.existing,
+      ticketId, repository: repo, prNumber: outcome.prNumber,
+      pullRequestUrl: outcome.url, headSha: outcome.headSha,
+      testedTreeSha: outcome.treeSha,
+      message: 'Draft PR opened for human review. No merge or push to main was performed.'
+    });
+  } catch {
+    return res.status(502).json({ success: false, error: 'DRAFT_PR_OPERATION_FAILED' });
+  } finally {
+    activeDraftPrCreations.delete(ticketId);
+  }
 });
 
 // Master Public Key Endpoint
