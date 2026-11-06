@@ -203,16 +203,27 @@ async function runSecurityTestSuite() {
       }
     });
 
-    await test('Passing test moves ticket to READY_FOR_REVIEW, never directly to COMMITTED_PUSHED', async () => {
-      const res = await apiRequest(
-        'POST',
-        '/api/cluster/ticket/test',
-        { 'Authorization': `Bearer ${SUTRADHAR_ADMIN_KEY}` },
-        { ticketId: 'TKT-104', simulateFailure: false, isDemoMode: true }
-      );
-      assert.strictEqual(res.status, 200);
-      assert.strictEqual(res.body.ticket.status, 'READY_FOR_REVIEW', 'Expected status READY_FOR_REVIEW');
-      assert.notStrictEqual(res.body.ticket.status, 'COMMITTED_PUSHED');
+    await test('Caller-provided demo flags never create a synthetic passing Docker result', async () => {
+      const oldRepo = process.env.SUTRADHAR_TARGET_REPO_ROOT;
+      const oldCommand = process.env.SUTRADHAR_SANDBOX_TEST_COMMAND;
+      delete process.env.SUTRADHAR_TARGET_REPO_ROOT;
+      delete process.env.SUTRADHAR_SANDBOX_TEST_COMMAND;
+      try {
+        const ticket = clusterState.tickets.find(t => t.id === 'TKT-104');
+        assert.ok(ticket);
+        const beforeStatus = ticket.status;
+        const res = await apiRequest(
+          'POST', '/api/cluster/ticket/test',
+          { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}`, 'x-sutradhar-demo-mode': 'true' },
+          { ticketId: 'TKT-104', simulateFailure: false, isDemoMode: true }
+        );
+        assert.strictEqual(res.status, 503);
+        assert.strictEqual(res.body.error, 'SANDBOX_NOT_CONFIGURED');
+        assert.strictEqual(ticket.status, beforeStatus);
+      } finally {
+        if (oldRepo !== undefined) process.env.SUTRADHAR_TARGET_REPO_ROOT = oldRepo;
+        if (oldCommand !== undefined) process.env.SUTRADHAR_SANDBOX_TEST_COMMAND = oldCommand;
+      }
     });
 
     await test('Unconfigured LLM in production mode -> returns MODEL_UNAVAILABLE', async () => {
