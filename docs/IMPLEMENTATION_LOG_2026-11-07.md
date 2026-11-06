@@ -60,6 +60,29 @@ are not configured.
 6. Production deployment, HTTPS smoke tests, demo seed cleanup, dependency
    lockfiles and PHP/Node-specific Docker image acceptance remain pending.
 
+## Continuation: protected draft PR preparation (7 November)
+
+- Added `github_pr_creator.ts`: read GitHub target `main`, validate
+  already-pushed worker branch has one commit whose parent/tree match
+  the Docker-tested attestation, and compare exact changed file list.
+- Only after those checks, call GitHub's **draft PR creation** endpoint;
+  never push, overwrite a branch or auto-merge. Equivalent existing open draft
+  PR is returned idempotently; changed branch, moved base or extra files fail closed.
+- Added `draft_pr_submissions` SQLite table and atomic CAS method checking
+  current worker token ID, revocation, lease expiry, epoch and patch hash.
+  Ticket stays `READY_FOR_REVIEW` after PR submission.
+- Added administrator-only, off-by-default
+  `POST /api/cluster/ticket/create-draft-pr` endpoint; separate GitHub
+  PR-write token from read-only merge verification token.
+- React DAG and sandbox console now have separate Create Draft PR and
+  Verify GitHub Merge controls. Misleading Git Push label removed.
+- Added `tests/github_pr_creator.test.ts`,
+  `tests/draft_pr_http_integration.test.ts` and draft-PR SQLite CAS tests
+  in `tests/git_merge_attestation.test.ts`.
+- **Not executed live:** No target-repo branch was pushed or draft PR created
+  in this work slice. Controlled REST fixtures are test-only; GitHub Actions
+  results must be checked for the final commit SHA.
+
 ## Next step
 
 Test an authorized target-repo PR against **live** GitHub read-only
