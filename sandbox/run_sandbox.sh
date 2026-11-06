@@ -86,7 +86,7 @@ timeout --signal=SIGKILL 45s docker run \
     -v "${STAGING_DIR}:/workspace:rw" \
     -w /workspace \
     "${IMAGE_TAG}" \
-    "timeout 40s ${TEST_CMD}"
+    "printf '__SUTRADHAR_CONTAINER_TEST_STARTED__\\n'; timeout 40s ${TEST_CMD}"
 status=$?
 set -e
 exit "${status}"
