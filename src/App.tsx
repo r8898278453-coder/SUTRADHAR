@@ -459,6 +459,7 @@ export const App: React.FC = () => {
             onSynthesize={handleSynthesize}
             onTestSandbox={handleTestSandbox}
             onSelfHeal={handleSelfHeal}
+            onCreateDraftPr={handleCreateDraftPr}
             onVerifyPush={handleVerifyPush}
             onSelectTicket={(t) => setActiveTicket(t)}
           />
