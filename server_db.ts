@@ -757,7 +757,7 @@ export class ClusterDatabase {
     reasoning: string;
     details?: Record<string, any>;
   }): void {
-    const logId = `LOG-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
+    const logId = `LOG-${crypto.randomUUID()}`;
     const now = Date.now();
     this.db.prepare(`
       INSERT INTO audit_log (log_id, timestamp, actor, action, ticket_id, reasoning, details_json)
@@ -1051,7 +1051,7 @@ export class ClusterDatabase {
     stderr?: string;
     durationMs?: number;
   }): void {
-    const id = attempt.attemptId || `ATT-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
+    const id = attempt.attemptId || `ATT-${crypto.randomUUID()}`;
     this.db.prepare(`
       INSERT INTO execution_attempts (
         attempt_id, ticket_id, worker_id, attempt_number, tier_used, patch_valid,
