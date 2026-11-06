@@ -8,6 +8,7 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import type { ClusterState, SwarmNode, Ticket, LLMCascadeTier, TelegramMessage, CryptoTokenPayload } from './src/types.ts';
 import { clusterDb } from './server_db.ts';
+import { verifyGitHubMergeEvidence } from './github_merge_verifier.ts';
 
 const app = express();
 const PORT = 3000;
@@ -1172,6 +1173,7 @@ type SandboxResult = {
   changedFiles: string[];
   baselineCommit: string | null;
   patchSha256: string | null;
+  candidateTreeSha: string | null;
   durationMs: number;
 };
 const activeSandboxTests = new Set<string>();
@@ -1306,6 +1308,7 @@ app.post('/api/cluster/ticket/test', authRole(['ADMIN', 'WORKER']), async (req, 
       details: {
         status: result.status, changedFiles: result.changedFiles,
         baselineCommit: result.baselineCommit, patchSha256: result.patchSha256,
+        candidateTreeSha: result.candidateTreeSha,
         exitCode: result.exitCode, durationMs: result.durationMs
       }
     });
@@ -1315,14 +1318,24 @@ app.post('/api/cluster/ticket/test', authRole(['ADMIN', 'WORKER']), async (req, 
     ticket.updatedAt = new Date().toISOString();
 
     if (result.status === 'TEST_PASSED' && result.patchValid === true && result.exitCode === 0) {
-      ticket.status = 'READY_FOR_REVIEW';
-      clusterDb.updateTicket(ticket.id, {
-        status: 'READY_FOR_REVIEW',
-        testStdout: result.stdout, testStderr: result.stderr,
-        logMessage: { level: 'SUCCESS', message: `Real Docker test passed for patch ${result.patchSha256?.slice(0, 12)}; Git review still pending.` }
+      // Do not call updateTicket separately; a single SQLite transaction must
+      // bind READY_FOR_REVIEW to the exact Git tree that actually passed Docker.
+      if (!result.baselineCommit || !result.candidateTreeSha || !result.patchSha256) {
+        return res.status(502).json({ success: false, error: 'SANDBOX_TREE_EVIDENCE_MISSING' });
+      }
+      const accepted = clusterDb.recordVerifiedSandboxPass({
+        ticketId, patchSha256: result.patchSha256,
+        baselineCommit: result.baselineCommit, candidateTreeSha: result.candidateTreeSha,
+        changedFiles: result.changedFiles, workerId: ticket.assignedTo || 'ADMIN',
+        epochId: startEpoch, stdout: result.stdout, stderr: result.stderr
       });
+      if (!accepted) {
+        return res.status(409).json({ success: false, error: 'SANDBOX_ATTESTATION_CONFLICT' });
+      }
+      ticket.status = 'READY_FOR_REVIEW';
       return res.json({ success: true, status: result.status, ticket, exitCode: 0,
         evidence: { baselineCommit: result.baselineCommit, patchSha256: result.patchSha256,
+          candidateTreeSha: result.candidateTreeSha,
           changedFiles: result.changedFiles, durationMs: result.durationMs } });
     }
 
@@ -1476,73 +1489,92 @@ Fix the code error and output a working unified diff patch.`;
   res.json({ success: true, ticket, healedDiff });
 });
 
-// 6. Git Pre-Receive Gatekeeper Verification Hook (Task 6)
-app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN', 'WORKER']), (req, res) => {
-  const { ticketId, tokenHeader, branch } = req.body;
-  const ticket = clusterState.tickets.find(t => t.id === ticketId);
-  if (!ticket) {
-    return res.status(404).json({ error: 'Ticket not found' });
+// 6. GitHub independent read-only merge verifier.
+// This endpoint NEVER pushes to a branch, merges a PR or creates Git commits.
+app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string') {
+    return res.status(400).json({ verified: false, error: 'INVALID_TICKET_ID' });
   }
-  if (!workerMayOperateTicket(req, ticketId)) {
-    return res.status(403).json({ success: false, error: '403_WORKER_LEASE_REQUIRED' });
-  }
-
-
-  const tokenToVerify = tokenHeader || ticket.ed25519Token || '';
-  
-  // 1. Genuine Asymmetric Ed25519 Verification against Master Public Key
-  const verification = verifyEd25519Token(
-    tokenToVerify, 
-    ticket.id, 
-    clusterState.epochId, 
-    ticket.allowedFiles
-  );
-
+  const ticket = clusterDb.getAllTickets().find(t => t.id === ticketId);
+  if (!ticket) return res.status(404).json({ verified: false, error: 'TICKET_NOT_FOUND' });
+  const active = clusterState.tickets.find(t => t.id === ticketId);
+  const snapshot = clusterDb.getSystemState();
+  const tokenToVerify = req.body?.tokenHeader || ticket.ed25519Token || '';
+  const verification = verifyEd25519Token(tokenToVerify, ticket.id, snapshot.epochId, ticket.allowedFiles);
   if (!verification.verified || !verification.payload) {
-    return res.status(403).json({
-      verified: false,
-      exitCode: 1,
-      error: verification.error || '403_CRYPTOGRAPHIC_VERIFICATION_FAILED'
-    });
+    return res.status(403).json({ verified: false, error: verification.error || 'INVALID_LEASE_SIGNATURE' });
   }
-
   const payload = verification.payload;
-
-  // 2. Check durable SQLite token revocation
   if (payload.tokenId && clusterDb.isTokenRevoked(payload.tokenId)) {
-    return res.status(403).json({
-      verified: false,
-      exitCode: 1,
-      error: `403_REVOKED_TOKEN: Token ${payload.tokenId} has been revoked in cluster state`
+    return res.status(403).json({ verified: false, error: '403_REVOKED_TOKEN' });
+  }
+  if (req.body?.branch && req.body.branch !== ticket.branch) {
+    return res.status(403).json({ verified: false, error: '403_BRANCH_MISMATCH' });
+  }
+  if (snapshot.killSwitchActive) {
+    return res.status(423).json({ verified: false, error: 'CLUSTER_PAUSED' });
+  }
+
+  const githubRepo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const githubToken = process.env.SUTRADHAR_GITHUB_TOKEN?.trim() || '';
+  const requiredChecks = (process.env.SUTRADHAR_REQUIRED_CHECKS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  if (!githubRepo || !githubToken || !requiredChecks.length) {
+    return res.status(503).json({
+      verified: false, error: 'GITHUB_VERIFICATION_NOT_CONFIGURED',
+      message: 'Configure a GitHub repository, read-only API token and explicit required CI check names.'
     });
   }
 
-  // 3. Branch verification
-  const pushedBranch = branch || `ai/${ticket.id}`;
-  if (pushedBranch !== `ai/${ticket.id}` && pushedBranch !== ticket.branch) {
-    return res.status(403).json({
-      verified: false,
-      exitCode: 1,
-      error: `403_BRANCH_MISMATCH: Pushed branch (${pushedBranch}) does not match authorized ticket branch (${ticket.branch || `ai/${ticket.id}`})`
-    });
+  if (ticket.status !== 'READY_FOR_REVIEW' || !ticket.diffPatch) {
+    return res.status(409).json({ verified: false, error: 'VERIFIED_SANDBOX_PASS_REQUIRED' });
+  }
+  const attestation = clusterDb.getSandboxAttestation(ticketId);
+  if (!attestation || attestation.epochId !== snapshot.epochId ||
+      attestation.patchSha256 !== crypto.createHash('sha256').update(ticket.diffPatch).digest('hex') ||
+      attestation.workerId !== payload.workerId) {
+    return res.status(409).json({ verified: false, error: 'TESTED_PATCH_ATTESTATION_REQUIRED' });
+  }
+  const lease = clusterDb.getAllLeases().find(l => l.ticketId === ticketId);
+  // Require a real active worker lease, not an arbitrary signed token.
+  if (!lease || lease.workerId !== payload.workerId || lease.expiresAt <= Date.now()) {
+    return res.status(403).json({ verified: false, error: 'WORKER_LEASE_NOT_CURRENT' });
   }
 
-  // 4. Require verified sandbox test pass before accepting push
-  if (ticket.status !== 'READY_FOR_REVIEW' && ticket.status !== 'TESTING_SANDBOX') {
-    return res.status(403).json({
-      verified: false,
-      exitCode: 1,
-      error: `403_TEST_NOT_PASSED: Ticket must pass ephemeral sandbox test before gatekeeper accepts push (current status: ${ticket.status})`
-    });
+  const requiredApprovals = Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS || '1');
+  const evidence = await verifyGitHubMergeEvidence({
+    repo: githubRepo, token: githubToken, branch: ticket.branch || `ai/${ticketId}`,
+    allowedFiles: ticket.allowedFiles,
+    baselineCommit: attestation.baselineCommit,
+    candidateTreeSha: attestation.candidateTreeSha,
+    requiredChecks, requiredApprovals
+  });
+  if (!evidence.verified) {
+    const httpStatus = evidence.error === 'GITHUB_API_UNAVAILABLE' ? 502 :
+      evidence.error === 'GITHUB_VERIFICATION_NOT_CONFIGURED' ? 503 : 409;
+    return res.status(httpStatus).json({ verified: false, error: evidence.error });
   }
 
-  // Signing a lease does not prove a Git push, successful CI, or a merge.
-  // Fail closed until the exact worker commit and remote merge evidence are checked.
-  return res.status(501).json({
-    verified: false,
-    success: false,
-    error: 'GIT_MERGE_VERIFICATION_NOT_INTEGRATED',
-    message: 'The lease is cryptographically valid, but no remote branch commit, test evidence or merge was verified. Ticket remains unchanged.'
+  // Fail closed if a new patch, epoch or state update happened during GitHub IO.
+  const committed = clusterDb.recordVerifiedGitMerge({
+    ticketId, repo: evidence.repo, prNumber: evidence.prNumber,
+    branch: evidence.branch, headSha: evidence.headSha,
+    mergeSha: evidence.mergeSha, treeSha: evidence.treeSha,
+    patchSha256: attestation.patchSha256, epochId: snapshot.epochId
+  });
+  if (!committed) {
+    return res.status(409).json({ verified: false, error: 'GITHUB_MERGE_EVIDENCE_STALE' });
+  }
+  if (active) {
+    active.status = 'COMMITTED_PUSHED';
+    active.rollbackCommit = evidence.mergeSha;
+  }
+  return res.json({
+    success: true, verified: true, status: 'COMMITTED_PUSHED',
+    ticketId, repository: evidence.repo, pullRequest: evidence.prNumber,
+    headSha: evidence.headSha, mergedCommit: evidence.mergeSha,
+    verifiedTreeSha: evidence.treeSha
   });
 });
 
