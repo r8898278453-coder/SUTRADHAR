@@ -27,7 +27,7 @@ export SUTRADHAR_SANDBOX_TEST_COMMAND="python3 -m pytest -q"
 export SUTRADHAR_GITHUB_REPOSITORY="owner/target-repo"
 # Set securely at deploy time; NEVER commit, log, or expose to the browser:
 export SUTRADHAR_GITHUB_TOKEN="<read-only token>"
-export SUTRADHAR_REQUIRED_CHECKS="TypeScript, unit checks, and build,Python syntax, shell syntax, state tests"
+export SUTRADHAR_REQUIRED_CHECKS="TypeScript, unit checks, and build;Python syntax, shell syntax, state tests"
 export SUTRADHAR_MIN_GITHUB_APPROVALS=1
 ```
 
