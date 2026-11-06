@@ -29,6 +29,18 @@ jobs:
         run: npm run lint
       - name: Security and state tests
         run: npm test
+      - name: Wait for Docker daemon (required for real integration)
+        run: |
+          sudo systemctl start docker || true
+          for attempt in $(seq 1 20); do
+            if timeout 12s docker info >/dev/null 2>&1; then
+              echo "Docker daemon ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Docker daemon unavailable: integration tests cannot be verified" >&2
+          exit 1
       - name: Real HTTP and Docker integration
         run: npm run test:sandbox-http
       - name: Build
@@ -49,6 +61,18 @@ jobs:
         run: bash -n sandbox/run_sandbox.sh hooks/pre-receive
       - name: Python state and worker tests
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Wait for Docker daemon (required for real integration)
+        run: |
+          sudo systemctl start docker || true
+          for attempt in $(seq 1 20); do
+            if timeout 12s docker info >/dev/null 2>&1; then
+              echo "Docker daemon ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Docker daemon unavailable: integration tests cannot be verified" >&2
+          exit 1
       - name: Real Git snapshot and Docker test integration
         env:
           SUTRADHAR_REAL_DOCKER_E2E: "1"
