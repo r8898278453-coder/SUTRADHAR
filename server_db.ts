@@ -454,6 +454,18 @@ export class ClusterDatabase {
   }
 
   // Durable Token Revocation (Task 9)
+  public getActiveLeaseAuth(ticketId: string): {
+    workerId: string; tokenId: string; epochId: number; expiresAt: number;
+  } | null {
+    const lease = this.db.prepare(`SELECT worker_id, token_id, epoch_id, expires_at
+      FROM worker_leases WHERE ticket_id = ? AND is_revoked = 0`).get(ticketId) as any;
+    if (!lease) return null;
+    return {
+      workerId: lease.worker_id, tokenId: lease.token_id,
+      epochId: Number(lease.epoch_id), expiresAt: Number(lease.expires_at)
+    };
+  }
+
   public revokeToken(tokenId: string, reason: string = 'Token explicitly revoked'): void {
     const now = Date.now();
     this.db.prepare(`
