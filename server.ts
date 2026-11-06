@@ -1536,9 +1536,12 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res
       attestation.workerId !== payload.workerId) {
     return res.status(409).json({ verified: false, error: 'TESTED_PATCH_ATTESTATION_REQUIRED' });
   }
-  const lease = clusterDb.getAllLeases().find(l => l.ticketId === ticketId);
-  // Require a real active worker lease, not an arbitrary signed token.
-  if (!lease || lease.workerId !== payload.workerId || lease.expiresAt <= Date.now()) {
+  const lease = clusterDb.getActiveLeaseAuth(ticketId);
+  // The exact signed token ID must be the one the authoritative DB leased
+  // to this worker in this epoch; arbitrary historical tokens cannot pass.
+  if (!lease || !payload.tokenId || lease.tokenId !== payload.tokenId ||
+      lease.workerId !== payload.workerId || lease.epochId !== snapshot.epochId ||
+      lease.expiresAt <= Date.now()) {
     return res.status(403).json({ verified: false, error: 'WORKER_LEASE_NOT_CURRENT' });
   }
 
@@ -2611,8 +2614,11 @@ app.post('/api/tickets/claim', authRole(['ADMIN', 'WORKER']), (req, res) => {
   }
 
   // Invoke atomic SQLite transaction with concurrency and dependency checks
-  const tokenId = `SEC-CLAIM-${Date.now()}`;
-  const claimResult = clusterDb.tryClaimTicket(workerId, ticketId, tokenId);
+  // The same signed token ID must be persisted in the durable worker lease.
+  // An arbitrary client-provided or synthetic token ID never grants Git access.
+  const claimEpoch = clusterDb.getSystemState().epochId;
+  const issued = generateEd25519Token(ticketId, workerId, claimEpoch, ticket.allowedFiles, 900);
+  const claimResult = clusterDb.tryClaimTicket(workerId, ticketId, issued.tokenId, 900);
 
   if (!claimResult.success) {
     const isCapExceeded = claimResult.error?.includes('MAX_WORKERS_CAP_EXCEEDED');
@@ -2625,6 +2631,9 @@ app.post('/api/tickets/claim', authRole(['ADMIN', 'WORKER']), (req, res) => {
   // Synchronize local in-memory clusterState
   ticket.status = 'SYNTHESIZING_DIFF';
   ticket.assignedTo = workerId;
+  ticket.ed25519Token = issued.tokenHeader;
+  ticket.tokenExpiresAt = issued.expiresAt;
+  clusterDb.updateTicket(ticketId, { ed25519Token: issued.tokenHeader, tokenExpiresAt: issued.expiresAt });
   ticket.branch = claimResult.branch || `worker-${workerId.slice(-4).toLowerCase()}/ticket-${ticket.id.toLowerCase().replace('tkt-', '')}`;
   ticket.logs.push({
     timestamp: new Date().toLocaleTimeString(),
