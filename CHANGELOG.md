@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased — protected draft PR creation] - 2026-11-07
+
+### Added
+- Explicit administrator-only draft PR submission, disabled by default and
+  controlled with separate write-scoped GitHub token.
+- Exact tested tree, parent baseline, branch commit count and file-scope
+  verification before draft PR creation; no automatic branch push or merge.
+- Idempotent existing-draft handling, durable draft submission audit record,
+  current signed worker lease / epoch / patch CAS checks.
+- Positive/negative GitHub REST fixtures, API and SQLite regression tests;
+  truthful Create Draft PR / Verify GitHub Merge UI buttons.
+
+### Still pending
+- Live GitHub target branch + draft PR acceptance, protected main configuration,
+  real automated worker push, durable distributed queue, and rollback.
+- No merge/deploy performed and no exposed signing key rotated.
+
 ## [Unreleased — GitHub verification slice] - 2026-11-07
 
 ### Added
