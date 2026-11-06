@@ -2,6 +2,7 @@ import express from 'express';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import * as os from 'os';
 import * as child_process from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
@@ -1158,155 +1159,202 @@ Output ONLY the raw unified diff (starting with diff --git or --- / +++).`;
   res.json({ success: true, ticket, generatedDiff, providerUsed });
 });
 
-// 4. Run Ephemeral Docker Sandbox Test (Task 4)
-app.post('/api/cluster/ticket/test', authRole(['ADMIN', 'WORKER']), (req, res) => {
-  const { ticketId, simulateFailure, isDemoMode } = req.body;
-  const ticket = clusterState.tickets.find(t => t.id === ticketId);
-  if (!ticket) {
-    return res.status(404).json({ error: 'Ticket not found' });
+// 4. Real sandbox execution: Git snapshot -> scope-checked patch -> disposable Docker.
+// Never accept caller-supplied test commands, simulated results, or a fake pass.
+type SandboxResult = {
+  status: 'TEST_PASSED' | 'TEST_FAILED' | 'PATCH_REJECTED' |
+    'SANDBOX_UNAVAILABLE' | 'SANDBOX_NOT_CONFIGURED' | 'PREPARE_FAILED' | 'RUNNER_ERROR';
+  patchValid: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  changedFiles: string[];
+  baselineCommit: string | null;
+  patchSha256: string | null;
+  durationMs: number;
+};
+const activeSandboxTests = new Set<string>();
+
+function executeRealSandbox(ticket: Ticket, repoRoot: string, testCommand: string): Promise<SandboxResult> {
+  return new Promise((resolve, reject) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sutradhar-test-'));
+    const patchFile = path.join(tempDir, 'candidate.patch');
+    let finished = false;
+    const finish = (err: Error | null, data?: SandboxResult) => {
+      if (finished) return;
+      finished = true;
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+      if (err) reject(err);
+      else if (data) resolve(data);
+      else reject(new Error('SANDBOX_RESULT_MISSING'));
+    };
+    try {
+      fs.writeFileSync(patchFile, ticket.diffPatch || '', { mode: 0o600 });
+      const commandArgs = [
+        path.join(process.cwd(), 'sandbox', 'execute_ticket.py'),
+        '--repo-root', repoRoot, '--patch-file', patchFile,
+        '--test-command', testCommand,
+        ...ticket.allowedFiles.flatMap(file => ['--allowed-file', file])
+      ];
+      child_process.execFile(
+        process.env.SUTRADHAR_PYTHON || 'python3', commandArgs,
+        { cwd: process.cwd(), timeout: 220000, maxBuffer: 1024 * 1024 },
+        (err, stdout, stderr) => {
+          if (err) {
+            finish(new Error(`SANDBOX_RUNNER_PROCESS_FAILED: ${err.message}; ${stderr.slice(-500)}`));
+            return;
+          }
+          try {
+            const result = JSON.parse(stdout.trim()) as SandboxResult;
+            if (!result || typeof result.status !== 'string' || typeof result.patchValid !== 'boolean' ||
+                !Array.isArray(result.changedFiles) || typeof result.durationMs !== 'number' ||
+                typeof result.stdout !== 'string' || typeof result.stderr !== 'string') {
+              throw new Error('Unexpected runner response schema');
+            }
+            finish(null, result);
+          } catch (parseError: any) {
+            finish(new Error(`SANDBOX_INVALID_RESULT: ${parseError.message}`));
+          }
+        }
+      );
+    } catch (err: any) {
+      finish(err);
+    }
+  });
+}
+
+app.post('/api/cluster/ticket/test', authRole(['ADMIN', 'WORKER']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string') {
+    return res.status(400).json({ success: false, error: 'INVALID_TICKET_ID' });
   }
+  const ticket = clusterState.tickets.find(t => t.id === ticketId);
+  if (!ticket) return res.status(404).json({ success: false, error: 'TICKET_NOT_FOUND' });
   if (!workerMayOperateTicket(req, ticketId)) {
     return res.status(403).json({ success: false, error: '403_WORKER_LEASE_REQUIRED' });
   }
 
-
-  const isTestOrDemo = process.env.NODE_ENV === 'test';
-
-  // Task 4: In production mode, if Docker is absent, return SANDBOX_UNAVAILABLE
-  if (!isTestOrDemo && !isDockerAvailable()) {
-    ticket.logs.push({
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'ERROR',
-      message: '[SANDBOX_UNAVAILABLE] Docker daemon is absent or not running. Untrusted code cannot be executed on the host system.'
-    });
-    clusterDb.updateTicket(ticket.id, {
-      logMessage: { level: 'ERROR', message: '[SANDBOX_UNAVAILABLE] Docker daemon is absent or not running.' }
-    });
+  // Only authenticated control-plane configuration chooses repo and test command.
+  // simulateFailure, isDemoMode and x-sutradhar-demo-mode are intentionally ignored.
+  const repoRoot = process.env.SUTRADHAR_TARGET_REPO_ROOT?.trim();
+  const testCommand = process.env.SUTRADHAR_SANDBOX_TEST_COMMAND?.trim();
+  if (!repoRoot || !testCommand) {
     return res.status(503).json({
-      success: false,
-      error: 'SANDBOX_UNAVAILABLE',
-      message: 'Docker daemon is unavailable. Untrusted generated code must not execute directly on the host.'
+      success: false, error: 'SANDBOX_NOT_CONFIGURED',
+      message: 'Set SUTRADHAR_TARGET_REPO_ROOT and SUTRADHAR_SANDBOX_TEST_COMMAND on the server.'
     });
   }
-
-  // This API is not wired to the isolated worker worktree runner yet.
-  // Never persist fabricated test output or claim a Docker pass in normal operation.
-  if (!isTestOrDemo) {
-    return res.status(501).json({
-      success: false,
-      error: 'SANDBOX_EXECUTION_NOT_INTEGRATED',
-      message: 'No test was executed. The HTTP endpoint must be connected to the actual Docker worker runner before production use.'
-    });
+  if (!isDockerAvailable()) {
+    return res.status(503).json({ success: false, error: 'SANDBOX_UNAVAILABLE',
+      message: 'Docker daemon is unavailable. Generated code cannot run on the host.' });
+  }
+  if (clusterDb.getSystemState().killSwitchActive) {
+    return res.status(423).json({ success: false, error: 'CLUSTER_PAUSED' });
+  }
+  if (!ticket.diffPatch || typeof ticket.diffPatch !== 'string') {
+    return res.status(409).json({ success: false, error: 'PATCH_NOT_GENERATED' });
+  }
+  if (!['TESTING_SANDBOX', 'HEALING_RETRY'].includes(ticket.status)) {
+    return res.status(409).json({ success: false, error: 'INVALID_TICKET_TEST_STATE', currentStatus: ticket.status });
+  }
+  if (activeSandboxTests.has(ticket.id)) {
+    return res.status(409).json({ success: false, error: 'TEST_ALREADY_RUNNING' });
   }
 
-  ticket.currentTier = simulateFailure ? 2 : 1;
-  const exitCode = simulateFailure ? 1 : 0;
-  const executionDurationMs = 1480;
+  // Pin the tested patch and active epoch to prevent concurrent state changes
+  // from accidentally marking a different candidate READY_FOR_REVIEW.
+  const originalPatch = ticket.diffPatch;
+  const startEpoch = clusterDb.getSystemState().epochId;
+  activeSandboxTests.add(ticket.id);
+  try {
+    const result = await executeRealSandbox(ticket, repoRoot, testCommand);
+    const stillAuthorized = ticket.diffPatch === originalPatch &&
+      clusterDb.getSystemState().epochId === startEpoch &&
+      !clusterDb.getSystemState().killSwitchActive &&
+      workerMayOperateTicket(req, ticketId);
 
-  if (exitCode === 0) {
-    // A passing test moves a ticket to READY_FOR_REVIEW, NEVER directly to COMMITTED_PUSHED!
-    ticket.status = 'READY_FOR_REVIEW';
-    ticket.testStderr = undefined;
-    ticket.testStdout = `[EPHEMERAL DOCKER SANDBOX (Mem: 512MB, Net: None, Timeout: 45s)]
-Applying patch with Tier ${ticket.currentTier} (git apply --check) -> OK
-Running pytest suite on /workspace/tests/...
-tests/Unit/ModuleTest.php ........... [100%]
-12 passed in 1.48s
-Exit Code: 0 (PASSED)`;
-    ticket.logs.push({
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'SUCCESS',
-      message: 'Ephemeral Sandbox test PASSED with Exit 0. Ticket is READY_FOR_REVIEW for gatekeeper commit push.'
-    });
-
-    // Record verified sandbox test in SQLite execution_attempts
-    clusterDb.recordExecutionAttempt({
-      ticketId: ticket.id,
-      workerId: ticket.assignedTo || 'NODE-E78A1201',
-      attemptNumber: ticket.retryCount + 1,
-      tierUsed: ticket.currentTier,
-      patchValid: true,
-      sandboxExitCode: 0,
-      stdout: ticket.testStdout,
-      stderr: '',
-      durationMs: executionDurationMs
-    });
-
-    clusterDb.updateTicket(ticket.id, {
-      status: 'READY_FOR_REVIEW',
-      logMessage: { level: 'SUCCESS', message: 'Ephemeral Sandbox test PASSED with Exit 0. Ready for review.' }
-    });
-
-  } else {
-    // Sandbox Failure -> Trigger Self-Healing Loop
-    ticket.retryCount += 1;
-    ticket.testStderr = `AssertionError: Assertion failed in test_contract_execution()
-Expected: HTTP 200 OK with sanitized payload
-Actual: HTTP 500 TypeError: undefined method guardAllowedFiles() on line 14
-Stacktrace:
-  File "/workspace/tests/Unit/Test.php", line 42, in test_contract_execution
-  File "/workspace/${ticket.allowedFiles[0] || 'modules/core/Handler.php'}", line 14, in executeSafeContract`;
-
-    clusterDb.recordExecutionAttempt({
-      ticketId: ticket.id,
-      workerId: ticket.assignedTo || 'NODE-E78A1201',
-      attemptNumber: ticket.retryCount,
-      tierUsed: ticket.currentTier,
-      patchValid: true,
-      sandboxExitCode: 1,
-      stdout: '',
-      stderr: ticket.testStderr,
-      durationMs: 950
-    });
-
-    if (ticket.retryCount >= ticket.maxRetries) {
-      ticket.status = 'DEAD_LETTER_QUEUE';
-      ticket.logs.push({
-        timestamp: new Date().toLocaleTimeString(),
-        level: 'ERROR',
-        message: `Self-healing retry limit reached (${ticket.retryCount}/${ticket.maxRetries}). State frozen and moved to DEAD_LETTER_QUEUE for Human-in-the-Loop (HITL) review.`
+    if (!stillAuthorized) {
+      clusterDb.appendAuditLog({
+        actor: 'Sandbox Gatekeeper', action: 'SANDBOX_RESULT_FENCED',
+        ticketId, reasoning: 'Candidate patch, epoch, pause state or worker lease changed while Docker was running.'
       });
-      
-      const dlqAlert = `🚨 [DEAD_LETTER_QUEUE] Ticket ${ticket.id} (${ticket.title}) failed 3x self-healing retries across cascade tiers. State frozen for HITL review.`;
-      clusterState.telegramFeed.unshift({
-        id: `tg-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
-        type: 'ALERT_HEALING',
-        urgent: true,
-        text: dlqAlert
-      });
+      return res.status(409).json({ success: false, error: 'SANDBOX_RESULT_STALE',
+        message: 'Test evidence was not accepted after candidate/lease/epoch change.' });
+    }
 
-      broadcastToTelegram(
-        `🚨 <b>[DEAD_LETTER_QUEUE ESCALATION]</b>\n\n` +
-        `🎫 <b>Ticket:</b> ${ticket.id}\n` +
-        `📝 <b>Title:</b> ${ticket.title}\n` +
-        `❌ <b>Failure:</b> 3x Self-Healing Retries Exhausted\n` +
-        `🛑 <b>Action:</b> State frozen, AST report generated, requesting Human-in-the-Loop (HITL) intervention.`
-      );
-
-      clusterDb.updateTicket(ticket.id, {
-        status: 'DEAD_LETTER_QUEUE',
-        retryCount: ticket.retryCount,
-        logMessage: { level: 'ERROR', message: `Self-healing retry limit reached (${ticket.retryCount}/${ticket.maxRetries}).` }
-      });
-    } else {
-      ticket.status = 'HEALING_RETRY';
-      ticket.logs.push({
-        timestamp: new Date().toLocaleTimeString(),
-        level: 'WARN',
-        message: `Docker test failed (Exit 1). Stacktrace captured. Initiating Closed-Loop Self-Healing Retry ${ticket.retryCount}/${ticket.maxRetries}.`
-      });
-
-      clusterDb.updateTicket(ticket.id, {
-        status: 'HEALING_RETRY',
-        retryCount: ticket.retryCount,
-        logMessage: { level: 'WARN', message: `Docker test failed (Exit 1). Retry ${ticket.retryCount}/${ticket.maxRetries}.` }
+    const actualTestRun = result.status === 'TEST_PASSED' || result.status === 'TEST_FAILED';
+    if (actualTestRun) {
+      clusterDb.recordExecutionAttempt({
+        ticketId,
+        workerId: ticket.assignedTo || 'ADMIN',
+        attemptNumber: ticket.retryCount + 1,
+        tierUsed: ticket.currentTier || 1,
+        patchValid: result.patchValid,
+        sandboxExitCode: result.exitCode ?? -1,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        durationMs: result.durationMs
       });
     }
-  }
 
-  ticket.updatedAt = new Date().toISOString();
-  res.json({ success: true, ticket, exitCode });
+    clusterDb.appendAuditLog({
+      actor: 'Sandbox Gatekeeper',
+      action: 'SANDBOX_EXECUTION_RESULT',
+      ticketId,
+      reasoning: `Runner result: ${result.status}. No Git push or merge claimed.`,
+      details: {
+        status: result.status, changedFiles: result.changedFiles,
+        baselineCommit: result.baselineCommit, patchSha256: result.patchSha256,
+        exitCode: result.exitCode, durationMs: result.durationMs
+      }
+    });
+
+    ticket.testStdout = result.stdout;
+    ticket.testStderr = result.stderr;
+    ticket.updatedAt = new Date().toISOString();
+
+    if (result.status === 'TEST_PASSED' && result.patchValid === true && result.exitCode === 0) {
+      ticket.status = 'READY_FOR_REVIEW';
+      clusterDb.updateTicket(ticket.id, {
+        status: 'READY_FOR_REVIEW',
+        testStdout: result.stdout, testStderr: result.stderr,
+        logMessage: { level: 'SUCCESS', message: `Real Docker test passed for patch ${result.patchSha256?.slice(0, 12)}; Git review still pending.` }
+      });
+      return res.json({ success: true, status: result.status, ticket, exitCode: 0,
+        evidence: { baselineCommit: result.baselineCommit, patchSha256: result.patchSha256,
+          changedFiles: result.changedFiles, durationMs: result.durationMs } });
+    }
+
+    if (result.status === 'TEST_FAILED' && result.patchValid) {
+      ticket.retryCount += 1;
+      ticket.status = ticket.retryCount >= ticket.maxRetries ? 'DEAD_LETTER_QUEUE' : 'HEALING_RETRY';
+      clusterDb.updateTicket(ticket.id, {
+        status: ticket.status, retryCount: ticket.retryCount,
+        testStdout: result.stdout, testStderr: result.stderr,
+        logMessage: { level: 'ERROR', message: `Real Docker test failed (exit ${result.exitCode}); retry ${ticket.retryCount}/${ticket.maxRetries}.` }
+      });
+      return res.json({ success: true, status: result.status, ticket,
+        exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr });
+    }
+
+    // Patch/sandbox setup errors do not prove a test passed or failed.
+    clusterDb.updateTicket(ticket.id, {
+      testStderr: result.stderr,
+      logMessage: { level: 'ERROR', message: `Sandbox blocked: ${result.status}; no validated test result.` }
+    });
+    const code = result.status === 'PATCH_REJECTED' ? 422 :
+      result.status === 'SANDBOX_UNAVAILABLE' || result.status === 'SANDBOX_NOT_CONFIGURED' ? 503 : 502;
+    return res.status(code).json({ success: false, error: result.status,
+      message: result.stderr.slice(-1000), exitCode: result.exitCode });
+  } catch (err: any) {
+    clusterDb.updateTicket(ticket.id, {
+      logMessage: { level: 'ERROR', message: 'Sandbox runner failed without trusted execution evidence.' }
+    });
+    return res.status(502).json({ success: false, error: 'SANDBOX_RUNNER_FAILED',
+      message: String(err?.message || err).slice(0, 500) });
+  } finally {
+    activeSandboxTests.delete(ticket.id);
+  }
 });
 
 // 5. Closed-Loop Self-Healing Re-prompting (Task 5)
