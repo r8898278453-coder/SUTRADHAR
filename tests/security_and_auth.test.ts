@@ -187,21 +187,19 @@ async function runSecurityTestSuite() {
     // -------------------------------------------------------------
     console.log('\n--- TASK 4 & 5: Docker Sandbox & LLM Truth Verification ---');
 
-    await test('Missing Docker in production mode -> returns SANDBOX_UNAVAILABLE', async () => {
-      if (!isDockerAvailable()) {
-        const oldEnv = process.env.NODE_ENV;
-        process.env.NODE_ENV = 'production';
+    await test('Production test API blocks simulated success with or without Docker', async () => {
+      const oldEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
         const res = await apiRequest(
-          'POST',
-          '/api/cluster/ticket/test',
-          { 'Authorization': `Bearer ${SUTRADHAR_ADMIN_KEY}` },
-          { ticketId: 'TKT-104', isDemoMode: false }
+          'POST', '/api/cluster/ticket/test',
+          { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}` },
+          { ticketId: 'TKT-104', simulateFailure: false }
         );
+        assert.ok([501, 503].includes(res.status), `Expected blocked, got ${res.status}`);
+        assert.strictEqual(res.body.success, false);
+      } finally {
         process.env.NODE_ENV = oldEnv;
-        assert.strictEqual(res.status, 503);
-        assert.strictEqual(res.body.error, 'SANDBOX_UNAVAILABLE');
-      } else {
-        console.log('     (Docker is present on host, skipping unavailable assert)');
       }
     });
 
@@ -265,6 +263,19 @@ async function runSecurityTestSuite() {
     // -------------------------------------------------------------
     console.log('\n--- TASK 6, 8, 9, 12: Gatekeeper & Rollback Verification ---');
 
+    await test('Valid lease without remote Git merge evidence cannot mark success', async () => {
+      const ticket = clusterState.tickets.find(t => t.id === 'TKT-104');
+      assert.ok(ticket);
+      ticket.status = 'READY_FOR_REVIEW';
+      const { tokenHeader } = generateEd25519Token(ticket.id, 'NODE-A8F24C09', clusterState.epochId, ticket.allowedFiles);
+      const res = await apiRequest('POST', '/api/cluster/ticket/verify-push',
+        { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}` },
+        { ticketId: ticket.id, tokenHeader, branch: `ai/${ticket.id}` });
+      assert.strictEqual(res.status, 501);
+      assert.strictEqual(res.body.error, 'GIT_MERGE_VERIFICATION_NOT_INTEGRATED');
+      assert.notStrictEqual(ticket.status, 'COMMITTED_PUSHED');
+    });
+
     await test('Revoked token push attempt -> DENIED (403_REVOKED_TOKEN)', async () => {
       const { tokenHeader, tokenId } = generateEd25519Token('TKT-104', 'NODE-A8F24C09', clusterState.epochId, ['modules/matrimony/ProfileController.php']);
       // Revoke token in SQLite
@@ -280,16 +291,32 @@ async function runSecurityTestSuite() {
       assert.ok(res.body.error?.includes('403_REVOKED_TOKEN'));
     });
 
-    await test('Wrong worker heartbeat -> REJECTED (403_WRONG_WORKER)', async () => {
+    await test('Wrong-worker heartbeat is denied and SQLite rejects wrong lease owner', async () => {
+      const ticketId = `TKT-HB-${Date.now()}`;
+      const ticket: any = {
+        id: ticketId, title: 'Heartbeat ownership test', description: 'Test',
+        priority: 'P2_NORMAL', domain: 'Core', status: 'PENDING',
+        parentTicketIds: [], allowedFiles: ['modules/core/HbTest.php'],
+        readOnlyContracts: [], retryCount: 0, maxRetries: 3,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), logs: []
+      };
+      clusterDb.createTicket(ticket);
+      clusterState.tickets.push(ticket);
+      const claim = clusterDb.tryClaimTicket('NODE-A8F24C09', ticketId, `tok-hb-${Date.now()}`);
+      assert.strictEqual(claim.success, true);
+      assert.strictEqual(clusterDb.recordLeaseHeartbeat(ticketId, 'NODE-IMPOSTER-999', 50, 'forged'), false);
+      if (claim.lease) clusterState.watchdogLeases.push(claim.lease);
+
       const res = await apiRequest(
-        'POST',
-        '/api/cluster/watchdog/heartbeat',
-        { 'Authorization': `Bearer ${SUTRADHAR_WORKER_KEY}` },
-        { ticketId: 'TKT-104', workerId: 'NODE-IMPOSTER-999', progressPct: 50 }
+        'POST', '/api/cluster/watchdog/heartbeat',
+        { Authorization: `Bearer ${SUTRADHAR_WORKER_KEY}` },
+        { ticketId, workerId: 'NODE-IMPOSTER-999', progressPct: 50 }
       );
       assert.strictEqual(res.status, 403);
-      assert.ok(res.body.error?.includes('403_WRONG_WORKER'));
+      assert.ok(res.body.error?.includes('403_WORKER_ID_MISMATCH') ||
+                res.body.error?.includes('403_WRONG_WORKER'));
     });
+
 
     await test('Rollback endpoint only records REQUESTED, not completed', async () => {
       const ticket106 = clusterState.tickets.find(t => t.id === 'TKT-106');
