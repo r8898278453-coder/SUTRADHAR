@@ -27,7 +27,8 @@
 | EXEC-03 | P0 | Live LLM synthesis | PARTIAL | Real Gemini/OpenRouter calls exist; validate actual unified diff output and ensure no arbitrary caller forces simulator. |
 | GIT-01 | P0 | Exact GitHub PR merge verification | CI VERIFIED (MOCKED GITHUB ONLY) | Read-only live GitHub REST verifier checks single head commit, baseline parent, exact tested/merged tree, PR file scope, required Actions checks, independent review, merged ancestry; SQLite CAS enforces current token/epoch. No real target PR merge acceptance executed. |
 | GIT-02 | P0 | Worker Git error handling | PARTIAL | Python worker rejects failed fetch/commit/rebase/push and out-of-scope staged paths; need end-to-end worktree+push+PR creation integration and exact commit tree test. |
-| GIT-03 | P0 | Protected merge queue | BLOCKED (SAFE) | Legacy direct `main` push disabled and regression tested. Automated PR creation, durable review queue, protections and live merged PR acceptance still missing. |
+| GIT-03 | P0 | Protected merge queue | PARTIAL / SAFE | Legacy direct `main` push disabled. Owner-enabled draft PR creation for an already-pushed tested branch is coded; multi-process durable queue, branch protection, worker push integration and live acceptance remain pending. |
+| GIT-04 | P0 | Draft PR creation gate | CODED / TESTING | Admin-only, feature-off by default; GitHub pushed branch baseline/one-commit/tree/file-scope checks; draft-only POST, idempotency, SQLite lease/patch/epoch audit record. Controlled REST fixture tests are not live PR creation. |
 | ROLL-01 | P0 | Truthful rollback status | CODED / CI PENDING | `ROLLBACK_REQUESTED` recorded, not `ROLLBACK_COMPLETED`. Actual Git revert/test/review/merge workflow still missing. |
 | DB-01 | P1 | Atomic Node ticket/master claims | PARTIAL | `BEGIN IMMEDIATE` exists; add multi-process contention and epoch-fencing tests. |
 | DB-02 | P1 | Python/Node clock consistency | CODED / CI PENDING | Python SQLite paths changed to milliseconds and writer transactions; test cross-language startup and concurrent writes. |
@@ -54,7 +55,7 @@
 
 ## Next implementation slice
 
-**Priority next:** run an owner-approved live target-repo PR acceptance test (GitHub API evidence is tested with mocked fixture responses only); implement controlled protected PR creation and real Git revert/merge rollback. Add durable DB-level duplicate-test locking, stronger provenance and language-specific signed Docker images. Verification endpoint now fails closed with 503 for missing config or 409 for insufficient evidence; it must never infer a merge from a token.
+**Priority next:** complete owner-controlled draft PR creation acceptance on a real target branch, then run an owner-approved live target-repo PR acceptance test (GitHub API evidence is tested with mocked fixture responses only); implement controlled protected PR creation and real Git revert/merge rollback. Add durable DB-level duplicate-test locking, stronger provenance and language-specific signed Docker images. Verification endpoint now fails closed with 503 for missing config or 409 for insufficient evidence; it must never infer a merge from a token.
 
 ## Verification policy
 
