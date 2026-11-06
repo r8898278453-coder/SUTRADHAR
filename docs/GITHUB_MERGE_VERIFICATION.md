@@ -42,6 +42,46 @@ Only the server reads these secrets; no request may override the repo, token,
 required checks or minimum approvals. If configuration is missing, the API
 returns **503 `GITHUB_VERIFICATION_NOT_CONFIGURED`**.
 
+## Optional draft PR creation (does not push or merge)
+
+New: `POST /api/cluster/ticket/create-draft-pr` (administrator-only).
+**Disabled by default.** This route does not generate code, upload a patch,
+push a branch or merge into `main`. A worker must already have pushed a
+branch containing **exactly one commit** built on the Docker-tested baseline.
+The uploaded Git tree must be byte-for-byte identical to the attested candidate.
+
+Production opt-in (separate from read-only verification token):
+
+```bash
+export SUTRADHAR_ENABLE_PR_CREATION=true
+export SUTRADHAR_GITHUB_PR_TOKEN="<fine-grained token: contents read; PR read/write>"
+```
+
+Prerequisites: `SUTRADHAR_GITHUB_REPOSITORY`, semicolon-separated
+`SUTRADHAR_REQUIRED_CHECKS`, at least one required reviewer, and a valid
+ticket-scoped current worker lease. Configured GitHub repository is the
+**target repository**, which must correspond to the Docker-tested checkout.
+
+This route reads target `main` HEAD and requires it to match the tested
+baseline commit; checks the pushed branch commit's *single parent* and
+Git tree; compares **all changed files** against the exact attested list
+and the worker file whitelist. No rebase or untested extra commit is accepted.
+
+If an identical **open draft** PR exists it returns that PR without another
+POST. Otherwise GitHub creates a draft PR for human review. It records
+`draft_pr_submissions` in SQLite under a lease/patch/epoch CAS transaction.
+Status stays `READY_FOR_REVIEW`. After human review, required CI and merge,
+call `/api/cluster/ticket/verify-push` separately.
+
+A PR creation request can partially succeed remotely if GitHub responds
+unexpectedly or state changes. In that case the API **does not claim success**;
+an administrator must inspect the target GitHub repo and reconcile the draft.
+The in-process duplicate lock is not a distributed queue; multi-process
+durable reservations and crash recovery remain pending.
+
+The route's GitHub calls are exercised with deterministic mock REST responses
+in CI. **No live target-project PR creation was performed in this slice.**
+
 ## Verified delivery sequence
 
 1. A worker claims the ticket. The master issues a ticket-scoped Ed25519 token.
