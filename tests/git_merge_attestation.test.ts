@@ -10,6 +10,7 @@ const BASE = 'a'.repeat(40);
 const TREE = 'c'.repeat(40);
 const HEAD = 'b'.repeat(40);
 const MERGE = 'd'.repeat(40);
+const TOKEN_ID = 'tok_test_lease_001';
 const patch = 'diff --git a/src/safe.ts b/src/safe.ts\n--- a/src/safe.ts\n+++ b/src/safe.ts\n@@ -1 +1 @@\n-old\n+new\n';
 const hash = crypto.createHash('sha256').update(patch).digest('hex');
 
@@ -27,6 +28,14 @@ function setup() {
     createdAt: timestamp, updatedAt: timestamp, logs: []
   });
   const epoch = db.getSystemState().epochId;
+  const now = Date.now();
+  // The merge CAS checks the durable owner, epoch, token ID and expiry again
+  // after external GitHub requests complete.
+  (db as any).db.prepare(`INSERT INTO worker_leases
+    (ticket_id, worker_id, epoch_id, token_id, leased_at, expires_at, last_heartbeat_at, is_revoked)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0)`).run(
+      ticketId, 'NODE-TEST', epoch, TOKEN_ID, now, now + 900_000, now
+    );
   function attest() {
     return db.recordVerifiedSandboxPass({
       ticketId, patchSha256: hash, baselineCommit: BASE, candidateTreeSha: TREE,
@@ -38,7 +47,7 @@ function setup() {
     return db.recordVerifiedGitMerge({
       ticketId, repo: 'acme/widgets', prNumber: 12, branch: 'ai/TKT-GITHUB-01',
       headSha: HEAD, mergeSha: MERGE, treeSha: TREE,
-      patchSha256: hash, epochId: epoch, ...data
+      patchSha256: hash, epochId: epoch, workerId: 'NODE-TEST', tokenId: TOKEN_ID, ...data
     });
   }
   return {
@@ -87,6 +96,17 @@ test('stale epoch or paused cluster denies merge', () => {
     assert.equal(t.attest(), true);
     assert.equal(t.merge({ epochId: 500 }), false);
     t.db.setKillSwitch(true, 'release freeze', 'QA');
+    assert.equal(t.merge(), false);
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'READY_FOR_REVIEW');
+  } finally { t.cleanup(); }
+});
+
+test('wrong token, revoked token and expired lease cannot commit a merge', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    assert.equal(t.merge({ tokenId: 'tok_forged' }), false);
+    t.db.revokeToken(TOKEN_ID, 'Security test');
     assert.equal(t.merge(), false);
     assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'READY_FOR_REVIEW');
   } finally { t.cleanup(); }
