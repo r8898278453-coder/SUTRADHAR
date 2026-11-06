@@ -53,7 +53,7 @@ test('HTTP GitHub merge approval uses signed durable lease and actual tested tre
   };
   process.env.SUTRADHAR_GITHUB_REPOSITORY = 'acme/widgets';
   process.env.SUTRADHAR_GITHUB_TOKEN = 'local-fixture-token';
-  process.env.SUTRADHAR_REQUIRED_CHECKS = 'CI / tests';
+  process.env.SUTRADHAR_REQUIRED_CHECKS = 'CI / tests;TypeScript, unit checks, and build';
   process.env.SUTRADHAR_MIN_GITHUB_APPROVALS = '1';
 
   const originalFetch = globalThis.fetch;
@@ -81,10 +81,12 @@ test('HTTP GitHub merge approval uses signed durable lease and actual tested tre
     if (pathname.endsWith('/pulls/24/files'))
       return body([{ filename: 'src/safe.ts', status: 'modified' }]);
     if (pathname.endsWith('/commits/' + HEAD + '/check-runs'))
-      return body({ total_count: 1, check_runs: [{
-        name: 'CI / tests', head_sha: HEAD,
-        status: 'completed', conclusion: 'success', app: { slug: 'github-actions' }
-      }] });
+      return body({ total_count: 2, check_runs: [
+        { name: 'CI / tests', head_sha: HEAD,
+          status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } },
+        { name: 'TypeScript, unit checks, and build', head_sha: HEAD,
+          status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }
+      ] });
     if (pathname.endsWith('/pulls/24/reviews'))
       return body([{ state: 'APPROVED', user: { login: 'reviewer' },
         submitted_at: '2026-11-06T18:00:00Z' }]);
