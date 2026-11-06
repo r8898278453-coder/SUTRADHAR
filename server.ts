@@ -1599,8 +1599,10 @@ app.post('/api/cluster/ticket/create-draft-pr', authRole(['ADMIN']), async (req,
   const token = process.env.SUTRADHAR_GITHUB_PR_TOKEN?.trim() || '';
   const requiredChecks = (process.env.SUTRADHAR_REQUIRED_CHECKS || '')
     .split(';').map(x => x.trim()).filter(Boolean);
+  const requiredApprovals = Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS || '1');
   if (!repo || !token || !requiredChecks.length ||
-      Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS || '1') < 1) {
+      !Number.isSafeInteger(requiredApprovals) || requiredApprovals < 1 ||
+      requiredApprovals > 5) {
     return res.status(503).json({ success: false, error: 'DRAFT_PR_CONFIGURATION_MISSING' });
   }
   if (activeDraftPrCreations.has(ticketId)) {
