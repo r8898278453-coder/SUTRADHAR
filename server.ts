@@ -2207,7 +2207,7 @@ app.post('/api/cluster/watchdog/heartbeat', authRole(['ADMIN', 'WORKER']), (req,
   const lease = clusterState.watchdogLeases.find(l => l.ticketId === ticketId);
   
   if (!lease) {
-    return res.status(404).json({ success: false, error: `No active lease for ticket ${ticketId}` });
+    return res.status(403).json({ success: false, error: '403_INVALID_OR_REVOKED_LEASE' });
   }
 
   // Durable lease ownership is authoritative, not the request's asserted workerId.
