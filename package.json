@@ -7,7 +7,9 @@
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "NODE_ENV=test SUTRADHAR_TEST_RUN=true SUTRADHAR_WORKER_KEY=sutradhar-local-tests-only-worker-secret-00001 node --import tsx --test --test-concurrency=1 tests/security_ed25519.test.ts tests/cluster_db.test.ts tests/e2e_lifecycle.test.ts && NODE_ENV=test SUTRADHAR_TEST_RUN=true SUTRADHAR_WORKER_KEY=sutradhar-local-tests-only-worker-secret-00001 tsx tests/security_and_auth.test.ts",
+    "test:python": "python3 -m unittest discover -s tests -p 'test_*.py' -v"
   },
   "dependencies": {
     "@google/genai": "latest",
