@@ -102,6 +102,8 @@ async function main() {
     assert.equal(success.status, 'READY_FOR_REVIEW');
     assert.notEqual(success.status, 'COMMITTED_PUSHED');
     assert.deepEqual(first.data.evidence.changedFiles, ['value.txt']);
+    assert.match(first.data.evidence.candidateTreeSha, /^[0-9a-f]{40}$/);
+    assert.equal(clusterDb.getSandboxAttestation(success.id)?.candidateTreeSha, first.data.evidence.candidateTreeSha);
     assert.equal(first.data.evidence.patchSha256, crypto.createHash('sha256').update(success.diffPatch!).digest('hex'));
     assert.ok((success.testStdout || '').includes('__SUTRADHAR_CONTAINER_TEST_STARTED__'));
     assert.equal(clusterDb.getAllTickets().find(x => x.id === success.id)?.status, 'READY_FOR_REVIEW');
