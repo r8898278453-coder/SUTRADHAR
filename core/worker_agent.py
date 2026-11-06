@@ -72,7 +72,8 @@ class WorkerLifecycleAgent:
 
         rc, out, err = self.execute_git_cmd(["pull", "--ff-only", "origin", base_branch])
         if rc != 0:
-            logger.warning(f"Git pull ff-only notice: {err} (proceeding with local baseline)")
+            logger.error(f"Git pull failed; refusing to use stale local baseline: {err}")
+            return False
         return True
 
     def step_2_create_backup_branch(self, work_branch: str) -> bool:
@@ -106,19 +107,47 @@ class WorkerLifecycleAgent:
         return rc == 0
 
     def step_4_rebase_and_push(self, base_branch: str, work_branch: str) -> Tuple[bool, str]:
-        """Pull latest rebase before pushing to avoid missing peers' work."""
-        logger.info(f"[{self.worker_id}] Pull rebase against origin/{base_branch}...")
-        rc, out, err = self.execute_git_cmd(["pull", "--rebase", "origin", base_branch])
+        """Stage only approved ticket files, commit, rebase, and verify push success."""
+        if not self.current_ticket or not self.current_ticket.allowed_files:
+            return False, "MISSING_TICKET_SCOPE"
+
+        from pathlib import PurePosixPath
+        allowed_files = set()
+        for name in self.current_ticket.allowed_files:
+            p = PurePosixPath(name)
+            if p.is_absolute() or ".." in p.parts or not name or "\\x00" in name:
+                return False, f"INVALID_ALLOWED_PATH: {name}"
+            allowed_files.add(str(p))
+
+        # Never stage arbitrary pre-existing workspace modifications.
+        rc, _, err = self.execute_git_cmd(["add", "--", *sorted(allowed_files)])
         if rc != 0:
-            logger.error(f"Rebase conflict: {err}")
+            return False, f"GIT_STAGE_FAILED: {err}"
+
+        rc, output, err = self.execute_git_cmd(["diff", "--cached", "--name-only", "--no-renames", "-z"])
+        if rc != 0:
+            return False, f"GIT_DIFF_FAILED: {err}"
+        changed = {p for p in output.split("\\x00") if p}
+        if not changed or not changed.issubset(allowed_files):
+            return False, f"UNAUTHORIZED_STAGED_FILES: {sorted(changed - allowed_files)}"
+
+        rc, _, err = self.execute_git_cmd([
+            "commit", "-m",
+            f"feat({self.current_ticket.ticket_id}): auto-synthesized by {self.worker_id}"
+        ])
+        if rc != 0:
+            return False, f"GIT_COMMIT_FAILED: {err}"
+
+        rc, _, err = self.execute_git_cmd(["fetch", "origin", base_branch])
+        if rc != 0:
+            return False, f"GIT_FETCH_FAILED: {err}"
+
+        rc, _, err = self.execute_git_cmd(["rebase", f"origin/{base_branch}"])
+        if rc != 0:
+            self.execute_git_cmd(["rebase", "--abort"])
             return False, f"REBASE_CONFLICT: {err}"
 
-        # Commit and push
-        self.execute_git_cmd(["add", "."])
-        self.execute_git_cmd(["commit", "-m", f"feat({self.current_ticket.ticket_id if self.current_ticket else 'task'}): auto-synthesized by {self.worker_id}"])
-
-        rc, out, err = self.execute_git_cmd(["push", "-u", "origin", work_branch])
+        rc, _, err = self.execute_git_cmd(["push", "-u", "origin", work_branch])
         if rc != 0:
-            logger.warning(f"Git push warning (simulated local repo): {err}")
-
-        return True, "SUCCESS"
+            return False, f"GIT_PUSH_FAILED: {err}"
+        return True, "PUSH_CONFIRMED_NOT_MERGED"
