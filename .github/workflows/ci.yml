@@ -1,0 +1,49 @@
+name: SUTRADHAR CI
+
+on:
+  push:
+    branches:
+      - 'fix/**'
+      - 'ai/**'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: TypeScript, unit checks, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Lockfile is pending; npm install is deliberately used instead of npm ci.
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run lint
+      - name: Security and state tests
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  python:
+    name: Python syntax, shell syntax, state tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python modules
+        run: python3 -m compileall -q core sequential_runner.py
+      - name: Check shell scripts
+        run: bash -n sandbox/run_sandbox.sh hooks/pre-receive
+      - name: Python state and worker tests
+        run: npm --version && python3 -m unittest discover -s tests -p 'test_*.py' -v
