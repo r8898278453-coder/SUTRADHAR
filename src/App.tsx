@@ -160,7 +160,27 @@ export const App: React.FC = () => {
     }
   };
 
-  // Handler: Verify & Git Push
+  // Submit only an existing, exact Docker-tested branch as a draft GitHub PR.
+  const handleCreateDraftPr = async (ticketId: string) => {
+    try {
+      const response = await fetch('/api/cluster/ticket/create-draft-pr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId })
+      });
+      const data = await response.json();
+      if (response.ok && data.success && data.draft) {
+        showToast(`GitHub draft PR #${data.prNumber} ${data.existing ? 'already exists' : 'created'}; awaiting human review, not merged.`);
+      } else {
+        showToast(`Draft PR blocked: ${data.error || response.status}`);
+      }
+      await fetchState();
+    } catch (error) {
+      showToast(`Draft PR error: ${error}`);
+    }
+  };
+
+  // Handler: Verify merged GitHub PR
   const handleVerifyPush = async (ticketId: string) => {
     try {
       const res = await fetch('/api/cluster/ticket/verify-push', {
@@ -419,6 +439,7 @@ export const App: React.FC = () => {
             state={state}
             onSynthesize={handleSynthesize}
             onTest={handleTestSandbox}
+            onCreateDraftPr={handleCreateDraftPr}
             onVerifyPush={handleVerifyPush}
             onSelectTicketForConsole={(t) => {
               setActiveTicket(t);
