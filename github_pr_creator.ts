@@ -99,6 +99,7 @@ export async function createVerifiedDraftPr(input: DraftPrInput): Promise<DraftP
           candidates[0].draft !== true || candidates[0].head.sha !== headSha ||
           !Number.isSafeInteger(candidates[0].number) ||
           candidates[0].number < 1 ||
+          candidates[0].base.sha !== baselineCommit ||
           typeof candidates[0].html_url !== 'string') {
         return deny('DRAFT_PR_BRANCH_ALREADY_USED');
       }
@@ -123,6 +124,7 @@ export async function createVerifiedDraftPr(input: DraftPrInput): Promise<DraftP
         created?.head?.ref !== branch || created.head.sha !== headSha ||
         created.head.repo?.full_name !== repo ||
         created?.base?.ref !== 'main' || created.base.repo?.full_name !== repo ||
+        created.base.sha !== baselineCommit ||
         !Number.isSafeInteger(created.number) || created.number < 1 ||
         typeof created.html_url !== 'string') {
       return deny('DRAFT_PR_RESPONSE_HEAD_CHANGED_MANUAL_REVIEW');
