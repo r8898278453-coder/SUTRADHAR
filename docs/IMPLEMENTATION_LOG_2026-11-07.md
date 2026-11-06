@@ -37,6 +37,8 @@ are not configured.
 - New SQLite CAS tests verify accepted/rejected transitions, one-time recording,
   changed patch, stale epoch, pause, revoked/forged token. Real Docker suite
   remains separate and continues running in PR CI.
+- Added `tests/github_merge_http_integration.test.ts`: test-only mocked GitHub REST responses drive the actual Express endpoint, including wrong-tree denial then signed-lease/SQLite CAS acceptance. This is not live GitHub evidence.
+- [GitHub Actions #42283331008](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/42283331008) completed successfully with TypeScript typecheck, Node tests including mocked GitHub HTTP cases, real HTTP-to-Docker integration, Python sandbox/consensus tests and build.
 - CI results apply only to the specific branch head tested by GitHub Actions;
   latest-head checks must be green before review.
 
