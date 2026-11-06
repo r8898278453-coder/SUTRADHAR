@@ -1,0 +1,37 @@
+# Secrets and Cryptographic Keys
+*.pem
+*.key
+*.pub
+/secrets/
+.sutradhar_state/
+*.env
+.env
+.env.*
+!.env.example
+
+# Runtime SQLite State & Databases
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Node Dependencies & Build Artifacts
+node_modules/
+dist/
+build/
+.cache/
+coverage/
+
+# Python Artifacts & Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+env/
+venv/
+
+# System Files
+.DS_Store
+Thumbs.db

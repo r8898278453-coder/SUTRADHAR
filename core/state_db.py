@@ -360,103 +360,114 @@ class StateDatabase:
 
     def try_claim_master(self, worker_id: str, heartbeat_ttl_seconds: int = 180) -> Tuple[bool, str, int]:
         """
-        Atomic Compare-And-Swap Master Election (Section 5).
+        Atomic Compare-And-Swap Master Election against authoritative SQLite system_state.
         Returns (success: bool, current_master_id: str, epoch: int).
         """
-        state = self._memory_db["system_state"]
-        current = state.get("current_master", {})
-        now = time.time()
-        
-        last_hb = current.get("last_heartbeat", 0)
-        curr_master = current.get("worker_id")
-        epoch = current.get("epoch", 1)
+        conn = self._get_sqlite_conn()
+        if not conn:
+            logger.error("Authoritative SQLite DB unavailable. Refusing master election from local cache.")
+            return False, "UNAVAILABLE", 0
 
-        # Check if master is alive
-        if curr_master and (now - last_hb) < heartbeat_ttl_seconds:
-            if curr_master == worker_id:
-                # Refresh heartbeat
-                current["last_heartbeat"] = now
-                self._save_to_disk()
-                return True, curr_master, epoch
-            return False, curr_master, epoch
+        now = int(time.time())
+        try:
+            with conn:
+                row = conn.execute("SELECT epoch_id, current_master_id, last_heartbeat FROM system_state WHERE id = 1").fetchone()
+                if not row:
+                    return False, "UNINITIALIZED", 0
 
-        # Master is expired or empty -> Atomic CAS win!
-        new_epoch = epoch + 1
-        state["current_master"] = {
-            "worker_id": worker_id,
-            "since_timestamp": now,
-            "last_heartbeat": now,
-            "epoch": new_epoch
-        }
+                curr_epoch = int(row["epoch_id"])
+                curr_master = str(row["current_master_id"])
+                last_hb = int(row["last_heartbeat"])
 
-        # Update worker role
-        if worker_id in self._memory_db["workers"]:
-            self._memory_db["workers"][worker_id]["role"] = "MASTER"
+                if curr_master == worker_id:
+                    conn.execute("UPDATE system_state SET last_heartbeat = ?, updated_at = ? WHERE id = 1", (now, now))
+                    return True, worker_id, curr_epoch
 
-        self.append_audit_log(
-            actor=worker_id,
-            action="MASTER_ELECTED_CAS",
-            ticket_id=None,
-            reasoning=f"Previous master timed out (> {heartbeat_ttl_seconds}s). Won atomic election CAS.",
-            details={"epoch": new_epoch}
-        )
-        self._save_to_disk()
-        return True, worker_id, new_epoch
+                if (now - last_hb) < heartbeat_ttl_seconds and curr_master != "UNINITIALIZED":
+                    return False, curr_master, curr_epoch
+
+                new_epoch = curr_epoch + 1
+                res = conn.execute("""
+                    UPDATE system_state
+                    SET current_master_id = ?, epoch_id = ?, last_heartbeat = ?, updated_at = ?
+                    WHERE id = 1 AND epoch_id = ?
+                """, (worker_id, new_epoch, now, now, curr_epoch))
+
+                if res.rowcount != 1:
+                    return False, curr_master, curr_epoch
+
+                conn.execute("UPDATE workers SET role = 'MASTER', status = 'ACTIVE' WHERE worker_id = ?", (worker_id,))
+                self.append_audit_log(
+                    actor=worker_id,
+                    action="MASTER_ELECTED_CAS",
+                    ticket_id=None,
+                    reasoning=f"Previous master timed out (> {heartbeat_ttl_seconds}s). Won atomic election CAS.",
+                    details={"epoch": new_epoch}
+                )
+                return True, worker_id, new_epoch
+        except Exception as e:
+            logger.error(f"Master election CAS error: {e}")
+            return False, "ERROR", 0
+        finally:
+            conn.close()
 
     def try_claim_ticket(self, worker_id: str, ticket_id: str) -> Tuple[bool, str]:
         """
-        Atomic Ticket Claim with Dependency Enforcement (Section 7, Section 11 Gap #3).
-        Only claims if status is 'open' AND (depends_on is None OR depends_on status is 'done').
+        Atomic Ticket Claim with Dependency Enforcement against authoritative SQLite database.
         """
-        tickets = self._memory_db["tickets"]
-        if ticket_id not in tickets:
-            return False, "Ticket not found"
+        conn = self._get_sqlite_conn()
+        if not conn:
+            return False, "AUTHORITATIVE_DB_UNAVAILABLE: Cannot grant leases without authoritative SQLite database"
 
-        tkt = tickets[ticket_id]
+        now = int(time.time())
+        try:
+            with conn:
+                sys_row = conn.execute("SELECT kill_switch_active, max_concurrent_workers, epoch_id FROM system_state WHERE id = 1").fetchone()
+                if sys_row and sys_row["kill_switch_active"]:
+                    return False, "KILL_SWITCH_ACTIVE: Cluster execution is paused."
 
-        # 1. Status check
-        if tkt.get("status") != "open":
-            return False, f"Ticket status is '{tkt.get('status')}', not 'open'"
+                max_workers = sys_row["max_concurrent_workers"] if sys_row else 6
+                active_cnt = conn.execute("SELECT COUNT(*) as cnt FROM tickets WHERE status IN ('SYNTHESIZING_DIFF', 'TESTING_SANDBOX', 'HEALING_RETRY')").fetchone()["cnt"]
+                if active_cnt >= max_workers:
+                    return False, f"MAX_WORKERS_CAP_EXCEEDED: Maximum {max_workers} concurrent workers allowed."
 
-        # 2. Dependency check (Section 11 Gap #3)
-        dep_id = tkt.get("depends_on")
-        if dep_id:
-            if dep_id not in tickets:
-                return False, f"Blocking dependency {dep_id} does not exist"
-            dep_status = tickets[dep_id].get("status")
-            if dep_status != "done":
-                return False, f"Dependency {dep_id} is '{dep_status}', must be 'done' before claiming"
+                tkt_row = conn.execute("SELECT * FROM tickets WHERE ticket_id = ?", (ticket_id,)).fetchone()
+                if not tkt_row:
+                    return False, "Ticket not found"
 
-        # 3. Max Concurrent Worker Check (Section 11 Gap #10)
-        max_workers = self._memory_db["system_state"].get("max_concurrent_workers", 6)
-        active_claims = sum(1 for t in tickets.values() if t.get("status") in ["claimed", "in_progress"])
-        if active_claims >= max_workers:
-            return False, f"Max concurrent workers cap reached ({active_claims}/{max_workers})"
+                if tkt_row["status"] not in ("PENDING", "BLOCKED_ON_PARENT", "open"):
+                    return False, f"Ticket status is '{tkt_row['status']}', cannot claim"
 
-        # 4. Quota check for worker (Section 4.3)
-        worker = self._memory_db["workers"].get(worker_id)
-        if worker and worker.get("quota_usage", {}).get("is_exhausted", False):
-            return False, f"Worker {worker_id} quota is marked exhausted. Cannot claim."
+                deps = conn.execute("SELECT parent_ticket_id FROM ticket_dependencies WHERE child_ticket_id = ?", (ticket_id,)).fetchall()
+                for d in deps:
+                    p_row = conn.execute("SELECT status FROM tickets WHERE ticket_id = ?", (d["parent_ticket_id"],)).fetchone()
+                    if not p_row or p_row["status"] != "COMMITTED_PUSHED":
+                        return False, f"Parent ticket {d['parent_ticket_id']} is not COMMITTED_PUSHED. Ticket remains blocked."
 
-        # Atomic claim
-        tkt["status"] = "claimed"
-        tkt["claimed_by"] = worker_id
-        tkt["claimed_at"] = time.time()
-        tkt["branch_name"] = f"worker-{worker_id[-4:]}/ticket-{ticket_id.lower().replace('tkt-', '')}"
+                branch = f"worker-{worker_id[-4:].lower()}/ticket-{ticket_id.lower().replace('tkt-', '')}"
+                res = conn.execute("""
+                    UPDATE tickets
+                    SET status = 'SYNTHESIZING_DIFF', assigned_to = ?, branch = ?, updated_at = ?
+                    WHERE ticket_id = ? AND (status = 'PENDING' OR status = 'BLOCKED_ON_PARENT' OR status = 'open')
+                """, (worker_id, branch, now, ticket_id))
 
-        if worker:
-            worker["status"] = "BUSY"
-            worker["current_ticket"] = ticket_id
+                if res.rowcount != 1:
+                    return False, "CLAIM_CONFLICT: Ticket was claimed by another worker concurrently"
 
-        self.append_audit_log(
-            actor=worker_id,
-            action="TICKET_CLAIMED",
-            ticket_id=ticket_id,
-            reasoning="Dependency check passed. Atomic claim acquired.",
-            details={"branch": tkt["branch_name"]}
-        )
-        self._save_to_disk()
-        return True, "Claim successful"
+                conn.execute("UPDATE workers SET status = 'SYNTHESIZING', current_ticket_id = ? WHERE worker_id = ?", (ticket_id, worker_id))
+                self.append_audit_log(
+                    actor=worker_id,
+                    action="TICKET_CLAIMED",
+                    ticket_id=ticket_id,
+                    reasoning="Dependency check passed. Atomic SQLite claim acquired.",
+                    details={"branch": branch}
+                )
+                return True, "Claim successful"
+        except Exception as e:
+            logger.error(f"Ticket claim error: {e}")
+            return False, f"CLAIM_FAILED: {str(e)}"
+        finally:
+            conn.close()
 
     # ==================== CLARIFICATION PROTOCOL (Section 3.3) ====================
 

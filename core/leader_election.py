@@ -29,12 +29,7 @@ class ClusterStateManager:
         if db_path:
             self.db_path = Path(db_path)
         else:
-            default_local = Path(__file__).resolve().parent.parent / ".sutradhar_state" / "cluster_state.db"
-            try:
-                Path("/opt/sutradhar/data").mkdir(parents=True, exist_ok=True)
-                self.db_path = Path("/opt/sutradhar/data/cluster_state.db")
-            except Exception:
-                self.db_path = default_local
+            self.db_path = Path(__file__).resolve().parent.parent / ".sutradhar_state" / "cluster.db"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -47,12 +42,19 @@ class ClusterStateManager:
     def _init_db(self) -> None:
         with self._get_conn() as conn:
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS cluster_meta (
+                CREATE TABLE IF NOT EXISTS system_state (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
-                    current_epoch INTEGER NOT NULL,
-                    active_master_id TEXT NOT NULL,
-                    pinned_message_id INTEGER DEFAULT 0,
+                    current_master_id TEXT NOT NULL,
+                    epoch_id INTEGER NOT NULL,
+                    master_mode TEXT DEFAULT 'ORCHESTRATOR',
+                    global_status TEXT DEFAULT 'RUNNING',
                     kill_switch_active INTEGER DEFAULT 0,
+                    kill_switch_reason TEXT,
+                    max_concurrent_workers INTEGER DEFAULT 6,
+                    active_project_id TEXT DEFAULT 'PRJ-MATRIMONY-01',
+                    rpm REAL DEFAULT 4.8,
+                    max_rpm REAL DEFAULT 10.0,
+                    last_heartbeat INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
             """)
@@ -66,20 +68,28 @@ class ClusterStateManager:
                 );
             """)
             conn.execute("""
-                INSERT OR IGNORE INTO cluster_meta (id, current_epoch, active_master_id, pinned_message_id, kill_switch_active, updated_at)
-                VALUES (1, 1, 'UNINITIALIZED', 0, 0, ?);
-            """, (int(time.time()),))
+                INSERT OR IGNORE INTO system_state (
+                    id, current_master_id, epoch_id, master_mode, global_status,
+                    kill_switch_active, kill_switch_reason, max_concurrent_workers,
+                    active_project_id, rpm, max_rpm, last_heartbeat, updated_at
+                ) VALUES (
+                    1, 'NODE-E78A1201', 15, 'ORCHESTRATOR', 'RUNNING',
+                    0, NULL, 6, 'PRJ-MATRIMONY-01', 4.8, 10.0, ?, ?
+                );
+            """, (int(time.time()), int(time.time())))
 
     def get_cluster_epoch(self) -> Tuple[int, str, bool]:
         with self._get_conn() as conn:
-            cursor = conn.execute("SELECT current_epoch, active_master_id, kill_switch_active FROM cluster_meta WHERE id = 1;")
+            cursor = conn.execute("SELECT epoch_id, current_master_id, kill_switch_active FROM system_state WHERE id = 1;")
             row = cursor.fetchone()
-            return row[0], row[1], bool(row[2])
+            if row:
+                return int(row[0]), str(row[1]), bool(row[2])
+            return 1, "NODE-E78A1201", False
 
     def set_kill_switch(self, active: bool) -> None:
         now = int(time.time())
         with self._get_conn() as conn:
-            conn.execute("UPDATE cluster_meta SET kill_switch_active = ?, updated_at = ? WHERE id = 1;", (1 if active else 0, now))
+            conn.execute("UPDATE system_state SET kill_switch_active = ?, updated_at = ? WHERE id = 1;", (1 if active else 0, now))
             logger.warning(f"[CONSENSUS] Emergency Kill-Switch set to {active}")
 
     def verify_split_brain_status(self, my_node_id: str, telegram_pinned_master_id: Optional[str]) -> Tuple[bool, str]:
@@ -104,8 +114,9 @@ class ClusterStateManager:
     def register_heartbeat(self, node_id: str, role: str, uptime: int, epoch_id: int) -> Tuple[int, str, bool]:
         now = int(time.time())
         with self._get_conn() as conn:
-            cursor = conn.execute("SELECT current_epoch, active_master_id, kill_switch_active FROM cluster_meta WHERE id = 1;")
-            curr_epoch, master_id, is_killed = cursor.fetchone()
+            cursor = conn.execute("SELECT epoch_id, current_master_id, kill_switch_active FROM system_state WHERE id = 1;")
+            row = cursor.fetchone()
+            curr_epoch, master_id, is_killed = (row[0], row[1], bool(row[2])) if row else (1, "UNINITIALIZED", False)
 
             must_demote = False
             if role == "MASTER" and (epoch_id < curr_epoch or (master_id != node_id and master_id != "UNINITIALIZED")):
@@ -128,19 +139,26 @@ class ClusterStateManager:
     def elect_new_master(self, candidate_node_id: str) -> Optional[int]:
         now = int(time.time())
         with self._get_conn() as conn:
-            cursor = conn.execute("SELECT current_epoch, active_master_id, updated_at FROM cluster_meta WHERE id = 1;")
-            curr_epoch, current_master, last_updated = cursor.fetchone()
+            cursor = conn.execute("SELECT epoch_id, current_master_id, updated_at FROM system_state WHERE id = 1;")
+            row = cursor.fetchone()
+            if not row:
+                return None
+            curr_epoch, current_master, last_updated = row
 
             if current_master != "UNINITIALIZED" and (now - last_updated) < 90 and current_master != candidate_node_id:
                 logger.warning(f"[CONSENSUS] Master {current_master} is still alive. Refusing election.")
                 return None
 
             new_epoch = curr_epoch + 1
-            conn.execute("""
-                UPDATE cluster_meta
-                SET current_epoch = ?, active_master_id = ?, updated_at = ?
-                WHERE id = 1;
-            """, (new_epoch, candidate_node_id, now))
+            cursor = conn.execute("""
+                UPDATE system_state
+                SET epoch_id = ?, current_master_id = ?, updated_at = ?
+                WHERE id = 1 AND epoch_id = ?;
+            """, (new_epoch, candidate_node_id, now, curr_epoch))
+
+            if cursor.rowcount != 1:
+                logger.warning("[CONSENSUS] CAS Election conflict: epoch changed concurrently.")
+                return None
 
             conn.execute("""
                 UPDATE node_registry SET role = 'MASTER', epoch_id = ? WHERE node_id = ?;
@@ -151,6 +169,6 @@ class ClusterStateManager:
 
 
 if __name__ == "__main__":
-    mgr = ClusterStateManager("/opt/sutradhar/data/cluster_state.db")
+    mgr = ClusterStateManager()
     epoch, master, is_killed = mgr.get_cluster_epoch()
     print(f"[+] Cluster State SQLite Initialized: Epoch #{epoch} | Master: {master} | Kill-Switch: {is_killed}")

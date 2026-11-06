@@ -253,38 +253,52 @@ export class ClusterDatabase {
   // Atomic Master Election CAS
   public tryClaimMaster(candidateId: string, heartbeatTtlMs: number = 90000): { success: boolean; activeMasterId: string; newEpoch: number } {
     const now = Date.now();
-    const current = this.getSystemState();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const current = this.getSystemState();
 
-    if (current.currentMasterId === candidateId) {
-      this.db.prepare('UPDATE system_state SET last_heartbeat = ?, updated_at = ? WHERE id = 1').run(now, now);
-      return { success: true, activeMasterId: candidateId, newEpoch: current.epochId };
+      if (current.currentMasterId === candidateId) {
+        this.db.prepare('UPDATE system_state SET last_heartbeat = ?, updated_at = ? WHERE id = 1').run(now, now);
+        this.db.exec('COMMIT');
+        return { success: true, activeMasterId: candidateId, newEpoch: current.epochId };
+      }
+
+      if (now - current.lastHeartbeat < heartbeatTtlMs) {
+        this.db.exec('COMMIT');
+        return { success: false, activeMasterId: current.currentMasterId, newEpoch: current.epochId };
+      }
+
+      // Previous master dead or failover -> Increment Monotonic Epoch atomically
+      const newEpoch = current.epochId + 1;
+      const res = this.db.prepare(`
+        UPDATE system_state 
+        SET current_master_id = ?, epoch_id = ?, last_heartbeat = ?, updated_at = ?
+        WHERE id = 1 AND epoch_id = ?
+      `).run(candidateId, newEpoch, now, now, current.epochId);
+
+      if (res.changes !== 1) {
+        throw new Error('ELECTION_CAS_CONFLICT: Epoch changed during election');
+      }
+
+      // Promote candidate worker node in workers table if registered
+      this.db.prepare(`
+        UPDATE workers SET role = 'MASTER', status = 'ACTIVE' WHERE worker_id = ?
+      `).run(candidateId);
+
+      this.appendAuditLog({
+        actor: candidateId,
+        action: 'MASTER_ELECTED_CAS',
+        reasoning: `Previous master timed out or failover triggered. Monotonic Epoch bumped to #${newEpoch}.`,
+        details: { candidateId, newEpoch, previousMaster: current.currentMasterId }
+      });
+
+      this.db.exec('COMMIT');
+      return { success: true, activeMasterId: candidateId, newEpoch };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      const fallbackState = this.getSystemState();
+      return { success: false, activeMasterId: fallbackState.currentMasterId, newEpoch: fallbackState.epochId };
     }
-
-    if (now - current.lastHeartbeat < heartbeatTtlMs) {
-      return { success: false, activeMasterId: current.currentMasterId, newEpoch: current.epochId };
-    }
-
-    // Previous master dead or failover -> Increment Monotonic Epoch atomically
-    const newEpoch = current.epochId + 1;
-    this.db.prepare(`
-      UPDATE system_state 
-      SET current_master_id = ?, epoch_id = ?, last_heartbeat = ?, updated_at = ?
-      WHERE id = 1
-    `).run(candidateId, newEpoch, now, now);
-
-    // Promote candidate worker node in workers table if registered
-    this.db.prepare(`
-      UPDATE workers SET role = 'MASTER', status = 'ACTIVE' WHERE worker_id = ?
-    `).run(candidateId);
-
-    this.appendAuditLog({
-      actor: candidateId,
-      action: 'MASTER_ELECTED_CAS',
-      reasoning: `Previous master timed out or failover triggered. Monotonic Epoch bumped to #${newEpoch}.`,
-      details: { candidateId, newEpoch, previousMaster: current.currentMasterId }
-    });
-
-    return { success: true, activeMasterId: candidateId, newEpoch };
   }
 
   // Atomic Ticket Claim with Dependency & Concurrency Guarantees
@@ -295,107 +309,146 @@ export class ClusterDatabase {
     lease?: WatchdogLease;
   } {
     const now = Date.now();
-    const system = this.getSystemState();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const system = this.getSystemState();
 
-    if (system.killSwitchActive) {
-      return { success: false, error: `KILL_SWITCH_ACTIVE: ${system.killSwitchReason || 'Cluster is paused'}` };
-    }
+      if (system.killSwitchActive) {
+        this.db.exec('ROLLBACK');
+        return { success: false, error: `KILL_SWITCH_ACTIVE: ${system.killSwitchReason || 'Cluster is paused'}` };
+      }
 
-    // 1. Concurrency limit check
-    const activeWorkersCount = this.db.prepare(`
-      SELECT COUNT(*) as cnt FROM tickets 
-      WHERE status IN ('SYNTHESIZING_DIFF', 'TESTING_SANDBOX', 'HEALING_RETRY')
-    `).get() as any;
+      // 1. Concurrency limit check
+      const activeWorkersCount = this.db.prepare(`
+        SELECT COUNT(*) as cnt FROM tickets 
+        WHERE status IN ('SYNTHESIZING_DIFF', 'TESTING_SANDBOX', 'HEALING_RETRY')
+      `).get() as any;
 
-    if (activeWorkersCount.cnt >= system.maxConcurrentWorkers) {
-      return { 
-        success: false, 
-        error: `MAX_WORKERS_CAP_EXCEEDED: Maximum ${system.maxConcurrentWorkers} concurrent workers allowed.` 
-      };
-    }
-
-    // 2. Ticket state check
-    const ticketRow = this.db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId) as any;
-    if (!ticketRow) {
-      return { success: false, error: `Ticket ${ticketId} not found` };
-    }
-
-    if (ticketRow.status !== 'PENDING' && ticketRow.status !== 'BLOCKED_ON_PARENT') {
-      return { success: false, error: `Ticket ${ticketId} is currently in '${ticketRow.status}' state.` };
-    }
-
-    // 3. Dependency check: verify all parent tickets are COMMITTED_PUSHED
-    const parents = this.db.prepare(`
-      SELECT parent_ticket_id FROM ticket_dependencies WHERE child_ticket_id = ?
-    `).all(ticketId) as Array<{ parent_ticket_id: string }>;
-
-    for (const p of parents) {
-      const parentRow = this.db.prepare('SELECT status FROM tickets WHERE ticket_id = ?').get(p.parent_ticket_id) as any;
-      if (!parentRow || parentRow.status !== 'COMMITTED_PUSHED') {
+      if (activeWorkersCount.cnt >= system.maxConcurrentWorkers) {
+        this.db.exec('ROLLBACK');
         return { 
           success: false, 
-          error: `Parent ticket ${p.parent_ticket_id} is not yet COMMITTED_PUSHED. Ticket remains blocked.` 
+          error: `MAX_WORKERS_CAP_EXCEEDED: Maximum ${system.maxConcurrentWorkers} concurrent workers allowed.` 
         };
       }
+
+      // 2. Ticket state check
+      const ticketRow = this.db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId) as any;
+      if (!ticketRow) {
+        this.db.exec('ROLLBACK');
+        return { success: false, error: `Ticket ${ticketId} not found` };
+      }
+
+      if (ticketRow.status !== 'PENDING' && ticketRow.status !== 'BLOCKED_ON_PARENT') {
+        this.db.exec('ROLLBACK');
+        return { success: false, error: `Ticket ${ticketId} is currently in '${ticketRow.status}' state.` };
+      }
+
+      // 3. Dependency check: verify all parent tickets are COMMITTED_PUSHED
+      const parents = this.db.prepare(`
+        SELECT parent_ticket_id FROM ticket_dependencies WHERE child_ticket_id = ?
+      `).all(ticketId) as Array<{ parent_ticket_id: string }>;
+
+      for (const p of parents) {
+        const parentRow = this.db.prepare('SELECT status FROM tickets WHERE ticket_id = ?').get(p.parent_ticket_id) as any;
+        if (!parentRow || parentRow.status !== 'COMMITTED_PUSHED') {
+          this.db.exec('ROLLBACK');
+          return { 
+            success: false, 
+            error: `Parent ticket ${p.parent_ticket_id} is not yet COMMITTED_PUSHED. Ticket remains blocked.` 
+          };
+        }
+      }
+
+      // 4. Atomic claim update
+      const branch = `worker-${workerId.slice(-4).toLowerCase()}/ticket-${ticketId.toLowerCase().replace('tkt-', '')}`;
+      const expiresAt = now + ttlSeconds * 1000;
+
+      const existingLogs = ticketRow.logs_json ? JSON.parse(ticketRow.logs_json) : [];
+      existingLogs.push({
+        timestamp: new Date().toLocaleTimeString(),
+        level: 'INFO',
+        message: `[ATOMIC CLAIM] Ticket leased to ${workerId}. Branch ${branch} reserved. Epoch #${system.epochId}.`
+      });
+
+      const updateRes = this.db.prepare(`
+        UPDATE tickets
+        SET status = 'SYNTHESIZING_DIFF',
+            assigned_to = ?,
+            branch = ?,
+            logs_json = ?,
+            updated_at = ?
+        WHERE ticket_id = ?
+          AND (status = 'PENDING' OR status = 'BLOCKED_ON_PARENT')
+      `).run(workerId, branch, JSON.stringify(existingLogs), now, ticketId);
+
+      if (updateRes.changes !== 1) {
+        throw new Error('CLAIM_CONFLICT: Ticket was claimed by another worker concurrently');
+      }
+
+      // Record worker lease
+      this.db.prepare(`
+        INSERT OR REPLACE INTO worker_leases (
+          ticket_id, worker_id, epoch_id, token_id, leased_at, expires_at,
+          last_heartbeat_at, missed_heartbeats, max_missed_heartbeats, progress_pct,
+          last_step, is_revoked
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 3, 10, 'Lease acquired, beginning synthesis', 0)
+      `).run(ticketId, workerId, system.epochId, tokenId, now, expiresAt, now);
+
+      // Update worker status
+      this.db.prepare(`
+        UPDATE workers SET status = 'SYNTHESIZING', current_ticket_id = ? WHERE worker_id = ?
+      `).run(ticketId, workerId);
+
+      this.appendAuditLog({
+        actor: workerId,
+        action: 'TICKET_CLAIMED_ATOMIC',
+        ticketId,
+        reasoning: 'Dependencies verified, concurrency cap checked, atomic lease acquired.',
+        details: { branch, epochId: system.epochId, tokenId, expiresAt }
+      });
+
+      this.db.exec('COMMIT');
+
+      const lease: WatchdogLease = {
+        ticketId,
+        workerId,
+        leasedAt: now,
+        expiresAt,
+        lastHeartbeatAt: now,
+        missedHeartbeats: 0,
+        maxMissedHeartbeats: 3,
+        progressPct: 10,
+        lastStep: 'Lease acquired, beginning synthesis',
+        isRevoked: false
+      };
+
+      return { success: true, branch, lease };
+    } catch (err: any) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      return { success: false, error: err.message || 'CLAIM_FAILED' };
     }
+  }
 
-    // 4. Atomic claim update
-    const branch = `worker-${workerId.slice(-4).toLowerCase()}/ticket-${ticketId.toLowerCase().replace('tkt-', '')}`;
-    const expiresAt = now + ttlSeconds * 1000;
-
-    const existingLogs = ticketRow.logs_json ? JSON.parse(ticketRow.logs_json) : [];
-    existingLogs.push({
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'INFO',
-      message: `[ATOMIC CLAIM] Ticket leased to ${workerId}. Branch ${branch} reserved. Epoch #${system.epochId}.`
-    });
-
+  // Durable Token Revocation (Task 9)
+  public revokeToken(tokenId: string, reason: string = 'Token explicitly revoked'): void {
+    const now = Date.now();
     this.db.prepare(`
-      UPDATE tickets
-      SET status = 'SYNTHESIZING_DIFF',
-          assigned_to = ?,
-          branch = ?,
-          logs_json = ?,
-          updated_at = ?
-      WHERE ticket_id = ?
-    `).run(workerId, branch, JSON.stringify(existingLogs), now, ticketId);
-
-    // Record worker lease
-    this.db.prepare(`
-      INSERT OR REPLACE INTO worker_leases (
-        ticket_id, worker_id, epoch_id, token_id, leased_at, expires_at,
-        last_heartbeat_at, missed_heartbeats, max_missed_heartbeats, progress_pct,
-        last_step, is_revoked
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 3, 10, 'Lease acquired, beginning synthesis', 0)
-    `).run(ticketId, workerId, system.epochId, tokenId, now, expiresAt, now);
-
-    // Update worker status
-    this.db.prepare(`
-      UPDATE workers SET status = 'SYNTHESIZING', current_ticket_id = ? WHERE worker_id = ?
-    `).run(ticketId, workerId);
+      INSERT OR REPLACE INTO revoked_tokens (token_id, revoked_at, reason)
+      VALUES (?, ?, ?)
+    `).run(tokenId, now, reason);
 
     this.appendAuditLog({
-      actor: workerId,
-      action: 'TICKET_CLAIMED_ATOMIC',
-      ticketId,
-      reasoning: 'Dependencies verified, concurrency cap checked, atomic lease acquired.',
-      details: { branch, epochId: system.epochId, tokenId, expiresAt }
+      actor: 'Security Gatekeeper',
+      action: 'TOKEN_REVOKED',
+      reasoning: reason,
+      details: { tokenId }
     });
+  }
 
-    const lease: WatchdogLease = {
-      ticketId,
-      workerId,
-      leasedAt: now,
-      expiresAt,
-      lastHeartbeatAt: now,
-      missedHeartbeats: 0,
-      maxMissedHeartbeats: 3,
-      progressPct: 10,
-      lastStep: 'Lease acquired, beginning synthesis',
-      isRevoked: false
-    };
-
-    return { success: true, branch, lease };
+  public isTokenRevoked(tokenId: string): boolean {
+    const row = this.db.prepare('SELECT token_id FROM revoked_tokens WHERE token_id = ?').get(tokenId);
+    return Boolean(row);
   }
 
   // Update Ticket Status
@@ -408,7 +461,7 @@ export class ClusterDatabase {
     llmUsed: string;
     retryCount: number;
     currentTier: 1 | 2 | 3;
-    assignedTo: string;
+    assignedTo: string | null;
     branch: string;
     ed25519Token: string;
     tokenExpiresAt: number;
@@ -427,6 +480,9 @@ export class ClusterDatabase {
       });
     }
 
+    const shouldClearAssignedTo = updates.assignedTo === null;
+    const newAssignedTo = updates.assignedTo !== undefined && updates.assignedTo !== null ? updates.assignedTo : null;
+
     this.db.prepare(`
       UPDATE tickets SET
         status = COALESCE(?, status),
@@ -437,7 +493,7 @@ export class ClusterDatabase {
         llm_used = COALESCE(?, llm_used),
         retry_count = COALESCE(?, retry_count),
         current_tier = COALESCE(?, current_tier),
-        assigned_to = COALESCE(?, assigned_to),
+        assigned_to = CASE WHEN ? = 1 THEN NULL WHEN ? IS NOT NULL THEN ? ELSE assigned_to END,
         branch = COALESCE(?, branch),
         ed25519_token = COALESCE(?, ed25519_token),
         token_expires_at = COALESCE(?, token_expires_at),
@@ -453,7 +509,9 @@ export class ClusterDatabase {
       updates.llmUsed || null,
       updates.retryCount !== undefined ? updates.retryCount : null,
       updates.currentTier || null,
-      updates.assignedTo !== undefined ? updates.assignedTo : null,
+      shouldClearAssignedTo ? 1 : 0,
+      newAssignedTo,
+      newAssignedTo,
       updates.branch || null,
       updates.ed25519Token || null,
       updates.tokenExpiresAt || null,
@@ -584,6 +642,12 @@ export class ClusterDatabase {
       now,
       now
     );
+
+    this.db.prepare(`
+      UPDATE tickets
+      SET status = 'ROLLBACK_COMPLETED', updated_at = ?
+      WHERE ticket_id = ?
+    `).run(now, ticketId);
 
     this.appendAuditLog({
       actor,

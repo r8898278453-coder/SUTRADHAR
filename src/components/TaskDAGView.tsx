@@ -88,6 +88,27 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
             [VERIFIED] tested/ MERGED
           </span>
         );
+      case 'READY_FOR_REVIEW':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 animate-pulse">
+            <CheckCircle className="w-3 h-3 text-emerald-400" />
+            [TEST_PASSED] READY FOR REVIEW
+          </span>
+        );
+      case 'ROLLBACK_REQUESTED':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/30 animate-spin">
+            <RotateCw className="w-3 h-3 text-orange-400" />
+            [ROLLBACK] REQUESTED
+          </span>
+        );
+      case 'ROLLBACK_COMPLETED':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
+            <ShieldAlert className="w-3 h-3 text-rose-400" />
+            [ROLLED_BACK] REVERTED
+          </span>
+        );
       case 'TESTING_SANDBOX':
         return (
           <span className="flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
@@ -487,9 +508,10 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                 </div>
               )}
 
-              {/* Case 5: ACTIVE PIPELINE (SYNTHESIZING, TESTING, HEALING) */}
+              {/* Case 5: ACTIVE PIPELINE (SYNTHESIZING, TESTING, HEALING, READY_FOR_REVIEW) */}
               {(selectedTicket.status === 'SYNTHESIZING_DIFF' || 
                 selectedTicket.status === 'TESTING_SANDBOX' || 
+                selectedTicket.status === 'READY_FOR_REVIEW' || 
                 selectedTicket.status === 'HEALING_RETRY') && (
                 <div className="space-y-3 pt-2 border-t border-slate-800">
                   <div className="flex items-center justify-between">

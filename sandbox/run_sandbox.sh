@@ -21,9 +21,13 @@ if [[ -d "${ABS_WORKSPACE}/secrets" ]]; then
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
-    echo "[INFO][SANDBOX] Docker daemon not present in environment. Executing in local isolated process sandbox (timeout 45s)..." >&2
-    cd "${ABS_WORKSPACE}"
-    exec timeout --signal=SIGKILL 45s bash -c "${TEST_CMD}"
+    echo "[FATAL][SANDBOX] SANDBOX_UNAVAILABLE: Docker daemon is not installed or running. Untrusted host execution is strictly prohibited." >&2
+    exit 126
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    echo "[FATAL][SANDBOX] SANDBOX_UNAVAILABLE: Docker daemon is not accessible. Untrusted host execution is strictly prohibited." >&2
+    exit 126
 fi
 
 IMAGE_TAG="sutradhar-runner:5.3"

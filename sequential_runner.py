@@ -92,6 +92,7 @@ class SequentialWorker:
         read_only_contracts: List[str],
         epoch_id: int,
         max_retries: int = 3,
+        lease_token: Optional[str] = None,
     ) -> bool:
         branch_name = f"ai/{ticket_id}"
 
@@ -140,14 +141,16 @@ class SequentialWorker:
                 )
 
                 if test_proc.returncode == 0:
-                    token_header = CryptoSigner.sign_lease(
-                        ticket_id=ticket_id,
-                        worker_id=self.node_id,
-                        epoch_id=epoch_id,
-                        allowed_files=allowed_files,
-                        ttl_seconds=3600,
-                        private_key_path=self.privkey_path,
-                    )
+                    token_header = lease_token or ""
+                    if not token_header and self.privkey_path and os.path.exists(self.privkey_path):
+                        token_header = CryptoSigner.sign_lease(
+                            ticket_id=ticket_id,
+                            worker_id=self.node_id,
+                            epoch_id=epoch_id,
+                            allowed_files=allowed_files,
+                            ttl_seconds=3600,
+                            private_key_path=self.privkey_path,
+                        )
                     
                     commit_msg = (
                         f"feat({ticket_id}): verified autonomous implementation\n\n"
@@ -156,7 +159,17 @@ class SequentialWorker:
                         f"Epoch: {epoch_id}\n"
                     )
 
-                    subprocess.run(["git", "add", "-A"], cwd=workspace, check=True)
+                    # Stage ONLY verified allowed files (Disallow git add -A, prevent traversals & symlinks)
+                    for rel_file in allowed_files:
+                        p = Path(rel_file)
+                        if ".." in p.parts or p.is_absolute():
+                            continue
+                        target = workspace / p
+                        if target.is_symlink():
+                            continue
+                        if target.exists():
+                            subprocess.run(["git", "add", str(p)], cwd=workspace, check=True)
+
                     subprocess.run(["git", "commit", "-m", commit_msg], cwd=workspace, check=True)
                     subprocess.run(["git", "push", "origin", branch_name], cwd=workspace, check=True)
                     return True
