@@ -64,8 +64,8 @@ function makeTicket(diffPatch: string, allowedFiles: string[] = ['value.txt']): 
     updatedAt: now,
     logs: []
   };
-  const created = clusterDb.createTicket(ticket);
-  assert.ok(created, 'Fixture ticket must be persisted');
+  clusterDb.createTicket(ticket);
+  assert.ok(clusterDb.getAllTickets().some(x => x.id === ticket.id), 'Fixture ticket must be persisted');
   clusterState.tickets.unshift(ticket);
   return ticket;
 }
