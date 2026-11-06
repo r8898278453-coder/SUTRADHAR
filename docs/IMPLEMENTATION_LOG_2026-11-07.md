@@ -80,8 +80,9 @@ are not configured.
   `tests/draft_pr_http_integration.test.ts` and draft-PR SQLite CAS tests
   in `tests/git_merge_attestation.test.ts`.
 - **Not executed live:** No target-repo branch was pushed or draft PR created
-  in this work slice. Controlled REST fixtures are test-only; GitHub Actions
-  results must be checked for the final commit SHA.
+  in this work slice. Controlled REST fixtures are test-only.
+- [GitHub Actions #42289533023](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/42289533023) and [#42289539845](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/42289539845) passed with the draft-PR HTTP/REST tests, TypeScript checks, real HTTP→Docker integration, Python tests and build for commit `a79ba982`.
+- Fixed intermittent `audit_log.log_id` collisions by using UUIDs instead of short timestamp/random IDs (also applied to execution-attempt IDs). Subsequent commit-specific CI must be checked separately.
 
 ## Next step
 
