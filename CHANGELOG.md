@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased — GitHub verification slice] - 2026-11-07
+
+### Added
+- Immutable Git tree SHA attestation from a real Docker-tested snapshot; successful test and provenance are stored atomically in SQLite.
+- Read-only GitHub REST merge verifier: single-commit PR parent/baseline, tested head/merged tree equality, allowed-file boundary, successful required GitHub Actions checks, independent human approval and merged-commit ancestry on main.
+- Durable signed worker lease identity: master-issued token ID stored on claim and rechecked in the final SQLite CAS alongside current epoch/revocation/expiry.
+- Verified merge evidence audit table; `COMMITTED_PUSHED` is written only for a genuinely validated remote PR and matching tested artifact.
+- Mocked-GitHub API acceptance/denial tests, HTTP endpoint mocked-REST integration, SQLite CAS regression tests and Python queue safety tests.
+- Operator documentation: [GitHub Merge Verification](docs/GITHUB_MERGE_VERIFICATION.md) and [7 November Log](docs/IMPLEMENTATION_LOG_2026-11-07.md).
+
+### Safety and remaining work
+- Disabled legacy in-process Git `checkout main` / `merge` / `push main` path; no implicit PR merge.
+- **Live target-project GitHub PR acceptance remains unverified.** Tests use controlled REST fixtures and real SQLite, not an actual merged PR.
+- Owner must configure read-only GitHub token, required checks, independent reviewers and branch protection, rotate the previously exposed signer, and complete real revert/rollback and protected PR creation.
+
 ## [Unreleased — fix branch] - 2026-11-06
 
 ### Implemented and CI-verified
