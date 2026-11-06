@@ -50,8 +50,16 @@ function setup() {
       patchSha256: hash, epochId: epoch, workerId: 'NODE-TEST', tokenId: TOKEN_ID, ...data
     });
   }
+  function draft(data: Partial<Parameters<typeof db.recordVerifiedDraftPr>[0]> = {}) {
+    return db.recordVerifiedDraftPr({
+      ticketId, repo: 'acme/widgets', prNumber: 42,
+      branch: 'ai/TKT-GITHUB-01', headSha: HEAD,
+      treeSha: TREE, patchSha256: hash, epochId: epoch,
+      workerId: 'NODE-TEST', tokenId: TOKEN_ID, ...data
+    });
+  }
   return {
-    db, ticketId, attest, merge,
+    db, ticketId, attest, merge, draft,
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true })
   };
 }
@@ -109,5 +117,33 @@ test('wrong token, revoked token and expired lease cannot commit a merge', () =>
     t.db.revokeToken(TOKEN_ID, 'Security test');
     assert.equal(t.merge(), false);
     assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'READY_FOR_REVIEW');
+  } finally { t.cleanup(); }
+});
+
+test('draft PR submission requires a matching tested tree and live signed lease', () => {
+  const t = setup();
+  try {
+    assert.equal(t.draft(), false, 'Untested ticket must be rejected');
+    assert.equal(t.attest(), true);
+    assert.equal(t.draft({ treeSha: 'f'.repeat(40) }), false);
+    assert.equal(t.draft({ tokenId: 'wrong' }), false);
+    assert.equal(t.draft(), true);
+    assert.equal(t.db.getDraftPrSubmission(t.ticketId)?.prNumber, 42);
+    assert.equal(t.draft(), true, 'Same PR can be recorded idempotently');
+    assert.equal(t.draft({ prNumber: 101 }), false, 'Different PR cannot overwrite evidence');
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status,
+      'READY_FOR_REVIEW', 'Creating a PR never marks a merge complete');
+    assert.equal(t.db.getAuditLogs(50).filter(x => x.action === 'DRAFT_PR_VERIFIED_SUBMITTED').length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('paused cluster or revoked lease blocks draft PR persistence', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    t.db.revokeToken(TOKEN_ID, 'Revoke test');
+    assert.equal(t.draft(), false);
+    t.db.setKillSwitch(true, 'Freeze', 'Test');
+    assert.equal(t.draft(), false);
   } finally { t.cleanup(); }
 });
