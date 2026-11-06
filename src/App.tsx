@@ -116,26 +116,28 @@ export const App: React.FC = () => {
     }
   };
 
-  // Handler: Ephemeral Sandbox Test
-  const handleTestSandbox = async (ticketId: string, simulateFailure = false) => {
-    showToast(simulateFailure ? `Running Sandbox test with injected failure...` : `Running Ephemeral Docker sandbox pytest suite...`);
+  // Handler: Actual isolated Docker test (no simulated pass/fail path)
+  const handleTestSandbox = async (ticketId: string) => {
+    showToast(`Running real isolated Docker tests for ${ticketId}...`);
     try {
       const res = await fetch('/api/cluster/ticket/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticketId, simulateFailure })
+        body: JSON.stringify({ ticketId })
       });
       const data = await res.json();
-      if (data.success) {
-        if (data.exitCode === 0) {
-          showToast(`✅ Sandbox test passed (Exit 0)! Ready for Ed25519 push.`);
-        } else {
-          showToast(`⚠️ Docker Sandbox failed (Exit 1). Triggering Self-Healing loop.`);
-        }
-        await fetchState();
+      if (!res.ok || !data.success) {
+        showToast(`Sandbox blocked: ${data.error || data.message || res.status}`);
+      } else if (data.status === 'TEST_PASSED' && data.exitCode === 0) {
+        showToast(`Docker tests passed (exit 0); ready for review, NOT merged.`);
+      } else if (data.status === 'TEST_FAILED') {
+        showToast(`Docker tests failed (exit ${data.exitCode}); self-healing can use actual stderr.`);
+      } else {
+        showToast(`Sandbox status: ${data.status || 'unknown'}`);
       }
-    } catch (e) {
-      showToast(`Sandbox test error: ${e}`);
+      await fetchState();
+    } catch (error) {
+      showToast(`Sandbox request error: ${error}`);
     }
   };
 
@@ -168,9 +170,9 @@ export const App: React.FC = () => {
       });
       const data = await res.json();
       if (data.verified) {
-        showToast(`✅ Ed25519 Token Verified! Push accepted into tested/${ticketId}.`);
+        showToast(`Verified remote Git merge evidence for ${ticketId}.`);
       } else {
-        showToast(`❌ Git Hook Rejected: ${data.error}`);
+        showToast(`Git merge not verified: ${data.error || 'Missing remote evidence'}`);
       }
       await fetchState();
     } catch (e) {
@@ -256,7 +258,7 @@ export const App: React.FC = () => {
 
   // Handler: Rollback Bad Merge
   const handleRollback = async (ticketId: string, reason?: string) => {
-    showToast(`🚨 Initiating emergency revert for ${ticketId}...`);
+    showToast(`Requesting rollback review for ${ticketId}...`);
     try {
       const res = await fetch('/api/master/rollback', {
         method: 'POST',
@@ -265,7 +267,7 @@ export const App: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        showToast(`🔄 Revert issued! Hotfix ticket ${data.hotfixTicket.id} spawned.`);
+        showToast(`Rollback requested for ${ticketId}; no Git revert has executed yet.`);
         await fetchState();
       }
     } catch (e) {
