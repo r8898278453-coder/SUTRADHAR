@@ -39,13 +39,30 @@ fi
 
 CONTAINER_NAME="sutradhar_sb_$(date +%s%N | cut -b1-12)"
 
-# Test Isolation Guardrail: Check for canonical tests directory and ensure read-only protection
-TEST_MOUNT_ARGS=""
-if [[ -d "${ABS_WORKSPACE}/tests" ]]; then
-    TEST_MOUNT_ARGS="-v ${ABS_WORKSPACE}/tests:/workspace/tests:ro"
-fi
+# Copy candidate files to a disposable workspace. Never expose the authoritative
+# repository read-write to a process executing model-generated code.
+STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sutradhar-sandbox.XXXXXXXX")"
+cleanup() { rm -rf -- "${STAGING_DIR}"; }
+trap cleanup EXIT
 
-exec timeout --signal=SIGKILL 45s docker run \
+# tar preserves symlinks rather than following them; exclude Git metadata and
+# common credential/state paths from the disposable runner workspace.
+tar -C "${ABS_WORKSPACE}" \
+    --exclude='./.git' \
+    --exclude='./.sutradhar_state' \
+    --exclude='*/.sutradhar_state/*' \
+    --exclude='./secrets' \
+    --exclude='*/secrets/*' \
+    --exclude='*.pem' --exclude='*.key' --exclude='*.pub' \
+    --exclude='.env' --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' \
+    --exclude='*.db' --exclude='*.db-wal' --exclude='*.db-shm' \
+    -cf - . | tar -C "${STAGING_DIR}" -xf -
+
+# The isolated container uses a non-root UID; only the disposable copy becomes writable.
+chmod -R a+rwX "${STAGING_DIR}"
+
+set +e
+timeout --signal=SIGKILL 45s docker run \
     --name "${CONTAINER_NAME}" \
     --rm \
     --network="none" \
@@ -59,8 +76,10 @@ exec timeout --signal=SIGKILL 45s docker run \
     --cap-drop=ALL \
     --read-only \
     --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-    -v "${ABS_WORKSPACE}:/workspace:rw" \
-    ${TEST_MOUNT_ARGS} \
+    -v "${STAGING_DIR}:/workspace:rw" \
     -w /workspace \
     "${IMAGE_TAG}" \
     "timeout 40s ${TEST_CMD}"
+status=$?
+set -e
+exit "${status}"
