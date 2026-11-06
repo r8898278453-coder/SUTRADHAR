@@ -21,19 +21,19 @@ class SandboxExecutionTests(unittest.TestCase):
         self._git("init", "-q")
         self._git("config", "user.email", "test@local.invalid")
         self._git("config", "user.name", "Sutradhar CI")
-        (self.repo / "value.txt").write_text("OLD\\n", encoding="utf-8")
+        (self.repo / "value.txt").write_text("OLD\n", encoding="utf-8")
         (self.repo / "tests").mkdir()
         (self.repo / "tests" / "test_value.py").write_text(
-            "from pathlib import Path\\n\\n"
-            "def test_value():\\n"
-            "    assert Path('/workspace/value.txt').read_text() == 'NEW\\\\n'\\n",
+            "from pathlib import Path\n\n"
+            "def test_value():\n"
+            "    assert Path('/workspace/value.txt').read_text() == 'NEW\\n'\n",
             encoding="utf-8"
         )
-        (self.repo / ".env.example").write_text("FAKE_CONFIG=not-a-secret\\n", encoding="utf-8")
+        (self.repo / ".env.example").write_text("FAKE_CONFIG=not-a-secret\n", encoding="utf-8")
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "baseline")
 
-        (self.repo / "value.txt").write_text("NEW\\n", encoding="utf-8")
+        (self.repo / "value.txt").write_text("NEW\n", encoding="utf-8")
         patch = subprocess.run(
             ["git", "-C", str(self.repo), "diff", "--", "value.txt"],
             capture_output=True, text=True, check=True
@@ -76,7 +76,7 @@ class SandboxExecutionTests(unittest.TestCase):
 
     def test_path_traversal_and_secrets_are_rejected(self):
         for name in ("../escape.py", "/etc/passwd", ".git/config", "secrets/key.pem",
-                     ".env", "modules/../secret.py", "modules\\\\escape.py"):
+                     ".env", "modules/../secret.py", "modules\\escape.py"):
             with self.subTest(path=name):
                 with self.assertRaises(RunnerFailure):
                     scoped_path(name)
