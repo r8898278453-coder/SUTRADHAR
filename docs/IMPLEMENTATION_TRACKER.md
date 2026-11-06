@@ -25,9 +25,9 @@
 | EXEC-01 | P0 | Real backend Docker tests | CI VERIFIED (SCOPED) | `server.ts` invokes `sandbox/execute_ticket.py`; actual HTTP→Git snapshot→Docker→SQLite pass/fail/scope tests passed in Actions run 42259691009. Production deployment, language-specific images and stronger evidence provenance remain. |
 | EXEC-02 | P0 | Isolated workspaces | CI VERIFIED (SCOPED) | Git HEAD archive, forbidden-path/symlink checks, scope-checked diff, Docker container start marker and real test exits verified. Dedicated hardened worker host/threat review still required. |
 | EXEC-03 | P0 | Live LLM synthesis | PARTIAL | Real Gemini/OpenRouter calls exist; validate actual unified diff output and ensure no arbitrary caller forces simulator. |
-| GIT-01 | P0 | No invented merge status | CODED / CI PENDING | Git verification endpoint now fails closed with HTTP 501 rather than setting `COMMITTED_PUSHED`. Real remote commit/PR/merge evidence not yet implemented. |
-| GIT-02 | P0 | Worker Git error handling | CODED / CI PENDING | Python worker rejects failed fetch/commit/rebase/push and out-of-scope staged paths; automated disposable-Git integration tests pending. |
-| GIT-03 | P0 | Protected merge queue | BLOCKED | Durable queue, GitHub PRs/checks, epoch fencing and actual merge evidence missing; existing Python queue pushes directly to `main`. |
+| GIT-01 | P0 | Exact GitHub PR merge verification | CI VERIFIED (MOCKED GITHUB ONLY) | Read-only live GitHub REST verifier checks single head commit, baseline parent, exact tested/merged tree, PR file scope, required Actions checks, independent review, merged ancestry; SQLite CAS enforces current token/epoch. No real target PR merge acceptance executed. |
+| GIT-02 | P0 | Worker Git error handling | PARTIAL | Python worker rejects failed fetch/commit/rebase/push and out-of-scope staged paths; need end-to-end worktree+push+PR creation integration and exact commit tree test. |
+| GIT-03 | P0 | Protected merge queue | BLOCKED (SAFE) | Legacy direct `main` push disabled and regression tested. Automated PR creation, durable review queue, protections and live merged PR acceptance still missing. |
 | ROLL-01 | P0 | Truthful rollback status | CODED / CI PENDING | `ROLLBACK_REQUESTED` recorded, not `ROLLBACK_COMPLETED`. Actual Git revert/test/review/merge workflow still missing. |
 | DB-01 | P1 | Atomic Node ticket/master claims | PARTIAL | `BEGIN IMMEDIATE` exists; add multi-process contention and epoch-fencing tests. |
 | DB-02 | P1 | Python/Node clock consistency | CODED / CI PENDING | Python SQLite paths changed to milliseconds and writer transactions; test cross-language startup and concurrent writes. |
@@ -54,10 +54,10 @@
 
 ## Next implementation slice
 
-**Priority next:** connect tested candidate artifacts to verified Git branch commits and required-check PR merges with durable evidence; implement actual revert-and-merge rollback. Keep `/api/cluster/ticket/verify-push` returning HTTP 501 until remote verification is proven. Also implement DB-level concurrent test locking and language-specific signed runner images.
+**Priority next:** run an owner-approved live target-repo PR acceptance test (GitHub API evidence is tested with mocked fixture responses only); implement controlled protected PR creation and real Git revert/merge rollback. Add durable DB-level duplicate-test locking, stronger provenance and language-specific signed Docker images. Verification endpoint now fails closed with 503 for missing config or 409 for insufficient evidence; it must never infer a merge from a token.
 
 ## Verification policy
 
 Code inspection is not a passing test. CI results refer to a specific commit; subsequent commits invalidate that proof until rerun. Docker and GitHub integration tests require actual dependencies and credentials. Report `NOT_RUN`, `BLOCKED`, or `FAILED` truthfully.
 
-See [implementation log](./IMPLEMENTATION_LOG_2026-11-06.md) and [real sandbox execution guide](./SANDBOX_EXECUTION.md) for performed actions, configuration and CI evidence.
+See [implementation log](./IMPLEMENTATION_LOG_2026-11-06.md), [7 November continuation log](./IMPLEMENTATION_LOG_2026-11-07.md), [real sandbox guide](./SANDBOX_EXECUTION.md), and [GitHub merge verification](./GITHUB_MERGE_VERIFICATION.md) for performed actions, configuration and CI evidence.
