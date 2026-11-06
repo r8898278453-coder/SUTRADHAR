@@ -1518,8 +1518,9 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res
 
   const githubRepo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
   const githubToken = process.env.SUTRADHAR_GITHUB_TOKEN?.trim() || '';
+  // Check-run names often contain commas; use semicolons as the delimiter.
   const requiredChecks = (process.env.SUTRADHAR_REQUIRED_CHECKS || '')
-    .split(',').map(s => s.trim()).filter(Boolean);
+    .split(';').map(s => s.trim()).filter(Boolean);
   if (!githubRepo || !githubToken || !requiredChecks.length) {
     return res.status(503).json({
       verified: false, error: 'GITHUB_VERIFICATION_NOT_CONFIGURED',
