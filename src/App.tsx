@@ -21,10 +21,51 @@ export const App: React.FC = () => {
   const [isRFCModalOpen, setIsRFCModalOpen] = useState(false);
   const [liveCardText, setLiveCardText] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [adminKey, setAdminKey] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  useEffect(() => {
+    fetch('/api/auth/session', { credentials: 'same-origin' })
+      .then(res => setAuthenticated(res.ok))
+      .catch(() => setAuthenticated(false))
+      .finally(() => setCheckingAuth(false));
+  }, []);
+
+  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoggingIn(true);
+    setLoginError('');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminKey })
+      });
+      if (!res.ok) {
+        setLoginError('Invalid admin key or login unavailable.');
+        return;
+      }
+      setAdminKey('');
+      setAuthenticated(true);
+    } catch {
+      setLoginError('Cannot contact the control plane.');
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); }
+    finally { setAuthenticated(false); setState(fallbackClusterState); setActiveTicket(null); }
   };
 
   // Fetch cluster state
@@ -50,10 +91,11 @@ export const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!authenticated) return;
     fetchState();
     const interval = setInterval(fetchState, 5000);
     return () => clearInterval(interval);
-  }, [fetchState]);
+  }, [fetchState, authenticated]);
 
   // Handler: Synthesize patch
   const handleSynthesize = async (ticketId: string) => {
@@ -287,6 +329,26 @@ export const App: React.FC = () => {
     }
   };
 
+  if (checkingAuth) {
+    return <div className="min-h-screen bg-[#080d17] text-slate-100 flex items-center justify-center">Checking control plane session…</div>;
+  }
+
+  if (!authenticated) {
+    return (
+      <div className="min-h-screen bg-[#080d17] text-slate-100 flex items-center justify-center p-6">
+        <form onSubmit={handleLogin} className="w-full max-w-md rounded-2xl border border-slate-700 bg-[#101a2b] p-8 shadow-2xl space-y-5">
+          <h1 className="text-2xl font-bold">SUTRADHAR Control Plane</h1>
+          <p className="text-sm text-slate-400">Administrator authentication is required to view cluster state or operate workers.</p>
+          <label className="block text-sm text-slate-200" htmlFor="adminKey">Administrator key</label>
+          <input id="adminKey" type="password" autoComplete="current-password" value={adminKey} onChange={e => setAdminKey(e.target.value)} required className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-3 text-white" />
+          {loginError && <p role="alert" className="text-sm text-red-400">{loginError}</p>}
+          <button type="submit" disabled={loggingIn || !adminKey.trim()} className="w-full rounded-lg bg-cyan-500 px-4 py-3 font-semibold text-slate-950 disabled:opacity-50">{loggingIn ? 'Signing in…' : 'Sign in securely'}</button>
+          <p className="text-xs text-slate-500">The key is verified by the backend. The browser receives only an HttpOnly session cookie.</p>
+        </form>
+      </div>
+    );
+  }
+
   if (!state) {
     return (
       <div className="min-h-screen bg-[#070b12] text-slate-100 flex items-center justify-center font-mono">
@@ -303,6 +365,8 @@ export const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#080d17] text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-white">
       
+      <div className="absolute right-4 top-2 z-50"><button type="button" onClick={handleLogout} className="rounded border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-300">Sign out</button></div>
+
       {/* Top Header & Metrics */}
       <Header
         state={state}
