@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased — fix branch] - 2026-11-06
+
+### Implemented and CI-verified
+- Default-deny admin APIs, browser login with HttpOnly session cookie, no hardcoded worker secret, stricter worker identity/lease checks.
+- Actual HTTP-to-Docker test execution: clean `git archive HEAD` snapshot, unified patch validation against allowed files, isolated non-root Docker process, real exit codes, stdout/stderr, retry/DLQ transitions, SQLite attempt/audit persistence and stale-epoch/patch fencing.
+- GitHub Actions now runs real Docker positive, negative and out-of-scope tests, including an Express HTTP-to-Docker-to-SQLite integration.
+- TypeScript, React dashboard, state and worker safety fixes and evidence-based documentation.
+
+### Deliberately blocked / still required
+- No fabricated remote Git merge; `/api/cluster/ticket/verify-push` remains HTTP 501 until real PR/merge evidence is implemented.
+- Rollback is only `ROLLBACK_REQUESTED`, not an actual Git revert.
+- Historical signing-key leak requires owner rotation/revocation.
+- No production readiness claim: real PHP/Node target images, GitHub merge queue, branch protection, multi-worker identities and production dashboard demo isolation remain.
+
+**Documentation:** [Implementation Tracker](docs/IMPLEMENTATION_TRACKER.md) · [Sandbox Execution](docs/SANDBOX_EXECUTION.md) · [Implementation Log](docs/IMPLEMENTATION_LOG_2026-11-06.md).
+
 ## [5.4.0] - 2026-11-04
 ### Added
 - **Authoritative Shared State SQLite Database (`server_db.ts`)**:
