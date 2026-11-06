@@ -25,7 +25,7 @@ import type { Ticket, ClusterState } from '../types.ts';
 interface TaskDAGViewProps {
   state: ClusterState;
   onSynthesize: (ticketId: string) => void;
-  onTest: (ticketId: string, simulateFailure?: boolean) => void;
+  onTest: (ticketId: string) => void;
   onVerifyPush: (ticketId: string) => void;
   onSelectTicketForConsole: (ticket: Ticket) => void;
   onClaimTicket?: (ticketId: string, workerId: string) => void;
@@ -584,7 +584,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
 
                     <button
                       id={`btn-test-${selectedTicket.id}`}
-                      onClick={() => onTest(selectedTicket.id, false)}
+                      onClick={() => onTest(selectedTicket.id)}
                       className="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
                     >
                       <Play className="w-3.5 h-3.5 text-cyan-400" />
@@ -602,12 +602,6 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between pt-2">
-                    <button
-                      onClick={() => onTest(selectedTicket.id, true)}
-                      className="text-[11px] font-mono text-rose-400 hover:text-rose-300 underline"
-                    >
-                      Simulate Docker Test Failure (Self-Healing Trigger)
-                    </button>
 
                     <button
                       onClick={() => onSelectTicketForConsole(selectedTicket)}
