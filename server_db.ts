@@ -1146,7 +1146,7 @@ export class ClusterDatabase {
   public recordVerifiedGitMerge(input: {
     ticketId: string; repo: string; prNumber: number; branch: string;
     headSha: string; mergeSha: string; treeSha: string;
-    patchSha256: string; epochId: number;
+    patchSha256: string; epochId: number; workerId: string; tokenId: string;
   }): boolean {
     const sha1 = /^[0-9a-f]{40}$/;
     if (![input.headSha, input.mergeSha, input.treeSha].every(x => sha1.test(x)) ||
@@ -1156,7 +1156,13 @@ export class ClusterDatabase {
       const t = this.db.prepare('SELECT status, diff_patch, branch, logs_json FROM tickets WHERE ticket_id = ?').get(input.ticketId) as any;
       const a = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id = ?').get(input.ticketId) as any;
       const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id = 1').get() as any;
-      if (!t || !a || !sys || sys.kill_switch_active ||
+      const lease = this.db.prepare(`SELECT worker_id, token_id, epoch_id, expires_at, is_revoked
+        FROM worker_leases WHERE ticket_id = ?`).get(input.ticketId) as any;
+      const tokenRevoked = this.isTokenRevoked(input.tokenId);
+      if (!t || !a || !sys || sys.kill_switch_active || !lease || tokenRevoked ||
+          lease.is_revoked || Number(lease.epoch_id) !== input.epochId ||
+          lease.worker_id !== input.workerId || a.worker_id !== input.workerId ||
+          lease.token_id !== input.tokenId || Number(lease.expires_at) <= Date.now() ||
           t.status !== 'READY_FOR_REVIEW' || t.branch !== input.branch ||
           Number(sys.epoch_id) !== input.epochId || Number(a.epoch_id) !== input.epochId ||
           a.candidate_tree_sha !== input.treeSha || a.patch_sha256 !== input.patchSha256 ||
