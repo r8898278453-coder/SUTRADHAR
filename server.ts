@@ -671,7 +671,7 @@ if (!SUTRADHAR_ADMIN_KEY) {
   }
 }
 
-export const SUTRADHAR_WORKER_KEY = process.env.SUTRADHAR_WORKER_KEY || 'sutradhar_worker_token_secret_v1';
+export const SUTRADHAR_WORKER_KEY = process.env.SUTRADHAR_WORKER_KEY?.trim() || '';
 
 // Session store for verified human admin sessions
 export const activeAdminSessions = new Map<string, { createdAt: number; expiresAt: number }>();
@@ -700,12 +700,27 @@ export function verifyAdminSession(token?: string): boolean {
 export function resolveCallerRole(req: express.Request): ClusterRole {
   const authHeader = req.headers['authorization'];
   const sessionHeader = req.headers['x-sutradhar-session'] as string | undefined;
+  const cookieSession = (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith('sutradhar_session='))?.slice('sutradhar_session='.length);
   const adminKeyHeader = req.headers['x-admin-key'] as string | undefined;
   const workerKeyHeader = req.headers['x-worker-key'] as string | undefined;
 
   let bearerToken: string | undefined;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     bearerToken = authHeader.substring(7).trim();
+  }
+
+  // Browser sessions use HttpOnly SameSite=Strict cookies. Cross-origin mutations are rejected.
+  if (cookieSession && verifyAdminSession(cookieSession)) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      const origin = req.headers.origin;
+      if (!origin) return 'READONLY';
+      try {
+        const parsed = new URL(origin);
+        if (parsed.host !== req.get('host')) return 'READONLY';
+        if (process.env.NODE_ENV === 'production' && parsed.protocol !== 'https:') return 'READONLY';
+      } catch { return 'READONLY'; }
+    }
+    return 'ADMIN';
   }
 
   // 1. Check for verified Admin credentials (env key, admin file key, or active admin session)
@@ -720,33 +735,15 @@ export function resolveCallerRole(req: express.Request): ClusterRole {
 
   // 2. Check for verified Worker credentials (worker key or valid Ed25519 token)
   if (
-    (bearerToken && bearerToken === SUTRADHAR_WORKER_KEY) ||
-    (workerKeyHeader && workerKeyHeader === SUTRADHAR_WORKER_KEY)
+    (SUTRADHAR_WORKER_KEY.length > 0 && bearerToken === SUTRADHAR_WORKER_KEY) ||
+    (SUTRADHAR_WORKER_KEY.length > 0 && workerKeyHeader === SUTRADHAR_WORKER_KEY)
   ) {
     return 'WORKER';
   }
 
-  // Check if Bearer token is a valid unrevoked Ed25519 lease token
-  if (bearerToken && bearerToken.startsWith('SEC-')) {
-    const v = verifyEd25519Token(bearerToken, '');
-    if (v.verified && v.payload && (!v.payload.tokenId || !clusterDb.isTokenRevoked(v.payload.tokenId))) {
-      return 'WORKER';
-    }
-  }
-
-  // Check for worker lease token header
-  const leaseHeader = req.headers['x-worker-lease'] as string | undefined;
-  if (leaseHeader && leaseHeader.startsWith('SEC-')) {
-    const v = verifyEd25519Token(leaseHeader, '');
-    if (v.verified && v.payload && (!v.payload.tokenId || !clusterDb.isTokenRevoked(v.payload.tokenId))) {
-      return 'WORKER';
-    }
-  }
-
-  // Local loopback development mode can be allowed if explicitly enabled by environment
-  if (process.env.NODE_ENV !== 'production' && process.env.SUTRADHAR_ALLOW_LOCAL_DEV_ADMIN === 'true') {
-    return 'ADMIN';
-  }
+  // An Ed25519 lease is ticket-scoped, not a global API credential.
+  // A later worker-auth integration must bind the authenticated worker to each lease.
+  // Local development must not silently elevate arbitrary callers to ADMIN.
 
   // NON-NEGOTIABLE: x-sutradhar-role is NEVER trusted as proof of identity!
   // Any unauthenticated or unrecognized caller strictly receives READONLY role.
@@ -822,7 +819,7 @@ ${offlineNotice}
 // -------------------------------------------------------------
 
 // 1. Get current cluster state
-app.get('/api/cluster/state', (req, res) => {
+app.get('/api/cluster/state', authRole(['ADMIN']), (req, res) => {
   // Authoritative sync from SQLite Cluster DB
   try {
     const sysState = clusterDb.getSystemState();
@@ -860,12 +857,20 @@ app.post('/api/auth/login', (req, res) => {
     });
   }
   const session = createAdminSession();
-  res.json({
-    success: true,
-    token: session.token,
-    role: 'ADMIN',
-    expiresIn: session.expiresIn
-  });
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `sutradhar_session=${session.token}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=${session.expiresIn}${secure}`);
+  res.json({ success: true, role: 'ADMIN', expiresIn: session.expiresIn });
+});
+
+app.get('/api/auth/session', authRole(['ADMIN']), (_req, res) => {
+  res.json({ authenticated: true, role: 'ADMIN' });
+});
+
+app.post('/api/auth/logout', authRole(['ADMIN']), (req, res) => {
+  const token = (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith('sutradhar_session='))?.slice('sutradhar_session='.length);
+  if (token) activeAdminSessions.delete(token);
+  res.setHeader('Set-Cookie', 'sutradhar_session=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0');
+  res.json({ success: true });
 });
 
 // 2. Inject Ticket (Normal or P0 Hotfix)
@@ -1078,7 +1083,7 @@ Output ONLY the raw unified diff (starting with diff --git or --- / +++).`;
   }
 
   // 3. Fallback Evaluation: If neither provider responded, enforce truth in production
-  const isTestOrDemo = isDemoMode === true || process.env.NODE_ENV === 'test' || req.headers['x-sutradhar-demo-mode'] === 'true';
+  const isTestOrDemo = process.env.NODE_ENV === 'test';
 
   if (!generatedDiff) {
     if (!isTestOrDemo) {
@@ -1142,7 +1147,7 @@ app.post('/api/cluster/ticket/test', authRole(['ADMIN', 'WORKER']), (req, res) =
     return res.status(404).json({ error: 'Ticket not found' });
   }
 
-  const isTestOrDemo = isDemoMode === true || process.env.NODE_ENV === 'test' || req.headers['x-sutradhar-demo-mode'] === 'true';
+  const isTestOrDemo = process.env.NODE_ENV === 'test';
 
   // Task 4: In production mode, if Docker is absent, return SANDBOX_UNAVAILABLE
   if (!isTestOrDemo && !isDockerAvailable()) {
@@ -1158,6 +1163,16 @@ app.post('/api/cluster/ticket/test', authRole(['ADMIN', 'WORKER']), (req, res) =
       success: false,
       error: 'SANDBOX_UNAVAILABLE',
       message: 'Docker daemon is unavailable. Untrusted generated code must not execute directly on the host.'
+    });
+  }
+
+  // This API is not wired to the isolated worker worktree runner yet.
+  // Never persist fabricated test output or claim a Docker pass in normal operation.
+  if (!isTestOrDemo) {
+    return res.status(501).json({
+      success: false,
+      error: 'SANDBOX_EXECUTION_NOT_INTEGRATED',
+      message: 'No test was executed. The HTTP endpoint must be connected to the actual Docker worker runner before production use.'
     });
   }
 
@@ -1335,7 +1350,7 @@ Fix the code error and output a working unified diff patch.`;
     }
   }
 
-  const isTestOrDemo = isDemoMode === true || process.env.NODE_ENV === 'test' || req.headers['x-sutradhar-demo-mode'] === 'true';
+  const isTestOrDemo = process.env.NODE_ENV === 'test';
 
   if (!healedDiff) {
     if (!isTestOrDemo) {
@@ -1441,101 +1456,13 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN', 'WORKER']), (req,
     });
   }
 
-  // 5. Real Git Commit SHA (Eliminated fake sha256 fallback)
-  let verifiedCommitSha = '';
-  try {
-    const gitHead = child_process.execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
-    verifiedCommitSha = gitHead;
-  } catch (e: any) {
-    return res.status(400).json({
-      verified: false,
-      exitCode: 1,
-      error: `400_GIT_COMMIT_NOT_FOUND: Authoritative Git commit could not be verified from repository: ${e.message}`
-    });
-  }
-
-  // Update ticket state to COMMITTED_PUSHED
-  ticket.status = 'COMMITTED_PUSHED';
-  ticket.rollbackCommit = verifiedCommitSha;
-  ticket.logs.push({
-    timestamp: new Date().toLocaleTimeString(),
-    level: 'SUCCESS',
-    message: `[GIT PUSH VERIFIED] Ed25519 token verified. Branch merged into tested/${ticket.id}. Verified Commit SHA: ${verifiedCommitSha.substring(0, 8)}`
-  });
-
-  // Free assigned worker node
-  if (ticket.assignedTo) {
-    const workerNode = clusterState.nodes.find(n => n.id === ticket.assignedTo);
-    if (workerNode) {
-      workerNode.status = 'IDLE';
-      workerNode.currentTicketId = undefined;
-    }
-  }
-
-  // Persist to transactional database
-  clusterDb.updateTicket(ticket.id, {
-    status: 'COMMITTED_PUSHED',
-    rollbackCommit: verifiedCommitSha,
-    assignedTo: undefined,
-    logMessage: {
-      level: 'SUCCESS',
-      message: `[GIT PUSH VERIFIED] Ed25519 token verified. Merged into tested/${ticket.id}. SHA: ${verifiedCommitSha.substring(0, 8)}`
-    }
-  });
-
-  // Check dependent child tickets (Blueprint Section 4.A & Section 11 Gap #3)
-  const newlyUnblockedTickets: string[] = [];
-  clusterState.tickets.forEach(child => {
-    if (child.status === 'BLOCKED_ON_PARENT') {
-      const parents = child.parentTicketIds || (child.dependsOn ? [child.dependsOn] : []);
-      const allParentsDone = parents.length > 0 && parents.every(pid => {
-        const p = clusterState.tickets.find(t => t.id === pid);
-        return p && p.status === 'COMMITTED_PUSHED';
-      });
-      if (allParentsDone) {
-        child.status = 'PENDING';
-        child.logs.push({
-          timestamp: new Date().toLocaleTimeString(),
-          level: 'INFO',
-          message: `[DEPENDENCY UNBLOCKED] All parents (${parents.join(', ')}) merged! Ticket is now OPEN for worker claim.`
-        });
-        clusterDb.updateTicket(child.id, { status: 'PENDING' });
-        newlyUnblockedTickets.push(child.id);
-      }
-    }
-  });
-
-  clusterState.telegramFeed.unshift({
-    id: `tg-merge-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'ALERT_MERGE',
-    text: `🚀 [TICKET MERGED] ${ticket.id} (${ticket.title}) pushed to tested/! ${newlyUnblockedTickets.length > 0 ? `Unblocked: ${newlyUnblockedTickets.join(', ')}` : ''}`
-  });
-
-  broadcastToTelegram(
-    `🚀 <b>[TICKET MERGED & TESTED]</b>\n\n` +
-    `🎫 <b>Ticket:</b> ${ticket.id}: ${ticket.title}\n` +
-    `🌿 <b>Branch:</b> <code>tested/${ticket.id}</code>\n` +
-    `🔐 <b>Commit Hash:</b> <code>${verifiedCommitSha}</code>\n` +
-    `🛡️ <b>Ed25519 Token:</b> Verified by Git Pre-Receive Gatekeeper\n` +
-    (newlyUnblockedTickets.length > 0 ? `\n🔓 <b>Unblocked Children:</b> <code>${newlyUnblockedTickets.join(', ')}</code> (Now PENDING for workers)` : '')
-  );
-
-  clusterDb.appendAuditLog({
-    actor: ticket.assignedTo || 'Worker',
-    action: 'GIT_PUSH_VERIFIED_MERGED',
-    ticketId: ticket.id,
-    reasoning: 'Ed25519 asymmetric signature verified. Tested diff merged with zero exit code.',
-    details: { rollbackCommit: verifiedCommitSha, newlyUnblockedTickets, tokenId: payload.tokenId }
-  });
-
-  return res.json({
-    verified: true,
-    exitCode: 0,
-    message: `200_OK: Ed25519 signature valid. Branch accepted into tested/${ticket.id}.`,
-    payload,
-    ticket,
-    newlyUnblockedTickets
+  // Signing a lease does not prove a Git push, successful CI, or a merge.
+  // Fail closed until the exact worker commit and remote merge evidence are checked.
+  return res.status(501).json({
+    verified: false,
+    success: false,
+    error: 'GIT_MERGE_VERIFICATION_NOT_INTEGRATED',
+    message: 'The lease is cryptographically valid, but no remote branch commit, test evidence or merge was verified. Ticket remains unchanged.'
   });
 });
 
@@ -1863,6 +1790,9 @@ async function handleTelegramIncomingMessage(chatId: string | number, rawText: s
     if (!auth.isAdmin) {
       replyText = `🚫 <b>[UNAUTHORIZED]</b> Sender <code>${escapeTelegramHtml(senderName)}</code> is not authorized to command graceful shutdown.`;
     } else {
+      clusterState.killSwitchActive = true;
+      clusterState.killSwitchReason = 'GRACEFUL_STOP_AFTER_CURRENT';
+      clusterDb.setKillSwitch(true, clusterState.killSwitchReason, senderName);
       clusterDb.appendAuditLog({
         actor: senderName,
         action: 'GRACEFUL_SHUTDOWN_TRIGGERED',
@@ -1925,17 +1855,16 @@ async function handleTelegramIncomingMessage(chatId: string | number, rawText: s
       const tktId = cleanText.replace(/^\/rollback\s*/i, '').trim().toUpperCase();
       const ticket = clusterState.tickets.find(t => t.id.toUpperCase() === tktId);
       if (ticket) {
-        const rollbackRes = clusterDb.rollbackMerge(ticket.id, `Triggered via Telegram rollback command by ${senderName}`, senderName);
-        const hotfixId = rollbackRes.hotfixId || `TKT-ROLLBACK-${Math.floor(100 + Math.random() * 900)}`;
-
-        clusterState.telegramFeed.unshift({
-          id: `tg-rollback-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'ALERT_P0',
-          urgent: true,
-          text: `🚨 [ROLLBACK EXECUTED] ${ticket.id} rolled back. Auto-created hotfix ${hotfixId}.`
-        });
-        replyText = `🚨 <b>Rollback Executed!</b>\n\nTarget commit reverted. Auto-spawned hotfix ticket <code>${hotfixId}</code> assigned to Master.`;
+        if (ticket.status !== 'COMMITTED_PUSHED' && ticket.status !== 'ROLLBACK_REQUESTED') {
+          replyText = '⚠️ Rollback requires a verified merged ticket.';
+        } else {
+          ticket.status = 'ROLLBACK_REQUESTED';
+          clusterDb.updateTicket(ticket.id, {
+            status: 'ROLLBACK_REQUESTED',
+            logMessage: { level: 'WARN', message: `Rollback requested by Telegram admin ${senderName}; Git revert NOT executed.` }
+          });
+          replyText = `⚠️ <b>Rollback REQUESTED</b> for <code>${escapeTelegramHtml(ticket.id)}</code>. No Git revert has been executed. Awaiting verified Git pipeline.`;
+        }
       } else {
         replyText = `⚠️ Usage: <code>/rollback &lt;TICKET-ID&gt;</code>`;
       }
@@ -2281,6 +2210,11 @@ app.post('/api/cluster/watchdog/heartbeat', authRole(['ADMIN', 'WORKER']), (req,
     return res.status(404).json({ success: false, error: `No active lease for ticket ${ticketId}` });
   }
 
+  // Durable lease ownership is authoritative, not the request's asserted workerId.
+  if (!workerId || !clusterDb.recordLeaseHeartbeat(ticketId, workerId, typeof progressPct === 'number' ? progressPct : lease.progressPct, currentStep || lease.lastStep)) {
+    return res.status(403).json({ success: false, error: '403_INVALID_OR_REVOKED_LEASE' });
+  }
+
   // Task 8: Reject wrong-worker heartbeats
   if (workerId && lease.workerId && workerId !== lease.workerId) {
     return res.status(403).json({
@@ -2295,8 +2229,6 @@ app.post('/api/cluster/watchdog/heartbeat', authRole(['ADMIN', 'WORKER']), (req,
   if (currentStep) lease.lastStep = currentStep;
 
   // Persist heartbeat to SQLite clusterDb
-  clusterDb.recordLeaseHeartbeat(ticketId, workerId || lease.workerId, typeof progressPct === 'number' ? progressPct : lease.progressPct, currentStep || lease.lastStep);
-
   // Add telegram progress feed item periodically
   clusterState.telegramFeed.unshift({
     id: `tg-hb-${Date.now()}`,
@@ -2534,7 +2466,7 @@ const sharedStateDB = {
 };
 
 // GET all 6 DB collections
-app.get('/api/db/all', (req, res) => {
+app.get('/api/db/all', authRole(['ADMIN']), (req, res) => {
   res.json({
     success: true,
     system_state: clusterDb.getSystemState(),
@@ -2679,60 +2611,23 @@ app.post('/api/tickets/:id/answer-clarification', authRole(['ADMIN']), (req, res
 
 // POST Rollback Bad Merge (Section 11 Gap #5 - Admin Only)
 app.post('/api/master/rollback', authRole(['ADMIN']), (req, res) => {
-  const { ticketId, reason, actor } = req.body;
+  const { ticketId, reason } = req.body;
   const ticket = clusterState.tickets.find(t => t.id === ticketId);
   if (!ticket) return res.status(404).json({ success: false, error: 'Ticket not found' });
-
-  // Task 12: Transition to ROLLBACK_REQUESTED then ROLLBACK_COMPLETED
+  if (ticket.status !== 'COMMITTED_PUSHED' && ticket.status !== 'ROLLBACK_REQUESTED') {
+    return res.status(409).json({ success: false, error: 'ROLLBACK_REQUIRES_VERIFIED_MERGE' });
+  }
   ticket.status = 'ROLLBACK_REQUESTED';
-
-  // Execute rollback in SQLite clusterDb
-  const rollbackResult = clusterDb.rollbackMerge(ticketId, reason || 'Regression detected in QA', actor || 'Master');
-  const hotfixId = rollbackResult.hotfixId || `TKT-HOTFIX-${Math.floor(100 + Math.random() * 900)}`;
-
-  ticket.status = 'ROLLBACK_COMPLETED';
-
-  const hotfixTicket: Ticket = {
-    id: hotfixId,
-    title: `[ROLLBACK HOTFIX] Revert ${ticket.id}: ${ticket.title}`,
-    description: `Emergency rollback: ${reason || 'Regression detected in QA'}. Reverting commit ${ticket.rollbackCommit || 'HEAD~1'}.`,
-    priority: 'P0_URGENT',
-    domain: ticket.domain,
-    status: 'SYNTHESIZING_DIFF',
-    assignedTo: clusterState.activeMasterId,
-    parentTicketIds: [],
-    allowedFiles: ticket.allowedFiles,
-    readOnlyContracts: ticket.readOnlyContracts,
-    retryCount: 0,
-    maxRetries: 3,
-    branch: `ai/${hotfixId}`,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    logs: [{
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'WARN',
-      message: `Rollback triggered for ${ticket.id}. Reverting commit ${ticket.rollbackCommit || 'HEAD~1'}.`
-    }]
-  };
-
-  clusterState.tickets.unshift(hotfixTicket);
-  clusterState.telegramFeed.unshift({
-    id: `tg-rollback-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'ALERT_P0',
-    urgent: true,
-    text: `🚨 [ROLLBACK EXECUTED] ${ticket.id} rolled back. Hotfix ${hotfixId} auto-spawned.`
+  clusterDb.updateTicket(ticket.id, {
+    status: 'ROLLBACK_REQUESTED',
+    logMessage: { level: 'WARN', message: `Rollback requested: ${String(reason || 'Regression detected')}. Awaiting verified Git revert and merge.` }
   });
-
-  broadcastToTelegram(
-    `🚨 <b>[BAD MERGE ROLLBACK EXECUTED]</b>\n\n` +
-    `🎫 <b>Reverted Ticket:</b> ${ticket.id}\n` +
-    `⚡ <b>Commit Reverted:</b> <code>${ticket.rollbackCommit || 'HEAD~1'}</code>\n` +
-    `📝 <b>Reason:</b> ${reason || 'Regression discovered post-merge'}\n` +
-    `🔥 <b>Auto Hotfix Created:</b> <code>${hotfixId}</code>`
-  );
-
-  res.json({ success: true, hotfixTicket });
+  return res.status(202).json({
+    success: true,
+    status: 'ROLLBACK_REQUESTED',
+    ticketId,
+    message: 'No Git revert or merge was executed; rollback requires the real Git pipeline.'
+  });
 });
 
 // POST Update Prompt Version (Section 11 Gap #9 - Admin Only)
@@ -2795,9 +2690,7 @@ app.post('/api/telegram/test-ping', authRole(['ADMIN']), async (req, res) => {
 
 // Background Watchdog & Split-Brain Evaluation Loop (Runs every 10s)
 setInterval(() => {
-  if (!clusterState.isLiveSimulation || clusterState.killSwitchActive) {
-    return;
-  }
+  // Lease expiry must continue even when the system is paused or demo mode is disabled.
 
   const now = Date.now();
 
