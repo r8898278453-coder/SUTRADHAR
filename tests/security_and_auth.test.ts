@@ -282,8 +282,8 @@ async function runSecurityTestSuite() {
       const res = await apiRequest('POST', '/api/cluster/ticket/verify-push',
         { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}` },
         { ticketId: ticket.id, tokenHeader, branch: `ai/${ticket.id}` });
-      assert.strictEqual(res.status, 501);
-      assert.strictEqual(res.body.error, 'GIT_MERGE_VERIFICATION_NOT_INTEGRATED');
+      assert.strictEqual(res.status, 503);
+      assert.strictEqual(res.body.error, 'GITHUB_VERIFICATION_NOT_CONFIGURED');
       assert.notStrictEqual(ticket.status, 'COMMITTED_PUSHED');
     });
 
