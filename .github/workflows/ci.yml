@@ -29,6 +29,8 @@ jobs:
         run: npm run lint
       - name: Security and state tests
         run: npm test
+      - name: Real HTTP and Docker integration
+        run: npm run test:sandbox-http
       - name: Build
         run: npm run build
 
