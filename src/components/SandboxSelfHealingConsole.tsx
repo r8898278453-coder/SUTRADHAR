@@ -20,7 +20,7 @@ interface SandboxProps {
   state: ClusterState;
   activeTicket: Ticket;
   onSynthesize: (ticketId: string) => void;
-  onTestSandbox: (ticketId: string, simulateFailure?: boolean) => void;
+  onTestSandbox: (ticketId: string) => void;
   onSelfHeal: (ticketId: string) => void;
   onVerifyPush: (ticketId: string) => void;
   onSelectTicket: (ticket: Ticket) => void;
@@ -273,19 +273,13 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
 
               {!activeTicket.testStdout && !activeTicket.testStderr && (
                 <div className="text-slate-500 flex flex-col items-center justify-center h-48">
-                  <p>Ephemeral Docker sandbox ready for execution.</p>
+                  <p>Docker runner requires a configured Git target and trusted test command.</p>
                   <div className="flex gap-2 mt-3">
                     <button
-                      onClick={() => onTestSandbox(activeTicket.id, false)}
-                      className="px-3 py-1.5 bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono hover:bg-emerald-600/30 transition"
+                      onClick={() => onTestSandbox(activeTicket.id)}
+                      className="px-3 py-1.5 bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-mono hover:bg-cyan-600/30 transition"
                     >
-                      Run Passing Test
-                    </button>
-                    <button
-                      onClick={() => onTestSandbox(activeTicket.id, true)}
-                      className="px-3 py-1.5 bg-rose-600/20 text-rose-300 border border-rose-500/30 rounded-lg text-xs font-mono hover:bg-rose-600/30 transition"
-                    >
-                      Run Failing Test (Stderr)
+                      Run Real Docker Tests
                     </button>
                   </div>
                 </div>
@@ -296,7 +290,7 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
             <div className="p-3 bg-slate-900/80 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => onTestSandbox(activeTicket.id, false)}
+                  onClick={() => onTestSandbox(activeTicket.id)}
                   className="px-3 py-1.5 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 rounded-lg flex items-center gap-1.5 transition active:scale-95"
                 >
                   <Play className="w-3.5 h-3.5" />
