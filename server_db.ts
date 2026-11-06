@@ -607,57 +607,27 @@ export class ClusterDatabase {
     return true;
   }
 
-  // Rollback Bad Merge
+  // Rollback is a request until an independently verified Git revert has merged.
+  // Never treat hotfix creation or a database write as proof that code was reverted.
   public rollbackMerge(ticketId: string, reason: string, actor: string = 'Master'): { success: boolean; hotfixId?: string } {
-    const row = this.db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId) as any;
-    if (!row) return { success: false };
-
-    const now = Date.now();
-    const hotfixId = `TKT-HOTFIX-${Math.floor(100 + Math.random() * 900)}`;
-    const rollbackCommit = row.rollback_commit || 'HEAD~1';
-
-    const hotfixLogs = [{
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'WARN',
-      message: `Emergency rollback hotfix spawned. Reverting commit ${rollbackCommit} of ${ticketId}.`
-    }];
+    const row = this.db.prepare('SELECT status FROM tickets WHERE ticket_id = ?').get(ticketId) as { status: string } | undefined;
+    if (!row || (row.status !== 'COMMITTED_PUSHED' && row.status !== 'ROLLBACK_REQUESTED')) {
+      return { success: false };
+    }
 
     this.db.prepare(`
-      INSERT INTO tickets (
-        ticket_id, project_id, title, description, priority, domain, status,
-        assigned_to, retry_count, max_retries, current_tier, branch, allowed_files_json,
-        read_only_contracts_json, logs_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'P0_URGENT', ?, 'SYNTHESIZING_DIFF', ?, 0, 3, 1, ?, ?, ?, ?, ?, ?)
-    `).run(
-      hotfixId,
-      row.project_id,
-      `[ROLLBACK HOTFIX] Revert ${ticketId}: ${row.title}`,
-      `Emergency rollback: ${reason}. Reverting commit ${rollbackCommit}.`,
-      row.domain,
-      'NODE-E78A1201',
-      `ai/${hotfixId}`,
-      row.allowed_files_json,
-      row.read_only_contracts_json || '[]',
-      JSON.stringify(hotfixLogs),
-      now,
-      now
-    );
-
-    this.db.prepare(`
-      UPDATE tickets
-      SET status = 'ROLLBACK_COMPLETED', updated_at = ?
+      UPDATE tickets SET status = 'ROLLBACK_REQUESTED', updated_at = ?
       WHERE ticket_id = ?
-    `).run(now, ticketId);
+    `).run(Date.now(), ticketId);
 
     this.appendAuditLog({
       actor,
-      action: 'MERGE_ROLLBACK',
+      action: 'ROLLBACK_REQUESTED',
       ticketId,
-      reasoning: `Bad merge identified: ${reason}. Commit ${rollbackCommit} scheduled for git revert. Auto-spawned ${hotfixId}.`,
-      details: { rollbackCommit, hotfixId, reason }
+      reasoning: `Rollback requested: ${reason}. No Git revert has been executed or merged.`
     });
 
-    return { success: true, hotfixId };
+    return { success: true };
   }
 
   // Heartbeat & Watchdog Sweeper
