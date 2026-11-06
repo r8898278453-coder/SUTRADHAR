@@ -672,6 +672,7 @@ if (!SUTRADHAR_ADMIN_KEY) {
 }
 
 export const SUTRADHAR_WORKER_KEY = process.env.SUTRADHAR_WORKER_KEY?.trim() || '';
+export const SUTRADHAR_WORKER_ID = process.env.SUTRADHAR_WORKER_ID?.trim() || '';
 
 // Session store for verified human admin sessions
 export const activeAdminSessions = new Map<string, { createdAt: number; expiresAt: number }>();
@@ -735,9 +736,11 @@ export function resolveCallerRole(req: express.Request): ClusterRole {
 
   // 2. Check for verified Worker credentials (worker key or valid Ed25519 token)
   if (
-    (SUTRADHAR_WORKER_KEY.length > 0 && bearerToken === SUTRADHAR_WORKER_KEY) ||
-    (SUTRADHAR_WORKER_KEY.length > 0 && workerKeyHeader === SUTRADHAR_WORKER_KEY)
+    SUTRADHAR_WORKER_KEY.length >= 32 &&
+    SUTRADHAR_WORKER_ID &&
+    (bearerToken === SUTRADHAR_WORKER_KEY || workerKeyHeader === SUTRADHAR_WORKER_KEY)
   ) {
+    (req as any).authenticatedWorkerId = SUTRADHAR_WORKER_ID;
     return 'WORKER';
   }
 
@@ -777,6 +780,18 @@ export function authRole(allowedRoles: ClusterRole[]) {
     (req as any).clientRole = role;
     next();
   };
+}
+
+// Only the worker holding the active SQLite lease may operate on its ticket.
+function workerMayOperateTicket(req: express.Request, ticketId: string): boolean {
+  if ((req as any).clientRole !== 'WORKER') return true;
+  const workerId = (req as any).authenticatedWorkerId;
+  if (!workerId) return false;
+  const ticket = clusterDb.getAllTickets().find(t => t.id === ticketId);
+  const lease = clusterDb.getAllLeases().find(l => l.ticketId === ticketId);
+  return !!ticket && ticket.assignedTo === workerId &&
+    !!lease && lease.workerId === workerId && !lease.isRevoked &&
+    lease.expiresAt > Date.now();
 }
 
 // Generate Pinned Telegram Live Card ASCII text
@@ -874,7 +889,7 @@ app.post('/api/auth/logout', authRole(['ADMIN']), (req, res) => {
 });
 
 // 2. Inject Ticket (Normal or P0 Hotfix)
-app.post('/api/cluster/ticket/create', authRole(['ADMIN', 'WORKER']), (req, res) => {
+app.post('/api/cluster/ticket/create', authRole(['ADMIN']), (req, res) => {
   const { title, description, domain, priority, allowedFiles, isP0 } = req.body;
   const currentTickets = clusterDb.getAllTickets();
   const ticketCount = currentTickets.length + 101;
@@ -1013,6 +1028,10 @@ app.post('/api/cluster/ticket/synthesize', authRole(['ADMIN', 'WORKER']), async 
   if (!ticket) {
     return res.status(404).json({ error: 'Ticket not found' });
   }
+  if (!workerMayOperateTicket(req, ticketId)) {
+    return res.status(403).json({ success: false, error: '403_WORKER_LEASE_REQUIRED' });
+  }
+
 
   ticket.status = 'SYNTHESIZING_DIFF';
   clusterState.rpm = Math.min(clusterState.maxRpm, clusterState.rpm + 0.5);
@@ -1146,6 +1165,10 @@ app.post('/api/cluster/ticket/test', authRole(['ADMIN', 'WORKER']), (req, res) =
   if (!ticket) {
     return res.status(404).json({ error: 'Ticket not found' });
   }
+  if (!workerMayOperateTicket(req, ticketId)) {
+    return res.status(403).json({ success: false, error: '403_WORKER_LEASE_REQUIRED' });
+  }
+
 
   const isTestOrDemo = process.env.NODE_ENV === 'test';
 
@@ -1293,6 +1316,10 @@ app.post('/api/cluster/ticket/self-heal', authRole(['ADMIN', 'WORKER']), async (
   if (!ticket) {
     return res.status(404).json({ error: 'Ticket not found' });
   }
+  if (!workerMayOperateTicket(req, ticketId)) {
+    return res.status(403).json({ success: false, error: '403_WORKER_LEASE_REQUIRED' });
+  }
+
 
   ticket.status = 'SYNTHESIZING_DIFF';
   const ai = getAI();
@@ -1407,6 +1434,10 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN', 'WORKER']), (req,
   if (!ticket) {
     return res.status(404).json({ error: 'Ticket not found' });
   }
+  if (!workerMayOperateTicket(req, ticketId)) {
+    return res.status(403).json({ success: false, error: '403_WORKER_LEASE_REQUIRED' });
+  }
+
 
   const tokenToVerify = tokenHeader || ticket.ed25519Token || '';
   
@@ -1523,7 +1554,7 @@ app.post('/api/cluster/node/failover', authRole(['ADMIN']), (req, res) => {
 });
 
 // 8. Bot-to-Bot RFC Delegation Protocol
-app.post('/api/cluster/rfc/delegate', authRole(['ADMIN', 'WORKER']), (req, res) => {
+app.post('/api/cluster/rfc/delegate', authRole(['ADMIN']), (req, res) => {
   const { fromNodeId, toNodeId, interfaceName, reason } = req.body;
   const fromNode = clusterState.nodes.find(n => n.id === fromNodeId) || clusterState.nodes[4];
   const toNode = clusterState.nodes.find(n => n.id === toNodeId) || clusterState.nodes[3];
@@ -2087,12 +2118,11 @@ app.post('/api/telegram/config', authRole(['ADMIN']), (req, res) => {
 });
 
 // Get Telegram Config Status (Redacting sensitive botToken for non-admins)
-app.get('/api/telegram/config', (req, res) => {
-  const role = resolveCallerRole(req);
+app.get('/api/telegram/config', authRole(['ADMIN']), (req, res) => {
   res.json({ 
     configured: !!(telegramConfig.botToken || process.env.TELEGRAM_BOT_TOKEN),
     chatId: telegramConfig.chatId || process.env.TELEGRAM_CHAT_ID || undefined,
-    botToken: role === 'ADMIN' ? telegramConfig.botToken : (telegramConfig.botToken ? '••••••••' : undefined),
+    botToken: telegramConfig.botToken ? '••••••••' : undefined,
     isPolling: telegramConfig.isPolling,
     knownChatsCount: telegramConfig.knownChatIds.size
   });
@@ -2204,6 +2234,9 @@ app.post('/api/cluster/kill-switch', authRole(['ADMIN']), (req, res) => {
 // 11. Watchdog Heartbeat Endpoint
 app.post('/api/cluster/watchdog/heartbeat', authRole(['ADMIN', 'WORKER']), (req, res) => {
   const { ticketId, workerId, progressPct, currentStep } = req.body;
+  if ((req as any).clientRole === 'WORKER' && workerId !== (req as any).authenticatedWorkerId) {
+    return res.status(403).json({ success: false, error: '403_WORKER_ID_MISMATCH' });
+  }
   const lease = clusterState.watchdogLeases.find(l => l.ticketId === ticketId);
   
   if (!lease) {
@@ -2482,6 +2515,9 @@ app.get('/api/db/all', authRole(['ADMIN']), (req, res) => {
 // POST Atomic Ticket Claim (Section 7, Section 11 Gap #3 & Gap #10)
 app.post('/api/tickets/claim', authRole(['ADMIN', 'WORKER']), (req, res) => {
   const { workerId, ticketId } = req.body;
+  if ((req as any).clientRole === 'WORKER' && workerId !== (req as any).authenticatedWorkerId) {
+    return res.status(403).json({ success: false, error: '403_WORKER_ID_MISMATCH' });
+  }
   const ticket = clusterState.tickets.find(t => t.id === ticketId);
   if (!ticket) return res.status(404).json({ success: false, error: 'Ticket not found' });
 
@@ -2535,7 +2571,7 @@ app.post('/api/tickets/claim', authRole(['ADMIN', 'WORKER']), (req, res) => {
 });
 
 // POST Block Ticket for Clarification (Section 3.3)
-app.post('/api/tickets/:id/block-clarification', authRole(['ADMIN', 'WORKER']), (req, res) => {
+app.post('/api/tickets/:id/block-clarification', authRole(['ADMIN']), (req, res) => {
   const { id } = req.params;
   const { question, workerId, reasoning } = req.body;
   const ticket = clusterState.tickets.find(t => t.id === id);
