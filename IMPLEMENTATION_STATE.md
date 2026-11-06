@@ -30,7 +30,7 @@ See:
 - GitHub merge verification now reads actual GitHub REST data when configured: merged PR, single commit, exact tested and merged tree, file scope, required CI checks and independent review. SQLite CAS checks live token/epoch again. Without configuration or trustworthy evidence it fails closed. **No real merged target PR has been acceptance-tested.**
 - Rollback is `ROLLBACK_REQUESTED` until a verified revert merges.
 - The old fixture-based `tests/e2e_lifecycle.test.ts` remains fixture-only for Git/merge. Separate real Docker integration suites now verify patch validation, passing/failing containers, Express API state transitions and SQLite writes.
-- Legacy direct-main Python queue is disabled. Automated PR creation, durable merge queue, real target-repo acceptance, production branch protection and real rollback remain incomplete.
+- Legacy direct-main Python queue is disabled. Explicit administrator draft PR creation is implemented for an already-pushed exact tested branch (off by default). Live GitHub PR creation acceptance, worker branch push integration, durable merge queue, production branch protection and real rollback remain incomplete.
 
 ## Mandatory owner actions
 
