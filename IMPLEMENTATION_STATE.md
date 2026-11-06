@@ -1,12 +1,13 @@
 # Implementation State — 2026-11-06
 
-**Status: SECURITY CONTAINMENT IN PROGRESS — NOT PRODUCTION READY**
+**Status: REAL DOCKER EXECUTION CI VERIFIED; GIT MERGE/ROLLBACK BLOCKED — NOT PRODUCTION READY**
 
 The prior text in this file incorrectly equated manually persisted fixture data with verified Docker execution, Git push and remote merge. It has been superseded by evidence-based tracking.
 
 See:
 - [Implementation Tracker](docs/IMPLEMENTATION_TRACKER.md) — module-level implementation/remaining status.
 - [Implementation Log](docs/IMPLEMENTATION_LOG_2026-11-06.md) — changes and validation history.
+- [Real Sandbox Execution](docs/SANDBOX_EXECUTION.md) — runtime configuration, evidence, isolation and limitations.
 - [GitHub Actions](https://github.com/r8898278453-coder/SUTRADHAR/actions) — check results for the specific commit.
 
 ## Implemented foundations
@@ -18,15 +19,15 @@ See:
 - Gemini and OpenRouter API call code (runtime provider availability not proven here).
 - Telegram chat + admin user allowlisting.
 - Admin session login with HttpOnly SameSite cookie and same-origin mutations.
-- Docker sandbox shell script using a disposable copy of the candidate worktree.
+- Real Docker test endpoint: Git HEAD snapshot + scoped patch validation + disposable nonroot Docker execution + SQLite test outcomes. Both real runner and HTTP integration pass/fail tests have passed in CI.
 - CI workflow and test entry points on the fix branch.
 
 ## Deliberately blocked until integrated
 
-- The HTTP Docker test endpoint **does not run real Docker** and returns HTTP 501/503 in normal operation.
+- HTTP Docker testing runs only when `SUTRADHAR_TARGET_REPO_ROOT` and `SUTRADHAR_SANDBOX_TEST_COMMAND` are configured and Docker is available. Missing prerequisites return 503; invalid patch scope returns 422. Production deployment is still unverified.
 - Git push verifier **does not verify a remote merge** and returns HTTP 501. No ticket is marked `COMMITTED_PUSHED` by that endpoint.
 - Rollback is `ROLLBACK_REQUESTED` until a verified revert merges.
-- The old fixture-based “E2E” suite is not evidence of real Docker/Git orchestration.
+- The old fixture-based `tests/e2e_lifecycle.test.ts` remains fixture-only for Git/merge. Separate real Docker integration suites now verify patch validation, passing/failing containers, Express API state transitions and SQLite writes.
 - Real worker identity management, durable merge queue and protected GitHub PR checks are incomplete.
 
 ## Mandatory owner actions
