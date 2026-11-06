@@ -27,6 +27,7 @@ interface TaskDAGViewProps {
   onSynthesize: (ticketId: string) => void;
   onTest: (ticketId: string) => void;
   onVerifyPush: (ticketId: string) => void;
+  onCreateDraftPr: (ticketId: string) => void;
   onSelectTicketForConsole: (ticket: Ticket) => void;
   onClaimTicket?: (ticketId: string, workerId: string) => void;
   onBlockClarification?: (ticketId: string, question: string, reason?: string) => void;
@@ -39,6 +40,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
   onSynthesize,
   onTest,
   onVerifyPush,
+  onCreateDraftPr,
   onSelectTicketForConsole,
   onClaimTicket,
   onBlockClarification,
@@ -592,12 +594,22 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                     </button>
 
                     <button
+                      onClick={() => onCreateDraftPr(selectedTicket.id)}
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="A branch containing the exact Docker-tested commit must already be pushed"
+                    >
+                      <GitBranch className="w-3.5 h-3.5" />
+                      3. Create Draft PR
+                    </button>
+                    <button
                       id={`btn-verify-${selectedTicket.id}`}
                       onClick={() => onVerifyPush(selectedTicket.id)}
-                      className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                      3. Git Push
+                      4. Verify GitHub Merge
                     </button>
                   </div>
 
