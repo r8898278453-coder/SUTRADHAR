@@ -33,7 +33,7 @@ class RunnerFailure(Exception):
 
 
 def scoped_path(raw: str) -> str:
-    if not raw or "\\x00" in raw or "\\" in raw:
+    if not raw or "\x00" in raw or "\\" in raw:
         raise RunnerFailure("PATCH_REJECTED", "Invalid scoped file path")
     path = PurePosixPath(raw)
     if path.is_absolute() or ".." in path.parts or str(path) != raw or raw.startswith("-"):
@@ -66,6 +66,13 @@ def extract_safe_snapshot(archive: Path, destination: Path) -> None:
             if member.name in {".", "./"}:
                 continue
             name = member.name.removeprefix("./").rstrip("/")
+            # Never copy runtime credentials into a runnable code snapshot.
+            parts = PurePosixPath(name).parts
+            if ({".sutradhar_state", "secrets", "node_modules", "__pycache__"} & set(parts)
+                    or PurePosixPath(name).name == ".env"
+                    or PurePosixPath(name).name.startswith(".env.")
+                    or PurePosixPath(name).suffix in {".pem", ".key", ".p12", ".pfx"}):
+                continue
             safe = scoped_path(name)
             count += 1
             total += member.size
@@ -147,7 +154,7 @@ def run(args: argparse.Namespace) -> dict:
                 ["git", "-C", str(workspace), "diff", "--cached", "--name-only", "--no-renames", "-z", "HEAD"],
                 capture_output=True, check=True, timeout=20
             ).stdout
-            changed = {s.decode("utf-8", "strict") for s in changed_raw.split(b"\\x00") if s}
+            changed = {s.decode("utf-8", "strict") for s in changed_raw.split(b"\x00") if s}
             for file_path in changed:
                 scoped_path(file_path)
             if not changed or not changed.issubset(allowed):
@@ -159,10 +166,10 @@ def run(args: argparse.Namespace) -> dict:
                 ["git", "-C", str(workspace), "ls-files", "-s", "-z"],
                 capture_output=True, check=True, timeout=20
             ).stdout
-            for line in stage.split(b"\\x00"):
-                if not line or b"\\t" not in line:
+            for line in stage.split(b"\x00"):
+                if not line or b"\t" not in line:
                     continue
-                meta, raw_name = line.split(b"\\t", 1)
+                meta, raw_name = line.split(b"\t", 1)
                 name = raw_name.decode("utf-8", "strict")
                 if name in changed and meta.split(b" ", 1)[0] not in {b"100644", b"100755"}:
                     raise RunnerFailure("PATCH_REJECTED", "Unsafe staged file type")
@@ -196,7 +203,7 @@ def run(args: argparse.Namespace) -> dict:
             result["status"] = "TEST_PASSED" if exit_code == 0 else "TEST_FAILED"
     except RunnerFailure as exc:
         result["status"] = exc.status
-        result["stderr"] = (result["stderr"] + "\\n" + str(exc))[-OUTPUT_LIMIT:].strip()
+        result["stderr"] = (result["stderr"] + "\n" + str(exc))[-OUTPUT_LIMIT:].strip()
     except (OSError, subprocess.SubprocessError, UnicodeError, tarfile.TarError, ValueError) as exc:
         result["status"] = "RUNNER_ERROR"
         result["stderr"] = f"Runner preparation failed: {type(exc).__name__}"
