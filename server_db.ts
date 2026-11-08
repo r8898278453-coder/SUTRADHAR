@@ -1359,8 +1359,17 @@ export class ClusterDatabase {
       const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id = 1').get() as any;
       const lease = this.db.prepare(`SELECT worker_id, token_id, epoch_id, expires_at, is_revoked
         FROM worker_leases WHERE ticket_id = ?`).get(input.ticketId) as any;
+      const pushed = this.db.prepare('SELECT * FROM verified_worker_pushes WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
       const tokenRevoked = this.isTokenRevoked(input.tokenId);
-      if (!t || !a || !sys || sys.kill_switch_active || !lease || tokenRevoked ||
+      if (!pushed || pushed.repo !== input.repo ||
+          pushed.branch !== input.branch || pushed.head_sha !== input.headSha ||
+          pushed.tree_sha !== input.treeSha ||
+          pushed.patch_sha256 !== input.patchSha256 ||
+          pushed.baseline_commit !== a?.baseline_commit ||
+          pushed.worker_id !== input.workerId ||
+          Number(pushed.epoch_id) !== input.epochId ||
+          !t || !a || !sys || sys.kill_switch_active || !lease || tokenRevoked ||
           lease.is_revoked || Number(lease.epoch_id) !== input.epochId ||
           lease.worker_id !== input.workerId || a.worker_id !== input.workerId ||
           lease.token_id !== input.tokenId || Number(lease.expires_at) <= Date.now() ||
