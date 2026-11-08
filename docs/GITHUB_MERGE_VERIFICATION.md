@@ -49,6 +49,7 @@ New: `POST /api/cluster/ticket/create-draft-pr` (administrator-only).
 push a branch or merge into `main`. A worker must already have pushed a
 branch containing **exactly one commit** built on the Docker-tested baseline.
 The uploaded Git tree must be byte-for-byte identical to the attested candidate.
+The SUTRADHAR SQLite `verified_worker_pushes` receipt must also bind the exact commit/tree to this ticket, worker and lease. The final merge verifier requires the same receipt and commit SHA.
 
 Production opt-in (separate from read-only verification token):
 
@@ -153,6 +154,5 @@ real remote PR was merged. The SQLite regression suite tests durable tree
 attestation, epoch/patch/lease fencing and atomic status changes. Real HTTP
 Docker tests independently prove the candidate tree and persisted attestation.
 
-**Next:** owner-approved live target-repo PR acceptance test; then implement
-safe protected-PR creation and actual revert-and-merge rollback. Keep these
+**Next:** owner-approved live worker push→draft PR→reviewed merge acceptance test; then durable distributed publication queue and real revert-and-merge rollback. Keep these
 as pending until executed. See [Implementation Tracker](./IMPLEMENTATION_TRACKER.md).
