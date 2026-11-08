@@ -1741,6 +1741,16 @@ app.post('/api/cluster/ticket/create-draft-pr', authRole(['ADMIN']), async (req,
       attestation.patchSha256 !== hash || !attestation.changedFiles.length) {
     return res.status(409).json({ success: false, error: 'TESTED_TREE_ATTESTATION_MISSING' });
   }
+  const pushReceipt = clusterDb.getVerifiedWorkerPush(ticketId);
+  if (!pushReceipt || pushReceipt.repo !== repo ||
+      pushReceipt.branch !== ticket.branch ||
+      pushReceipt.treeSha !== attestation.candidateTreeSha ||
+      pushReceipt.baselineCommit !== attestation.baselineCommit ||
+      pushReceipt.patchSha256 !== attestation.patchSha256 ||
+      pushReceipt.epochId !== snapshot.epochId ||
+      pushReceipt.workerId !== attestation.workerId) {
+    return res.status(409).json({ success: false, error: 'VERIFIED_WORKER_PUSH_REQUIRED' });
+  }
   const verified = verifyEd25519Token(ticket.ed25519Token || '', ticketId,
     snapshot.epochId, ticket.allowedFiles);
   if (!verified.verified || !verified.payload || !verified.payload.tokenId) {
@@ -1768,6 +1778,9 @@ app.post('/api/cluster/ticket/create-draft-pr', authRole(['ADMIN']), async (req,
       title: `[${ticketId}] ${ticket.title}`.slice(0, 160),
       description: ticket.description || ''
     });
+    if (outcome.created && outcome.headSha !== pushReceipt.headSha) {
+      return res.status(409).json({ success: false, error: 'DRAFT_PR_REMOTE_HEAD_CHANGED' });
+    }
     if (!outcome.created) {
       const code = outcome.error === 'DRAFT_PR_GITHUB_API_UNAVAILABLE' ? 502 :
         outcome.error === 'DRAFT_PR_CONFIGURATION_INVALID' ? 503 : 409;
