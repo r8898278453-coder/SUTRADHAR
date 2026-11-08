@@ -8,7 +8,7 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "lint": "tsc --noEmit",
-    "test": "NODE_ENV=test SUTRADHAR_TEST_RUN=true SUTRADHAR_WORKER_KEY=sutradhar-local-tests-only-worker-secret-00001 SUTRADHAR_WORKER_ID=NODE-A8F24C09 node --import tsx --test --test-concurrency=1 tests/security_ed25519.test.ts tests/cluster_db.test.ts tests/e2e_lifecycle.test.ts tests/github_merge_verifier.test.ts tests/github_pr_creator.test.ts tests/draft_pr_http_integration.test.ts tests/git_merge_attestation.test.ts tests/github_merge_http_integration.test.ts && NODE_ENV=test SUTRADHAR_TEST_RUN=true SUTRADHAR_WORKER_KEY=sutradhar-local-tests-only-worker-secret-00001 SUTRADHAR_WORKER_ID=NODE-A8F24C09 tsx tests/security_and_auth.test.ts",
+    "test": "NODE_ENV=test SUTRADHAR_TEST_RUN=true SUTRADHAR_WORKER_KEY=sutradhar-local-tests-only-worker-secret-00001 SUTRADHAR_WORKER_ID=NODE-A8F24C09 node --import tsx --test --test-concurrency=1 tests/security_ed25519.test.ts tests/cluster_db.test.ts tests/e2e_lifecycle.test.ts tests/github_merge_verifier.test.ts tests/github_pr_creator.test.ts tests/draft_pr_http_integration.test.ts tests/tested_branch_http_guard.test.ts tests/git_merge_attestation.test.ts tests/github_merge_http_integration.test.ts && NODE_ENV=test SUTRADHAR_TEST_RUN=true SUTRADHAR_WORKER_KEY=sutradhar-local-tests-only-worker-secret-00001 SUTRADHAR_WORKER_ID=NODE-A8F24C09 tsx tests/security_and_auth.test.ts",
     "test:python": "python3 -m unittest discover -s tests -p 'test_*.py' -v",
     "test:sandbox-http": "NODE_ENV=test SUTRADHAR_TEST_RUN=true tsx tests/sandbox_http_integration.test.ts"
   },
