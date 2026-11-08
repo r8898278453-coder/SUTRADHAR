@@ -1584,6 +1584,124 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res
   });
 });
 
+// Guarded worker publication: a verified Docker tree is materialized in a
+// disposable bare Git repository, then pushed ONLY as a new worker branch.
+// The host's source checkout and GitHub main are never mutated.
+const activeVerifiedPushes = new Set<string>();
+app.post('/api/cluster/ticket/push-tested-branch', authRole(['ADMIN']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string' || !ticketId.trim()) {
+    return res.status(400).json({ success: false, error: 'INVALID_TICKET_ID' });
+  }
+  if (process.env.SUTRADHAR_ENABLE_WORKER_PUSH !== 'true') {
+    return res.status(503).json({ success: false, error: 'WORKER_PUSH_DISABLED' });
+  }
+  const repo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const target = process.env.SUTRADHAR_TARGET_REPO_ROOT?.trim() || '';
+  const token = process.env.SUTRADHAR_GITHUB_PUSH_TOKEN?.trim() || '';
+  if (!repo || !target || !token) {
+    return res.status(503).json({ success: false, error: 'WORKER_PUSH_NOT_CONFIGURED' });
+  }
+  if (activeVerifiedPushes.has(ticketId)) {
+    return res.status(409).json({ success: false, error: 'WORKER_PUSH_ALREADY_RUNNING' });
+  }
+  const ticket = clusterDb.getAllTickets().find(t => t.id === ticketId);
+  if (!ticket) return res.status(404).json({ success: false, error: 'TICKET_NOT_FOUND' });
+  const state = clusterDb.getSystemState();
+  if (state.killSwitchActive) {
+    return res.status(423).json({ success: false, error: 'CLUSTER_PAUSED' });
+  }
+  if (ticket.status !== 'READY_FOR_REVIEW' || !ticket.diffPatch || !ticket.branch) {
+    return res.status(409).json({ success: false, error: 'REAL_DOCKER_TEST_REQUIRED' });
+  }
+  if (clusterDb.getVerifiedWorkerPush(ticketId)) {
+    return res.status(409).json({ success: false, error: 'WORKER_PUSH_ALREADY_RECORDED',
+      message: 'A verified branch receipt already exists. Proceed to draft PR review.' });
+  }
+  const attested = clusterDb.getSandboxAttestation(ticketId);
+  const hash = crypto.createHash('sha256').update(ticket.diffPatch).digest('hex');
+  if (!attested || attested.patchSha256 !== hash || !attested.changedFiles.length ||
+      attested.epochId !== state.epochId || attested.workerId !== ticket.assignedTo) {
+    return res.status(409).json({ success: false, error: 'TESTED_GIT_TREE_REQUIRED' });
+  }
+  const signature = verifyEd25519Token(ticket.ed25519Token || '', ticketId, state.epochId, ticket.allowedFiles);
+  if (!signature.verified || !signature.payload?.tokenId) {
+    return res.status(403).json({ success: false, error: 'WORKER_PUSH_SIGNATURE_INVALID' });
+  }
+  const verifiedPayload = signature.payload;
+  const lease = clusterDb.getActiveLeaseAuth(ticketId);
+  if (!lease || lease.workerId !== verifiedPayload.workerId ||
+      lease.workerId !== attested.workerId ||
+      lease.tokenId !== verifiedPayload.tokenId ||
+      lease.epochId !== state.epochId || lease.expiresAt <= Date.now() ||
+      clusterDb.isTokenRevoked(verifiedPayload.tokenId)) {
+    return res.status(403).json({ success: false, error: 'WORKER_PUSH_LEASE_NOT_CURRENT' });
+  }
+
+  activeVerifiedPushes.add(ticketId);
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'sutradhar-publish-'));
+  const patchFile = path.join(scratch, 'candidate.patch');
+  try {
+    fs.writeFileSync(patchFile, ticket.diffPatch, { mode: 0o600 });
+    const cmd = [
+      '-m', 'sandbox.push_tested_branch',
+      '--repo-root', target,
+      '--github-repository', repo,
+      '--ticket-id', ticketId, '--branch', ticket.branch,
+      '--baseline-commit', attested.baselineCommit,
+      '--candidate-tree-sha', attested.candidateTreeSha,
+      '--patch-sha256', attested.patchSha256,
+      '--patch-file', patchFile,
+      ...ticket.allowedFiles.flatMap(p => ['--allowed-file', p]),
+      ...attested.changedFiles.flatMap(p => ['--changed-file', p])
+    ];
+    const output = await new Promise<string>((resolve, reject) => {
+      child_process.execFile(process.env.SUTRADHAR_PYTHON || 'python3', cmd, {
+        cwd: process.cwd(), timeout: 180000, maxBuffer: 512 * 1024,
+        env: { ...process.env, SUTRADHAR_GITHUB_PUSH_TOKEN: token }
+      }, (error, stdout) => {
+        if (error) reject(new Error('GIT_PUBLISH_SUBPROCESS_ERROR'));
+        else resolve(stdout);
+      });
+    });
+    let result: any;
+    try { result = JSON.parse(output.trim()); }
+    catch { return res.status(502).json({ success: false, error: 'GIT_PUBLISH_INVALID_RESPONSE' }); }
+    if (!result?.success || result.status !== 'PUSH_CONFIRMED_NOT_MERGED') {
+      return res.status(409).json({
+        success: false, error: typeof result?.error === 'string' ? result.error : 'WORKER_PUSH_FAILED'
+      });
+    }
+    if (result.treeSha !== attested.candidateTreeSha ||
+        result.baselineCommit !== attested.baselineCommit ||
+        result.patchSha256 !== attested.patchSha256 ||
+        result.branch !== ticket.branch ||
+        !/^[0-9a-f]{40}$/.test(result.headSha || '')) {
+      return res.status(502).json({ success: false, error: 'WORKER_PUSH_EVIDENCE_MISMATCH' });
+    }
+    const accepted = clusterDb.recordVerifiedWorkerPush({
+      ticketId, repo, branch: ticket.branch, headSha: result.headSha,
+      treeSha: result.treeSha, baselineCommit: result.baselineCommit,
+      patchSha256: result.patchSha256, workerId: verifiedPayload.workerId,
+      epochId: state.epochId, tokenId: verifiedPayload.tokenId
+    });
+    if (!accepted) return res.status(409).json({
+      success: false, error: 'WORKER_PUSH_STATE_CHANGED_RECONCILE',
+      message: 'Remote branch may exist but ticket/lease evidence changed; inspect GitHub before retrying.'
+    });
+    return res.json({
+      success: true, status: 'PUSH_CONFIRMED_NOT_MERGED', ticketId,
+      branch: ticket.branch, headSha: result.headSha, treeSha: result.treeSha,
+      message: 'Exact tested branch pushed. Human-reviewed draft PR is next; main unchanged.'
+    });
+  } catch {
+    return res.status(502).json({ success: false, error: 'WORKER_PUSH_EXECUTION_UNAVAILABLE' });
+  } finally {
+    try { fs.rmSync(scratch, { force: true, recursive: true }); } catch {}
+    activeVerifiedPushes.delete(ticketId);
+  }
+});
+
 // Explicit, administrator-triggered draft PR creation for an already pushed
 // worker branch. No GitHub merge endpoint is invoked by this route.
 const activeDraftPrCreations = new Set<string>();
