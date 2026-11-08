@@ -160,6 +160,26 @@ export const App: React.FC = () => {
     }
   };
 
+  // Push exactly the candidate that already passed real Docker to a new
+  // worker branch. Never push to main or claim a merge here.
+  const handlePushTestedBranch = async (ticketId: string) => {
+    try {
+      const response = await fetch('/api/cluster/ticket/push-tested-branch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId })
+      });
+      const data = await response.json();
+      if (response.ok && data.status === 'PUSH_CONFIRMED_NOT_MERGED') {
+        showToast(`Verified branch ${data.branch} at ${data.headSha?.slice(0, 12)}; not merged. Create draft PR next.`);
+      } else {
+        showToast(`Worker push blocked: ${data.error || response.status}`);
+      }
+      await fetchState();
+    } catch (error) {
+      showToast(`Worker push failed: ${error}`);
+    }
+  };
+
   // Submit only an existing, exact Docker-tested branch as a draft GitHub PR.
   const handleCreateDraftPr = async (ticketId: string) => {
     try {
@@ -439,6 +459,7 @@ export const App: React.FC = () => {
             state={state}
             onSynthesize={handleSynthesize}
             onTest={handleTestSandbox}
+            onPushTestedBranch={handlePushTestedBranch}
             onCreateDraftPr={handleCreateDraftPr}
             onVerifyPush={handleVerifyPush}
             onSelectTicketForConsole={(t) => {
@@ -459,6 +480,7 @@ export const App: React.FC = () => {
             onSynthesize={handleSynthesize}
             onTestSandbox={handleTestSandbox}
             onSelfHeal={handleSelfHeal}
+            onPushTestedBranch={handlePushTestedBranch}
             onCreateDraftPr={handleCreateDraftPr}
             onVerifyPush={handleVerifyPush}
             onSelectTicket={(t) => setActiveTicket(t)}
