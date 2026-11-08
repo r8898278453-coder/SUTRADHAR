@@ -24,6 +24,7 @@ interface SandboxProps {
   onSelfHeal: (ticketId: string) => void;
   onVerifyPush: (ticketId: string) => void;
   onCreateDraftPr: (ticketId: string) => void;
+  onPushTestedBranch: (ticketId: string) => void;
   onSelectTicket: (ticket: Ticket) => void;
 }
 
@@ -35,6 +36,7 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
   onSelfHeal,
   onVerifyPush,
   onCreateDraftPr,
+  onPushTestedBranch,
   onSelectTicket
 }) => {
   const [selectedTier, setSelectedTier] = useState<1 | 2 | 3>(activeTicket.currentTier || 1);
@@ -312,6 +314,10 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
 
               {activeTicket.status === 'READY_FOR_REVIEW' ? (
                 <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => onPushTestedBranch(activeTicket.id)}
+                    className="rounded border border-cyan-600 bg-cyan-950/30 px-3 py-1 text-cyan-300">
+                    Push Tested Branch
+                  </button>
                   <button type="button" onClick={() => onCreateDraftPr(activeTicket.id)}
                     className="rounded border border-indigo-600 bg-indigo-950/30 px-3 py-1 text-indigo-300">
                     Create Draft PR
