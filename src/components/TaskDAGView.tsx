@@ -28,6 +28,7 @@ interface TaskDAGViewProps {
   onTest: (ticketId: string) => void;
   onVerifyPush: (ticketId: string) => void;
   onCreateDraftPr: (ticketId: string) => void;
+  onPushTestedBranch: (ticketId: string) => void;
   onSelectTicketForConsole: (ticket: Ticket) => void;
   onClaimTicket?: (ticketId: string, workerId: string) => void;
   onBlockClarification?: (ticketId: string, question: string, reason?: string) => void;
@@ -41,6 +42,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
   onTest,
   onVerifyPush,
   onCreateDraftPr,
+  onPushTestedBranch,
   onSelectTicketForConsole,
   onClaimTicket,
   onBlockClarification,
@@ -594,13 +596,22 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                     </button>
 
                     <button
+                      onClick={() => onPushTestedBranch(selectedTicket.id)}
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-mono disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Push only a new worker branch containing the exact Docker-tested Git tree"
+                    >
+                      <GitBranch className="w-3.5 h-3.5" />
+                      3. Push Tested Branch
+                    </button>
+                    <button
                       onClick={() => onCreateDraftPr(selectedTicket.id)}
                       disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
                       className="px-3 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                       title="A branch containing the exact Docker-tested commit must already be pushed"
                     >
                       <GitBranch className="w-3.5 h-3.5" />
-                      3. Create Draft PR
+                      4. Create Draft PR
                     </button>
                     <button
                       id={`btn-verify-${selectedTicket.id}`}
@@ -609,7 +620,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                       className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                      4. Verify GitHub Merge
+                      5. Verify GitHub Merge
                     </button>
                   </div>
 
