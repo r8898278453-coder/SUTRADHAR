@@ -50,6 +50,14 @@ function setup() {
       patchSha256: hash, epochId: epoch, workerId: 'NODE-TEST', tokenId: TOKEN_ID, ...data
     });
   }
+  function push(data: Partial<Parameters<typeof db.recordVerifiedWorkerPush>[0]> = {}) {
+    return db.recordVerifiedWorkerPush({
+      ticketId, repo: 'acme/widgets', branch: 'ai/TKT-GITHUB-01',
+      headSha: HEAD, treeSha: TREE, baselineCommit: BASE,
+      patchSha256: hash, workerId: 'NODE-TEST', epochId: epoch,
+      tokenId: TOKEN_ID, ...data
+    });
+  }
   function draft(data: Partial<Parameters<typeof db.recordVerifiedDraftPr>[0]> = {}) {
     return db.recordVerifiedDraftPr({
       ticketId, repo: 'acme/widgets', prNumber: 42,
@@ -59,7 +67,7 @@ function setup() {
     });
   }
   return {
-    db, ticketId, attest, merge, draft,
+    db, ticketId, attest, merge, draft, push,
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true })
   };
 }
@@ -125,6 +133,12 @@ test('draft PR submission requires a matching tested tree and live signed lease'
   try {
     assert.equal(t.draft(), false, 'Untested ticket must be rejected');
     assert.equal(t.attest(), true);
+    assert.equal(t.draft(), false, 'No verified push receipt => no PR');
+    assert.equal(t.push({ treeSha: 'f'.repeat(40) }), false);
+    assert.equal(t.push(), true, 'Exact tested branch receipt recorded');
+    assert.equal(t.db.getVerifiedWorkerPush(t.ticketId)?.headSha, HEAD);
+    assert.equal(t.push(), true, 'Same push can be recorded idempotently');
+    assert.equal(t.push({ headSha: 'f'.repeat(40) }), false, 'Different push cannot overwrite receipt');
     assert.equal(t.draft({ treeSha: 'f'.repeat(40) }), false);
     assert.equal(t.draft({ tokenId: 'wrong' }), false);
     assert.equal(t.draft(), true);
@@ -145,5 +159,18 @@ test('paused cluster or revoked lease blocks draft PR persistence', () => {
     assert.equal(t.draft(), false);
     t.db.setKillSwitch(true, 'Freeze', 'Test');
     assert.equal(t.draft(), false);
+  } finally { t.cleanup(); }
+});
+
+test('verified worker push cannot proceed without Docker attestation or live lease', () => {
+  const t = setup();
+  try {
+    assert.equal(t.push(), false);
+    assert.equal(t.attest(), true);
+    assert.equal(t.push({ tokenId: 'forged-token' }), false);
+    assert.equal(t.push({ patchSha256: 'a'.repeat(64) }), false);
+    t.db.revokeToken(TOKEN_ID, 'Security revoked');
+    assert.equal(t.push(), false);
+    assert.equal(t.db.getVerifiedWorkerPush(t.ticketId), null);
   } finally { t.cleanup(); }
 });
