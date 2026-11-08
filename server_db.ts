@@ -220,6 +220,19 @@ export class ClusterDatabase {
         epoch_id INTEGER NOT NULL,
         created_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS verified_worker_pushes (
+        ticket_id TEXT PRIMARY KEY,
+        repo TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        head_sha TEXT NOT NULL,
+        tree_sha TEXT NOT NULL,
+        baseline_commit TEXT NOT NULL,
+        patch_sha256 TEXT NOT NULL,
+        worker_id TEXT NOT NULL,
+        epoch_id INTEGER NOT NULL,
+        pushed_at INTEGER NOT NULL
+      );
     `);
 
     // Ensure baseline system_state row
@@ -1151,6 +1164,89 @@ export class ClusterDatabase {
       patchSha256: r.patch_sha256, baselineCommit: r.baseline_commit,
       candidateTreeSha: r.candidate_tree_sha, changedFiles: JSON.parse(r.changed_files_json),
       workerId: r.worker_id, epochId: Number(r.epoch_id), verifiedAt: Number(r.verified_at)
+    } : null;
+  }
+
+  /** Durable receipt for an independently verified worker-branch push. */
+  public recordVerifiedWorkerPush(input: {
+    ticketId: string; repo: string; branch: string; headSha: string;
+    treeSha: string; baselineCommit: string; patchSha256: string;
+    workerId: string; epochId: number; tokenId: string;
+  }): boolean {
+    if (![input.headSha, input.treeSha, input.baselineCommit].every(x => /^[a-f0-9]{40}$/.test(x)) ||
+        !/^[a-f0-9]{64}$/.test(input.patchSha256)) return false;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const t = this.db.prepare('SELECT status, branch, assigned_to, diff_patch FROM tickets WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const a = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const lease = this.db.prepare('SELECT * FROM worker_leases WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id = 1')
+        .get() as any;
+      if (!t || !a || !lease || !sys || sys.kill_switch_active ||
+          t.status !== 'READY_FOR_REVIEW' || t.branch !== input.branch ||
+          t.assigned_to !== input.workerId ||
+          a.baseline_commit !== input.baselineCommit ||
+          a.candidate_tree_sha !== input.treeSha ||
+          a.patch_sha256 !== input.patchSha256 ||
+          a.worker_id !== input.workerId || Number(a.epoch_id) !== input.epochId ||
+          Number(sys.epoch_id) !== input.epochId ||
+          Number(lease.epoch_id) !== input.epochId ||
+          lease.worker_id !== input.workerId || lease.token_id !== input.tokenId ||
+          lease.is_revoked || Number(lease.expires_at) <= Date.now() ||
+          this.isTokenRevoked(input.tokenId) ||
+          !t.diff_patch ||
+          crypto.createHash('sha256').update(t.diff_patch).digest('hex') !== input.patchSha256) {
+        this.db.exec('ROLLBACK');
+        return false;
+      }
+      const previous = this.db.prepare('SELECT * FROM verified_worker_pushes WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      if (previous) {
+        const same = previous.repo === input.repo && previous.branch === input.branch &&
+          previous.head_sha === input.headSha && previous.tree_sha === input.treeSha &&
+          previous.baseline_commit === input.baselineCommit &&
+          previous.patch_sha256 === input.patchSha256 &&
+          previous.worker_id === input.workerId && Number(previous.epoch_id) === input.epochId;
+        this.db.exec('COMMIT');
+        return same;
+      }
+      this.db.prepare(`INSERT INTO verified_worker_pushes
+        (ticket_id, repo, branch, head_sha, tree_sha, baseline_commit,
+         patch_sha256, worker_id, epoch_id, pushed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        input.ticketId, input.repo, input.branch, input.headSha,
+        input.treeSha, input.baselineCommit, input.patchSha256,
+        input.workerId, input.epochId, Date.now()
+      );
+      this.appendAuditLog({
+        actor: input.workerId, action: 'WORKER_BRANCH_PUSH_VERIFIED',
+        ticketId: input.ticketId,
+        reasoning: 'Scoped worker branch remotely confirmed. No PR created or merge performed.',
+        details: { repo: input.repo, branch: input.branch,
+          headSha: input.headSha, treeSha: input.treeSha }
+      });
+      this.db.exec('COMMIT');
+      return true;
+    } catch (e) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw e;
+    }
+  }
+
+  public getVerifiedWorkerPush(ticketId: string): {
+    repo: string; branch: string; headSha: string; treeSha: string;
+    baselineCommit: string; patchSha256: string; workerId: string; epochId: number;
+  } | null {
+    const row = this.db.prepare('SELECT * FROM verified_worker_pushes WHERE ticket_id = ?')
+      .get(ticketId) as any;
+    return row ? {
+      repo: row.repo, branch: row.branch, headSha: row.head_sha,
+      treeSha: row.tree_sha, baselineCommit: row.baseline_commit,
+      patchSha256: row.patch_sha256, workerId: row.worker_id,
+      epochId: Number(row.epoch_id)
     } : null;
   }
 
