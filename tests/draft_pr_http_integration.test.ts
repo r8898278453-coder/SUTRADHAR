@@ -43,6 +43,13 @@ test('admin-only HTTP draft PR creation is scope/lease gated and never merges', 
     workerId, epochId: epoch, stdout: 'fixture: real Docker tested in separate suite',
     stderr: ''
   }), true);
+  // Controlled GitHub responses only: simulate a previously verified worker
+  // push receipt in SQLite. The real Git push is covered by Python bare-remote tests.
+  assert.equal(clusterDb.recordVerifiedWorkerPush({
+    ticketId, repo: 'acme/widgets', branch: claim.branch!,
+    headSha: HEAD, treeSha: TREE, baselineCommit: BASE,
+    patchSha256: patchHash, workerId, epochId: epoch, tokenId: token.tokenId
+  }), true);
 
   const envNames = ['SUTRADHAR_GITHUB_REPOSITORY', 'SUTRADHAR_GITHUB_PR_TOKEN',
     'SUTRADHAR_REQUIRED_CHECKS', 'SUTRADHAR_MIN_GITHUB_APPROVALS',
