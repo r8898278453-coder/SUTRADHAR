@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased — verified worker branch publication] - 2026-11-08
+
+### Added
+- Real Git bare-index patch publication bound to Docker-tested Git tree,
+  baseline, whitelist and changed files; only new worker branch non-force
+  push, remote SHA confirmation; never push main.
+- Optional administrator-only branch push endpoint and isolated GitHub push
+  credentials, durable `verified_worker_pushes` receipts with signed worker
+  lease/epoch/patch CAS checks; downstream draft PR and final merge CAS now
+  require exact verified pushed commit.
+- Real disposable local bare-remote Git push regression tests and API
+  authentication/configuration tests. Dashboard shows separate Push Tested
+  Branch, Create Draft PR and Verify GitHub Merge actions.
+
+### Remaining
+- No live target GitHub push/PR/merge performed; historical signer rotation,
+  distributed queue/crash recovery, rollback revert and production deployment pending.
+
 ## [Unreleased — protected draft PR creation] - 2026-11-07
 
 ### Added
