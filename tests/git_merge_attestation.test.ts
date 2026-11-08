@@ -78,6 +78,8 @@ test('exact Docker tree and matching remote merge evidence persist atomically', 
     assert.equal(t.attest(), true);
     assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'READY_FOR_REVIEW');
     assert.equal(t.db.getSandboxAttestation(t.ticketId)?.candidateTreeSha, TREE);
+    assert.equal(t.merge(), false, 'A merge without our worker push receipt is denied');
+    assert.equal(t.push(), true, 'Worker branch is now attested');
     assert.equal(t.merge(), true);
     const merged = t.db.getAllTickets().find(x => x.id === t.ticketId);
     assert.equal(merged?.status, 'COMMITTED_PUSHED');
@@ -99,6 +101,7 @@ test('wrong tree and changed patch are denied', () => {
   const t = setup();
   try {
     assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
     assert.equal(t.merge({ treeSha: 'f'.repeat(40) }), false);
     t.db.updateTicket(t.ticketId, { diffPatch: patch + '# edited' });
     assert.equal(t.merge(), false);
@@ -110,6 +113,7 @@ test('stale epoch or paused cluster denies merge', () => {
   const t = setup();
   try {
     assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
     assert.equal(t.merge({ epochId: 500 }), false);
     t.db.setKillSwitch(true, 'release freeze', 'QA');
     assert.equal(t.merge(), false);
@@ -121,6 +125,7 @@ test('wrong token, revoked token and expired lease cannot commit a merge', () =>
   const t = setup();
   try {
     assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
     assert.equal(t.merge({ tokenId: 'tok_forged' }), false);
     t.db.revokeToken(TOKEN_ID, 'Security test');
     assert.equal(t.merge(), false);
