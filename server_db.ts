@@ -1287,6 +1287,17 @@ export class ClusterDatabase {
         this.db.exec('ROLLBACK');
         return false;
       }
+      const pushed = this.db.prepare('SELECT * FROM verified_worker_pushes WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      if (!pushed || pushed.repo !== input.repo ||
+          pushed.branch !== input.branch || pushed.head_sha !== input.headSha ||
+          pushed.tree_sha !== input.treeSha ||
+          pushed.patch_sha256 !== input.patchSha256 ||
+          pushed.worker_id !== input.workerId ||
+          Number(pushed.epoch_id) !== input.epochId) {
+        this.db.exec('ROLLBACK');
+        return false;
+      }
       const existing = this.db.prepare('SELECT * FROM draft_pr_submissions WHERE ticket_id = ?')
         .get(input.ticketId) as any;
       if (existing) {
