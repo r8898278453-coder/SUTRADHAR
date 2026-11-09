@@ -25,6 +25,7 @@ interface SandboxProps {
   onVerifyPush: (ticketId: string) => void;
   onCreateDraftPr: (ticketId: string) => void;
   onPushTestedBranch: (ticketId: string) => void;
+  onReconcileWorkerPush: (ticketId: string) => void;
   onSelectTicket: (ticket: Ticket) => void;
 }
 
@@ -37,6 +38,7 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
   onVerifyPush,
   onCreateDraftPr,
   onPushTestedBranch,
+  onReconcileWorkerPush,
   onSelectTicket
 }) => {
   const [selectedTier, setSelectedTier] = useState<1 | 2 | 3>(activeTicket.currentTier || 1);
@@ -317,6 +319,11 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
                   <button type="button" onClick={() => onPushTestedBranch(activeTicket.id)}
                     className="rounded border border-cyan-600 bg-cyan-950/30 px-3 py-1 text-cyan-300">
                     Push Tested Branch
+                  </button>
+                  <button type="button" onClick={() => onReconcileWorkerPush(activeTicket.id)}
+                    className="rounded border border-amber-600 bg-amber-950/30 px-3 py-1 text-amber-300"
+                    title="Read-only remote inspection; no automatic push">
+                    Reconcile Push
                   </button>
                   <button type="button" onClick={() => onCreateDraftPr(activeTicket.id)}
                     className="rounded border border-indigo-600 bg-indigo-950/30 px-3 py-1 text-indigo-300">
