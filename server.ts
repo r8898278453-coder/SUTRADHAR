@@ -3179,7 +3179,7 @@ setInterval(() => {
     if (sweep.expiredTickets.length > 0) {
       sweep.expiredTickets.forEach(tid => {
         const ticket = clusterState.tickets.find(t => t.id === tid);
-        if (ticket && ticket.status !== 'COMMITTED_PUSHED') {
+        if (ticket && !['READY_FOR_REVIEW', 'COMMITTED_PUSHED', 'ROLLBACK_REQUESTED'].includes(ticket.status)) {
           ticket.status = 'PENDING';
           ticket.assignedTo = undefined;
           ticket.logs.push({
@@ -3216,7 +3216,7 @@ setInterval(() => {
     if (now >= lease.expiresAt || lease.missedHeartbeats >= lease.maxMissedHeartbeats) {
       lease.isRevoked = true;
       const ticket = clusterState.tickets.find(t => t.id === lease.ticketId);
-      if (ticket && ticket.status !== 'COMMITTED_PUSHED') {
+      if (ticket && !['READY_FOR_REVIEW', 'COMMITTED_PUSHED', 'ROLLBACK_REQUESTED'].includes(ticket.status)) {
         const prevWorker = ticket.assignedTo || 'Unassigned';
         ticket.status = 'PENDING';
         ticket.assignedTo = undefined;
