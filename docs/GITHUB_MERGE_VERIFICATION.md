@@ -105,11 +105,14 @@ in CI. **No live target-project PR creation was performed in this slice.**
    The merge commit must be reachable on `main` (GitHub compare ancestry).
    PR files must be wholly within the ticket's allowed-file set, with no
    renames or unknown changes.
-7. An administrator calls `POST /api/cluster/ticket/verify-push` with the
-   ticket ID. The server validates the signed and live lease, checks durable
-   sandbox evidence, fetches GitHub evidence via its configured token, and
-   atomically marks `COMMITTED_PUSHED` only if the ticket, epoch, token,
-   patch and lease are **still current**.
+7. After human review, an administrator explicitly calls
+   `POST /api/cluster/ticket/authorize-merge-verification` for the registered
+   PR. This creates a short-lived **15-minute proof-verification grant** bound
+   to the tested/pushed tree, head, PR and epoch, not a worker lease renewal.
+   The administrator then calls `POST /api/cluster/ticket/verify-push`.
+   The backend checks the exact registered PR/head and independent GitHub
+   merge/CI/review proof; only an atomic, single-use grant CAS may mark
+   `COMMITTED_PUSHED`. The worker execution token may already be expired.
 8. The remote merged commit and PR metadata are persisted in
    `verified_git_merges` and the audit log; `rollback_commit` references
    the actual merged SHA, not a fabricated local `HEAD`.
@@ -130,7 +133,7 @@ merge queue now fails closed with `GITHUB_REVIEWED_PR_REQUIRED`.
 - `GITHUB_APPROVAL_NOT_VERIFIED`: no qualifying independent approval.
 - `GITHUB_MERGE_NOT_ON_MAIN`: GitHub merge commit is not reachable on main.
 - `GITHUB_API_UNAVAILABLE`: GitHub unavailable/authentication rejected.
-- `GITHUB_MERGE_EVIDENCE_STALE`: a new patch, epoch, pause, revoked lease, or
+- `GITHUB_MERGE_EVIDENCE_STALE`: a new patch, epoch, pause, changed grant/provenance or
   concurrent status update invalidated verification before SQLite commit.
 
 This intentionally restrictive v1 gate rejects ordinary multi-commit PRs,
@@ -151,7 +154,7 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 Unit tests provide a deterministic fake GitHub REST **response fixture** to
 exercise positive and negative verification logic; they do **not** prove a
 real remote PR was merged. The SQLite regression suite tests durable tree
-attestation, epoch/patch/lease fencing and atomic status changes. Real HTTP
+attestation, epoch/patch/grant fencing and atomic status changes. Real HTTP
 Docker tests independently prove the candidate tree and persisted attestation.
 
 **Next:** owner-approved live worker push→draft PR→reviewed merge acceptance test; then durable distributed publication queue and real revert-and-merge rollback. Keep these
