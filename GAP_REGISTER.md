@@ -9,7 +9,7 @@ This register reflects the current implementation branch, not an unsupported "al
 | GAP-P0-003 | Critical | Remote GitHub PR merge verifier implemented with exact tested tree, mandatory CI/review checks; live target PR acceptance not yet run | PARTIAL — MOCKED API CI VERIFIED |
 | GAP-P0-004 | Critical | Real Git revert with verified merge missing | BLOCKED (REQUESTED only) |
 | GAP-P0-005 | High | Multiple worker identities and per-ticket lease enforcement across all operations | PARTIAL |
-| GAP-P0-006 | High | Direct-main push disabled; real scoped worker-branch publication locally Git tested, draft PR/API receipts integrated; live target GitHub push/review/merge, durable queue and protections pending | PARTIAL — LOCAL GIT VERIFIED |
+| GAP-P0-006 | High | Direct-main push disabled; guarded worker push with SQLite reservation and read-only crash reconciliation, draft PR/merge receipts integrated; live GitHub delivery and scheduled distributed queue pending | PARTIAL — RECOVERY CI VERIFIED |
 | GAP-P1-001 | High | Node/Python shared-state and leader failover consistency | PARTIAL |
 | GAP-P1-002 | High | Real Docker+Git snapshot+HTTP+SQLite tests pass, but remote GitHub PR/merge E2E still missing | PARTIAL — DOCKER VERIFIED |
 | GAP-P1-003 | High | Production demo seed and fictional worker metrics remain | PENDING |
