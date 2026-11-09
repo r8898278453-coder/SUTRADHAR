@@ -29,6 +29,7 @@ interface TaskDAGViewProps {
   onVerifyPush: (ticketId: string) => void;
   onCreateDraftPr: (ticketId: string) => void;
   onPushTestedBranch: (ticketId: string) => void;
+  onReconcileWorkerPush: (ticketId: string) => void;
   onSelectTicketForConsole: (ticket: Ticket) => void;
   onClaimTicket?: (ticketId: string, workerId: string) => void;
   onBlockClarification?: (ticketId: string, question: string, reason?: string) => void;
@@ -43,6 +44,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
   onVerifyPush,
   onCreateDraftPr,
   onPushTestedBranch,
+  onReconcileWorkerPush,
   onSelectTicketForConsole,
   onClaimTicket,
   onBlockClarification,
@@ -603,6 +605,14 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                     >
                       <GitBranch className="w-3.5 h-3.5" />
                       3. Push Tested Branch
+                    </button>
+                    <button
+                      onClick={() => onReconcileWorkerPush(selectedTicket.id)}
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-amber-600/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-mono disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Read-only inspection of uncertain worker push; never auto-retries"
+                    >
+                      Reconcile Push
                     </button>
                     <button
                       onClick={() => onCreateDraftPr(selectedTicket.id)}
