@@ -234,6 +234,21 @@ export class ClusterDatabase {
         pushed_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS merge_verification_grants (
+        ticket_id TEXT PRIMARY KEY,
+        grant_id TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        pr_number INTEGER NOT NULL,
+        branch TEXT NOT NULL,
+        head_sha TEXT NOT NULL,
+        candidate_tree_sha TEXT NOT NULL,
+        patch_sha256 TEXT NOT NULL,
+        epoch_id INTEGER NOT NULL,
+        issued_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        consumed_at INTEGER
+      );
+
       CREATE TABLE IF NOT EXISTS worker_push_jobs (
         ticket_id TEXT PRIMARY KEY,
         reservation_id TEXT NOT NULL,
@@ -1506,11 +1521,108 @@ export class ClusterDatabase {
     } : null;
   }
 
+  /**
+   * Admin-directed proof verification authorization after human review.
+   * This is NOT a worker lease and never authorizes code execution or a push.
+   * It is bound to an already registered PR and exact tested/pushed artifact.
+   */
+  public authorizeGitMergeVerification(ticketId: string, repo: string,
+    actor: string = 'Administrator', ttlMs: number = 900000
+  ): { success: true; grantId: string; expiresAt: number; prNumber: number; headSha: string } |
+     { success: false; error: string } {
+    const deny = (error: string): { success: false; error: string } => ({ success: false, error });
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) ||
+        !Number.isSafeInteger(ttlMs) || ttlMs < 60000 || ttlMs > 900000) {
+      return deny('MERGE_GRANT_INVALID_CONFIGURATION');
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const ticket = this.db.prepare('SELECT status, branch, assigned_to, diff_patch FROM tickets WHERE ticket_id=?')
+        .get(ticketId) as any;
+      const attested = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id=?')
+        .get(ticketId) as any;
+      const pushed = this.db.prepare('SELECT * FROM verified_worker_pushes WHERE ticket_id=?')
+        .get(ticketId) as any;
+      const draft = this.db.prepare('SELECT * FROM draft_pr_submissions WHERE ticket_id=?')
+        .get(ticketId) as any;
+      const original = this.db.prepare('SELECT * FROM worker_push_jobs WHERE ticket_id=?')
+        .get(ticketId) as any;
+      const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id=1').get() as any;
+      const previous = this.db.prepare('SELECT consumed_at FROM merge_verification_grants WHERE ticket_id=?')
+        .get(ticketId) as any;
+      const epoch = Number(sys?.epoch_id);
+      const patchSha = ticket?.diff_patch ?
+        crypto.createHash('sha256').update(ticket.diff_patch).digest('hex') : null;
+      if (!ticket || !attested || !pushed || !draft || !original || !sys ||
+          sys.kill_switch_active || previous?.consumed_at != null ||
+          ticket.status !== 'READY_FOR_REVIEW' ||
+          ticket.branch !== pushed.branch || pushed.branch !== draft.branch ||
+          pushed.repo !== repo || draft.repo !== repo ||
+          pushed.head_sha !== draft.head_sha ||
+          pushed.tree_sha !== draft.tree_sha || pushed.tree_sha !== attested.candidate_tree_sha ||
+          pushed.patch_sha256 !== draft.patch_sha256 ||
+          pushed.patch_sha256 !== attested.patch_sha256 || pushed.patch_sha256 !== patchSha ||
+          ticket.assigned_to !== pushed.worker_id ||
+          pushed.worker_id !== attested.worker_id || pushed.worker_id !== original.worker_id ||
+          original.state !== 'CONFIRMED' ||
+          original.repo !== repo || original.branch !== ticket.branch ||
+          original.patch_sha256 !== pushed.patch_sha256 ||
+          original.candidate_tree_sha !== pushed.tree_sha ||
+          !original.token_id || this.isTokenRevoked(original.token_id) ||
+          Number(pushed.epoch_id) !== epoch || Number(attested.epoch_id) !== epoch ||
+          Number(draft.epoch_id) !== epoch || Number(original.epoch_id) !== epoch) {
+        this.db.exec('ROLLBACK');
+        return deny('MERGE_GRANT_UNVERIFIED_PROVENANCE');
+      }
+      const now = Date.now();
+      const grantId = crypto.randomUUID();
+      const expiresAt = now + ttlMs;
+      this.db.prepare(`INSERT INTO merge_verification_grants
+        (ticket_id, grant_id, repo, pr_number, branch, head_sha,
+         candidate_tree_sha, patch_sha256, epoch_id, issued_at, expires_at, consumed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(ticket_id) DO UPDATE SET
+          grant_id=excluded.grant_id, repo=excluded.repo,
+          pr_number=excluded.pr_number, branch=excluded.branch,
+          head_sha=excluded.head_sha, candidate_tree_sha=excluded.candidate_tree_sha,
+          patch_sha256=excluded.patch_sha256, epoch_id=excluded.epoch_id,
+          issued_at=excluded.issued_at, expires_at=excluded.expires_at, consumed_at=NULL`)
+        .run(ticketId, grantId, repo, draft.pr_number, ticket.branch,
+          pushed.head_sha, pushed.tree_sha, pushed.patch_sha256, epoch, now, expiresAt);
+      this.appendAuditLog({
+        actor, action: 'MERGE_VERIFICATION_AUTHORIZED', ticketId,
+        reasoning: 'Administrator authorized read-only remote merge proof verification; no worker token renewal, merge or push.',
+        details: { repo, prNumber: draft.pr_number, headSha: pushed.head_sha,
+          candidateTreeSha: pushed.tree_sha, epochId: epoch, expiresAt }
+      });
+      this.db.exec('COMMIT');
+      return { success: true, grantId, expiresAt, prNumber: draft.pr_number, headSha: pushed.head_sha };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  public getMergeVerificationGrant(ticketId: string): {
+    grantId: string; repo: string; prNumber: number; branch: string;
+    headSha: string; treeSha: string; patchSha256: string;
+    epochId: number; expiresAt: number; consumedAt: number | null;
+  } | null {
+    const r = this.db.prepare('SELECT * FROM merge_verification_grants WHERE ticket_id=?')
+      .get(ticketId) as any;
+    return r ? {
+      grantId: r.grant_id, repo: r.repo, prNumber: Number(r.pr_number),
+      branch: r.branch, headSha: r.head_sha, treeSha: r.candidate_tree_sha,
+      patchSha256: r.patch_sha256, epochId: Number(r.epoch_id),
+      expiresAt: Number(r.expires_at), consumedAt: r.consumed_at == null ? null : Number(r.consumed_at)
+    } : null;
+  }
+
   /** CAS: no status update unless the matching attestation and live epoch still exist. */
   public recordVerifiedGitMerge(input: {
     ticketId: string; repo: string; prNumber: number; branch: string;
     headSha: string; mergeSha: string; treeSha: string;
-    patchSha256: string; epochId: number; workerId: string; tokenId: string;
+    patchSha256: string; epochId: number; grantId: string;
   }): boolean {
     const sha1 = /^[0-9a-f]{40}$/;
     if (![input.headSha, input.mergeSha, input.treeSha].every(x => sha1.test(x)) ||
@@ -1520,22 +1632,39 @@ export class ClusterDatabase {
       const t = this.db.prepare('SELECT status, diff_patch, branch, logs_json FROM tickets WHERE ticket_id = ?').get(input.ticketId) as any;
       const a = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id = ?').get(input.ticketId) as any;
       const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id = 1').get() as any;
-      const lease = this.db.prepare(`SELECT worker_id, token_id, epoch_id, expires_at, is_revoked
-        FROM worker_leases WHERE ticket_id = ?`).get(input.ticketId) as any;
       const pushed = this.db.prepare('SELECT * FROM verified_worker_pushes WHERE ticket_id = ?')
         .get(input.ticketId) as any;
-      const tokenRevoked = this.isTokenRevoked(input.tokenId);
+      const draft = this.db.prepare('SELECT * FROM draft_pr_submissions WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const original = this.db.prepare('SELECT * FROM worker_push_jobs WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const grant = this.db.prepare('SELECT * FROM merge_verification_grants WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
       if (!pushed || pushed.repo !== input.repo ||
           pushed.branch !== input.branch || pushed.head_sha !== input.headSha ||
           pushed.tree_sha !== input.treeSha ||
           pushed.patch_sha256 !== input.patchSha256 ||
           pushed.baseline_commit !== a?.baseline_commit ||
-          pushed.worker_id !== input.workerId ||
+          pushed.worker_id !== a?.worker_id ||
           Number(pushed.epoch_id) !== input.epochId ||
-          !t || !a || !sys || sys.kill_switch_active || !lease || tokenRevoked ||
-          lease.is_revoked || Number(lease.epoch_id) !== input.epochId ||
-          lease.worker_id !== input.workerId || a.worker_id !== input.workerId ||
-          lease.token_id !== input.tokenId || Number(lease.expires_at) <= Date.now() ||
+          !draft || draft.repo !== input.repo || draft.pr_number !== input.prNumber ||
+          draft.branch !== input.branch || draft.head_sha !== input.headSha ||
+          draft.tree_sha !== input.treeSha || draft.patch_sha256 !== input.patchSha256 ||
+          Number(draft.epoch_id) !== input.epochId ||
+          !original || original.state !== 'CONFIRMED' || original.repo !== input.repo ||
+          original.branch !== input.branch || original.worker_id !== pushed.worker_id ||
+          original.patch_sha256 !== input.patchSha256 ||
+          original.candidate_tree_sha !== input.treeSha ||
+          Number(original.epoch_id) !== input.epochId ||
+          this.isTokenRevoked(original.token_id) ||
+          !grant || grant.grant_id !== input.grantId ||
+          grant.repo !== input.repo || grant.pr_number !== input.prNumber ||
+          grant.branch !== input.branch || grant.head_sha !== input.headSha ||
+          grant.candidate_tree_sha !== input.treeSha ||
+          grant.patch_sha256 !== input.patchSha256 ||
+          Number(grant.epoch_id) !== input.epochId ||
+          grant.consumed_at != null || Number(grant.expires_at) <= Date.now() ||
+          !t || !a || !sys || sys.kill_switch_active ||
           t.status !== 'READY_FOR_REVIEW' || t.branch !== input.branch ||
           Number(sys.epoch_id) !== input.epochId || Number(a.epoch_id) !== input.epochId ||
           a.candidate_tree_sha !== input.treeSha || a.patch_sha256 !== input.patchSha256 ||
@@ -1555,6 +1684,9 @@ export class ClusterDatabase {
           input.ticketId, input.repo, input.prNumber, input.branch,
           input.headSha, input.mergeSha, input.treeSha, now
       );
+      this.db.prepare(`UPDATE merge_verification_grants SET consumed_at=?
+        WHERE ticket_id=? AND grant_id=? AND consumed_at IS NULL`)
+        .run(now, input.ticketId, input.grantId);
       this.appendAuditLog({
         actor: 'GitHub Merge Gatekeeper', action: 'REMOTE_MERGE_VERIFIED',
         ticketId: input.ticketId, reasoning: 'GitHub merged PR, independent CI, review, file scope and exact tested tree verified.',
