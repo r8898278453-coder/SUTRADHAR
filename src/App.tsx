@@ -356,6 +356,48 @@ export const App: React.FC = () => {
     }
   };
 
+  // Reviewed GitHub rollback: separate, administrator-triggered stages.
+  // None of these stages directly updates target main.
+  const handleRollbackPrepare = async (ticketId: string) => {
+    try {
+      const res = await fetch('/api/master/rollback/prepare', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId })
+      });
+      const body = await res.json();
+      showToast(res.ok
+        ? `Rollback branch ${body.branch} pushed after Docker test; not merged.`
+        : `Rollback preparation blocked: ${body.error || res.status}; no completion claimed.`);
+      await fetchState();
+    } catch (error) { showToast(`Rollback preparation unavailable: ${error}`); }
+  };
+  const handleRollbackDraft = async (ticketId: string) => {
+    try {
+      const res = await fetch('/api/master/rollback/create-draft-pr', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId })
+      });
+      const body = await res.json();
+      showToast(res.ok
+        ? `Rollback draft PR #${body.prNumber} opened; human review and CI still required.`
+        : `Rollback draft PR blocked: ${body.error || res.status}`);
+      await fetchState();
+    } catch (error) { showToast(`Rollback draft PR unavailable: ${error}`); }
+  };
+  const handleRollbackVerify = async (ticketId: string) => {
+    try {
+      const res = await fetch('/api/master/rollback/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId })
+      });
+      const body = await res.json();
+      showToast(body.verified
+        ? `Rollback PR #${body.prNumber} independently verified merged into main.`
+        : `Rollback not verified: ${body.error || res.status}`);
+      await fetchState();
+    } catch (error) { showToast(`Rollback verification unavailable: ${error}`); }
+  };
+
   // Handler: P0 Hotfix submit
   const handleSubmitP0 = async (formData: { title: string; description: string; allowedFiles: string[] }) => {
     showToast(`🚨 Dispatching P0 Hotfix to Master Process 2 (Local Hybrid)...`);
@@ -513,6 +555,9 @@ export const App: React.FC = () => {
             onBlockClarification={handleBlockClarification}
             onAnswerClarification={handleAnswerClarification}
             onRollback={handleRollback}
+            onRollbackPrepare={handleRollbackPrepare}
+            onRollbackDraft={handleRollbackDraft}
+            onRollbackVerify={handleRollbackVerify}
           />
         )}
 
