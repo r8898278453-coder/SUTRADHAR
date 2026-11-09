@@ -2746,12 +2746,16 @@ app.post('/api/cluster/watchdog/revoke', authRole(['ADMIN']), (req, res) => {
 
   if (ticket) {
     const prevWorker = ticket.assignedTo || 'Unknown';
-    ticket.status = 'PENDING';
-    ticket.assignedTo = undefined;
+    const preserveFinal = ['COMMITTED_PUSHED', 'ROLLBACK_REQUESTED', 'ROLLBACK_COMPLETED']
+      .includes(ticket.status);
+    if (!preserveFinal) {
+      ticket.status = 'PENDING';
+      ticket.assignedTo = undefined;
+    }
     ticket.logs.push({
       timestamp: new Date().toLocaleTimeString(),
       level: 'WARN',
-      message: `[WATCHDOG REVOCATION] Lease forcefully revoked. Reason: ${reason || 'Worker timeout/unresponsive'}. Ticket returned to DAG queue.`
+      message: `[WATCHDOG REVOCATION] Lease revoked: ${reason || 'Worker timeout/unresponsive'}. ${preserveFinal ? 'Final ticket evidence retained.' : 'Ticket returned to DAG queue.'}`
     });
 
     clusterState.telegramFeed.unshift({
