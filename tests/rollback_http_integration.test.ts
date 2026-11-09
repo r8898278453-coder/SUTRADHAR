@@ -177,6 +177,19 @@ test('real admin HTTP rollback PR requires external review/CI evidence before co
       });
       return { status: response.status, body: await response.json() as any };
     };
+    // Even with a prepared fixture, anonymous and feature-disabled API
+    // requests must never execute any rollback Git operation.
+    const anon = await originalFetch(origin + '/api/master/rollback/prepare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticketId })
+    });
+    assert.equal(anon.status, 401);
+    process.env.SUTRADHAR_ENABLE_ROLLBACK = 'false';
+    const disabled = await post('/api/master/rollback/prepare');
+    assert.equal(disabled.status, 503);
+    assert.equal(disabled.body.error, 'ROLLBACK_FEATURE_DISABLED');
+    assert.equal((await post('/api/master/rollback/create-draft-pr')).status, 503);
+    process.env.SUTRADHAR_ENABLE_ROLLBACK = 'true';
     const early = await post('/api/master/rollback/verify');
     assert.equal(early.status, 409);
     assert.equal(clusterDb.getAllTickets().find(t => t.id === ticketId)?.status, 'ROLLBACK_REQUESTED');
