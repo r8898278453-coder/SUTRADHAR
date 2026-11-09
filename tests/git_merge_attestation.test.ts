@@ -16,7 +16,9 @@ const hash = crypto.createHash('sha256').update(patch).digest('hex');
 
 function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sutradhar-git-cas-'));
-  const db = new ClusterDatabase(path.join(dir, 'state.db'));
+  const dbPath = path.join(dir, 'state.db');
+  const db = new ClusterDatabase(dbPath);
+  (db as any).__testDbPath = dbPath;
   const ticketId = 'TKT-GITHUB-01';
   const timestamp = new Date().toISOString();
   db.createTicket({
@@ -50,12 +52,23 @@ function setup() {
       patchSha256: hash, epochId: epoch, workerId: 'NODE-TEST', tokenId: TOKEN_ID, ...data
     });
   }
+  let reservationId: string | null = null;
+  function reserve() {
+    const result = db.reserveWorkerPushJob({
+      ticketId, repo: 'acme/widgets', branch: 'ai/TKT-GITHUB-01',
+      treeSha: TREE, baselineCommit: BASE, patchSha256: hash,
+      workerId: 'NODE-TEST', epochId: epoch, tokenId: TOKEN_ID
+    });
+    if (result.success) reservationId = result.reservationId;
+    return result;
+  }
   function push(data: Partial<Parameters<typeof db.recordVerifiedWorkerPush>[0]> = {}) {
+    if (!reservationId && !reserve().success) return false;
     return db.recordVerifiedWorkerPush({
       ticketId, repo: 'acme/widgets', branch: 'ai/TKT-GITHUB-01',
       headSha: HEAD, treeSha: TREE, baselineCommit: BASE,
       patchSha256: hash, workerId: 'NODE-TEST', epochId: epoch,
-      tokenId: TOKEN_ID, ...data
+      tokenId: TOKEN_ID, reservationId: reservationId!, ...data
     });
   }
   function draft(data: Partial<Parameters<typeof db.recordVerifiedDraftPr>[0]> = {}) {
@@ -67,7 +80,8 @@ function setup() {
     });
   }
   return {
-    db, ticketId, attest, merge, draft, push,
+    db, ticketId, attest, merge, draft, push, reserve,
+    getReservationId: () => reservationId,
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true })
   };
 }
@@ -177,5 +191,68 @@ test('verified worker push cannot proceed without Docker attestation or live lea
     t.db.revokeToken(TOKEN_ID, 'Security revoked');
     assert.equal(t.push(), false);
     assert.equal(t.db.getVerifiedWorkerPush(t.ticketId), null);
+  } finally { t.cleanup(); }
+});
+
+test('durable worker push reservation denies duplicates and requires manual recovery after expiry', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    const first = t.reserve();
+    assert.equal(first.success, true);
+    if (!first.success) return;
+    const other = t.reserve();
+    assert.deepEqual(other, { success: false, error: 'WORKER_PUSH_RESERVED' });
+    assert.equal(t.db.getWorkerPushJob(t.ticketId)?.state, 'RUNNING');
+    (t.db as any).db.prepare('UPDATE worker_push_jobs SET expires_at=? WHERE ticket_id=?')
+      .run(Date.now() - 10, t.ticketId);
+    const stale = t.reserve();
+    assert.deepEqual(stale, { success: false, error: 'WORKER_PUSH_RECOVERY_REQUIRED' });
+    assert.equal(t.db.getWorkerPushJob(t.ticketId)?.state, 'NEEDS_RECONCILIATION');
+    assert.equal(t.reserve().success, false);
+    assert.equal(t.db.clearWorkerPushAfterVerifiedAbsence(t.ticketId, 'wrong'), false);
+    assert.equal(t.db.clearWorkerPushAfterVerifiedAbsence(t.ticketId, first.reservationId), true);
+    const retry = t.reserve();
+    assert.equal(retry.success, true);
+    if (retry.success) assert.notEqual(retry.reservationId, first.reservationId);
+    assert.equal(t.push(), true);
+    assert.equal(t.db.getWorkerPushJob(t.ticketId)?.state, 'CONFIRMED');
+    assert.equal(t.db.clearWorkerPushAfterVerifiedAbsence(t.ticketId, retry.success ? retry.reservationId : ''), false);
+  } finally { t.cleanup(); }
+});
+
+test('uncertain push receipt can be verified only under the original job reservation', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    const first = t.reserve();
+    assert.equal(first.success, true);
+    if (!first.success) return;
+    assert.equal(t.db.markWorkerPushUncertain(t.ticketId, first.reservationId, 'REMOTE_RESULT_UNCERTAIN'), true);
+    assert.equal(t.db.getWorkerPushJob(t.ticketId)?.state, 'NEEDS_RECONCILIATION');
+    assert.equal(t.push({ reservationId: 'forged-reservation' }), false);
+    assert.equal(t.push(), true, 'Read-only verified remote push may be reconciled by current valid lease');
+    assert.equal(t.db.getVerifiedWorkerPush(t.ticketId)?.headSha, HEAD);
+    assert.equal(t.db.getWorkerPushJob(t.ticketId)?.state, 'CONFIRMED');
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'READY_FOR_REVIEW');
+  } finally { t.cleanup(); }
+});
+
+test('second SQLite process sees existing worker push reservation immediately', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    const first = t.reserve();
+    assert.equal(first.success, true);
+    const fileName = (t.db as any).db.filename;
+    // More than one instance shares the same SQLite DB; no in-memory lock needed.
+    const second = new ClusterDatabase((t.db as any).__testDbPath || fileName);
+    const r = second.reserveWorkerPushJob({
+      ticketId: t.ticketId, repo: 'acme/widgets', branch: 'ai/TKT-GITHUB-01',
+      baselineCommit: BASE, treeSha: TREE, patchSha256: hash,
+      workerId: 'NODE-TEST', tokenId: TOKEN_ID,
+      epochId: t.db.getSystemState().epochId
+    });
+    assert.deepEqual(r, { success: false, error: 'WORKER_PUSH_RESERVED' });
   } finally { t.cleanup(); }
 });
