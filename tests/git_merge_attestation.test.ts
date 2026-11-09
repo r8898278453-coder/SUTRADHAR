@@ -309,3 +309,33 @@ test('expired or mismatched admin grant fails closed until explicitly reauthoriz
     assert.equal(t.authorize().success, false, 'Consumed grant cannot be reissued');
   } finally { t.cleanup(); }
 });
+
+test('explicit manual revoke cancels review and rejects future proof authorization', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
+    assert.equal(t.db.revokeLease(t.ticketId, 'Admin cancelled review'), true);
+    assert.equal(t.db.isTokenRevoked(TOKEN_ID), true);
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'PENDING');
+    assert.equal(t.merge(), false);
+    assert.equal(t.authorize().success, false);
+  } finally { t.cleanup(); }
+});
+
+test('manual worker lease revoke cannot regress a verified GitHub merge to pending', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
+    assert.equal(t.merge(), true);
+    assert.equal(t.db.revokeLease(t.ticketId, 'Completed worker cleanup'), true);
+    assert.equal(t.db.isTokenRevoked(TOKEN_ID), true);
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'COMMITTED_PUSHED');
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.rollbackCommit, MERGE);
+  } finally { t.cleanup(); }
+});
