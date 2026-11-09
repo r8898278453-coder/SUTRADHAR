@@ -79,6 +79,46 @@ These prove real Git object/push behavior *locally*. GitHub authentication,
 remote branch protection and a live target-project PR still require
 separate owner-approved integration testing.
 
+## Durable push reservations and crash recovery (10 November)
+
+Worker pushes are reserved in SQLite **before** remote Git writes. The
+`worker_push_jobs` table stores a unique reservation per ticket across
+processes sharing the same SQLite database:
+
+| State | Meaning | Automatic retry? |
+| --- | --- | --- |
+| `RUNNING` | One push may still be in progress | No |
+| `NEEDS_RECONCILIATION` | Process failed, result unknown or five-minute reservation expired | No |
+| `CONFIRMED` | Actual remote commit SHA verified, receipt saved atomically | No |
+
+A timed-out reservation **never** automatically permits another push.
+
+Administrator-only manual recovery endpoint:
+
+```http
+POST /api/cluster/ticket/reconcile-tested-branch
+Content-Type: application/json
+
+{"ticketId":"TKT-EXAMPLE"}
+```
+
+Requires administrator authorization, configured server-side Git credentials
+and `SUTRADHAR_ENABLE_WORKER_PUSH=true`. It invokes the Python publisher in
+`--inspect-only` mode. No Git writes occur during reconciliation.
+
+- **Remote branch exists and exact commit parent/tree match:** recover the
+  original pushed SHA only when the current signed lease/token/epoch and
+  patch attestation also match. Mark CONFIRMED in the same SQLite transaction.
+- **Remote branch absent and main still equals tested baseline:** clear the
+  uncertain reservation. An administrator may separately issue a new push.
+- **Wrong branch/tree, moved main, Git access failure, expired/revoked lease:**
+  preserve the uncertain state for manual investigation; never claim merge.
+
+If a remote branch changes after inspection, the process remains vulnerable
+to a race; use protected branches, scoped credentials and trusted workers.
+The recovery endpoint does not merge, force-push, rewrite history or
+automatically retry a failed remote request.
+
 ## Known limitations and next steps
 
 1. GitHub branch publication is feature-flagged and has **not been attempted
@@ -86,9 +126,9 @@ separate owner-approved integration testing.
 2. An external actor racing a new branch before a push is detected before
    and after publication; fully atomic remote absent-ref creation is not
    guaranteed by the standard Git push protocol. Install server-side rules.
-3. The per-process duplicate-run lock is not durable. Create DB-reserved
-   push jobs with recovery/reconciliation, rather than retrying blindly
-   after an uncertain remote outcome.
+3. Push reservation and read-only crash reconciliation are durable in
+   SQLite. A fully scheduled distributed worker queue, cancellation, lease
+   reissue after human review and multi-process PR creation locks remain pending.
 4. The PR/merge verifier is strict about single-commit branches, exact
    baseline and post-merge tested tree. It does not claim support for
    rebase, squash or unrelated main changes without fresh Docker tests.
@@ -98,4 +138,5 @@ separate owner-approved integration testing.
 
 See [Implementation Tracker](./IMPLEMENTATION_TRACKER.md),
 [GitHub PR Verification](./GITHUB_MERGE_VERIFICATION.md)
-and [8 November Implementation Log](./IMPLEMENTATION_LOG_2026-11-08.md).
+[8 November Implementation Log](./IMPLEMENTATION_LOG_2026-11-08.md)
+and [10 November Crash Recovery Log](./IMPLEMENTATION_LOG_2026-11-10.md).
