@@ -58,6 +58,11 @@ test('HTTP GitHub merge approval uses signed durable lease and actual tested tre
     tokenId: signed.tokenId,
     reservationId: pushReservation.reservationId
   }), true, 'Mock GitHub fixture requires separate matching worker push receipt');
+  assert.equal(clusterDb.recordVerifiedDraftPr({
+    ticketId, repo: 'acme/widgets', prNumber: 24,
+    branch: claim.branch!, headSha: HEAD, treeSha: TREE,
+    patchSha256: hash, workerId: worker, epochId: epoch, tokenId: signed.tokenId
+  }), true, 'Human review grant must be tied to the registered exact-head draft PR');
 
   const previous = {
     repo: process.env.SUTRADHAR_GITHUB_REPOSITORY,
@@ -115,22 +120,35 @@ test('HTTP GitHub merge approval uses signed durable lease and actual tested tre
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
     const url = `http://127.0.0.1:${address.port}/api/cluster/ticket/verify-push`;
-    const call = async () => {
-      const response = await originalFetch(url, {
+    const adminKey = (await import('../server.ts')).SUTRADHAR_ADMIN_KEY;
+    const post = async (target: string) => {
+      const response = await originalFetch(target, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${(await import('../server.ts')).SUTRADHAR_ADMIN_KEY}`,
-          'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticketId, tokenHeader: signed.tokenHeader, branch: claim.branch })
+        headers: { Authorization: `Bearer ${adminKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId, branch: claim.branch })
       });
       return { status: response.status, data: await response.json() as any };
     };
-    const denied = await call();
+    const noGrant = await post(url);
+    assert.equal(noGrant.status, 409);
+    assert.equal(noGrant.data.error, 'ADMIN_MERGE_VERIFICATION_GRANT_REQUIRED');
+    // Simulate human review taking longer than the worker execution lease.
+    (clusterDb as any).db.prepare(`UPDATE worker_leases
+      SET expires_at=?, last_heartbeat_at=? WHERE ticket_id=?`)
+      .run(Date.now() - 1000, Date.now() - 120000, ticketId);
+    clusterDb.sweepWatchdog();
+    assert.equal(clusterDb.getAllTickets().find(x => x.id === ticketId)?.status,
+      'READY_FOR_REVIEW', 'Review state must survive execution lease timeout');
+    const granted = await post(url.replace('/verify-push', '/authorize-merge-verification'));
+    assert.equal(granted.status, 200, JSON.stringify(granted.data));
+    assert.equal(granted.data.status, 'MERGE_VERIFICATION_AUTHORIZED');
+    const denied = await post(url);
     assert.equal(denied.status, 409);
     assert.equal(denied.data.error, 'GITHUB_TESTED_TREE_MISMATCH');
     assert.equal(clusterDb.getAllTickets().find(x => x.id === ticketId)?.status, 'READY_FOR_REVIEW');
 
     simulateWrongTree = false;
-    const accepted = await call();
+    const accepted = await post(url);
     assert.equal(accepted.status, 200, JSON.stringify(accepted.data));
     assert.equal(accepted.data.verified, true);
     assert.equal(accepted.data.status, 'COMMITTED_PUSHED');
@@ -138,7 +156,7 @@ test('HTTP GitHub merge approval uses signed durable lease and actual tested tre
     const persisted = clusterDb.getAllTickets().find(x => x.id === ticketId);
     assert.equal(persisted?.status, 'COMMITTED_PUSHED');
     assert.equal(persisted?.rollbackCommit, MERGE);
-    const replay = await call();
+    const replay = await post(url);
     assert.equal(replay.status, 409);
   } finally {
     globalThis.fetch = originalFetch;
