@@ -23,6 +23,8 @@ export type MergeVerificationInput = {
   candidateTreeSha: string;
   requiredChecks: string[];
   requiredApprovals: number;
+  expectedPrNumber?: number;
+  expectedHeadSha?: string;
   mainBranch?: string;
   checkAppSlug?: string;
   fetcher?: GitHubFetcher;
@@ -43,7 +45,10 @@ export async function verifyGitHubMergeEvidence(input: MergeVerificationInput):
       !input.allowedFiles?.length || !input.requiredChecks?.length ||
       !input.requiredChecks.every(s => typeof s === 'string' && s.trim().length > 0) ||
       !Number.isInteger(input.requiredApprovals) || input.requiredApprovals < 1 ||
-      input.requiredApprovals > 5) {
+      input.requiredApprovals > 5 ||
+      (input.expectedPrNumber !== undefined &&
+        (!Number.isSafeInteger(input.expectedPrNumber) || input.expectedPrNumber < 1)) ||
+      (input.expectedHeadSha !== undefined && !shaPattern.test(input.expectedHeadSha))) {
     return deny('GITHUB_VERIFICATION_NOT_CONFIGURED');
   }
   const allowed = new Set(input.allowedFiles);
@@ -77,7 +82,9 @@ export async function verifyGitHubMergeEvidence(input: MergeVerificationInput):
       p?.base?.ref === branch && p?.base?.repo?.full_name === input.repo &&
       typeof p?.merge_commit_sha === 'string' && shaPattern.test(p.merge_commit_sha) &&
       shaPattern.test(p?.head?.sha || '') && p?.commits === 1 &&
-      typeof p?.number === 'number' && Number.isSafeInteger(p.number));
+      typeof p?.number === 'number' && Number.isSafeInteger(p.number) &&
+      (input.expectedPrNumber === undefined || p.number === input.expectedPrNumber) &&
+      (input.expectedHeadSha === undefined || p.head.sha === input.expectedHeadSha));
     if (matching.length !== 1) return deny('GITHUB_MERGED_PR_NOT_UNAMBIGUOUS');
     const pr = matching[0];
     const headSha = String(pr.head.sha);
