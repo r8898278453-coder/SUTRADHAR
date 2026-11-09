@@ -96,6 +96,9 @@ and dashboard had coupled the final merged state to that stale worker lease.
   explicit token revocation, watchdog lease expiry preserving review,
   and the real Express endpoint with deterministic mocked GitHub REST
   evidence; no live target-repo merge is claimed.
+- Manual lease revocation now also revokes its token ID and cannot reset
+  `COMMITTED_PUSHED` or rollback-tracking tickets to `PENDING`; security
+  regression tests cover both cancelled review and completed merge.
 - [Human Review Authorization Guide](./HUMAN_REVIEW_AUTHORIZATION.md)
   documents setup, operator steps, constraints and safety boundaries.
 
