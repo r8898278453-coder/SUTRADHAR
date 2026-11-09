@@ -951,20 +951,26 @@ export class ClusterDatabase {
     if (!lease) return false;
 
     this.db.prepare('UPDATE worker_leases SET is_revoked = 1 WHERE ticket_id = ?').run(ticketId);
+    if (lease.token_id) this.revokeToken(lease.token_id, reason);
 
-    const ticketRow = this.db.prepare('SELECT logs_json FROM tickets WHERE ticket_id = ?').get(ticketId) as any;
+    const ticketRow = this.db.prepare('SELECT status, logs_json FROM tickets WHERE ticket_id = ?').get(ticketId) as any;
     let logs = ticketRow?.logs_json ? JSON.parse(ticketRow.logs_json) : [];
     logs.push({
       timestamp: new Date().toLocaleTimeString(),
       level: 'WARN',
-      message: `[WATCHDOG REVOCATION] Lease revoked: ${reason}. Ticket reset to PENDING.`
+      message: ['COMMITTED_PUSHED', 'ROLLBACK_REQUESTED', 'ROLLBACK_COMPLETED'].includes(ticketRow?.status)
+        ? `[WATCHDOG REVOCATION] Lease revoked: ${reason}. Final merge/rollback status preserved.`
+        : `[WATCHDOG REVOCATION] Lease revoked: ${reason}. Ticket reset to PENDING.`
     });
 
-    this.db.prepare(`
-      UPDATE tickets
-      SET status = 'PENDING', assigned_to = NULL, logs_json = ?, updated_at = ?
-      WHERE ticket_id = ?
-    `).run(JSON.stringify(logs), now, ticketId);
+    if (['COMMITTED_PUSHED', 'ROLLBACK_REQUESTED', 'ROLLBACK_COMPLETED'].includes(ticketRow?.status)) {
+      this.db.prepare('UPDATE tickets SET logs_json=?, updated_at=? WHERE ticket_id=?')
+        .run(JSON.stringify(logs), now, ticketId);
+    } else {
+      this.db.prepare(`UPDATE tickets
+        SET status='PENDING', assigned_to=NULL, logs_json=?, updated_at=? WHERE ticket_id=?`)
+        .run(JSON.stringify(logs), now, ticketId);
+    }
 
     this.appendAuditLog({
       actor: 'Sutradhar Watchdog',
