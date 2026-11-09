@@ -36,6 +36,9 @@ interface TaskDAGViewProps {
   onBlockClarification?: (ticketId: string, question: string, reason?: string) => void;
   onAnswerClarification?: (ticketId: string, answer: string) => void;
   onRollback?: (ticketId: string, reason?: string) => void;
+  onRollbackPrepare: (ticketId: string) => void;
+  onRollbackDraft: (ticketId: string) => void;
+  onRollbackVerify: (ticketId: string) => void;
 }
 
 export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
@@ -51,7 +54,10 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
   onClaimTicket,
   onBlockClarification,
   onAnswerClarification,
-  onRollback
+  onRollback,
+  onRollbackPrepare,
+  onRollbackDraft,
+  onRollbackVerify
 }) => {
   const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
   const [selectedTicketId, setSelectedTicketId] = useState<string>(state.tickets[2]?.id || state.tickets[0]?.id || 'TKT-104');
@@ -509,10 +515,32 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                         className="w-full py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition"
                       >
                         <Undo2 className="w-3.5 h-3.5" />
-                        Execute Revert & Auto-Spawn Hotfix
+                        Request Rollback (No Git Change Yet)
                       </button>
                     </div>
                   )}
+                </div>
+              )}
+
+              {selectedTicket.status === 'ROLLBACK_REQUESTED' && (
+                <div className="pt-3 space-y-2 border-t border-red-900/70">
+                  <span className="text-xs font-mono text-red-300">
+                    Rollback requested — main unchanged until independently reviewed PR merge
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => onRollbackPrepare(selectedTicket.id)}
+                      className="px-2.5 py-1.5 bg-rose-950/50 border border-rose-700 rounded text-xs text-rose-200">
+                      1. Docker Test & Push Revert Branch
+                    </button>
+                    <button onClick={() => onRollbackDraft(selectedTicket.id)}
+                      className="px-2.5 py-1.5 bg-indigo-950/50 border border-indigo-700 rounded text-xs text-indigo-200">
+                      2. Create Draft Rollback PR
+                    </button>
+                    <button onClick={() => onRollbackVerify(selectedTicket.id)}
+                      className="px-2.5 py-1.5 bg-emerald-950/50 border border-emerald-700 rounded text-xs text-emerald-200">
+                      3. Verify Reviewed Rollback Merge
+                    </button>
+                  </div>
                 </div>
               )}
 
