@@ -32,7 +32,7 @@ export type MergeVerificationInput = {
 
 const shaPattern = /^[0-9a-f]{40}$/;
 const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const branchPattern = /^(ai|worker-[a-zA-Z0-9-]+)\/[a-zA-Z0-9_.\/-]+$/;
+const branchPattern = /^(?:ai|worker-[a-zA-Z0-9-]+)\/[a-zA-Z0-9_.\/-]+$|^rollback\/[A-Za-z0-9][A-Za-z0-9_.-]{0,85}$/;
 
 export async function verifyGitHubMergeEvidence(input: MergeVerificationInput):
   Promise<VerifiedMerge | MergeDenial> {
