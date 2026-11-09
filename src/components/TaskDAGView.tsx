@@ -27,6 +27,7 @@ interface TaskDAGViewProps {
   onSynthesize: (ticketId: string) => void;
   onTest: (ticketId: string) => void;
   onVerifyPush: (ticketId: string) => void;
+  onAuthorizeMergeVerification: (ticketId: string) => void;
   onCreateDraftPr: (ticketId: string) => void;
   onPushTestedBranch: (ticketId: string) => void;
   onReconcileWorkerPush: (ticketId: string) => void;
@@ -42,6 +43,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
   onSynthesize,
   onTest,
   onVerifyPush,
+  onAuthorizeMergeVerification,
   onCreateDraftPr,
   onPushTestedBranch,
   onReconcileWorkerPush,
@@ -624,13 +626,21 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                       4. Create Draft PR
                     </button>
                     <button
+                      onClick={() => onAuthorizeMergeVerification(selectedTicket.id)}
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-violet-600/20 text-violet-300 border border-violet-500/30 rounded-lg text-xs font-mono disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Administrator grants a 15-minute read-only verification window after human review; never merges"
+                    >
+                      5. Authorize Merge Check
+                    </button>
+                    <button
                       id={`btn-verify-${selectedTicket.id}`}
                       onClick={() => onVerifyPush(selectedTicket.id)}
                       disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
                       className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                      5. Verify GitHub Merge
+                      6. Verify GitHub Merge
                     </button>
                   </div>
 
