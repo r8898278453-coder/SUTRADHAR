@@ -1638,6 +1638,17 @@ app.post('/api/cluster/ticket/push-tested-branch', authRole(['ADMIN']), async (r
     return res.status(403).json({ success: false, error: 'WORKER_PUSH_LEASE_NOT_CURRENT' });
   }
 
+  const reservation = clusterDb.reserveWorkerPushJob({
+    ticketId, repo, branch: ticket.branch, treeSha: attested.candidateTreeSha,
+    baselineCommit: attested.baselineCommit, patchSha256: attested.patchSha256,
+    workerId: verifiedPayload.workerId, tokenId: verifiedPayload.tokenId,
+    epochId: state.epochId
+  });
+  if (!reservation.success) {
+    return res.status(409).json({ success: false, error: reservation.error,
+      message: 'If a previous push is uncertain, use administrator reconciliation; never blind-retry.' });
+  }
+
   activeVerifiedPushes.add(ticketId);
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'sutradhar-publish-'));
   const patchFile = path.join(scratch, 'candidate.patch');
@@ -1666,10 +1677,17 @@ app.post('/api/cluster/ticket/push-tested-branch', authRole(['ADMIN']), async (r
     });
     let result: any;
     try { result = JSON.parse(output.trim()); }
-    catch { return res.status(502).json({ success: false, error: 'GIT_PUBLISH_INVALID_RESPONSE' }); }
+    catch {
+      clusterDb.markWorkerPushUncertain(ticketId, reservation.reservationId, 'GIT_PUBLISH_INVALID_RESPONSE');
+      return res.status(502).json({ success: false, error: 'GIT_PUBLISH_INVALID_RESPONSE',
+        requiresReconciliation: true });
+    }
     if (!result?.success || result.status !== 'PUSH_CONFIRMED_NOT_MERGED') {
+      clusterDb.markWorkerPushUncertain(ticketId, reservation.reservationId, 'REMOTE_RESULT_UNCERTAIN');
       return res.status(409).json({
-        success: false, error: typeof result?.error === 'string' ? result.error : 'WORKER_PUSH_FAILED'
+        success: false,
+        error: typeof result?.error === 'string' ? result.error : 'WORKER_PUSH_FAILED',
+        requiresReconciliation: true
       });
     }
     if (result.treeSha !== attested.candidateTreeSha ||
@@ -1677,14 +1695,20 @@ app.post('/api/cluster/ticket/push-tested-branch', authRole(['ADMIN']), async (r
         result.patchSha256 !== attested.patchSha256 ||
         result.branch !== ticket.branch ||
         !/^[0-9a-f]{40}$/.test(result.headSha || '')) {
-      return res.status(502).json({ success: false, error: 'WORKER_PUSH_EVIDENCE_MISMATCH' });
+      clusterDb.markWorkerPushUncertain(ticketId, reservation.reservationId, 'WORKER_PUSH_EVIDENCE_MISMATCH');
+      return res.status(502).json({ success: false, error: 'WORKER_PUSH_EVIDENCE_MISMATCH',
+        requiresReconciliation: true });
     }
     const accepted = clusterDb.recordVerifiedWorkerPush({
       ticketId, repo, branch: ticket.branch, headSha: result.headSha,
       treeSha: result.treeSha, baselineCommit: result.baselineCommit,
       patchSha256: result.patchSha256, workerId: verifiedPayload.workerId,
-      epochId: state.epochId, tokenId: verifiedPayload.tokenId
+      epochId: state.epochId, tokenId: verifiedPayload.tokenId,
+      reservationId: reservation.reservationId
     });
+    if (!accepted) clusterDb.markWorkerPushUncertain(
+      ticketId, reservation.reservationId, 'WORKER_PUSH_STATE_CHANGED'
+    );
     if (!accepted) return res.status(409).json({
       success: false, error: 'WORKER_PUSH_STATE_CHANGED_RECONCILE',
       message: 'Remote branch may exist but ticket/lease evidence changed; inspect GitHub before retrying.'
@@ -1695,7 +1719,9 @@ app.post('/api/cluster/ticket/push-tested-branch', authRole(['ADMIN']), async (r
       message: 'Exact tested branch pushed. Human-reviewed draft PR is next; main unchanged.'
     });
   } catch {
-    return res.status(502).json({ success: false, error: 'WORKER_PUSH_EXECUTION_UNAVAILABLE' });
+    clusterDb.markWorkerPushUncertain(ticketId, reservation.reservationId, 'WORKER_PUSH_EXECUTION_UNAVAILABLE');
+    return res.status(502).json({ success: false, error: 'WORKER_PUSH_EXECUTION_UNAVAILABLE',
+      requiresReconciliation: true });
   } finally {
     try { fs.rmSync(scratch, { force: true, recursive: true }); } catch {}
     activeVerifiedPushes.delete(ticketId);
