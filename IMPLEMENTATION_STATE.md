@@ -11,6 +11,7 @@ See:
 - [GitHub Merge Verification](docs/GITHUB_MERGE_VERIFICATION.md) — read-only delivery evidence and limitations.
 - [7 November Implementation Log](docs/IMPLEMENTATION_LOG_2026-11-07.md) — this continuation slice.
 - [8 November Implementation Log](docs/IMPLEMENTATION_LOG_2026-11-08.md) — tested worker-branch push and live acceptance gaps.
+- [10 November Implementation Log](docs/IMPLEMENTATION_LOG_2026-11-10.md) — durable push reservation and crash recovery tests.
 - [Worker Branch Publication](docs/WORKER_BRANCH_PUBLICATION.md) — guarded push protocol and local integration evidence.
 - [GitHub Actions](https://github.com/r8898278453-coder/SUTRADHAR/actions) — check results for the specific commit.
 
@@ -32,7 +33,7 @@ See:
 - GitHub merge verification now reads actual GitHub REST data when configured: merged PR, single commit, exact tested and merged tree, file scope, required CI checks and independent review. SQLite CAS checks live token/epoch again. Without configuration or trustworthy evidence it fails closed. **No real merged target PR has been acceptance-tested.**
 - Rollback is `ROLLBACK_REQUESTED` until a verified revert merges.
 - The old fixture-based `tests/e2e_lifecycle.test.ts` remains fixture-only for Git/merge. Separate real Docker integration suites now verify patch validation, passing/failing containers, Express API state transitions and SQLite writes.
-- Legacy direct-main Python queue is disabled. Explicit administrator guarded worker branch push and draft PR creation are implemented (both off by default). Tested Git tree is bound to the actual new worker branch SHA and durable SQLite receipt. Local bare-remote Git push tests passed; **no live target GitHub push/PR/merge acceptance performed**. Durable distributed queue, production branch protection and actual rollback remain incomplete.
+- Legacy direct-main Python queue is disabled. Administrator worker-branch push and draft PR creation remain off by default. Worker push uses an atomic SQLite reservation, durable uncertainty state and read-only Git parent/tree recovery before an explicit retry; local bare-remote tests verify it. **No live target GitHub push/PR/merge acceptance performed.** Distributed scheduling, protected main, post-review lease renewal and rollback remain incomplete.
 
 ## Mandatory owner actions
 
