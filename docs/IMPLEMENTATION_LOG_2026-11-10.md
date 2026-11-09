@@ -62,13 +62,56 @@ blind retries.
   non-force push and post-push SHA check mitigate this but do not replace
   GitHub branch protections; production deployment needs further integration.
 
+## Continuation — human-review-safe GitHub merge verification
+
+The existing short worker execution token previously expired (or was
+watchdog-revoked) during a GitHub human review, and both the live verifier
+and dashboard had coupled the final merged state to that stale worker lease.
+
+- `server_db.ts`: added `merge_verification_grants` with exact registered
+  repository, PR number, already pushed head SHA, candidate Git tree,
+  patch hash, epoch, 15-minute expiration and consumed timestamp.
+- Only an authenticated administrator may issue or explicitly reissue a
+  read-only proof-verification grant. A grant **never** extends, unrevokes or
+  replaces the worker's execution token. A previously explicitly revoked
+  worker token remains blocked as bad provenance.
+- The final merged-state SQLite CAS requires the correct current, unconsumed
+  grant plus the tested Docker tree, verified worker push receipt, registered
+  PR/head, original token-revocation status, live epoch, patch hash and
+  inactive kill switch. It consumes the grant atomically with the
+  `COMMITTED_PUSHED` transition and actual merged commit SHA.
+- `server.ts`: added admin-only
+  `POST /api/cluster/ticket/authorize-merge-verification`; the existing
+  `verify-push` route is now independently gated by the grant and actual
+  GitHub REST evidence, not an expired worker lease.
+- `github_merge_verifier.ts`: expected exact registered GitHub PR number
+  and pushed head SHA are now mandatory in the server's verification call.
+- `server_db.ts` + `server.ts` watchdogs: preserve
+  `READY_FOR_REVIEW`, `COMMITTED_PUSHED` and `ROLLBACK_REQUESTED`
+  tickets when the *worker execution lease* expires. Expired workers
+  cannot act again; manually cancelling tickets still blocks review proof.
+- `src/App.tsx`, DAG and Sandbox Console: separate
+  **Authorize Merge Check** and **Verify GitHub Merge** actions.
+- Tests: exact PR/head mismatch, stale/mismatched/consumed admin grants,
+  explicit token revocation, watchdog lease expiry preserving review,
+  and the real Express endpoint with deterministic mocked GitHub REST
+  evidence; no live target-repo merge is claimed.
+- [Human Review Authorization Guide](./HUMAN_REVIEW_AUTHORIZATION.md)
+  documents setup, operator steps, constraints and safety boundaries.
+
+**Validation:** GitHub Actions code-check jobs passed for implementation
+commit `e003d5c17503a3e64868226544f1f9e70fb70753`
+([run #42700720219](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/42700720219)).
+Later documentation/UI commits require fresh current-head CI.
+
 ## Remaining priorities
 
 P0: rotate leaked master signer, revoke old tokens, owner-approved live
-GitHub acceptance, verified Git revert rollback. P1: robust authorization
-renewal across human review, distributed PR creation reservation, real
-provider credentials/branch protection, production dashboard truthfulness,
-language-specific images and dependency lockfiles.
+GitHub acceptance and verified Git revert rollback. P1: distributed PR
+creation reservation, external operator/CI integration of administrator
+proof grants, multi-host worker coordination, real provider credentials /
+branch protection, production dashboard truthfulness, language-specific
+images and dependency lockfiles.
 
 **CI evidence:** Consult the Actions runs attached to the final commit SHA;
 do not infer it from older green commits.
