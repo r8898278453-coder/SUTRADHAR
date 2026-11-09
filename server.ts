@@ -1650,9 +1650,10 @@ app.post('/api/cluster/ticket/push-tested-branch', authRole(['ADMIN']), async (r
   }
 
   activeVerifiedPushes.add(ticketId);
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'sutradhar-publish-'));
-  const patchFile = path.join(scratch, 'candidate.patch');
+  let scratch: string | null = null;
   try {
+    scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'sutradhar-publish-'));
+    const patchFile = path.join(scratch, 'candidate.patch');
     fs.writeFileSync(patchFile, ticket.diffPatch, { mode: 0o600 });
     const cmd = [
       '-m', 'sandbox.push_tested_branch',
@@ -1723,7 +1724,100 @@ app.post('/api/cluster/ticket/push-tested-branch', authRole(['ADMIN']), async (r
     return res.status(502).json({ success: false, error: 'WORKER_PUSH_EXECUTION_UNAVAILABLE',
       requiresReconciliation: true });
   } finally {
-    try { fs.rmSync(scratch, { force: true, recursive: true }); } catch {}
+    if (scratch) {
+      try { fs.rmSync(scratch, { force: true, recursive: true }); } catch {}
+    }
+    activeVerifiedPushes.delete(ticketId);
+  }
+});
+
+// Crash recovery is read-only against Git, and never itself triggers a push.
+// An admin explicitly requests reconciliation for a durable uncertain job.
+app.post('/api/cluster/ticket/reconcile-tested-branch', authRole(['ADMIN']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string' || !ticketId.trim()) {
+    return res.status(400).json({ success: false, error: 'INVALID_TICKET_ID' });
+  }
+  if (process.env.SUTRADHAR_ENABLE_WORKER_PUSH !== 'true') {
+    return res.status(503).json({ success: false, error: 'WORKER_PUSH_DISABLED' });
+  }
+  const repo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const target = process.env.SUTRADHAR_TARGET_REPO_ROOT?.trim() || '';
+  const token = process.env.SUTRADHAR_GITHUB_PUSH_TOKEN?.trim() || '';
+  if (!repo || !target || !token) {
+    return res.status(503).json({ success: false, error: 'WORKER_PUSH_NOT_CONFIGURED' });
+  }
+  if (activeVerifiedPushes.has(ticketId)) {
+    return res.status(409).json({ success: false, error: 'WORKER_PUSH_ALREADY_RUNNING' });
+  }
+  clusterDb.expireWorkerPushJob(ticketId);
+  const job = clusterDb.getWorkerPushJob(ticketId);
+  if (!job) return res.status(404).json({ success: false, error: 'WORKER_PUSH_JOB_NOT_FOUND' });
+  if (job.state !== 'NEEDS_RECONCILIATION') {
+    return res.status(409).json({ success: false,
+      error: job.state === 'CONFIRMED' ? 'WORKER_PUSH_ALREADY_CONFIRMED' : 'WORKER_PUSH_STILL_RUNNING' });
+  }
+  if (job.repo !== repo) {
+    return res.status(409).json({ success: false, error: 'WORKER_PUSH_TARGET_REPOSITORY_CHANGED' });
+  }
+  activeVerifiedPushes.add(ticketId);
+  try {
+    const args = [
+      '-m', 'sandbox.push_tested_branch', '--inspect-only',
+      '--repo-root', target, '--github-repository', repo,
+      '--ticket-id', ticketId, '--branch', job.branch,
+      '--baseline-commit', job.baselineCommit,
+      '--candidate-tree-sha', job.treeSha,
+      '--patch-sha256', job.patchSha256
+    ];
+    const output = await new Promise<string>((resolve, reject) => {
+      child_process.execFile(process.env.SUTRADHAR_PYTHON || 'python3', args, {
+        cwd: process.cwd(), timeout: 120000, maxBuffer: 128 * 1024,
+        env: { ...process.env, SUTRADHAR_GITHUB_PUSH_TOKEN: token }
+      }, (error, stdout) => {
+        if (error) reject(new Error('REMOTE_INSPECTION_UNAVAILABLE'));
+        else resolve(stdout);
+      });
+    });
+    let result: any;
+    try { result = JSON.parse(output.trim()); }
+    catch { return res.status(502).json({ success: false, error: 'REMOTE_INSPECTION_INVALID' }); }
+    if (!result?.success) {
+      return res.status(409).json({ success: false,
+        error: typeof result?.error === 'string' ? result.error : 'REMOTE_INSPECTION_FAILED',
+        requiresManualReview: true });
+    }
+    if (result.branch !== job.branch || result.baselineCommit !== job.baselineCommit ||
+        result.treeSha !== job.treeSha) {
+      return res.status(409).json({ success: false, error: 'REMOTE_INSPECTION_EVIDENCE_MISMATCH' });
+    }
+    if (result.status === 'REMOTE_BRANCH_ABSENT') {
+      const cleared = clusterDb.clearWorkerPushAfterVerifiedAbsence(ticketId, job.reservationId);
+      if (!cleared) return res.status(409).json({ success: false, error: 'RECONCILIATION_STATE_CHANGED' });
+      return res.json({ success: true, status: 'REMOTE_ABSENT_EXPLICIT_RETRY_AVAILABLE',
+        ticketId, message: 'No branch exists and main matches baseline. A separate explicit push may now be requested.' });
+    }
+    if (result.status === 'REMOTE_BRANCH_CONFIRMED_NOT_MERGED' &&
+        /^[0-9a-f]{40}$/.test(result.headSha || '')) {
+      const accepted = clusterDb.recordVerifiedWorkerPush({
+        ticketId, repo, branch: job.branch, headSha: result.headSha,
+        treeSha: job.treeSha, baselineCommit: job.baselineCommit,
+        patchSha256: job.patchSha256, workerId: job.workerId,
+        epochId: job.epochId, tokenId: job.tokenId,
+        reservationId: job.reservationId
+      });
+      if (!accepted) return res.status(409).json({
+        success: false, error: 'RECONCILIATION_LEASE_OR_STATE_CHANGED',
+        requiresManualReview: true
+      });
+      return res.json({ success: true, status: 'PUSH_CONFIRMED_NOT_MERGED',
+        ticketId, branch: job.branch, headSha: result.headSha,
+        message: 'Read-only remote verification recovered the original worker branch receipt. No new push occurred.' });
+    }
+    return res.status(502).json({ success: false, error: 'REMOTE_INSPECTION_INVALID_OUTCOME' });
+  } catch {
+    return res.status(502).json({ success: false, error: 'REMOTE_INSPECTION_UNAVAILABLE' });
+  } finally {
     activeVerifiedPushes.delete(ticketId);
   }
 });
