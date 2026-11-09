@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased — reviewed Git rollback workflow] - 2026-11-10
+
+### Added
+- Verified original GitHub merge SHA and first-parent baseline are required
+  before a rollback branch can be prepared.
+- `sandbox/prepare_rollback.py` constructs the exact inverse Git tree in
+  a private bare index; Docker must pass before a non-force push to
+  `rollback/<ticketId>`. No checkout of generated code on the host,
+  no direct main push or auto-merge.
+- Rollback SQLite stage and immutable audit evidence: PREPARING,
+  BRANCH_PUSHED, PR_CREATING, DRAFT_PR, NEEDS_RECONCILIATION,
+  COMPLETED. Concurrent duplicate operations fail closed.
+- Administrator APIs to prepare, create the **draft rollback PR**, and
+  independently verify the reviewed merged result with required CI, human
+  approval, exact restored tree, file whitelist and main ancestry.
+- `ROLLBACK_COMPLETED` only after atomic verified GitHub merged PR evidence.
+- Local disposable bare-Git revert tests, a **real Docker** restored-tree CI
+  test, and mocked GitHub API HTTP/SQLite failure/positive tests.
+- [Verified Rollback Guide](docs/VERIFIED_ROLLBACK_PIPELINE.md) and
+  truthful three-step dashboard controls.
+
+### Pending
+- **No live target GitHub rollback PR has been created or merged.**
+  Owner branch protections, historical signer rotation, durable uncertain
+  rollback operation reconciliation and production smoke tests still required.
+
 ## [Unreleased — human review verification authorization] - 2026-11-10
 
 ### Added
