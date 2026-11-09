@@ -25,6 +25,7 @@ blind retries.
 | `tests/git_merge_attestation.test.ts` | Simulate concurrent processes by independent DB handles; require stored reservation before any worker push receipt | Node SQLite tests |
 | `tests/test_tested_branch_push.py` | Verify read-only Git reconciliation with real on-disk bare remotes | Python Git tests |
 | `tests/tested_branch_http_guard.test.ts` | Ensure reconciliation remains off without configured protected credentials | HTTP auth tests |
+| `src/App.tsx` + DAG + Sandbox console | Administrator `Reconcile Push` action displays recovered/absent/blocked states; no auto-retry | TypeScript build |
 | `docs/WORKER_BRANCH_PUBLICATION.md` | Document exact state transitions, explicit retry policy, limitations, and operator recovery | Documentation |
 
 ## Crash/retry behavior
