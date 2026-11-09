@@ -117,8 +117,7 @@ in CI. **No live target-project PR creation was performed in this slice.**
    `verified_git_merges` and the audit log; `rollback_commit` references
    the actual merged SHA, not a fabricated local `HEAD`.
 
-**No route executes a git push or merges main.** The old Python in-process
-merge queue now fails closed with `GITHUB_REVIEWED_PR_REQUIRED`.
+**The verification endpoint never pushes code or merges main.** Other explicitly enabled, admin-only endpoints may push a new tested worker or rollback branch, but **none** push to main or invoke the GitHub merge API. The old Python direct-main merge queue fails closed with `GITHUB_REVIEWED_PR_REQUIRED`. Rollback procedures: [Verified Rollback Pipeline](./VERIFIED_ROLLBACK_PIPELINE.md).
 
 ## Failures and limitations
 
