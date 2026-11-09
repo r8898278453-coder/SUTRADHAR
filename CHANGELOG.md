@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased — human review verification authorization] - 2026-11-10
+
+### Added
+- Separate administrator-only, short-lived (15-minute) authorization for
+  read-only GitHub merged-PR proof checks; **no worker lease renewal**.
+- Exact registered PR number and pushed head SHA pinned to the verifier.
+- SQLite grant CAS enforces tested tree/patch/epoch/kill-switch and original
+  token revocation, consumes grant atomically with verified merged SHA.
+- Watchdog now preserves READY_FOR_REVIEW evidence after worker timeout
+  while still revoking stale execution leases.
+- Negative and post-lease-expiry tests for admin grants and GitHub evidence.
+- [Human Review Authorization Guide](docs/HUMAN_REVIEW_AUTHORIZATION.md).
+
+### Pending
+- Owner-approved live target GitHub PR acceptance, actual Git revert
+  rollback and production/release security gates.
+
 ## [Unreleased — durable push crash recovery] - 2026-11-10
 
 ### Added
@@ -16,7 +33,7 @@
 
 ### Pending
 - Real GitHub authenticated acceptance, durable PR operation reservations,
-  post-human-review authorization renewal, genuine Git revert rollback and
+  human-review grant live acceptance, genuine Git revert rollback and
   production release checks. No live target GitHub operation performed.
 
 ## [Unreleased — verified worker branch publication] - 2026-11-08
