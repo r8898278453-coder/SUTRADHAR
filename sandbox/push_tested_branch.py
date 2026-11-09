@@ -221,6 +221,65 @@ def push_tested_patch(
         }
 
 
+
+def inspect_remote_tested_branch(
+    *, repo_root: str, github_repository: str, branch: str,
+    baseline_commit: str, candidate_tree_sha: str,
+    push_token: Optional[str] = None, allow_local_remote: bool = False
+) -> dict[str, object]:
+    """Read-only crash recovery: confirm actual remote SHA, tree and parent.
+
+    A missing remote ref is NOT proof that a push never occurred; an admin must
+    explicitly reconcile before attempting a fresh non-force branch push.
+    """
+    if not SHA1.fullmatch(baseline_commit) or not SHA1.fullmatch(candidate_tree_sha):
+        raise PublishFailure("INVALID_TESTED_GIT_ATTESTATION")
+    if not BRANCH.fullmatch(branch) or branch in PROHIBITED_BRANCHES:
+        raise PublishFailure("UNSAFE_WORKER_BRANCH")
+    try:
+        source = Path(repo_root).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise PublishFailure("SOURCE_REPOSITORY_MISSING")
+    if not source.is_dir() or not (source / ".git").exists():
+        raise PublishFailure("SOURCE_REPOSITORY_MISSING")
+    env = _git_environment()
+    if Path(_git(source, env, "rev-parse", "--show-toplevel").decode()).resolve() != source:
+        raise PublishFailure("SOURCE_REPOSITORY_MISMATCH")
+    origin_raw = _git(source, env, "config", "--local", "--get", "remote.origin.url").decode()
+    origin = _canonical_origin(origin_raw, github_repository, allow_local_remote)
+
+    with tempfile.TemporaryDirectory(prefix="sutradhar-reconcile-") as folder:
+        work = Path(folder)
+        bare = work / "verify.git"
+        bare.mkdir(mode=0o700)
+        _askpass_script(work, env, push_token)
+        _git(bare, env, "init", "--bare", "-q")
+        # A moved main must never authorize retry or retroactive acceptance.
+        if _remote_ref(bare, env, origin, "refs/heads/main") != baseline_commit:
+            raise PublishFailure("REMOTE_MAIN_MOVED_RETEST_REQUIRED")
+        remote_ref = "refs/heads/" + branch
+        remote_sha = _remote_ref(bare, env, origin, remote_ref)
+        if remote_sha is None:
+            return {
+                "status": "REMOTE_BRANCH_ABSENT", "branch": branch,
+                "baselineCommit": baseline_commit, "treeSha": candidate_tree_sha
+            }
+        _git(bare, env, "fetch", "--no-tags", "--no-write-fetch-head",
+             "--no-recurse-submodules", origin, remote_sha, timeout=60)
+        commit_and_parents = _git(bare, env, "rev-list", "--parents", "-n", "1", remote_sha).decode().split()
+        tree = _git(bare, env, "rev-parse", remote_sha + "^{tree}").decode()
+        if commit_and_parents != [remote_sha, baseline_commit] or tree != candidate_tree_sha:
+            raise PublishFailure("REMOTE_WORKER_BRANCH_MISMATCH_MANUAL_REVIEW")
+        # A concurrent ref replacement must not be considered verified.
+        if _remote_ref(bare, env, origin, remote_ref) != remote_sha:
+            raise PublishFailure("REMOTE_WORKER_BRANCH_CHANGED")
+        return {
+            "status": "REMOTE_BRANCH_CONFIRMED_NOT_MERGED",
+            "headSha": remote_sha, "branch": branch, "treeSha": tree,
+            "baselineCommit": baseline_commit
+        }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", required=True)
@@ -233,8 +292,19 @@ def main() -> None:
     parser.add_argument("--patch-file", required=True)
     parser.add_argument("--allowed-file", action="append", default=[])
     parser.add_argument("--changed-file", action="append", default=[])
+    parser.add_argument("--inspect-only", action="store_true",
+                        help="Read-only remote inspection for crash recovery")
     args = parser.parse_args()
     try:
+        if args.inspect_only:
+            result = inspect_remote_tested_branch(
+                repo_root=args.repo_root, github_repository=args.github_repository,
+                branch=args.branch, baseline_commit=args.baseline_commit,
+                candidate_tree_sha=args.candidate_tree_sha,
+                push_token=os.environ.get("SUTRADHAR_GITHUB_PUSH_TOKEN")
+            )
+            print(json.dumps({"success": True, **result}, sort_keys=True))
+            return
         result = push_tested_patch(
             repo_root=args.repo_root, github_repository=args.github_repository,
             ticket_id=args.ticket_id, branch=args.branch,
