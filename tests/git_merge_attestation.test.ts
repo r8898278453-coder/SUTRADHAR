@@ -339,3 +339,81 @@ test('manual worker lease revoke cannot regress a verified GitHub merge to pendi
     assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.rollbackCommit, MERGE);
   } finally { t.cleanup(); }
 });
+
+test('rollback can complete only after a recorded revert branch, draft PR and verified remote merge', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
+    assert.equal(t.merge(), true);
+    assert.equal(t.db.rollbackMerge(t.ticketId, 'Detected regression', 'Admin').success, true);
+    const reserved = t.db.reserveVerifiedRollback(t.ticketId, 'acme/widgets');
+    assert.equal(reserved.success, true, JSON.stringify(reserved));
+    if (!reserved.success) return;
+    assert.equal(reserved.mergedCommit, MERGE);
+    assert.equal(reserved.baselineCommit, BASE);
+    assert.deepEqual(reserved.changedFiles, ['src/safe.ts']);
+    assert.equal(t.db.reserveVerifiedRollback(t.ticketId, 'acme/widgets').success, false,
+      'Duplicate rollback preparation must not run');
+    const prepared = {
+      ticketId: t.ticketId, reservationId: reserved.reservationId,
+      repo: 'acme/widgets', branch: reserved.branch,
+      originalMergeSha: MERGE, baselineCommit: BASE,
+      testedMergeTree: TREE, headSha: 'e'.repeat(40),
+      revertedTree: 'f'.repeat(40), epochId: reserved.epochId
+    };
+    assert.equal(t.db.recordVerifiedGitRollback({
+      ticketId: t.ticketId, repo: 'acme/widgets', prNumber: 77,
+      branch: reserved.branch, headSha: prepared.headSha,
+      originalMergeSha: MERGE, revertedTree: prepared.revertedTree,
+      rollbackMergeSha: '9'.repeat(40), epochId: reserved.epochId
+    }), false, 'No verified PR => no rollback completion');
+    assert.equal(t.db.recordRollbackPrepared({ ...prepared, revertedTree: '' }), false);
+    assert.equal(t.db.recordRollbackPrepared(prepared), true);
+    assert.equal(t.db.getRollbackProposal(t.ticketId)?.status, 'BRANCH_PUSHED');
+    assert.equal(t.db.reserveRollbackDraftPr(t.ticketId, reserved.reservationId), true);
+    assert.equal(t.db.reserveRollbackDraftPr(t.ticketId, reserved.reservationId), false,
+      'Concurrent PR creation cannot race');
+    assert.equal(t.db.recordRollbackDraftPr(t.ticketId, reserved.reservationId,
+      'acme/widgets', 77, reserved.branch, 'a'.repeat(40), prepared.revertedTree), false);
+    assert.equal(t.db.recordRollbackDraftPr(t.ticketId, reserved.reservationId,
+      'acme/widgets', 77, reserved.branch, prepared.headSha, prepared.revertedTree), true);
+    assert.equal(t.db.getRollbackProposal(t.ticketId)?.status, 'DRAFT_PR');
+    assert.equal(t.db.recordVerifiedGitRollback({
+      ticketId: t.ticketId, repo: 'acme/widgets', prNumber: 78,
+      branch: reserved.branch, headSha: prepared.headSha,
+      originalMergeSha: MERGE, revertedTree: prepared.revertedTree,
+      rollbackMergeSha: '9'.repeat(40), epochId: reserved.epochId
+    }), false, 'Wrong PR number cannot certify rollback');
+    const accepted = {
+      ticketId: t.ticketId, repo: 'acme/widgets', prNumber: 77,
+      branch: reserved.branch, headSha: prepared.headSha,
+      originalMergeSha: MERGE, revertedTree: prepared.revertedTree,
+      rollbackMergeSha: '9'.repeat(40), epochId: reserved.epochId
+    };
+    assert.equal(t.db.recordVerifiedGitRollback(accepted), true);
+    assert.equal(t.db.recordVerifiedGitRollback(accepted), false, 'No duplicate rollback completion');
+    const rolled = t.db.getAllTickets().find(x => x.id === t.ticketId);
+    assert.equal(rolled?.status, 'ROLLBACK_COMPLETED');
+    assert.equal(rolled?.rollbackCommit, '9'.repeat(40));
+    assert.equal(t.db.getAuditLogs(50).filter(x => x.action === 'REMOTE_ROLLBACK_VERIFIED').length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('rollback requires a previously verified merged ticket and remains blocked when paused', () => {
+  const t = setup();
+  try {
+    assert.equal(t.db.reserveVerifiedRollback(t.ticketId, 'acme/widgets').success, false);
+    assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
+    assert.equal(t.merge(), true);
+    assert.equal(t.db.rollbackMerge(t.ticketId, 'Failing suite').success, true);
+    t.db.setKillSwitch(true, 'Emergency pause', 'Admin');
+    assert.equal(t.db.reserveVerifiedRollback(t.ticketId, 'acme/widgets').success, false);
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'ROLLBACK_REQUESTED');
+  } finally { t.cleanup(); }
+});
