@@ -757,20 +757,29 @@ export class ClusterDatabase {
       if (isExpired) {
         // Revoke lease
         this.db.prepare('UPDATE worker_leases SET is_revoked = 1 WHERE ticket_id = ?').run(lease.ticket_id);
-        // Reset ticket to PENDING
-        const ticketRow = this.db.prepare('SELECT logs_json FROM tickets WHERE ticket_id = ?').get(lease.ticket_id) as any;
+        // A Docker-tested ticket awaiting human GitHub review must NOT be
+        // recycled to PENDING after the worker's short execution lease expires.
+        // The worker lease is revoked, but immutable review provenance remains.
+        const ticketRow = this.db.prepare('SELECT status, logs_json FROM tickets WHERE ticket_id = ?')
+          .get(lease.ticket_id) as any;
+        const preserveReview = ['READY_FOR_REVIEW', 'COMMITTED_PUSHED', 'ROLLBACK_REQUESTED']
+          .includes(ticketRow?.status);
         let logs = ticketRow?.logs_json ? JSON.parse(ticketRow.logs_json) : [];
         logs.push({
           timestamp: new Date().toLocaleTimeString(),
           level: 'WARN',
-          message: `[WATCHDOG AUTO-RECOVERY] Worker ${lease.worker_id} went unresponsive (>90s silence). Lease auto-revoked and recycled.`
+          message: preserveReview
+            ? '[WATCHDOG] Execution lease expired; review evidence preserved. Administrator merge-verification grant required.'
+            : `[WATCHDOG AUTO-RECOVERY] Worker ${lease.worker_id} went unresponsive (>90s silence). Lease auto-revoked and recycled.`
         });
-
-        this.db.prepare(`
-          UPDATE tickets
-          SET status = 'PENDING', assigned_to = NULL, logs_json = ?, updated_at = ?
-          WHERE ticket_id = ? AND status != 'COMMITTED_PUSHED'
-        `).run(JSON.stringify(logs), now, lease.ticket_id);
+        if (preserveReview) {
+          this.db.prepare('UPDATE tickets SET logs_json=?, updated_at=? WHERE ticket_id=?')
+            .run(JSON.stringify(logs), now, lease.ticket_id);
+        } else {
+          this.db.prepare(`UPDATE tickets SET status='PENDING', assigned_to=NULL,
+            logs_json=?, updated_at=? WHERE ticket_id=?`)
+            .run(JSON.stringify(logs), now, lease.ticket_id);
+        }
 
         // Mark worker offline
         this.db.prepare(`
