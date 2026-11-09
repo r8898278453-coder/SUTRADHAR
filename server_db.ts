@@ -209,6 +209,36 @@ export class ClusterDatabase {
         verified_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS rollback_proposals (
+        ticket_id TEXT PRIMARY KEY,
+        reservation_id TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        original_merge_sha TEXT NOT NULL,
+        baseline_commit TEXT NOT NULL,
+        tested_merge_tree TEXT NOT NULL,
+        epoch_id INTEGER NOT NULL,
+        branch TEXT NOT NULL,
+        revert_head_sha TEXT,
+        revert_tree_sha TEXT,
+        pr_number INTEGER,
+        status TEXT NOT NULL CHECK(status IN
+          ('PREPARING','BRANCH_PUSHED','PR_CREATING','DRAFT_PR','NEEDS_RECONCILIATION','COMPLETED')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS verified_git_rollbacks (
+        ticket_id TEXT PRIMARY KEY,
+        repo TEXT NOT NULL,
+        pr_number INTEGER NOT NULL,
+        branch TEXT NOT NULL,
+        rollback_head_sha TEXT NOT NULL,
+        original_merge_sha TEXT NOT NULL,
+        reverted_tree_sha TEXT NOT NULL,
+        rollback_merge_sha TEXT NOT NULL,
+        verified_at INTEGER NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS draft_pr_submissions (
         ticket_id TEXT PRIMARY KEY,
         repo TEXT NOT NULL,
@@ -698,6 +728,220 @@ export class ClusterDatabase {
     });
 
     return true;
+  }
+
+  /**
+   * Fail-closed rollback reservation. No duplicate push across processes and
+   * no retry when a prior Git write may have succeeded.
+   */
+  public reserveVerifiedRollback(ticketId: string, repo: string):
+    { success: true; reservationId: string; mergedCommit: string;
+      baselineCommit: string; testedTree: string; branch: string; changedFiles: string[]; allowedFiles: string[]; epochId: number } |
+    { success: false; error: string } {
+    const deny = (error: string): { success: false; error: string } => ({ success: false, error });
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) ||
+        !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,85}$/.test(ticketId)) return deny('ROLLBACK_INVALID_REQUEST');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const t = this.db.prepare('SELECT * FROM tickets WHERE ticket_id=?').get(ticketId) as any;
+      const m = this.db.prepare('SELECT * FROM verified_git_merges WHERE ticket_id=?').get(ticketId) as any;
+      const a = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id=?').get(ticketId) as any;
+      const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id=1').get() as any;
+      const existing = this.db.prepare('SELECT ticket_id FROM rollback_proposals WHERE ticket_id=?').get(ticketId) as any;
+      if (existing) { this.db.exec('ROLLBACK'); return deny('ROLLBACK_ALREADY_RESERVED_RECONCILE'); }
+      if (!t || !m || !a || !sys || sys.kill_switch_active ||
+          t.status !== 'ROLLBACK_REQUESTED' || m.repo !== repo ||
+          m.merge_sha !== t.rollback_commit || m.tree_sha !== a.candidate_tree_sha ||
+          Number(a.epoch_id) !== Number(sys.epoch_id) ||
+          !t.diff_patch || crypto.createHash('sha256').update(t.diff_patch).digest('hex') !== a.patch_sha256) {
+        this.db.exec('ROLLBACK');
+        return deny('ROLLBACK_VERIFIED_ORIGIN_REQUIRED');
+      }
+      const changedFiles = JSON.parse(a.changed_files_json || '[]');
+      const allowedFiles = JSON.parse(t.allowed_files_json || '[]');
+      if (!Array.isArray(changedFiles) || !Array.isArray(allowedFiles) || !changedFiles.length ||
+          !changedFiles.every(x => typeof x === 'string' && allowedFiles.includes(x))) {
+        this.db.exec('ROLLBACK'); return deny('ROLLBACK_FILE_SCOPE_UNSAFE');
+      }
+      const reservationId = crypto.randomUUID();
+      const branch = 'rollback/' + ticketId;
+      const now = Date.now();
+      this.db.prepare(`INSERT INTO rollback_proposals
+        (ticket_id, reservation_id, repo, original_merge_sha, baseline_commit,
+         tested_merge_tree, epoch_id, branch, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PREPARING', ?, ?)`).run(
+          ticketId, reservationId, repo, m.merge_sha, a.baseline_commit,
+          m.tree_sha, sys.epoch_id, branch, now, now
+        );
+      this.appendAuditLog({
+        actor: 'Rollback Gatekeeper', action: 'ROLLBACK_PREPARATION_RESERVED', ticketId,
+        reasoning: 'Verified original merge reserved for Docker-tested inverse branch; no remote operation yet.',
+        details: { repo, branch, originalMergeSha: m.merge_sha, baselineSha: a.baseline_commit }
+      });
+      this.db.exec('COMMIT');
+      return { success: true, reservationId, mergedCommit: m.merge_sha,
+        baselineCommit: a.baseline_commit, testedTree: m.tree_sha, branch,
+        changedFiles, allowedFiles, epochId: Number(sys.epoch_id) };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  public getRollbackProposal(ticketId: string): {
+    reservationId: string; repo: string; originalMergeSha: string;
+    baselineCommit: string; testedMergeTree: string; epochId: number;
+    branch: string; headSha: string | null; revertedTree: string | null;
+    prNumber: number | null; status: string;
+  } | null {
+    const r = this.db.prepare('SELECT * FROM rollback_proposals WHERE ticket_id=?')
+      .get(ticketId) as any;
+    return r ? {
+      reservationId: r.reservation_id, repo: r.repo,
+      originalMergeSha: r.original_merge_sha, baselineCommit: r.baseline_commit,
+      testedMergeTree: r.tested_merge_tree, epochId: Number(r.epoch_id),
+      branch: r.branch, headSha: r.revert_head_sha, revertedTree: r.revert_tree_sha,
+      prNumber: r.pr_number == null ? null : Number(r.pr_number), status: r.status
+    } : null;
+  }
+
+  public markRollbackUncertain(ticketId: string, reservationId: string): boolean {
+    return this.db.prepare(`UPDATE rollback_proposals
+      SET status='NEEDS_RECONCILIATION', updated_at=?
+      WHERE ticket_id=? AND reservation_id=? AND status IN ('PREPARING','PR_CREATING')`)
+      .run(Date.now(), ticketId, reservationId).changes === 1;
+  }
+
+  public recordRollbackPrepared(input: {
+    ticketId: string; reservationId: string; repo: string; branch: string;
+    originalMergeSha: string; baselineCommit: string; testedMergeTree: string;
+    headSha: string; revertedTree: string; epochId: number;
+  }): boolean {
+    if (![input.originalMergeSha, input.baselineCommit, input.testedMergeTree,
+          input.headSha, input.revertedTree].every(x => /^[0-9a-f]{40}$/.test(x))) return false;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const r = this.db.prepare('SELECT * FROM rollback_proposals WHERE ticket_id=?')
+        .get(input.ticketId) as any;
+      const t = this.db.prepare('SELECT status FROM tickets WHERE ticket_id=?')
+        .get(input.ticketId) as any;
+      const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id=1')
+        .get() as any;
+      if (!r || !t || !sys || sys.kill_switch_active ||
+          r.status !== 'PREPARING' || t.status !== 'ROLLBACK_REQUESTED' ||
+          r.reservation_id !== input.reservationId || r.repo !== input.repo ||
+          r.branch !== input.branch || r.original_merge_sha !== input.originalMergeSha ||
+          r.baseline_commit !== input.baselineCommit || r.tested_merge_tree !== input.testedMergeTree ||
+          Number(r.epoch_id) !== input.epochId || Number(sys.epoch_id) !== input.epochId) {
+        this.db.exec('ROLLBACK'); return false;
+      }
+      this.db.prepare(`UPDATE rollback_proposals
+        SET status='BRANCH_PUSHED', revert_head_sha=?, revert_tree_sha=?, updated_at=?
+        WHERE ticket_id=? AND reservation_id=?`).run(
+          input.headSha, input.revertedTree, Date.now(), input.ticketId, input.reservationId
+        );
+      this.appendAuditLog({
+        actor: 'Rollback Gatekeeper', action: 'ROLLBACK_BRANCH_PUSH_CONFIRMED', ticketId: input.ticketId,
+        reasoning: 'Docker-tested reverse Git tree pushed to a new rollback branch; no PR merge occurred.',
+        details: { repo: input.repo, branch: input.branch, headSha: input.headSha, revertedTree: input.revertedTree }
+      });
+      this.db.exec('COMMIT'); return true;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  public reserveRollbackDraftPr(ticketId: string, reservationId: string): boolean {
+    const r = this.db.prepare(`UPDATE rollback_proposals
+      SET status='PR_CREATING', updated_at=? WHERE ticket_id=?
+      AND reservation_id=? AND status='BRANCH_PUSHED'
+      AND EXISTS(SELECT 1 FROM tickets WHERE ticket_id=? AND status='ROLLBACK_REQUESTED')
+      AND epoch_id=(SELECT epoch_id FROM system_state WHERE id=1)
+      AND (SELECT kill_switch_active FROM system_state WHERE id=1)=0`)
+      .run(Date.now(), ticketId, reservationId, ticketId);
+    return r.changes === 1;
+  }
+
+  public recordRollbackDraftPr(ticketId: string, reservationId: string,
+    repo: string, prNumber: number, branch: string, headSha: string, revertedTree: string): boolean {
+    if (!Number.isSafeInteger(prNumber) || prNumber < 1 ||
+        ![headSha, revertedTree].every(x => /^[0-9a-f]{40}$/.test(x))) return false;
+    const row = this.db.prepare(`UPDATE rollback_proposals
+      SET status='DRAFT_PR', pr_number=?, updated_at=?
+      WHERE ticket_id=? AND reservation_id=? AND status='PR_CREATING'
+      AND repo=? AND branch=? AND revert_head_sha=? AND revert_tree_sha=?
+      AND epoch_id=(SELECT epoch_id FROM system_state WHERE id=1)
+      AND (SELECT kill_switch_active FROM system_state WHERE id=1)=0`)
+      .run(prNumber, Date.now(), ticketId, reservationId,
+        repo, branch, headSha, revertedTree);
+    if (row.changes !== 1) return false;
+    this.appendAuditLog({
+      actor: 'Rollback Gatekeeper', action: 'ROLLBACK_DRAFT_PR_RECORDED', ticketId,
+      reasoning: 'GitHub draft PR opened for independent human review. No merge or rollback completion claimed.',
+      details: { repo, branch, prNumber, headSha, revertedTree }
+    });
+    return true;
+  }
+
+  public recordVerifiedGitRollback(input: {
+    ticketId: string; repo: string; prNumber: number; branch: string;
+    headSha: string; originalMergeSha: string; revertedTree: string;
+    rollbackMergeSha: string; epochId: number;
+  }): boolean {
+    if (![input.headSha, input.originalMergeSha, input.revertedTree, input.rollbackMergeSha]
+      .every(x => /^[0-9a-f]{40}$/.test(x)) ||
+      !Number.isSafeInteger(input.prNumber) || input.prNumber < 1) return false;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const p = this.db.prepare('SELECT * FROM rollback_proposals WHERE ticket_id=?')
+        .get(input.ticketId) as any;
+      const t = this.db.prepare('SELECT status, rollback_commit FROM tickets WHERE ticket_id=?')
+        .get(input.ticketId) as any;
+      const m = this.db.prepare('SELECT * FROM verified_git_merges WHERE ticket_id=?')
+        .get(input.ticketId) as any;
+      const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id=1')
+        .get() as any;
+      if (!p || !t || !m || !sys || sys.kill_switch_active ||
+          p.status !== 'DRAFT_PR' || t.status !== 'ROLLBACK_REQUESTED' ||
+          t.rollback_commit !== input.originalMergeSha ||
+          m.repo !== input.repo || m.merge_sha !== input.originalMergeSha ||
+          p.repo !== input.repo || p.pr_number !== input.prNumber ||
+          p.branch !== input.branch || p.revert_head_sha !== input.headSha ||
+          p.revert_tree_sha !== input.revertedTree ||
+          p.original_merge_sha !== input.originalMergeSha ||
+          Number(p.epoch_id) !== input.epochId ||
+          Number(sys.epoch_id) !== input.epochId) {
+        this.db.exec('ROLLBACK'); return false;
+      }
+      const now = Date.now();
+      this.db.prepare(`UPDATE rollback_proposals SET status='COMPLETED', updated_at=?
+        WHERE ticket_id=?`).run(now, input.ticketId);
+      this.db.prepare(`INSERT INTO verified_git_rollbacks
+        (ticket_id,repo,pr_number,branch,rollback_head_sha,original_merge_sha,
+         reverted_tree_sha,rollback_merge_sha,verified_at)
+        VALUES (?,?,?,?,?,?,?,?,?)`).run(
+          input.ticketId, input.repo, input.prNumber, input.branch,
+          input.headSha, input.originalMergeSha, input.revertedTree,
+          input.rollbackMergeSha, now
+        );
+      this.db.prepare(`UPDATE tickets SET status='ROLLBACK_COMPLETED',
+        rollback_commit=?, updated_at=? WHERE ticket_id=?`).run(
+          input.rollbackMergeSha, now, input.ticketId
+        );
+      this.appendAuditLog({
+        actor: 'Rollback GitHub Verifier', action: 'REMOTE_ROLLBACK_VERIFIED',
+        ticketId: input.ticketId,
+        reasoning: 'GitHub approved PR merged and exact restored tree verified against original baseline; no simulated completion.',
+        details: { repo: input.repo, prNumber: input.prNumber,
+          headSha: input.headSha, rollbackMergeSha: input.rollbackMergeSha,
+          restoredTree: input.revertedTree }
+      });
+      this.db.exec('COMMIT'); return true;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
   }
 
   // Rollback is a request until an independently verified Git revert has merged.
