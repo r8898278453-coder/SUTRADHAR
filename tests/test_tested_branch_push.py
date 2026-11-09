@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import unittest
 
-from sandbox.push_tested_branch import push_tested_patch, PublishFailure
+from sandbox.push_tested_branch import push_tested_patch, inspect_remote_tested_branch, PublishFailure
 
 
 def git(directory: Path, *args: str) -> str:
@@ -65,6 +65,13 @@ class TestedBranchPushTests(unittest.TestCase):
         }
         args.update(overrides)
         return push_tested_patch(**args)
+
+    def inspect(self):
+        return inspect_remote_tested_branch(
+            repo_root=str(self.source), github_repository="acme/widgets",
+            branch=self.branch, baseline_commit=self.baseline,
+            candidate_tree_sha=self.tree, allow_local_remote=True
+        )
 
     def remote_branch(self):
         output = git(self.remote, "show-ref", "--verify", f"refs/heads/{self.branch}")
@@ -126,6 +133,31 @@ class TestedBranchPushTests(unittest.TestCase):
         with self.assertRaises(PublishFailure) as error:
             self.push()
         self.assertEqual(error.exception.code, "REMOTE_MAIN_MOVED_RETEST_REQUIRED")
+
+    def test_read_only_recovery_reports_absent_branch_without_any_push(self):
+        status = self.inspect()
+        self.assertEqual(status["status"], "REMOTE_BRANCH_ABSENT")
+        self.assertEqual(status["treeSha"], self.tree)
+        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/main"), self.baseline)
+        self.assertNotIn(f"refs/heads/{self.branch}", git(self.remote, "show-ref"))
+
+    def test_read_only_recovery_confirms_original_commit_and_tree(self):
+        pushed = self.push()
+        status = self.inspect()
+        self.assertEqual(status["status"], "REMOTE_BRANCH_CONFIRMED_NOT_MERGED")
+        self.assertEqual(status["headSha"], pushed["headSha"])
+        self.assertEqual(status["treeSha"], self.tree)
+        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/main"), self.baseline)
+
+    def test_read_only_recovery_rejects_unrelated_remote_branch(self):
+        git(self.source, "checkout", "-q", "-b", self.branch)
+        (self.source / "README.md").write_text("UNTESTED\n")
+        git(self.source, "add", "README.md")
+        git(self.source, "commit", "-q", "-m", "malicious unrelated")
+        git(self.source, "push", "-q", "origin", self.branch)
+        with self.assertRaises(PublishFailure) as error:
+            self.inspect()
+        self.assertEqual(error.exception.code, "REMOTE_WORKER_BRANCH_MISMATCH_MANUAL_REVIEW")
 
     def test_changed_local_head_requires_retest(self):
         (self.source / "README.md").write_text("NEW HEAD\n")
