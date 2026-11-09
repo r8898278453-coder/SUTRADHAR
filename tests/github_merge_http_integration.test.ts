@@ -44,11 +44,19 @@ test('HTTP GitHub merge approval uses signed durable lease and actual tested tre
     changedFiles: files, workerId: worker, epochId: epoch,
     stdout: 'this is an API fixture; Docker tested separately', stderr: ''
   }), true);
+  const pushReservation = clusterDb.reserveWorkerPushJob({
+    ticketId, repo: 'acme/widgets', branch: claim.branch!,
+    treeSha: TREE, baselineCommit: BASE, patchSha256: hash,
+    workerId: worker, epochId: epoch, tokenId: signed.tokenId
+  });
+  assert.equal(pushReservation.success, true);
+  if (!pushReservation.success) throw new Error(pushReservation.error);
   assert.equal(clusterDb.recordVerifiedWorkerPush({
     ticketId, repo: 'acme/widgets', branch: claim.branch!,
     headSha: HEAD, treeSha: TREE, baselineCommit: BASE,
     patchSha256: hash, workerId: worker, epochId: epoch,
-    tokenId: signed.tokenId
+    tokenId: signed.tokenId,
+    reservationId: pushReservation.reservationId
   }), true, 'Mock GitHub fixture requires separate matching worker push receipt');
 
   const previous = {
