@@ -95,6 +95,20 @@ for (const [name, options, reason] of [
   });
 }
 
+test('admin grant pins exact PR number and pushed head', async () => {
+  const expected = input();
+  const wrongPr = await verifyGitHubMergeEvidence({ ...expected, expectedPrNumber: 999 });
+  assert.deepEqual(wrongPr, { verified: false, error: 'GITHUB_MERGED_PR_NOT_UNAMBIGUOUS' });
+  const wrongHead = await verifyGitHubMergeEvidence({
+    ...expected, expectedPrNumber: 12, expectedHeadSha: 'e'.repeat(40)
+  });
+  assert.deepEqual(wrongHead, { verified: false, error: 'GITHUB_MERGED_PR_NOT_UNAMBIGUOUS' });
+  const correct = await verifyGitHubMergeEvidence({
+    ...expected, expectedPrNumber: 12, expectedHeadSha: HEAD
+  });
+  assert.equal(correct.verified, true);
+});
+
 test('required check configuration cannot be empty', async () => {
   const result = await verifyGitHubMergeEvidence({ ...input(), requiredChecks: [] });
   assert.deepEqual(result, { verified: false, error: 'GITHUB_VERIFICATION_NOT_CONFIGURED' });
