@@ -45,10 +45,18 @@ test('admin-only HTTP draft PR creation is scope/lease gated and never merges', 
   }), true);
   // Controlled GitHub responses only: simulate a previously verified worker
   // push receipt in SQLite. The real Git push is covered by Python bare-remote tests.
+  const pushReservation = clusterDb.reserveWorkerPushJob({
+    ticketId, repo: 'acme/widgets', branch: claim.branch!,
+    treeSha: TREE, baselineCommit: BASE, patchSha256: patchHash,
+    workerId: workerId, epochId: epoch, tokenId: token.tokenId
+  });
+  assert.equal(pushReservation.success, true);
+  if (!pushReservation.success) throw new Error(pushReservation.error);
   assert.equal(clusterDb.recordVerifiedWorkerPush({
     ticketId, repo: 'acme/widgets', branch: claim.branch!,
     headSha: HEAD, treeSha: TREE, baselineCommit: BASE,
-    patchSha256: patchHash, workerId, epochId: epoch, tokenId: token.tokenId
+    patchSha256: patchHash, workerId, epochId: epoch, tokenId: token.tokenId,
+    reservationId: pushReservation.reservationId
   }), true);
 
   const envNames = ['SUTRADHAR_GITHUB_REPOSITORY', 'SUTRADHAR_GITHUB_PR_TOKEN',
