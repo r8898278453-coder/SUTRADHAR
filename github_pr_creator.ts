@@ -17,7 +17,7 @@ export type DraftPrInput = {
 
 const sha = /^[0-9a-f]{40}$/;
 const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const branchPattern = /^(?:ai\/[A-Za-z0-9_.-]+|worker-[A-Za-z0-9-]+\/ticket-[A-Za-z0-9_.-]+)$/;
+const branchPattern = /^(?:ai\/[A-Za-z0-9_.-]+|worker-[A-Za-z0-9-]+\/ticket-[A-Za-z0-9_.-]+|rollback\/[A-Za-z0-9][A-Za-z0-9_.-]{0,85})$/;
 const safePath = (p: string) =>
   !!p && !p.startsWith('/') && !p.startsWith('-') && !p.includes('\\') &&
   !p.split('/').some(part => !part || part === '.' || part === '..') &&
