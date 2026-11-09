@@ -35,6 +35,13 @@ test('verified worker push endpoint denies anonymous, disabled and unconfigured 
     const missing = await call();
     assert.equal(missing.status, 503);
     assert.equal(missing.body.error, 'WORKER_PUSH_NOT_CONFIGURED');
+    const reconcile = await fetch(url.replace('/push-tested-branch', '/reconcile-tested-branch'), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticketId: 'TKT-SECURITY-NO-PUSH' })
+    });
+    assert.equal(reconcile.status, 503);
+    assert.equal((await reconcile.json() as any).error, 'WORKER_PUSH_NOT_CONFIGURED');
   } finally {
     for (const k of keys) {
       if (saved[k] === undefined) delete process.env[k];
