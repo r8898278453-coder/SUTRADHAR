@@ -45,11 +45,17 @@ function setup() {
       stdout: 'container exit 0', stderr: ''
     });
   }
+  let currentGrantId = 'not-authorized';
+  function authorize() {
+    const result = db.authorizeGitMergeVerification(ticketId, 'acme/widgets', 'TEST-ADMIN');
+    if (result.success) currentGrantId = result.grantId;
+    return result;
+  }
   function merge(data: Partial<Parameters<typeof db.recordVerifiedGitMerge>[0]> = {}) {
     return db.recordVerifiedGitMerge({
-      ticketId, repo: 'acme/widgets', prNumber: 12, branch: 'ai/TKT-GITHUB-01',
+      ticketId, repo: 'acme/widgets', prNumber: 42, branch: 'ai/TKT-GITHUB-01',
       headSha: HEAD, mergeSha: MERGE, treeSha: TREE,
-      patchSha256: hash, epochId: epoch, workerId: 'NODE-TEST', tokenId: TOKEN_ID, ...data
+      patchSha256: hash, epochId: epoch, grantId: currentGrantId, ...data
     });
   }
   let reservationId: string | null = null;
@@ -80,7 +86,7 @@ function setup() {
     });
   }
   return {
-    db, ticketId, attest, merge, draft, push, reserve,
+    db, ticketId, attest, merge, draft, push, reserve, authorize,
     getReservationId: () => reservationId,
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true })
   };
@@ -94,6 +100,9 @@ test('exact Docker tree and matching remote merge evidence persist atomically', 
     assert.equal(t.db.getSandboxAttestation(t.ticketId)?.candidateTreeSha, TREE);
     assert.equal(t.merge(), false, 'A merge without our worker push receipt is denied');
     assert.equal(t.push(), true, 'Worker branch is now attested');
+    assert.equal(t.merge(), false, 'Human review grant and registered draft PR are mandatory');
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
     assert.equal(t.merge(), true);
     const merged = t.db.getAllTickets().find(x => x.id === t.ticketId);
     assert.equal(merged?.status, 'COMMITTED_PUSHED');
@@ -116,6 +125,8 @@ test('wrong tree and changed patch are denied', () => {
   try {
     assert.equal(t.attest(), true);
     assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
     assert.equal(t.merge({ treeSha: 'f'.repeat(40) }), false);
     t.db.updateTicket(t.ticketId, { diffPatch: patch + '# edited' });
     assert.equal(t.merge(), false);
@@ -128,6 +139,8 @@ test('stale epoch or paused cluster denies merge', () => {
   try {
     assert.equal(t.attest(), true);
     assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
     assert.equal(t.merge({ epochId: 500 }), false);
     t.db.setKillSwitch(true, 'release freeze', 'QA');
     assert.equal(t.merge(), false);
@@ -135,14 +148,17 @@ test('stale epoch or paused cluster denies merge', () => {
   } finally { t.cleanup(); }
 });
 
-test('wrong token, revoked token and expired lease cannot commit a merge', () => {
+test('forged admin grant and explicitly revoked original worker token deny merge', () => {
   const t = setup();
   try {
     assert.equal(t.attest(), true);
     assert.equal(t.push(), true);
-    assert.equal(t.merge({ tokenId: 'tok_forged' }), false);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
+    assert.equal(t.merge({ grantId: 'forged-grant' }), false);
     t.db.revokeToken(TOKEN_ID, 'Security test');
     assert.equal(t.merge(), false);
+    assert.equal(t.authorize().success, false, 'Revoked worker provenance cannot be reauthorized');
     assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'READY_FOR_REVIEW');
   } finally { t.cleanup(); }
 });
@@ -254,5 +270,42 @@ test('second SQLite process sees existing worker push reservation immediately', 
       epochId: t.db.getSystemState().epochId
     });
     assert.deepEqual(r, { success: false, error: 'WORKER_PUSH_RESERVED' });
+  } finally { t.cleanup(); }
+});
+
+test('watchdog expiry preserves tested review state; administrator can verify after worker lease expires', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    (t.db as any).db.prepare(`UPDATE worker_leases
+      SET expires_at=?, last_heartbeat_at=? WHERE ticket_id=?`)
+      .run(Date.now() - 1000, Date.now() - 120000, t.ticketId);
+    const sweep = t.db.sweepWatchdog();
+    assert.ok(sweep.expiredTickets.includes(t.ticketId));
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'READY_FOR_REVIEW');
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.assignedTo, 'NODE-TEST');
+    assert.equal(t.authorize().success, true, 'Explicit admin grant may follow worker lease expiry');
+    assert.equal(t.merge(), true, 'Verified GitHub evidence may be saved after worker lease expiry');
+    assert.equal(t.merge(), false, 'Admin grant is single-use');
+  } finally { t.cleanup(); }
+});
+
+test('expired or mismatched admin grant fails closed until explicitly reauthorized', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
+    (t.db as any).db.prepare('UPDATE merge_verification_grants SET expires_at=? WHERE ticket_id=?')
+      .run(Date.now() - 1000, t.ticketId);
+    assert.equal(t.merge(), false);
+    assert.equal(t.authorize().success, true, 'Reissue requires an explicit fresh admin action');
+    assert.equal(t.merge({ prNumber: 999 }), false, 'Registered PR identity cannot change');
+    assert.equal(t.merge({ headSha: 'f'.repeat(40) }), false, 'Registered head cannot change');
+    assert.equal(t.merge(), true);
+    assert.equal(t.authorize().success, false, 'Consumed grant cannot be reissued');
   } finally { t.cleanup(); }
 });
