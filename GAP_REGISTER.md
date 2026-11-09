@@ -6,7 +6,7 @@ This register reflects the current implementation branch, not an unsupported "al
 |---|---|---|---|
 | GAP-P0-001 | Critical | Previously public master signing key must be rotated; old leases invalidated | OWNER ACTION |
 | GAP-P0-002 | Critical | HTTP real Docker execution integrated and tested; production images/provenance and deployment verification remain | PARTIAL — REAL DOCKER CI VERIFIED |
-| GAP-P0-003 | Critical | Remote GitHub PR merge verifier implemented with exact tested tree, mandatory CI/review checks; live target PR acceptance not yet run | PARTIAL — MOCKED API CI VERIFIED |
+| GAP-P0-003 | Critical | Remote GitHub merge verifier pins registered PR/head; 15-minute admin proof grant handles expired worker lease. Live target GitHub merged-PR acceptance not run | PARTIAL — MOCKED API CI VERIFIED |
 | GAP-P0-004 | Critical | Real Git revert with verified merge missing | BLOCKED (REQUESTED only) |
 | GAP-P0-005 | High | Multiple worker identities and per-ticket lease enforcement across all operations | PARTIAL |
 | GAP-P0-006 | High | Direct-main push disabled; guarded worker push with SQLite reservation and read-only crash reconciliation, draft PR/merge receipts integrated; live GitHub delivery and scheduled distributed queue pending | PARTIAL — RECOVERY CI VERIFIED |
