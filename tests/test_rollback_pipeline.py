@@ -92,6 +92,9 @@ class RollbackBranchTests(unittest.TestCase):
     def test_scope_mismatch_and_duplicate_branch_are_denied(self):
         with self.assertRaises(PublishFailure) as err:
             self.run_rollback(changed_files=["README.md"])
+        self.assertEqual(err.exception.code, "ROLLBACK_OUT_OF_SCOPE")
+        with self.assertRaises(PublishFailure) as err:
+            self.run_rollback(changed_files=["README.md"], allowed_files=["README.md"])
         self.assertEqual(err.exception.code, "ROLLBACK_CHANGED_FILES_MISMATCH")
         with self.assertRaises(PublishFailure) as err:
             self.run_rollback(allowed_files=["README.md"])
