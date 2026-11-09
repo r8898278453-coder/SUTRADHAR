@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased — durable push crash recovery] - 2026-11-10
+
+### Added
+- SQLite `worker_push_jobs` reservation before remote Git operations, with
+  RUNNING, NEEDS_RECONCILIATION and CONFIRMED states shared across processes.
+- Missing/uncertain push outcomes never trigger blind retry; expired jobs move
+  into explicit recovery rather than automatically releasing the lock.
+- Read-only Git remote inspection verifies main baseline, worker branch parent
+  and exact Docker-tested tree, then recovers the signed receipt under CAS or
+  permits a separate explicit retry only after proving remote branch absent.
+- Regression tests across independent SQLite connections and real local bare
+  Git remotes for positive, absent, mismatched and expired outcomes.
+- Operator guide and implementation log for 10 November.
+
+### Pending
+- Real GitHub authenticated acceptance, durable PR operation reservations,
+  post-human-review authorization renewal, genuine Git revert rollback and
+  production release checks. No live target GitHub operation performed.
+
 ## [Unreleased — verified worker branch publication] - 2026-11-08
 
 ### Added
