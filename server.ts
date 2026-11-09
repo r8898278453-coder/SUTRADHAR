@@ -3117,6 +3117,226 @@ app.post('/api/tickets/:id/answer-clarification', authRole(['ADMIN']), (req, res
   res.json({ success: true, ticket });
 });
 
+// Verified rollback pipeline: the backend never writes directly to main.
+// All three routes are administrator-only and feature-OFF by default.
+const activeRollbackPreparations = new Set<string>();
+app.post('/api/master/rollback/prepare', authRole(['ADMIN']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string' || !ticketId.trim()) {
+    return res.status(400).json({ success: false, error: 'INVALID_TICKET_ID' });
+  }
+  if (process.env.SUTRADHAR_ENABLE_ROLLBACK !== 'true') {
+    return res.status(503).json({ success: false, error: 'ROLLBACK_FEATURE_DISABLED' });
+  }
+  const repo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const target = process.env.SUTRADHAR_TARGET_REPO_ROOT?.trim() || '';
+  const token = process.env.SUTRADHAR_GITHUB_ROLLBACK_TOKEN?.trim() || '';
+  const command = process.env.SUTRADHAR_SANDBOX_TEST_COMMAND?.trim() || '';
+  if (!repo || !target || !token || !command) {
+    return res.status(503).json({ success: false, error: 'ROLLBACK_NOT_CONFIGURED' });
+  }
+  if (activeRollbackPreparations.has(ticketId)) {
+    return res.status(409).json({ success: false, error: 'ROLLBACK_ALREADY_RUNNING' });
+  }
+  const reservation = clusterDb.reserveVerifiedRollback(ticketId, repo);
+  if (!reservation.success) {
+    return res.status(409).json({ success: false, error: reservation.error });
+  }
+  activeRollbackPreparations.add(ticketId);
+  try {
+    const args = [
+      '-m', 'sandbox.prepare_rollback',
+      '--repo-root', target, '--github-repository', repo,
+      '--ticket-id', ticketId,
+      '--merged-commit', reservation.mergedCommit,
+      '--baseline-commit', reservation.baselineCommit,
+      '--tested-tree', reservation.testedTree,
+      '--test-command', command,
+      ...reservation.allowedFiles.flatMap(file => ['--allowed-file', file]),
+      ...reservation.changedFiles.flatMap(file => ['--changed-file', file])
+    ];
+    const output = await new Promise<string>((resolve, reject) => {
+      child_process.execFile(process.env.SUTRADHAR_PYTHON || 'python3', args, {
+        cwd: process.cwd(), timeout: 240000, maxBuffer: 128 * 1024,
+        env: { ...process.env, SUTRADHAR_GITHUB_ROLLBACK_TOKEN: token }
+      }, (error, stdout) => {
+        if (error) reject(new Error('ROLLBACK_SUBPROCESS_UNAVAILABLE'));
+        else resolve(stdout);
+      });
+    });
+    let proof: any;
+    try { proof = JSON.parse(output.trim()); }
+    catch { proof = null; }
+    if (!proof?.success || proof?.status !== 'ROLLBACK_BRANCH_PUSHED_NOT_MERGED' ||
+        proof.branch !== reservation.branch ||
+        proof.mergedCommit !== reservation.mergedCommit ||
+        proof.baselineCommit !== reservation.baselineCommit ||
+        proof.testedMergeTreeSha !== reservation.testedTree ||
+        proof.dockerExitCode !== 0 ||
+        !/^[0-9a-f]{40}$/.test(proof.headSha || '') ||
+        !/^[0-9a-f]{40}$/.test(proof.treeSha || '') ||
+        !Array.isArray(proof.changedFiles) ||
+        proof.changedFiles.length !== reservation.changedFiles.length ||
+        proof.changedFiles.some((file: string) => !reservation.changedFiles.includes(file))) {
+      clusterDb.markRollbackUncertain(ticketId, reservation.reservationId);
+      return res.status(409).json({
+        success: false,
+        error: typeof proof?.error === 'string' ? proof.error : 'ROLLBACK_PROOF_NOT_ACCEPTED',
+        requiresReconciliation: true,
+        message: 'No rollback was marked complete. A remote branch might exist; inspect GitHub before any retry.'
+      });
+    }
+    const recorded = clusterDb.recordRollbackPrepared({
+      ticketId, reservationId: reservation.reservationId, repo,
+      branch: reservation.branch,
+      originalMergeSha: proof.mergedCommit,
+      baselineCommit: proof.baselineCommit,
+      testedMergeTree: proof.testedMergeTreeSha,
+      headSha: proof.headSha, revertedTree: proof.treeSha,
+      epochId: reservation.epochId
+    });
+    if (!recorded) {
+      clusterDb.markRollbackUncertain(ticketId, reservation.reservationId);
+      return res.status(409).json({ success: false,
+        error: 'ROLLBACK_POST_PUSH_STATE_CHANGED_MANUAL_REVIEW' });
+    }
+    return res.json({
+      success: true, ticketId, status: 'ROLLBACK_BRANCH_PUSHED_NOT_MERGED',
+      branch: proof.branch, headSha: proof.headSha, restoredTreeSha: proof.treeSha,
+      originalMergeSha: proof.mergedCommit,
+      message: 'A real Docker-tested revert branch was pushed. Human-reviewed PR required; main unchanged.'
+    });
+  } catch {
+    clusterDb.markRollbackUncertain(ticketId, reservation.reservationId);
+    return res.status(502).json({ success: false,
+      error: 'ROLLBACK_PREPARATION_UNAVAILABLE', requiresReconciliation: true });
+  } finally {
+    activeRollbackPreparations.delete(ticketId);
+  }
+});
+
+app.post('/api/master/rollback/create-draft-pr', authRole(['ADMIN']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string' || !ticketId.trim()) {
+    return res.status(400).json({ success: false, error: 'INVALID_TICKET_ID' });
+  }
+  if (process.env.SUTRADHAR_ENABLE_ROLLBACK !== 'true') {
+    return res.status(503).json({ success: false, error: 'ROLLBACK_FEATURE_DISABLED' });
+  }
+  const repo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const token = process.env.SUTRADHAR_GITHUB_PR_TOKEN?.trim() || '';
+  const checks = (process.env.SUTRADHAR_REQUIRED_CHECKS || '').split(';').filter(Boolean);
+  const approvals = Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS || '1');
+  if (!repo || !token || !checks.length || !Number.isSafeInteger(approvals) ||
+      approvals < 1 || approvals > 5) {
+    return res.status(503).json({ success: false, error: 'ROLLBACK_PR_NOT_CONFIGURED' });
+  }
+  const proposal = clusterDb.getRollbackProposal(ticketId);
+  const ticket = clusterDb.getAllTickets().find(t => t.id === ticketId);
+  const attest = clusterDb.getSandboxAttestation(ticketId);
+  if (!proposal || !ticket || !attest || !proposal.headSha || !proposal.revertedTree ||
+      proposal.repo !== repo || ticket.status !== 'ROLLBACK_REQUESTED') {
+    return res.status(409).json({ success: false, error: 'ROLLBACK_PUSH_EVIDENCE_REQUIRED' });
+  }
+  if (!clusterDb.reserveRollbackDraftPr(ticketId, proposal.reservationId)) {
+    return res.status(409).json({ success: false, error: 'ROLLBACK_PR_OPERATION_RESERVED' });
+  }
+  const outcome = await createVerifiedDraftPr({
+    repo, token, branch: proposal.branch, ticketId,
+    baselineCommit: proposal.originalMergeSha,
+    candidateTreeSha: proposal.revertedTree,
+    changedFiles: attest.changedFiles, allowedFiles: ticket.allowedFiles,
+    title: `[ROLLBACK ${ticketId}] Revert verified merge ${proposal.originalMergeSha.slice(0, 12)}`,
+    description: 'Emergency rollback. Independent human approval and required CI mandatory; NO AUTO-MERGE.'
+  });
+  if (!outcome.created || outcome.headSha !== proposal.headSha ||
+      outcome.treeSha !== proposal.revertedTree) {
+    clusterDb.markRollbackUncertain(ticketId, proposal.reservationId);
+    return res.status(409).json({
+      success: false,
+      error: outcome.created ? 'ROLLBACK_DRAFT_PR_HEAD_MISMATCH' : outcome.error,
+      requiresReconciliation: true,
+      message: 'Draft PR might already exist; inspect GitHub before retrying.'
+    });
+  }
+  const recorded = clusterDb.recordRollbackDraftPr(
+    ticketId, proposal.reservationId, repo, outcome.prNumber,
+    outcome.branch, outcome.headSha, outcome.treeSha
+  );
+  if (!recorded) {
+    clusterDb.markRollbackUncertain(ticketId, proposal.reservationId);
+    return res.status(409).json({ success: false,
+      error: 'ROLLBACK_DRAFT_PR_STATE_CHANGED_MANUAL_REVIEW' });
+  }
+  return res.status(outcome.existing ? 200 : 201).json({
+    success: true, status: 'ROLLBACK_DRAFT_PR_NOT_MERGED',
+    ticketId, prNumber: outcome.prNumber, pullRequestUrl: outcome.url,
+    branch: outcome.branch, headSha: outcome.headSha, restoredTreeSha: outcome.treeSha,
+    existing: outcome.existing, draft: true,
+    message: 'Draft rollback PR requires human review and CI. No merge performed.'
+  });
+});
+
+app.post('/api/master/rollback/verify', authRole(['ADMIN']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string' || !ticketId.trim()) {
+    return res.status(400).json({ verified: false, error: 'INVALID_TICKET_ID' });
+  }
+  const repo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const token = process.env.SUTRADHAR_GITHUB_TOKEN?.trim() || '';
+  const requiredChecks = (process.env.SUTRADHAR_REQUIRED_CHECKS || '')
+    .split(';').map(x => x.trim()).filter(Boolean);
+  const requiredApprovals = Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS || '1');
+  if (!repo || !token || !requiredChecks.length ||
+      !Number.isSafeInteger(requiredApprovals) || requiredApprovals < 1 || requiredApprovals > 5) {
+    return res.status(503).json({ verified: false, error: 'ROLLBACK_VERIFICATION_NOT_CONFIGURED' });
+  }
+  const proposal = clusterDb.getRollbackProposal(ticketId);
+  const ticket = clusterDb.getAllTickets().find(t => t.id === ticketId);
+  const attest = clusterDb.getSandboxAttestation(ticketId);
+  const state = clusterDb.getSystemState();
+  if (!proposal || proposal.status !== 'DRAFT_PR' || !ticket || !attest ||
+      !proposal.headSha || !proposal.revertedTree || !proposal.prNumber ||
+      proposal.repo !== repo || proposal.epochId !== state.epochId ||
+      state.killSwitchActive || ticket.status !== 'ROLLBACK_REQUESTED' ||
+      ticket.rollbackCommit !== proposal.originalMergeSha ||
+      attest.candidateTreeSha !== proposal.testedMergeTree) {
+    return res.status(409).json({ verified: false, error: 'ROLLBACK_DRAFT_PROOF_REQUIRED' });
+  }
+  const evidence = await verifyGitHubMergeEvidence({
+    repo, token, branch: proposal.branch, baselineCommit: proposal.originalMergeSha,
+    candidateTreeSha: proposal.revertedTree, allowedFiles: attest.changedFiles,
+    expectedPrNumber: proposal.prNumber, expectedHeadSha: proposal.headSha,
+    requiredChecks, requiredApprovals
+  });
+  if (!evidence.verified) {
+    return res.status(evidence.error === 'GITHUB_API_UNAVAILABLE' ? 502 : 409)
+      .json({ verified: false, error: evidence.error });
+  }
+  const committed = clusterDb.recordVerifiedGitRollback({
+    ticketId, repo: evidence.repo, prNumber: evidence.prNumber,
+    branch: evidence.branch, headSha: evidence.headSha,
+    originalMergeSha: proposal.originalMergeSha,
+    revertedTree: evidence.treeSha,
+    rollbackMergeSha: evidence.mergeSha,
+    epochId: proposal.epochId
+  });
+  if (!committed) {
+    return res.status(409).json({ verified: false, error: 'ROLLBACK_MERGE_EVIDENCE_STALE' });
+  }
+  const active = clusterState.tickets.find(t => t.id === ticketId);
+  if (active) {
+    active.status = 'ROLLBACK_COMPLETED';
+    active.rollbackCommit = evidence.mergeSha;
+  }
+  return res.json({
+    success: true, verified: true, status: 'ROLLBACK_COMPLETED',
+    ticketId, prNumber: evidence.prNumber, rollbackMergedSha: evidence.mergeSha,
+    restoredTreeSha: evidence.treeSha, originalMergeSha: proposal.originalMergeSha,
+    message: 'Verified reviewed GitHub rollback PR merged; restored tree exactly matches original first-parent tree.'
+  });
+});
+
 // POST Rollback Bad Merge (Section 11 Gap #5 - Admin Only)
 app.post('/api/master/rollback', authRole(['ADMIN']), (req, res) => {
   const { ticketId, reason } = req.body;
