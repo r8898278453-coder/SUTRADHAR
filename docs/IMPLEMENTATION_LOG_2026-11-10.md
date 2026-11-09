@@ -107,10 +107,47 @@ commit `e003d5c17503a3e64868226544f1f9e70fb70753`
 ([run #42700720219](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/42700720219)).
 Later documentation/UI commits require fresh current-head CI.
 
+## Continuation — actual Docker-tested revert and reviewed rollback PR
+
+- Added `sandbox/prepare_rollback.py`, a strict real Git object workflow
+  that verifies the original GitHub merged commit remains the exact remote
+  `main` HEAD. A 1- or 2-parent merged commit must have first parent equal
+  to the original tested baseline. Every changed file must exactly match
+  the Docker-attested ticket whitelist. No host checkout of generated code.
+- A disposable bare Git index restores the original first-parent tree.
+  This tree is extracted with the safe Git-archive rules and retested by the
+  hardened **real Docker** runner. Without a real container test start marker
+  and exit 0 the rollback branch is **never pushed**.
+- When Docker passes, a single revert-equivalent Git commit (parent is the
+  original merged SHA, tree is the original baseline tree) is pushed by a
+  non-force refspec to `rollback/<ticketId>`, never `main`.
+  The exact remote branch SHA is confirmed.
+- `server_db.ts`: `rollback_proposals`, `verified_git_rollbacks` and
+  atomic ticket reservation/CAS for branch, PR and remote completion.
+  Uncertain side effects require manual reconciliation; no blind retry.
+- `server.ts`: admin-only, off-by-default rollback prepare and draft PR
+  endpoints, and read-only GitHub merged rollback PR verification. The
+  verifier checks exact registered PR number/head, required CI, independent
+  GitHub approval, main ancestry and the full restored tree, then saves
+  `ROLLBACK_COMPLETED` transactionally.
+- `src/App.tsx` / DAG: explicit three-stage rollback actions. Removed
+  misleading one-click “Execute Revert & Auto-Spawn Hotfix” message.
+- Regression tests: real disposable Git remote commit/tree restoration,
+  main unchanged, scope mismatch, advanced main and duplicate branch denial;
+  failed Docker never pushes. GitHub Actions runs the restored tree through
+  a **real Docker** test stage. Real Express+SQLite rollback HTTP tests use
+  controlled **mock GitHub REST** proof for absent merge, wrong tree,
+  missing approval and accepted PR.
+- [Verified rollback operator guide](./VERIFIED_ROLLBACK_PIPELINE.md)
+  describes configuration, strict preconditions and P0 acceptance gaps.
+
+**Live target GitHub rollback PR merge was NOT performed.** Real local Git
+and Docker tests are not a substitute for owner-approved live acceptance.
+
 ## Remaining priorities
 
 P0: rotate leaked master signer, revoke old tokens, owner-approved live
-GitHub acceptance and verified Git revert rollback. P1: distributed PR
+GitHub forward/rollback live acceptance and rollback crash reconciliation. P1: distributed PR
 creation reservation, external operator/CI integration of administrator
 proof grants, multi-host worker coordination, real provider credentials /
 branch protection, production dashboard truthfulness, language-specific
