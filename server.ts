@@ -1490,6 +1490,32 @@ Fix the code error and output a working unified diff patch.`;
   res.json({ success: true, ticket, healedDiff });
 });
 
+// Human-review-safe authorization for *read-only* GitHub merge proof
+// verification. This does NOT renew a worker lease or approve/perform a merge.
+app.post('/api/cluster/ticket/authorize-merge-verification', authRole(['ADMIN']), (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string' || !ticketId.trim()) {
+    return res.status(400).json({ success: false, error: 'INVALID_TICKET_ID' });
+  }
+  const repo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const token = process.env.SUTRADHAR_GITHUB_TOKEN?.trim() || '';
+  const checks = (process.env.SUTRADHAR_REQUIRED_CHECKS || '')
+    .split(';').map(x => x.trim()).filter(Boolean);
+  if (!repo || !token || !checks.length) {
+    return res.status(503).json({ success: false, error: 'GITHUB_VERIFICATION_NOT_CONFIGURED' });
+  }
+  const grant = clusterDb.authorizeGitMergeVerification(ticketId, repo);
+  if (!grant.success) {
+    return res.status(409).json({ success: false, error: grant.error });
+  }
+  return res.json({
+    success: true, status: 'MERGE_VERIFICATION_AUTHORIZED',
+    ticketId, prNumber: grant.prNumber, headSha: grant.headSha,
+    expiresAt: grant.expiresAt,
+    message: 'Administrator authorized proof verification for 15 minutes; no PR merged or worker lease renewed.'
+  });
+});
+
 // 6. GitHub independent read-only merge verifier.
 // This endpoint NEVER pushes to a branch, merges a PR or creates Git commits.
 app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res) => {
@@ -1501,15 +1527,6 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res
   if (!ticket) return res.status(404).json({ verified: false, error: 'TICKET_NOT_FOUND' });
   const active = clusterState.tickets.find(t => t.id === ticketId);
   const snapshot = clusterDb.getSystemState();
-  const tokenToVerify = req.body?.tokenHeader || ticket.ed25519Token || '';
-  const verification = verifyEd25519Token(tokenToVerify, ticket.id, snapshot.epochId, ticket.allowedFiles);
-  if (!verification.verified || !verification.payload) {
-    return res.status(403).json({ verified: false, error: verification.error || 'INVALID_LEASE_SIGNATURE' });
-  }
-  const payload = verification.payload;
-  if (payload.tokenId && clusterDb.isTokenRevoked(payload.tokenId)) {
-    return res.status(403).json({ verified: false, error: '403_REVOKED_TOKEN' });
-  }
   if (req.body?.branch && req.body.branch !== ticket.branch) {
     return res.status(403).json({ verified: false, error: '403_BRANCH_MISMATCH' });
   }
@@ -1534,17 +1551,24 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res
   }
   const attestation = clusterDb.getSandboxAttestation(ticketId);
   if (!attestation || attestation.epochId !== snapshot.epochId ||
-      attestation.patchSha256 !== crypto.createHash('sha256').update(ticket.diffPatch).digest('hex') ||
-      attestation.workerId !== payload.workerId) {
+      attestation.patchSha256 !== crypto.createHash('sha256').update(ticket.diffPatch).digest('hex')) {
     return res.status(409).json({ verified: false, error: 'TESTED_PATCH_ATTESTATION_REQUIRED' });
   }
-  const lease = clusterDb.getActiveLeaseAuth(ticketId);
-  // The exact signed token ID must be the one the authoritative DB leased
-  // to this worker in this epoch; arbitrary historical tokens cannot pass.
-  if (!lease || !payload.tokenId || lease.tokenId !== payload.tokenId ||
-      lease.workerId !== payload.workerId || lease.epochId !== snapshot.epochId ||
-      lease.expiresAt <= Date.now()) {
-    return res.status(403).json({ verified: false, error: 'WORKER_LEASE_NOT_CURRENT' });
+  const grant = clusterDb.getMergeVerificationGrant(ticketId);
+  const submitted = clusterDb.getDraftPrSubmission(ticketId);
+  const pushed = clusterDb.getVerifiedWorkerPush(ticketId);
+  if (!grant || !submitted || !pushed ||
+      grant.consumedAt !== null || grant.expiresAt <= Date.now() ||
+      grant.epochId !== snapshot.epochId || grant.repo !== githubRepo ||
+      grant.prNumber !== submitted.prNumber || grant.headSha !== submitted.headSha ||
+      grant.headSha !== pushed.headSha || grant.branch !== ticket.branch ||
+      grant.treeSha !== attestation.candidateTreeSha ||
+      grant.patchSha256 !== attestation.patchSha256 ||
+      submitted.repo !== githubRepo || pushed.repo !== githubRepo) {
+    return res.status(409).json({
+      verified: false, error: 'ADMIN_MERGE_VERIFICATION_GRANT_REQUIRED',
+      message: 'Administrator must explicitly authorize current registered PR proof verification.'
+    });
   }
 
   const requiredApprovals = Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS || '1');
@@ -1553,6 +1577,7 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res
     allowedFiles: ticket.allowedFiles,
     baselineCommit: attestation.baselineCommit,
     candidateTreeSha: attestation.candidateTreeSha,
+    expectedPrNumber: grant.prNumber, expectedHeadSha: grant.headSha,
     requiredChecks, requiredApprovals
   });
   if (!evidence.verified) {
@@ -1567,7 +1592,7 @@ app.post('/api/cluster/ticket/verify-push', authRole(['ADMIN']), async (req, res
     branch: evidence.branch, headSha: evidence.headSha,
     mergeSha: evidence.mergeSha, treeSha: evidence.treeSha,
     patchSha256: attestation.patchSha256, epochId: snapshot.epochId,
-    workerId: payload.workerId, tokenId: payload.tokenId!
+    grantId: grant.grantId
   });
   if (!committed) {
     return res.status(409).json({ verified: false, error: 'GITHUB_MERGE_EVIDENCE_STALE' });
