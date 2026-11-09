@@ -207,7 +207,7 @@ def push_tested_patch(
         # No '+' refspec, --force, remote delete, or push to main.
         # The target branch must not exist; after the push we verify exact SHA.
         try:
-            _git(bare, env, "push", "--porcelain", "--no-verify",
+            _git(bare, env, "push", "--porcelain",
                  origin, f"{new_sha}:{branch_ref}", timeout=60)
         except PublishFailure:
             raise PublishFailure("WORKER_BRANCH_PUSH_FAILED")
