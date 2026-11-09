@@ -180,6 +180,27 @@ export const App: React.FC = () => {
     }
   };
 
+  // Recover an uncertain push with read-only Git inspection, never re-pushing.
+  const handleReconcileWorkerPush = async (ticketId: string) => {
+    try {
+      const response = await fetch('/api/cluster/ticket/reconcile-tested-branch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId })
+      });
+      const data = await response.json();
+      if (response.ok && data.status === 'PUSH_CONFIRMED_NOT_MERGED') {
+        showToast(`Recovered remote branch ${data.branch} at ${data.headSha?.slice(0, 12)}; draft PR can follow.`);
+      } else if (response.ok && data.status === 'REMOTE_ABSENT_EXPLICIT_RETRY_AVAILABLE') {
+        showToast('Remote branch absent; explicitly request Push Tested Branch if still authorized.');
+      } else {
+        showToast(`Push reconciliation blocked: ${data.error || response.status}; no automatic retry.`);
+      }
+      await fetchState();
+    } catch (error) {
+      showToast(`Push reconciliation unavailable: ${error}`);
+    }
+  };
+
   // Submit only an existing, exact Docker-tested branch as a draft GitHub PR.
   const handleCreateDraftPr = async (ticketId: string) => {
     try {
@@ -460,6 +481,7 @@ export const App: React.FC = () => {
             onSynthesize={handleSynthesize}
             onTest={handleTestSandbox}
             onPushTestedBranch={handlePushTestedBranch}
+            onReconcileWorkerPush={handleReconcileWorkerPush}
             onCreateDraftPr={handleCreateDraftPr}
             onVerifyPush={handleVerifyPush}
             onSelectTicketForConsole={(t) => {
@@ -481,6 +503,7 @@ export const App: React.FC = () => {
             onTestSandbox={handleTestSandbox}
             onSelfHeal={handleSelfHeal}
             onPushTestedBranch={handlePushTestedBranch}
+            onReconcileWorkerPush={handleReconcileWorkerPush}
             onCreateDraftPr={handleCreateDraftPr}
             onVerifyPush={handleVerifyPush}
             onSelectTicket={(t) => setActiveTicket(t)}
