@@ -233,6 +233,24 @@ export class ClusterDatabase {
         epoch_id INTEGER NOT NULL,
         pushed_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS worker_push_jobs (
+        ticket_id TEXT PRIMARY KEY,
+        reservation_id TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        baseline_commit TEXT NOT NULL,
+        candidate_tree_sha TEXT NOT NULL,
+        patch_sha256 TEXT NOT NULL,
+        worker_id TEXT NOT NULL,
+        token_id TEXT NOT NULL,
+        epoch_id INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('RUNNING','NEEDS_RECONCILIATION','CONFIRMED')),
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        last_error TEXT
+      );
     `);
 
     // Ensure baseline system_state row
@@ -1167,11 +1185,140 @@ export class ClusterDatabase {
     } : null;
   }
 
+  /**
+   * Cross-process SQLite reservation. A timed-out RUNNING job is NEVER retried
+   * automatically: the remote push may have succeeded just before a crash.
+   */
+  public reserveWorkerPushJob(input: {
+    ticketId: string; repo: string; branch: string;
+    treeSha: string; baselineCommit: string; patchSha256: string;
+    workerId: string; tokenId: string; epochId: number;
+  }): { success: true; reservationId: string } | { success: false; error: string } {
+    const fail = (error: string): { success: false; error: string } => ({ success: false, error });
+    if (!/^[0-9a-f]{40}$/.test(input.treeSha) ||
+        !/^[0-9a-f]{40}$/.test(input.baselineCommit) ||
+        !/^[0-9a-f]{64}$/.test(input.patchSha256) ||
+        !input.tokenId || !input.workerId) return fail('WORKER_PUSH_RESERVATION_INVALID');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const now = Date.now();
+      const t = this.db.prepare('SELECT status, branch, assigned_to, diff_patch FROM tickets WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const a = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const l = this.db.prepare('SELECT * FROM worker_leases WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id = 1')
+        .get() as any;
+      const receipt = this.db.prepare('SELECT ticket_id FROM verified_worker_pushes WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      if (receipt || !t || !a || !l || !sys || sys.kill_switch_active ||
+          t.status !== 'READY_FOR_REVIEW' || t.branch !== input.branch ||
+          t.assigned_to !== input.workerId || !t.diff_patch ||
+          crypto.createHash('sha256').update(t.diff_patch).digest('hex') !== input.patchSha256 ||
+          a.patch_sha256 !== input.patchSha256 || a.baseline_commit !== input.baselineCommit ||
+          a.candidate_tree_sha !== input.treeSha || a.worker_id !== input.workerId ||
+          Number(a.epoch_id) !== input.epochId || Number(sys.epoch_id) !== input.epochId ||
+          l.worker_id !== input.workerId || l.token_id !== input.tokenId ||
+          Number(l.epoch_id) !== input.epochId || l.is_revoked ||
+          Number(l.expires_at) <= now || this.isTokenRevoked(input.tokenId)) {
+        this.db.exec('ROLLBACK');
+        return fail('WORKER_PUSH_RESERVATION_PRECONDITION_FAILED');
+      }
+      const prev = this.db.prepare('SELECT * FROM worker_push_jobs WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      if (prev) {
+        const same = prev.repo === input.repo && prev.branch === input.branch &&
+          prev.baseline_commit === input.baselineCommit &&
+          prev.candidate_tree_sha === input.treeSha &&
+          prev.patch_sha256 === input.patchSha256 && prev.worker_id === input.workerId &&
+          prev.token_id === input.tokenId && Number(prev.epoch_id) === input.epochId;
+        if (!same) {
+          this.db.exec('ROLLBACK');
+          return fail('WORKER_PUSH_RESERVATION_MISMATCH');
+        }
+        if (prev.state === 'RUNNING' && Number(prev.expires_at) <= now) {
+          this.db.prepare(`UPDATE worker_push_jobs SET state='NEEDS_RECONCILIATION',
+            last_error='RESERVATION_EXPIRED', updated_at=? WHERE ticket_id=?`)
+            .run(now, input.ticketId);
+          this.db.exec('COMMIT');
+          return fail('WORKER_PUSH_RECOVERY_REQUIRED');
+        }
+        this.db.exec('ROLLBACK');
+        return fail(prev.state === 'RUNNING' ? 'WORKER_PUSH_RESERVED' :
+          prev.state === 'CONFIRMED' ? 'WORKER_PUSH_ALREADY_CONFIRMED' :
+          'WORKER_PUSH_RECOVERY_REQUIRED');
+      }
+      const reservationId = crypto.randomUUID();
+      // 5-minute window, longer than the 180s push process timeout.
+      this.db.prepare(`INSERT INTO worker_push_jobs
+        (ticket_id, reservation_id, repo, branch, baseline_commit, candidate_tree_sha,
+         patch_sha256, worker_id, token_id, epoch_id, state, started_at, updated_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?, ?, ?)`).run(
+          input.ticketId, reservationId, input.repo, input.branch, input.baselineCommit,
+          input.treeSha, input.patchSha256, input.workerId, input.tokenId,
+          input.epochId, now, now, now + 300000
+        );
+      this.db.exec('COMMIT');
+      return { success: true, reservationId };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  public getWorkerPushJob(ticketId: string): {
+    reservationId: string; repo: string; branch: string; baselineCommit: string;
+    treeSha: string; patchSha256: string; workerId: string; tokenId: string;
+    epochId: number; state: string; expiresAt: number; lastError: string | null;
+  } | null {
+    const r = this.db.prepare('SELECT * FROM worker_push_jobs WHERE ticket_id = ?')
+      .get(ticketId) as any;
+    return r ? {
+      reservationId: r.reservation_id, repo: r.repo, branch: r.branch,
+      baselineCommit: r.baseline_commit, treeSha: r.candidate_tree_sha,
+      patchSha256: r.patch_sha256, workerId: r.worker_id, tokenId: r.token_id,
+      epochId: Number(r.epoch_id), state: r.state, expiresAt: Number(r.expires_at),
+      lastError: r.last_error
+    } : null;
+  }
+
+  public markWorkerPushUncertain(ticketId: string, reservationId: string, reason: string): boolean {
+    const allowed = /^[A-Z_]{3,64}$/.test(reason) ? reason : 'REMOTE_RESULT_UNCERTAIN';
+    const r = this.db.prepare(`UPDATE worker_push_jobs
+      SET state='NEEDS_RECONCILIATION', last_error=?, updated_at=?
+      WHERE ticket_id=? AND reservation_id=? AND state='RUNNING'`)
+      .run(allowed, Date.now(), ticketId, reservationId);
+    return r.changes === 1;
+  }
+
+  public expireWorkerPushJob(ticketId: string): boolean {
+    const now = Date.now();
+    const r = this.db.prepare(`UPDATE worker_push_jobs
+      SET state='NEEDS_RECONCILIATION', last_error='RESERVATION_EXPIRED', updated_at=?
+      WHERE ticket_id=? AND state='RUNNING' AND expires_at<=?`)
+      .run(now, ticketId, now);
+    return r.changes === 1;
+  }
+
+  /**
+   * Explicit administrator reconciliation after a read-only remote inspection
+   * proves the branch is absent AND remote main is still the tested baseline.
+   * No implicit retry or automatic push.
+   */
+  public clearWorkerPushAfterVerifiedAbsence(ticketId: string, reservationId: string): boolean {
+    const r = this.db.prepare(`DELETE FROM worker_push_jobs
+      WHERE ticket_id=? AND reservation_id=? AND state='NEEDS_RECONCILIATION'
+      AND NOT EXISTS(SELECT 1 FROM verified_worker_pushes WHERE ticket_id=?)`)
+      .run(ticketId, reservationId, ticketId);
+    return r.changes === 1;
+  }
+
   /** Durable receipt for an independently verified worker-branch push. */
   public recordVerifiedWorkerPush(input: {
     ticketId: string; repo: string; branch: string; headSha: string;
     treeSha: string; baselineCommit: string; patchSha256: string;
-    workerId: string; epochId: number; tokenId: string;
+    workerId: string; epochId: number; tokenId: string; reservationId: string;
   }): boolean {
     if (![input.headSha, input.treeSha, input.baselineCommit].every(x => /^[a-f0-9]{40}$/.test(x)) ||
         !/^[a-f0-9]{64}$/.test(input.patchSha256)) return false;
@@ -1202,6 +1349,19 @@ export class ClusterDatabase {
         this.db.exec('ROLLBACK');
         return false;
       }
+      const job = this.db.prepare('SELECT * FROM worker_push_jobs WHERE ticket_id = ?')
+        .get(input.ticketId) as any;
+      if (!job || job.reservation_id !== input.reservationId ||
+          job.repo !== input.repo || job.branch !== input.branch ||
+          job.baseline_commit !== input.baselineCommit ||
+          job.candidate_tree_sha !== input.treeSha ||
+          job.patch_sha256 !== input.patchSha256 ||
+          job.worker_id !== input.workerId || job.token_id !== input.tokenId ||
+          Number(job.epoch_id) !== input.epochId ||
+          !['RUNNING', 'NEEDS_RECONCILIATION', 'CONFIRMED'].includes(job.state)) {
+        this.db.exec('ROLLBACK');
+        return false;
+      }
       const previous = this.db.prepare('SELECT * FROM verified_worker_pushes WHERE ticket_id = ?')
         .get(input.ticketId) as any;
       if (previous) {
@@ -1221,6 +1381,9 @@ export class ClusterDatabase {
         input.treeSha, input.baselineCommit, input.patchSha256,
         input.workerId, input.epochId, Date.now()
       );
+      this.db.prepare(`UPDATE worker_push_jobs SET state='CONFIRMED',
+        last_error=NULL, updated_at=? WHERE ticket_id=? AND reservation_id=?`)
+        .run(Date.now(), input.ticketId, input.reservationId);
       this.appendAuditLog({
         actor: input.workerId, action: 'WORKER_BRANCH_PUSH_VERIFIED',
         ticketId: input.ticketId,
