@@ -23,6 +23,7 @@ interface SandboxProps {
   onTestSandbox: (ticketId: string) => void;
   onSelfHeal: (ticketId: string) => void;
   onVerifyPush: (ticketId: string) => void;
+  onAuthorizeMergeVerification: (ticketId: string) => void;
   onCreateDraftPr: (ticketId: string) => void;
   onPushTestedBranch: (ticketId: string) => void;
   onReconcileWorkerPush: (ticketId: string) => void;
@@ -36,6 +37,7 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
   onTestSandbox,
   onSelfHeal,
   onVerifyPush,
+  onAuthorizeMergeVerification,
   onCreateDraftPr,
   onPushTestedBranch,
   onReconcileWorkerPush,
@@ -328,6 +330,11 @@ export const SandboxSelfHealingConsole: React.FC<SandboxProps> = ({
                   <button type="button" onClick={() => onCreateDraftPr(activeTicket.id)}
                     className="rounded border border-indigo-600 bg-indigo-950/30 px-3 py-1 text-indigo-300">
                     Create Draft PR
+                  </button>
+                  <button type="button" onClick={() => onAuthorizeMergeVerification(activeTicket.id)}
+                    className="rounded border border-violet-600 bg-violet-950/30 px-3 py-1 text-violet-300"
+                    title="Authorize 15-minute read-only merge verification; not an approval or merge">
+                    Authorize Merge Check
                   </button>
                   <button type="button" onClick={() => onVerifyPush(activeTicket.id)}
                     className="rounded border border-emerald-600 bg-emerald-950/30 px-3 py-1 text-emerald-300">
