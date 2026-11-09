@@ -289,7 +289,7 @@ def main() -> None:
     parser.add_argument("--baseline-commit", required=True)
     parser.add_argument("--candidate-tree-sha", required=True)
     parser.add_argument("--patch-sha256", required=True)
-    parser.add_argument("--patch-file", required=True)
+    parser.add_argument("--patch-file", help="Required for push; not for read-only inspection")
     parser.add_argument("--allowed-file", action="append", default=[])
     parser.add_argument("--changed-file", action="append", default=[])
     parser.add_argument("--inspect-only", action="store_true",
@@ -305,6 +305,8 @@ def main() -> None:
             )
             print(json.dumps({"success": True, **result}, sort_keys=True))
             return
+        if not args.patch_file:
+            raise PublishFailure("PATCH_FILE_REQUIRED")
         result = push_tested_patch(
             repo_root=args.repo_root, github_repository=args.github_repository,
             ticket_id=args.ticket_id, branch=args.branch,
