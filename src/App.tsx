@@ -221,6 +221,26 @@ export const App: React.FC = () => {
     }
   };
 
+  // Administrator authorization to verify remote PR merge evidence. This
+  // creates no Git commit, renews no worker token and does not merge a PR.
+  const handleAuthorizeMergeVerification = async (ticketId: string) => {
+    try {
+      const response = await fetch('/api/cluster/ticket/authorize-merge-verification', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId })
+      });
+      const data = await response.json();
+      if (response.ok && data.status === 'MERGE_VERIFICATION_AUTHORIZED') {
+        showToast(`PR #${data.prNumber}: 15-minute remote proof check authorized; not merged by this action.`);
+      } else {
+        showToast(`Merge proof authorization denied: ${data.error || response.status}`);
+      }
+      await fetchState();
+    } catch (error) {
+      showToast(`Merge proof authorization unavailable: ${error}`);
+    }
+  };
+
   // Handler: Verify merged GitHub PR
   const handleVerifyPush = async (ticketId: string) => {
     try {
@@ -483,6 +503,7 @@ export const App: React.FC = () => {
             onPushTestedBranch={handlePushTestedBranch}
             onReconcileWorkerPush={handleReconcileWorkerPush}
             onCreateDraftPr={handleCreateDraftPr}
+            onAuthorizeMergeVerification={handleAuthorizeMergeVerification}
             onVerifyPush={handleVerifyPush}
             onSelectTicketForConsole={(t) => {
               setActiveTicket(t);
@@ -505,6 +526,7 @@ export const App: React.FC = () => {
             onPushTestedBranch={handlePushTestedBranch}
             onReconcileWorkerPush={handleReconcileWorkerPush}
             onCreateDraftPr={handleCreateDraftPr}
+            onAuthorizeMergeVerification={handleAuthorizeMergeVerification}
             onVerifyPush={handleVerifyPush}
             onSelectTicket={(t) => setActiveTicket(t)}
           />
