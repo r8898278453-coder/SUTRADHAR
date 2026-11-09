@@ -9,7 +9,8 @@
 - SQLite grant CAS enforces tested tree/patch/epoch/kill-switch and original
   token revocation, consumes grant atomically with verified merged SHA.
 - Watchdog now preserves READY_FOR_REVIEW evidence after worker timeout
-  while still revoking stale execution leases.
+  while still revoking stale execution leases. Manual revocation explicitly
+  revokes the worker token and preserves already verified final merge status.
 - Negative and post-lease-expiry tests for admin grants and GitHub evidence.
 - [Human Review Authorization Guide](docs/HUMAN_REVIEW_AUTHORIZATION.md).
 
