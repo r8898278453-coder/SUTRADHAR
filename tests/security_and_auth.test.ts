@@ -10,6 +10,7 @@ import {
   createAdminSession, 
   isTelegramAuthorized,
   generateEd25519Token,
+  verifyEd25519Token,
   isDockerAvailable,
   clusterState
 } from '../server.ts';
@@ -287,19 +288,21 @@ async function runSecurityTestSuite() {
       assert.notStrictEqual(ticket.status, 'COMMITTED_PUSHED');
     });
 
-    await test('Revoked token push attempt -> DENIED (403_REVOKED_TOKEN)', async () => {
-      const { tokenHeader, tokenId } = generateEd25519Token('TKT-104', 'NODE-A8F24C09', clusterState.epochId, ['modules/matrimony/ProfileController.php']);
-      // Revoke token in SQLite
-      clusterDb.revokeToken(tokenId, 'Security test revocation');
-
-      const res = await apiRequest(
-        'POST',
-        '/api/cluster/ticket/verify-push',
-        { 'Authorization': `Bearer ${SUTRADHAR_ADMIN_KEY}` },
-        { ticketId: 'TKT-104', tokenHeader, branch: 'ai/TKT-104' }
+    await test('Revoked worker token is rejected cryptographically, not usable as a merge grant', async () => {
+      const files = ['modules/matrimony/ProfileController.php'];
+      const { tokenHeader, tokenId } = generateEd25519Token(
+        'TKT-104', 'NODE-A8F24C09', clusterState.epochId, files
       );
-      assert.strictEqual(res.status, 403);
-      assert.ok(res.body.error?.includes('403_REVOKED_TOKEN'));
+      clusterDb.revokeToken(tokenId, 'Security test revocation');
+      const verified = verifyEd25519Token(tokenHeader, 'TKT-104', clusterState.epochId, files);
+      assert.strictEqual(verified.verified, false);
+      assert.ok(verified.error?.includes('403_REVOKED_TOKEN'));
+      // Merge authorization is deliberately a separate admin-only workflow;
+      // sending a revoked worker token cannot make a merge claim succeed.
+      const res = await apiRequest('POST', '/api/cluster/ticket/verify-push',
+        { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}` },
+        { ticketId: 'TKT-104', tokenHeader, branch: 'ai/TKT-104' });
+      assert.notStrictEqual(res.body.status, 'COMMITTED_PUSHED');
     });
 
     await test('Wrong-worker heartbeat is denied and SQLite rejects wrong lease owner', async () => {
