@@ -72,10 +72,11 @@ the independently verified `READY_FOR_REVIEW` ticket, assigned provenance
 and patch are **preserved** in SQLite and the in-memory dashboard. This
 does not make an expired worker lease usable again.
 
-An explicit/manual worker lease revocation still cancels the ticket to
-`PENDING` and blocks merge authorization. Revocation of the original
-signed token via `revoked_tokens` also prevents issuing or consuming a
-merge-verification grant.
+An explicit/manual worker lease revocation still cancels an unfinished
+review ticket to `PENDING` and permanently revokes the original token via
+`revoked_tokens`. It blocks any outstanding or future proof grant. If the
+ticket is already `COMMITTED_PUSHED` or awaiting rollback, manual lease
+cleanup preserves that final status and verified merge evidence.
 
 ## Rejection and limitation cases
 
