@@ -22,7 +22,7 @@
 ### Remaining
 - Real target GitHub forward and rollback reviewed-PR acceptance,
   historic key rotation, multi-host scheduler/PR queue and a dedicated
-  real-Docker recovery HTTP acceptance test are still pending.
+  live GitHub acceptance with an actual protected target repository remain pending.
 
 ## [Unreleased — reviewed Git rollback workflow] - 2026-11-10
 
