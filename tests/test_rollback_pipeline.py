@@ -88,7 +88,7 @@ class RollbackBranchTests(unittest.TestCase):
         self.assertEqual(result["headSha"], pushed["headSha"])
         self.assertEqual(result["treeSha"], self.baseline_tree)
         self.assertEqual(result["dockerExitCode"], 0)
-        self.assertEqual(tested, ["SAFE\\n"])
+        self.assertEqual(tested, ["SAFE\n"])
         self.assertEqual(git(self.remote, "rev-parse", "refs/heads/main"), self.merged)
 
     def test_recovery_docker_failure_never_records_verified_branch(self):
