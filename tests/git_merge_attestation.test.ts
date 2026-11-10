@@ -417,3 +417,153 @@ test('rollback requires a previously verified merged ticket and remains blocked 
     assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'ROLLBACK_REQUESTED');
   } finally { t.cleanup(); }
 });
+
+test('rollback recovery can clear an uncertain *absent* remote branch only after explicit fenced inspection', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
+    assert.equal(t.merge(), true);
+    assert.equal(t.db.rollbackMerge(t.ticketId, 'Restore last known good').success, true);
+    const r = t.db.reserveVerifiedRollback(t.ticketId, 'acme/widgets');
+    assert.equal(r.success, true);
+    if (!r.success) return;
+    const busy = t.db.reserveRollbackReconciliation(t.ticketId, 'acme/widgets');
+    assert.deepEqual(busy, { success: false, error: 'ROLLBACK_RECOVERY_OPERATION_STILL_ACTIVE' });
+    assert.equal(t.db.markRollbackUncertain(t.ticketId, r.reservationId), true);
+    const inspect = t.db.reserveRollbackReconciliation(t.ticketId, 'acme/widgets');
+    assert.equal(inspect.success, true);
+    if (!inspect.success) return;
+    assert.equal(t.db.reserveRollbackReconciliation(t.ticketId, 'acme/widgets').success, false);
+    const base = {
+      ticketId: t.ticketId, reservationId: r.reservationId,
+      recoveryToken: inspect.recoveryToken,
+      repo: 'acme/widgets', originalMergeSha: MERGE,
+      baselineCommit: BASE, testedTree: TREE, epochId: r.epochId,
+      result: 'ABSENT' as const, branch: r.branch
+    };
+    assert.equal(t.db.finishRollbackReconciliation({
+      ...base, recoveryToken: 'forged-recovery-token'
+    }), false);
+    assert.equal(t.db.finishRollbackReconciliation(base), true);
+    assert.equal(t.db.getRollbackProposal(t.ticketId), null);
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'ROLLBACK_REQUESTED');
+    assert.equal(t.db.finishRollbackReconciliation(base), false);
+    const retry = t.db.reserveVerifiedRollback(t.ticketId, 'acme/widgets');
+    assert.equal(retry.success, true, 'Only an explicitly verified absent ref allows new preparation');
+    if (retry.success) assert.notEqual(retry.reservationId, r.reservationId);
+  } finally { t.cleanup(); }
+});
+
+test('rollback recovery preserves original remote head/tree and records an existing draft PR', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
+    assert.equal(t.merge(), true);
+    assert.equal(t.db.rollbackMerge(t.ticketId, 'Regression').success, true);
+    const r = t.db.reserveVerifiedRollback(t.ticketId, 'acme/widgets');
+    assert.equal(r.success, true);
+    if (!r.success) return;
+    const head = 'e'.repeat(40), restored = 'f'.repeat(40);
+    assert.equal(t.db.recordRollbackPrepared({
+      ticketId: t.ticketId, reservationId: r.reservationId,
+      repo: 'acme/widgets', branch: r.branch,
+      originalMergeSha: MERGE, baselineCommit: BASE,
+      testedMergeTree: TREE, headSha: head, revertedTree: restored, epochId: r.epochId
+    }), true);
+    assert.equal(t.db.reserveRollbackDraftPr(t.ticketId, r.reservationId), true);
+    assert.equal(t.db.markRollbackUncertain(t.ticketId, r.reservationId), true);
+    const recovery = t.db.reserveRollbackReconciliation(t.ticketId, 'acme/widgets');
+    assert.equal(recovery.success, true);
+    if (!recovery.success) return;
+    const args = {
+      ticketId: t.ticketId, reservationId: r.reservationId,
+      recoveryToken: recovery.recoveryToken,
+      repo: 'acme/widgets', originalMergeSha: MERGE,
+      baselineCommit: BASE, testedTree: TREE, epochId: r.epochId,
+      result: 'DRAFT_PR' as const, branch: r.branch,
+      headSha: head, revertedTree: restored, prNumber: 91
+    };
+    assert.equal(t.db.finishRollbackReconciliation({
+      ...args, headSha: 'a'.repeat(40)
+    }), false, 'Cannot substitute a different pushed branch');
+    assert.equal(t.db.finishRollbackReconciliation(args), true);
+    const p = t.db.getRollbackProposal(t.ticketId);
+    assert.equal(p?.status, 'DRAFT_PR');
+    assert.equal(p?.headSha, head);
+    assert.equal(p?.prNumber, 91);
+    assert.equal(t.db.reserveRollbackDraftPr(t.ticketId, r.reservationId), false);
+    assert.equal(t.db.finishRollbackReconciliation(args), false);
+    assert.equal(t.db.getAllTickets().find(x => x.id === t.ticketId)?.status, 'ROLLBACK_REQUESTED');
+  } finally { t.cleanup(); }
+});
+
+test('reconciliation of a stale/crashed reservation is fenced across SQLite processes', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
+    assert.equal(t.merge(), true);
+    assert.equal(t.db.rollbackMerge(t.ticketId, 'Regression').success, true);
+    const r = t.db.reserveVerifiedRollback(t.ticketId, 'acme/widgets');
+    assert.equal(r.success, true);
+    if (!r.success) return;
+    (t.db as any).db.prepare('UPDATE rollback_proposals SET updated_at=? WHERE ticket_id=?')
+      .run(Date.now() - 400000, t.ticketId);
+    const lock = t.db.reserveRollbackReconciliation(t.ticketId, 'acme/widgets');
+    assert.equal(lock.success, true);
+    if (!lock.success) return;
+    const db2 = new ClusterDatabase((t.db as any).__testDbPath);
+    assert.deepEqual(db2.reserveRollbackReconciliation(t.ticketId, 'acme/widgets'), {
+      success: false, error: 'ROLLBACK_RECOVERY_ALREADY_RUNNING'
+    });
+    assert.equal(db2.failRollbackReconciliation(t.ticketId, r.reservationId, 'wrong'), false);
+    assert.equal(db2.failRollbackReconciliation(t.ticketId, r.reservationId, lock.recoveryToken), true);
+    const again = t.db.reserveRollbackReconciliation(t.ticketId, 'acme/widgets');
+    assert.equal(again.success, true);
+    if (!again.success) return;
+    assert.notEqual(again.recoveryToken, lock.recoveryToken);
+    assert.equal(t.db.finishRollbackReconciliation({
+      ticketId: t.ticketId, reservationId: r.reservationId,
+      recoveryToken: lock.recoveryToken,
+      repo: 'acme/widgets', originalMergeSha: MERGE,
+      baselineCommit: BASE, testedTree: TREE, epochId: r.epochId,
+      result: 'ABSENT', branch: r.branch
+    }), false, 'An older recovery token cannot commit after takeover');
+  } finally { t.cleanup(); }
+});
+
+test('rollback reconciliation denies a changed epoch or paused cluster', () => {
+  const t = setup();
+  try {
+    assert.equal(t.attest(), true);
+    assert.equal(t.push(), true);
+    assert.equal(t.draft(), true);
+    assert.equal(t.authorize().success, true);
+    assert.equal(t.merge(), true);
+    assert.equal(t.db.rollbackMerge(t.ticketId, 'Regression').success, true);
+    const r = t.db.reserveVerifiedRollback(t.ticketId, 'acme/widgets');
+    assert.equal(r.success, true);
+    if (!r.success) return;
+    assert.equal(t.db.markRollbackUncertain(t.ticketId, r.reservationId), true);
+    const recovery = t.db.reserveRollbackReconciliation(t.ticketId, 'acme/widgets');
+    assert.equal(recovery.success, true);
+    if (!recovery.success) return;
+    t.db.setKillSwitch(true, 'Operations paused', 'Admin');
+    assert.equal(t.db.finishRollbackReconciliation({
+      ticketId: t.ticketId, reservationId: r.reservationId,
+      recoveryToken: recovery.recoveryToken,
+      repo: 'acme/widgets', originalMergeSha: MERGE,
+      baselineCommit: BASE, testedTree: TREE, epochId: r.epochId,
+      result: 'ABSENT', branch: r.branch
+    }), false);
+    assert.equal(t.db.getRollbackProposal(t.ticketId)?.status, 'NEEDS_RECONCILIATION');
+  } finally { t.cleanup(); }
+});
