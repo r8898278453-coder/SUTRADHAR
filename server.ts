@@ -10,6 +10,7 @@ import type { ClusterState, SwarmNode, Ticket, LLMCascadeTier, TelegramMessage, 
 import { clusterDb } from './server_db.ts';
 import { verifyGitHubMergeEvidence } from './github_merge_verifier.ts';
 import { createVerifiedDraftPr } from './github_pr_creator.ts';
+import { inspectRollbackDraftPr } from './github_rollback_reconciler.ts';
 
 const app = express();
 const PORT = 3000;
@@ -3211,6 +3212,136 @@ app.post('/api/master/rollback/prepare', authRole(['ADMIN']), async (req, res) =
     return res.status(502).json({ success: false,
       error: 'ROLLBACK_PREPARATION_UNAVAILABLE', requiresReconciliation: true });
   } finally {
+    activeRollbackPreparations.delete(ticketId);
+  }
+});
+
+// Explicit crash recovery for uncertain rollback external writes. No new
+// Git push or PR creation, regardless of remote outcome. Cross-process DB
+// reservation fences concurrent inspectors; restored tree is Docker-retested.
+app.post('/api/master/rollback/reconcile', authRole(['ADMIN']), async (req, res) => {
+  const ticketId = req.body?.ticketId;
+  if (typeof ticketId !== 'string' || !ticketId.trim()) {
+    return res.status(400).json({ success: false, error: 'INVALID_TICKET_ID' });
+  }
+  if (process.env.SUTRADHAR_ENABLE_ROLLBACK !== 'true') {
+    return res.status(503).json({ success: false, error: 'ROLLBACK_FEATURE_DISABLED' });
+  }
+  const repo = process.env.SUTRADHAR_GITHUB_REPOSITORY?.trim() || '';
+  const target = process.env.SUTRADHAR_TARGET_REPO_ROOT?.trim() || '';
+  const gitToken = process.env.SUTRADHAR_GITHUB_ROLLBACK_TOKEN?.trim() || '';
+  const readToken = process.env.SUTRADHAR_GITHUB_TOKEN?.trim() || '';
+  const command = process.env.SUTRADHAR_SANDBOX_TEST_COMMAND?.trim() || '';
+  if (!repo || !target || !gitToken || !readToken || !command) {
+    return res.status(503).json({ success: false, error: 'ROLLBACK_RECOVERY_NOT_CONFIGURED' });
+  }
+  if (activeRollbackPreparations.has(ticketId)) {
+    return res.status(409).json({ success: false, error: 'ROLLBACK_OPERATION_IN_PROCESS' });
+  }
+  const reserved = clusterDb.reserveRollbackReconciliation(ticketId, repo);
+  if (!reserved.success) {
+    return res.status(409).json({ success: false, error: reserved.error });
+  }
+  activeRollbackPreparations.add(ticketId);
+  let accepted = false;
+  try {
+    const args = [
+      '-m', 'sandbox.prepare_rollback', '--inspect-only',
+      '--repo-root', target, '--github-repository', repo,
+      '--ticket-id', ticketId, '--merged-commit', reserved.originalMergeSha,
+      '--baseline-commit', reserved.baselineCommit,
+      '--tested-tree', reserved.testedTree, '--test-command', command,
+      ...reserved.allowedFiles.flatMap(file => ['--allowed-file', file]),
+      ...reserved.changedFiles.flatMap(file => ['--changed-file', file])
+    ];
+    const output = await new Promise<string>((resolve, reject) => {
+      child_process.execFile(process.env.SUTRADHAR_PYTHON || 'python3', args, {
+        cwd: process.cwd(), timeout: 240000, maxBuffer: 128 * 1024,
+        env: { ...process.env, SUTRADHAR_GITHUB_ROLLBACK_TOKEN: gitToken }
+      }, (error, stdout) => {
+        if (error) reject(new Error('ROLLBACK_READ_ONLY_GIT_UNAVAILABLE'));
+        else resolve(stdout);
+      });
+    });
+    let git: any;
+    try { git = JSON.parse(output.trim()); }
+    catch { return res.status(502).json({ success: false, error: 'ROLLBACK_RECOVERY_GIT_INVALID' }); }
+    if (!git?.success) {
+      return res.status(409).json({ success: false,
+        error: typeof git?.error === 'string' ? git.error : 'ROLLBACK_RECOVERY_GIT_FAILED',
+        requiresManualReview: true });
+    }
+    if (git.branch !== reserved.branch ||
+        git.mergedCommit !== reserved.originalMergeSha ||
+        git.baselineCommit !== reserved.baselineCommit ||
+        git.testedMergeTreeSha !== reserved.testedTree) {
+      return res.status(409).json({ success: false, error: 'ROLLBACK_RECOVERY_PROVENANCE_MISMATCH' });
+    }
+    const absent = git.status === 'ROLLBACK_REMOTE_BRANCH_ABSENT';
+    const present = git.status === 'ROLLBACK_REMOTE_BRANCH_CONFIRMED_NOT_MERGED';
+    if (!absent && !present) {
+      return res.status(502).json({ success: false, error: 'ROLLBACK_RECOVERY_GIT_STATUS_INVALID' });
+    }
+    if (present && (
+        git.dockerExitCode !== 0 ||
+        !/^[0-9a-f]{40}$/.test(git.headSha || '') ||
+        !/^[0-9a-f]{40}$/.test(git.treeSha || '') ||
+        !Array.isArray(git.changedFiles) ||
+        git.changedFiles.length !== reserved.changedFiles.length ||
+        git.changedFiles.some((file: string) => !reserved.changedFiles.includes(file)) ||
+        (reserved.headSha && reserved.headSha !== git.headSha) ||
+        (reserved.revertedTree && reserved.revertedTree !== git.treeSha))) {
+      return res.status(409).json({ success: false,
+        error: 'ROLLBACK_RECOVERY_RETEST_OR_SHA_MISMATCH' });
+    }
+    const pr = await inspectRollbackDraftPr({
+      repo, token: readToken, branch: reserved.branch,
+      originalMergeSha: reserved.originalMergeSha,
+      branchHeadSha: present ? git.headSha : null,
+      restoredTreeSha: present ? git.treeSha : null,
+      changedFiles: reserved.changedFiles, allowedFiles: reserved.allowedFiles
+    });
+    if (!pr.verified) {
+      return res.status(409).json({ success: false, error: pr.error,
+        requiresManualReview: true });
+    }
+    if (absent && (pr.state !== 'ABSENT' || reserved.headSha)) {
+      return res.status(409).json({ success: false, error: 'ROLLBACK_RECOVERY_REMOTE_CONFLICT' });
+    }
+    const result = absent ? 'ABSENT' : pr.state === 'DRAFT_PR' ? 'DRAFT_PR' : 'BRANCH_PUSHED';
+    const saved = clusterDb.finishRollbackReconciliation({
+      ticketId, reservationId: reserved.reservationId,
+      recoveryToken: reserved.recoveryToken, repo,
+      originalMergeSha: reserved.originalMergeSha,
+      baselineCommit: reserved.baselineCommit,
+      testedTree: reserved.testedTree, epochId: reserved.epochId,
+      result, branch: reserved.branch,
+      ...(present ? { headSha: git.headSha, revertedTree: git.treeSha } : {}),
+      ...(pr.state === 'DRAFT_PR' ? { prNumber: pr.prNumber } : {})
+    });
+    if (!saved) {
+      return res.status(409).json({ success: false, error: 'ROLLBACK_RECOVERY_STATE_CHANGED' });
+    }
+    accepted = true;
+    return res.json({
+      success: true, ticketId,
+      status: result === 'ABSENT' ? 'ROLLBACK_ABSENT_EXPLICIT_PREPARE_ALLOWED' :
+        result === 'BRANCH_PUSHED' ? 'ROLLBACK_BRANCH_RECOVERED_NOT_MERGED' :
+        'ROLLBACK_DRAFT_PR_RECOVERED_NOT_MERGED',
+      ...(present ? { branch: reserved.branch, headSha: git.headSha,
+        restoredTreeSha: git.treeSha } : {}),
+      ...(pr.state === 'DRAFT_PR' ? { prNumber: pr.prNumber, pullRequestUrl: pr.url } : {}),
+      message: 'Recovered by read-only Git/GitHub proof and Docker retest where required. No Git/PR write or merge performed.'
+    });
+  } catch {
+    return res.status(502).json({ success: false,
+      error: 'ROLLBACK_RECOVERY_READ_UNAVAILABLE', requiresManualReview: true });
+  } finally {
+    if (!accepted) {
+      clusterDb.failRollbackReconciliation(
+        ticketId, reserved.reservationId, reserved.recoveryToken
+      );
+    }
     activeRollbackPreparations.delete(ticketId);
   }
 });
