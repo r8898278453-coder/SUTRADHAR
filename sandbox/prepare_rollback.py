@@ -248,7 +248,7 @@ def inspect_rollback_for_recovery(
             raise PublishFailure("ROLLBACK_REMOTE_REVERT_MISMATCH")
         raw = _git(bare, env, "diff", "--no-renames", "--name-status", "-z",
                    baseline_commit, merged_commit)
-        fields = [item.decode("utf-8", "strict") for item in raw.split(b"\\x00") if item]
+        fields = [item.decode("utf-8", "strict") for item in raw.split(b"\x00") if item]
         if len(fields) != 2 * len(changed) or set(fields[1::2]) != changed or (
             any(code not in {"A", "D", "M"} for code in fields[::2])
         ):
