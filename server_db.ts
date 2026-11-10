@@ -298,6 +298,16 @@ export class ClusterDatabase {
       );
     `);
 
+    // Migration for deployed databases: retain existing rollback reservation
+    // rows while adding a cross-process, epoch-fenced reconciliation mutex.
+    const rollbackColumns = this.db.prepare('PRAGMA table_info(rollback_proposals)').all() as any[];
+    if (!rollbackColumns.some(c => c.name === 'recovery_token')) {
+      this.db.exec('ALTER TABLE rollback_proposals ADD COLUMN recovery_token TEXT');
+    }
+    if (!rollbackColumns.some(c => c.name === 'recovery_started_at')) {
+      this.db.exec('ALTER TABLE rollback_proposals ADD COLUMN recovery_started_at INTEGER');
+    }
+
     // Ensure baseline system_state row
     const row = this.db.prepare('SELECT id FROM system_state WHERE id = 1').get();
     if (!row) {
@@ -810,6 +820,181 @@ export class ClusterDatabase {
       SET status='NEEDS_RECONCILIATION', updated_at=?
       WHERE ticket_id=? AND reservation_id=? AND status IN ('PREPARING','PR_CREATING')`)
       .run(Date.now(), ticketId, reservationId).changes === 1;
+  }
+
+  /**
+   * An explicit admin recovery request acquires a distributed mutex in SQLite.
+   * Recent PREPARING and PR_CREATING operations cannot be interrupted: the
+   * original subprocess might still be mutating remote GitHub. Expired
+   * operations remain fenced and must be verified remotely before retrying.
+   */
+  public reserveRollbackReconciliation(ticketId: string, repo: string):
+    { success: true; recoveryToken: string; reservationId: string;
+      originalMergeSha: string; baselineCommit: string; testedTree: string;
+      branch: string; headSha: string | null; revertedTree: string | null;
+      changedFiles: string[]; allowedFiles: string[]; epochId: number } |
+    { success: false; error: string } {
+    const deny = (error: string): { success: false; error: string } => ({ success: false, error });
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const now = Date.now();
+      const p = this.db.prepare('SELECT * FROM rollback_proposals WHERE ticket_id=?')
+        .get(ticketId) as any;
+      const t = this.db.prepare('SELECT * FROM tickets WHERE ticket_id=?')
+        .get(ticketId) as any;
+      const m = this.db.prepare('SELECT * FROM verified_git_merges WHERE ticket_id=?')
+        .get(ticketId) as any;
+      const a = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id=?')
+        .get(ticketId) as any;
+      const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id=1')
+        .get() as any;
+      const changedFiles = a ? JSON.parse(a.changed_files_json || '[]') : [];
+      const allowedFiles = t ? JSON.parse(t.allowed_files_json || '[]') : [];
+      if (!p || !t || !m || !a || !sys || sys.kill_switch_active ||
+          t.status !== 'ROLLBACK_REQUESTED' || p.repo !== repo || m.repo !== repo ||
+          t.rollback_commit !== m.merge_sha || p.original_merge_sha !== m.merge_sha ||
+          p.baseline_commit !== a.baseline_commit || p.tested_merge_tree !== a.candidate_tree_sha ||
+          Number(p.epoch_id) !== Number(sys.epoch_id) ||
+          Number(a.epoch_id) !== Number(sys.epoch_id) ||
+          !t.diff_patch ||
+          crypto.createHash('sha256').update(t.diff_patch).digest('hex') !== a.patch_sha256 ||
+          !Array.isArray(changedFiles) || !changedFiles.length ||
+          !Array.isArray(allowedFiles) ||
+          !changedFiles.every(x => typeof x === 'string' && allowedFiles.includes(x))) {
+        this.db.exec('ROLLBACK'); return deny('ROLLBACK_RECOVERY_PROVENANCE_INVALID');
+      }
+      if (p.status === 'COMPLETED' || p.status === 'DRAFT_PR' || p.status === 'BRANCH_PUSHED') {
+        this.db.exec('ROLLBACK'); return deny('ROLLBACK_RECOVERY_NOT_NEEDED');
+      }
+      const stale = now - Number(p.updated_at) >= 360000;
+      if (!['PREPARING', 'PR_CREATING', 'NEEDS_RECONCILIATION'].includes(p.status)) {
+        this.db.exec('ROLLBACK'); return deny('ROLLBACK_RECOVERY_STATE_INVALID');
+      }
+      if (p.status !== 'NEEDS_RECONCILIATION' && !stale) {
+        this.db.exec('ROLLBACK'); return deny('ROLLBACK_RECOVERY_OPERATION_STILL_ACTIVE');
+      }
+      const lockStale = p.recovery_started_at != null &&
+        now - Number(p.recovery_started_at) >= 360000;
+      if (p.recovery_token && !lockStale) {
+        this.db.exec('ROLLBACK'); return deny('ROLLBACK_RECOVERY_ALREADY_RUNNING');
+      }
+      if (p.recovery_token && p.status !== 'NEEDS_RECONCILIATION' && !stale) {
+        this.db.exec('ROLLBACK'); return deny('ROLLBACK_RECOVERY_OPERATION_STILL_ACTIVE');
+      }
+      const recoveryToken = crypto.randomUUID();
+      this.db.prepare(`UPDATE rollback_proposals
+        SET status='NEEDS_RECONCILIATION', recovery_token=?, recovery_started_at=?,
+            updated_at=?
+        WHERE ticket_id=? AND reservation_id=?`)
+        .run(recoveryToken, now, now, ticketId, p.reservation_id);
+      this.db.exec('COMMIT');
+      return {
+        success: true, recoveryToken, reservationId: p.reservation_id,
+        originalMergeSha: p.original_merge_sha, baselineCommit: p.baseline_commit,
+        testedTree: p.tested_merge_tree, branch: p.branch,
+        headSha: p.revert_head_sha, revertedTree: p.revert_tree_sha,
+        changedFiles, allowedFiles, epochId: Number(sys.epoch_id)
+      };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  public failRollbackReconciliation(ticketId: string, reservationId: string,
+    recoveryToken: string): boolean {
+    return this.db.prepare(`UPDATE rollback_proposals
+      SET recovery_token=NULL, recovery_started_at=NULL, updated_at=?
+      WHERE ticket_id=? AND reservation_id=? AND recovery_token=?
+      AND status='NEEDS_RECONCILIATION'`)
+      .run(Date.now(), ticketId, reservationId, recoveryToken).changes === 1;
+  }
+
+  /**
+   * Accept only read-only Git + actual Docker + read-only GitHub PR proof.
+   * No state can be restored from an arbitrary user supplied SHA.
+   */
+  public finishRollbackReconciliation(input: {
+    ticketId: string; reservationId: string; recoveryToken: string;
+    repo: string; originalMergeSha: string; baselineCommit: string;
+    testedTree: string; epochId: number;
+    result: 'ABSENT' | 'BRANCH_PUSHED' | 'DRAFT_PR';
+    branch: string; headSha?: string; revertedTree?: string;
+    prNumber?: number;
+  }): boolean {
+    if (input.result !== 'ABSENT' && (
+          !/^[0-9a-f]{40}$/.test(input.headSha || '') ||
+          !/^[0-9a-f]{40}$/.test(input.revertedTree || ''))) return false;
+    if (input.result === 'DRAFT_PR' && (
+        !Number.isSafeInteger(input.prNumber) || (input.prNumber ?? 0) < 1)) return false;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const p = this.db.prepare('SELECT * FROM rollback_proposals WHERE ticket_id=?')
+        .get(input.ticketId) as any;
+      const t = this.db.prepare('SELECT * FROM tickets WHERE ticket_id=?')
+        .get(input.ticketId) as any;
+      const m = this.db.prepare('SELECT * FROM verified_git_merges WHERE ticket_id=?')
+        .get(input.ticketId) as any;
+      const a = this.db.prepare('SELECT * FROM sandbox_attestations WHERE ticket_id=?')
+        .get(input.ticketId) as any;
+      const sys = this.db.prepare('SELECT epoch_id, kill_switch_active FROM system_state WHERE id=1')
+        .get() as any;
+      if (!p || !t || !m || !a || !sys || sys.kill_switch_active ||
+          p.status !== 'NEEDS_RECONCILIATION' ||
+          p.reservation_id !== input.reservationId ||
+          p.recovery_token !== input.recoveryToken ||
+          p.repo !== input.repo || p.branch !== input.branch ||
+          p.original_merge_sha !== input.originalMergeSha ||
+          p.baseline_commit !== input.baselineCommit ||
+          p.tested_merge_tree !== input.testedTree ||
+          m.merge_sha !== input.originalMergeSha || m.repo !== input.repo ||
+          t.status !== 'ROLLBACK_REQUESTED' || t.rollback_commit !== input.originalMergeSha ||
+          a.baseline_commit !== input.baselineCommit ||
+          a.candidate_tree_sha !== input.testedTree ||
+          Number(sys.epoch_id) !== input.epochId ||
+          Number(p.epoch_id) !== input.epochId ||
+          Number(a.epoch_id) !== input.epochId ||
+          !t.diff_patch ||
+          crypto.createHash('sha256').update(t.diff_patch).digest('hex') !== a.patch_sha256) {
+        this.db.exec('ROLLBACK'); return false;
+      }
+      if (input.result === 'ABSENT' &&
+          (p.revert_head_sha || p.revert_tree_sha || p.pr_number != null)) {
+        this.db.exec('ROLLBACK'); return false;
+      }
+      if (input.result !== 'ABSENT' && (
+          (p.revert_head_sha && p.revert_head_sha !== input.headSha) ||
+          (p.revert_tree_sha && p.revert_tree_sha !== input.revertedTree) ||
+          (p.pr_number != null && p.pr_number !== input.prNumber))) {
+        this.db.exec('ROLLBACK'); return false;
+      }
+      if (input.result === 'ABSENT') {
+        this.db.prepare(`DELETE FROM rollback_proposals
+          WHERE ticket_id=? AND reservation_id=? AND recovery_token=?`)
+          .run(input.ticketId, input.reservationId, input.recoveryToken);
+      } else {
+        this.db.prepare(`UPDATE rollback_proposals
+          SET status=?, revert_head_sha=?, revert_tree_sha=?, pr_number=?,
+              recovery_token=NULL, recovery_started_at=NULL, updated_at=?
+          WHERE ticket_id=? AND reservation_id=?`).run(
+            input.result, input.headSha, input.revertedTree,
+            input.result === 'DRAFT_PR' ? input.prNumber : null,
+            Date.now(), input.ticketId, input.reservationId
+          );
+      }
+      this.appendAuditLog({
+        actor: 'Rollback Reconciliation', action: 'ROLLBACK_REMOTE_STATE_RECONCILED',
+        ticketId: input.ticketId,
+        reasoning: 'Read-only remote Git/GitHub inspection and Docker retest; no push, PR create or merge performed.',
+        details: { result: input.result, repo: input.repo, branch: input.branch,
+          headSha: input.headSha || null, prNumber: input.prNumber ?? null }
+      });
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
   }
 
   public recordRollbackPrepared(input: {
