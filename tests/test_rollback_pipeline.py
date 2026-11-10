@@ -174,6 +174,20 @@ class RollbackBranchTests(unittest.TestCase):
 
     @unittest.skipUnless(os.getenv("SUTRADHAR_REAL_DOCKER_E2E") == "1",
                          "Real Docker stage must opt in")
+    def test_real_docker_recovery_retests_existing_remote_branch(self):
+        originally = self.run_rollback()
+        recovered = self.inspect(
+            test_runner=None,
+            test_command="python3 -c 'print(123)'"
+        )
+        self.assertEqual(recovered["status"], "ROLLBACK_REMOTE_BRANCH_CONFIRMED_NOT_MERGED")
+        self.assertEqual(recovered["headSha"], originally["headSha"])
+        self.assertEqual(recovered["treeSha"], self.baseline_tree)
+        self.assertEqual(recovered["dockerExitCode"], 0)
+        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/main"), self.merged)
+
+    @unittest.skipUnless(os.getenv("SUTRADHAR_REAL_DOCKER_E2E") == "1",
+                         "Real Docker stage must opt in")
     def test_real_docker_must_pass_before_remote_branch_push(self):
         result = self.run_rollback(test_runner=None,
             test_command="python3 -c 'print(123)'")
