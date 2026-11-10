@@ -189,7 +189,11 @@ test('real admin HTTP rollback PR requires external review/CI evidence before co
     assert.equal(disabled.status, 503);
     assert.equal(disabled.body.error, 'ROLLBACK_FEATURE_DISABLED');
     assert.equal((await post('/api/master/rollback/create-draft-pr')).status, 503);
+    assert.equal((await post('/api/master/rollback/reconcile')).status, 503);
     process.env.SUTRADHAR_ENABLE_ROLLBACK = 'true';
+    const unconfiguredRecovery = await post('/api/master/rollback/reconcile');
+    assert.equal(unconfiguredRecovery.status, 503);
+    assert.equal(unconfiguredRecovery.body.error, 'ROLLBACK_RECOVERY_NOT_CONFIGURED');
     const early = await post('/api/master/rollback/verify');
     assert.equal(early.status, 409);
     assert.equal(clusterDb.getAllTickets().find(t => t.id === ticketId)?.status, 'ROLLBACK_REQUESTED');
