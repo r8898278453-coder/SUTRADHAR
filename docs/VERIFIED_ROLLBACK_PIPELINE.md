@@ -90,10 +90,58 @@ One ticket has at most one proposal reservation.
 
 If Git/Docker/GitHub becomes unavailable or a server dies after an external
 write, the system **does not claim rollback success**. Retrying preparation
-against an existing reservation is denied. Administrators must inspect the
-remote branch/PR, manually reconcile and reauthorize further work under an
-approved recovery procedure. Automated reconciliation for rollback proposals
-is **not yet implemented**.
+against an existing reservation is denied. The administrator can call the
+read-only recovery endpoint below. The system **never automatically retries
+Git push, PR creation or merging**.
+
+### Explicit read-only reconciliation — 11 November
+
+```http
+POST /api/master/rollback/reconcile
+Content-Type: application/json
+
+{"ticketId":"TKT-EXAMPLE"}
+```
+
+Requires an authenticated administrator, `SUTRADHAR_ENABLE_ROLLBACK=true`,
+the configured trusted target Git checkout, rollback Git token, separate
+read-only GitHub token, and the trusted Docker test command. No caller may
+override repository, test command or credentials through the request body.
+
+- A single SQLite `recovery_token` fences concurrent inspectors, even from
+  different processes sharing the authoritative database. Only uncertain
+  operations are eligible. A fresh `PREPARING` or `PR_CREATING` operation
+  remains busy until at least **six minutes** have passed; active recovery
+  locks must also expire before another explicit attempt.
+- The Python inspector uses remote Git read-only requests and checks `main`
+  still points to the original verified merge. If a rollback branch exists,
+  its exact commit parent and tree must match the original merge and restored
+  baseline. The full changed-file set must still be allowed; the remote
+  branch is **re-tested inside hardened Docker**. No test marker or failed
+  exit means no recovery acceptance.
+- The TypeScript inspector uses only GitHub REST **GET** requests, checking
+  the exact repository/branch/head/tree, diff and unique open **draft**
+  rollback PR. Conflicting, forked, closed, ambiguous and incomplete
+  results fail closed.
+- **Remote branch and PR both absent**, and no previous branch SHA recorded:
+  clear only the uncertain reservation. A fresh explicit prepare request
+  may be made separately; this recovery call never creates a branch.
+- **Matching branch exists, draft PR absent:** recover
+  `BRANCH_PUSHED` with exact SHA and tree. Operator may separately
+  create a draft PR after inspection.
+- **Matching branch and matching draft PR exist:** recover `DRAFT_PR` with
+  the PR number and exact branch SHA. Human review and CI are still required.
+- A moved main, altered branch, expired/stale epoch, paused cluster or
+  conflicting PR preserves `NEEDS_RECONCILIATION`, requiring operator
+  intervention. No remote write or `ROLLBACK_COMPLETED` claim results.
+
+This is read-only **remote evidence recovery**, not proof that a real
+GitHub PR has been independently approved or merged. The final
+`/api/master/rollback/verify` endpoint separately verifies those facts.
+Git ref lookups and GitHub REST reads are snapshots; another actor may
+change refs immediately afterwards. Use protected branches and narrow
+credentials. Missing/deleted/closed or already merged PR recovery can
+still require manual intervention.
 
 An original merge already followed by a newer main commit is deliberately
 blocked. The system currently handles only the last verified merge, not
@@ -122,11 +170,13 @@ revert branches containing multiple commits.
   acceptance is **NOT RUN**. Requires owner-approved target repo/credentials.
 - Historically exposed master signer must be rotated and legacy leases
   invalidated before release.
-- A fully durable rollback PR recovery/reconciliation API and real
-  multi-host distributed queue are still missing.
+- Durable read-only rollback recovery is implemented, but a scheduled
+  multi-host queue, protected remote ref policies and dedicated end-to-end
+  Docker recovery acceptance tests remain pending.
 - Production environment, HTTPS, runner images and branch protection
   require separate security review.
 
 Related: [Implementation Tracker](./IMPLEMENTATION_TRACKER.md),
 [Human Review Authorization](./HUMAN_REVIEW_AUTHORIZATION.md),
-[Worker Branch Publication](./WORKER_BRANCH_PUBLICATION.md).
+[Worker Branch Publication](./WORKER_BRANCH_PUBLICATION.md) and
+[11 November Recovery Log](./IMPLEMENTATION_LOG_2026-11-11.md).
