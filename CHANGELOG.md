@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased — rollback crash reconciliation] - 2026-11-11
+
+### Added
+- Administrator-only, off-by-default `POST /api/master/rollback/reconcile`
+  with **read-only** remote Git and GitHub PR inspection.
+- Temporary bare Git index compares original merge parent, restored tree,
+  remote branch SHA and scope; **re-tests an existing branch in isolated
+  Docker** before recovering its push receipt.
+- SQLite `rollback_proposals` recovery token and timestamp migration,
+  cross-process fencing, six-minute stale-operation guard and atomic
+  ABSENT/BRANCH_PUSHED/DRAFT_PR recovery outcomes. No blind retry.
+- Read-only GitHub exact rollback PR inspector rejects wrong owner, changed
+  head/tree, missing expected changes, ambiguous/fork/closed PR or advanced
+  main. No GitHub write API is called.
+- Regression tests for actual temporary Git remotes, mocked GitHub REST,
+  SQLite contention and HTTP authorization/configuration denial.
+- Explicit read-only recovery dashboard action and
+  [11 November Implementation Log](docs/IMPLEMENTATION_LOG_2026-11-11.md).
+
+### Remaining
+- Real target GitHub forward and rollback reviewed-PR acceptance,
+  historic key rotation, multi-host scheduler/PR queue and a dedicated
+  real-Docker recovery HTTP acceptance test are still pending.
+
 ## [Unreleased — reviewed Git rollback workflow] - 2026-11-10
 
 ### Added
