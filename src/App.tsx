@@ -371,6 +371,30 @@ export const App: React.FC = () => {
       await fetchState();
     } catch (error) { showToast(`Rollback preparation unavailable: ${error}`); }
   };
+  const handleRollbackReconcile = async (ticketId: string) => {
+    try {
+      const res = await fetch('/api/master/rollback/reconcile', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId })
+      });
+      const body = await res.json();
+      const successMessages: Record<string, string> = {
+        ROLLBACK_ABSENT_EXPLICIT_PREPARE_ALLOWED:
+          'Remote rollback branch and PR absent. You may separately request a fresh Docker-tested preparation.',
+        ROLLBACK_BRANCH_RECOVERED_NOT_MERGED:
+          'Rollback branch verified against actual remote Git and Docker; draft PR still required.',
+        ROLLBACK_DRAFT_PR_RECOVERED_NOT_MERGED:
+          'Existing rollback draft PR recovered from GitHub; independent human review and CI still required.'
+      };
+      showToast(res.ok
+        ? successMessages[body.status] || 'Rollback remote evidence inspected; no Git write performed.'
+        : `Rollback reconciliation blocked: ${body.error || res.status}; no automatic retry.`);
+      await fetchState();
+    } catch (error) {
+      showToast(`Rollback reconciliation unavailable: ${error}`);
+    }
+  };
+
   const handleRollbackDraft = async (ticketId: string) => {
     try {
       const res = await fetch('/api/master/rollback/create-draft-pr', {
@@ -556,6 +580,7 @@ export const App: React.FC = () => {
             onAnswerClarification={handleAnswerClarification}
             onRollback={handleRollback}
             onRollbackPrepare={handleRollbackPrepare}
+            onRollbackReconcile={handleRollbackReconcile}
             onRollbackDraft={handleRollbackDraft}
             onRollbackVerify={handleRollbackVerify}
           />
