@@ -108,15 +108,16 @@ export async function inspectRollbackDraftPr(
     }
     // Do not trust search filters alone; GitHub's response must independently
     // bind the exact source repo, branch, target and original baseline.
-    const matches = prs.filter((pr: any) =>
-      pr?.head?.ref === input.branch &&
-      pr?.head?.repo?.full_name === input.repo &&
-      pr?.base?.ref === 'main' &&
-      pr?.base?.repo?.full_name === input.repo);
-    if (matches.length === 0) {
+    const candidates = prs.filter((pr: any) =>
+      pr?.head?.ref === input.branch && pr?.base?.ref === 'main');
+    if (candidates.length === 0) {
       return { verified: true, state: 'ABSENT' };
     }
-    if (matches.length !== 1 || input.branchHeadSha === null ||
+    const matches = candidates.filter((pr: any) =>
+      pr?.head?.repo?.full_name === input.repo &&
+      pr?.base?.repo?.full_name === input.repo);
+    if (candidates.length !== 1 || matches.length !== 1 ||
+        input.branchHeadSha === null ||
         matches[0].state !== 'open' || matches[0].draft !== true ||
         matches[0].head.sha !== input.branchHeadSha ||
         matches[0].base.sha !== input.originalMergeSha ||
