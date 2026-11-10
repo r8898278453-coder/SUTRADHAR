@@ -59,10 +59,10 @@
 - `tests/rollback_http_integration.test.ts`: verifies anonymous,
   disabled and missing-config HTTP recovery rejection.
 - Real Docker integration runs in the existing CI Python job for
-  rollback preparation. Recovery's actual Docker launch uses the same
-  hardened runner; Python recovery tests inject a test-only stub to test
-  Git proof conditions. **A dedicated real-Docker recovery end-to-end
-  case is still recommended** before production acceptance.
+  rollback preparation **and read-only crash recovery**. The recovery
+  test first creates a real local rollback Git branch, then invokes
+  `inspect_rollback_for_recovery` without a test stub so the restored
+  tree is actually tested inside Docker. This does not verify live GitHub.
 - All GitHub API proof tests use **mocked REST responses**, not a live
   target-project PR. Cite the latest exact-head Actions jobs after final
   documentation changes; an older green run does not verify a later commit.
