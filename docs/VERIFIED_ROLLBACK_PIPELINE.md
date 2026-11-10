@@ -155,8 +155,9 @@ revert branches containing multiple commits.
   unchanged main, wrong tree/scope, moved main, duplicate branch and denied
   Docker outcomes.
 - The dedicated GitHub Actions Python Docker stage runs a **real container**
-  to test the restored Git archive before push. Ordinary Python test jobs
-  use a test-only fake runner to verify preflight Git logic.
+  both before rollback branch push and when read-only recovery inspects an
+  existing rollback branch. Ordinary Python test jobs use a test-only runner
+  for Git proof and rejection cases.
 - TypeScript `tests/git_merge_attestation.test.ts` verifies durable
   reservation, stage CAS, exact PR identity and one-time completion.
 - `tests/rollback_http_integration.test.ts` exercises actual Express/SQLite
@@ -170,9 +171,9 @@ revert branches containing multiple commits.
   acceptance is **NOT RUN**. Requires owner-approved target repo/credentials.
 - Historically exposed master signer must be rotated and legacy leases
   invalidated before release.
-- Durable read-only rollback recovery is implemented, but a scheduled
-  multi-host queue, protected remote ref policies and dedicated end-to-end
-  Docker recovery acceptance tests remain pending.
+- Durable read-only rollback recovery and local real-Docker recovery CI
+  are implemented, but a scheduled multi-host queue, protected remote ref
+  policies and live target GitHub acceptance remain pending.
 - Production environment, HTTPS, runner images and branch protection
   require separate security review.
 
