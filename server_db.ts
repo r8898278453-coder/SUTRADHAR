@@ -977,8 +977,8 @@ export class ClusterDatabase {
           SET status=?, revert_head_sha=?, revert_tree_sha=?, pr_number=?,
               recovery_token=NULL, recovery_started_at=NULL, updated_at=?
           WHERE ticket_id=? AND reservation_id=?`).run(
-            input.result, input.headSha, input.revertedTree,
-            input.result === 'DRAFT_PR' ? input.prNumber : null,
+            input.result, input.headSha!, input.revertedTree!,
+            input.result === 'DRAFT_PR' ? input.prNumber! : null,
             Date.now(), input.ticketId, input.reservationId
           );
       }
