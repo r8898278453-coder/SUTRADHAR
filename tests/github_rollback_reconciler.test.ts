@@ -85,6 +85,7 @@ const problems: Array<[string, Scenario, string]> = [
   ['extra changed file', { extraFile: true }, 'ROLLBACK_PR_REMOTE_COMMIT_MISMATCH'],
   ['duplicate candidate PR', { ambiguous: true }, 'ROLLBACK_PR_CONFLICT_REQUIRES_REVIEW'],
   ['closed PR', { closed: true }, 'ROLLBACK_PR_CONFLICT_REQUIRES_REVIEW'],
+  ['fork source PR', { wrongRepo: true }, 'ROLLBACK_PR_CONFLICT_REQUIRES_REVIEW'],
   ['changed PR head', { changedPrHead: true }, 'ROLLBACK_PR_CONFLICT_REQUIRES_REVIEW'],
   ['changed base', { movedPrBase: true }, 'ROLLBACK_PR_CONFLICT_REQUIRES_REVIEW'],
   ['GitHub unavailable', { networkDown: true }, 'ROLLBACK_GITHUB_READ_UNAVAILABLE']
