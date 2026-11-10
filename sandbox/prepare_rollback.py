@@ -168,6 +168,134 @@ def prepare_rollback(
         }
 
 
+
+def inspect_rollback_for_recovery(
+    *, repo_root: str, github_repository: str, ticket_id: str,
+    merged_commit: str, baseline_commit: str, tested_tree: str,
+    allowed_files: list[str], changed_files: list[str],
+    test_command: str, push_token: Optional[str] = None,
+    allow_local_remote: bool = False, test_runner=None
+) -> dict[str, object]:
+    """Read-only remote inspection; Docker-retest exact restored tree if present.
+
+    This can recover a server crash after push without inferring that an
+    untrusted actor's matching Git branch was ever Docker tested. It never
+    pushes, deletes, force-updates, creates a PR, or claims rollback complete.
+    """
+    if not TICKET.fullmatch(ticket_id) or not all(
+        SHA1.fullmatch(s) for s in (merged_commit, baseline_commit, tested_tree)
+    ):
+        raise PublishFailure("ROLLBACK_ATTESTATION_INVALID")
+    if not test_command.strip() or len(test_command) > 300:
+        raise PublishFailure("ROLLBACK_DOCKER_COMMAND_NOT_CONFIGURED")
+    try:
+        allowed = {scoped_path(p) for p in allowed_files}
+        changed = {scoped_path(p) for p in changed_files}
+    except RunnerFailure:
+        raise PublishFailure("ROLLBACK_PROTECTED_PATH")
+    if not allowed or not changed or len(changed) != len(changed_files) or len(changed) >= 100:
+        raise PublishFailure("ROLLBACK_SCOPE_INVALID")
+    if not changed.issubset(allowed):
+        raise PublishFailure("ROLLBACK_OUT_OF_SCOPE")
+    try:
+        source = Path(repo_root).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise PublishFailure("SOURCE_REPOSITORY_MISSING")
+    if not source.is_dir() or not (source / ".git").exists():
+        raise PublishFailure("SOURCE_REPOSITORY_MISSING")
+    env = _git_environment()
+    if Path(_git(source, env, "rev-parse", "--show-toplevel").decode()).resolve() != source:
+        raise PublishFailure("SOURCE_REPOSITORY_MISMATCH")
+    origin_raw = _git(source, env, "config", "--local", "--get", "remote.origin.url").decode()
+    origin = _canonical_origin(origin_raw, github_repository, allow_local_remote)
+    if not allow_local_remote and origin.startswith("https://") and not push_token:
+        raise PublishFailure("ROLLBACK_PUSH_TOKEN_NOT_CONFIGURED")
+
+    branch = "rollback/" + ticket_id
+    branch_ref = "refs/heads/" + branch
+    with tempfile.TemporaryDirectory(prefix="sutradhar-rollback-inspect-") as folder:
+        root = Path(folder)
+        bare = root / "verify.git"
+        bare.mkdir(mode=0o700)
+        _git(bare, env, "init", "--bare", "-q")
+        env["GIT_INDEX_FILE"] = str(root / "verify.index")
+        _askpass_script(root, env, push_token)
+        if _remote_ref(bare, env, origin, "refs/heads/main") != merged_commit:
+            raise PublishFailure("ROLLBACK_MAIN_MOVED_MANUAL_REVIEW")
+        head = _remote_ref(bare, env, origin, branch_ref)
+        if head is None:
+            # Absence is a snapshot only. A separate admin action is required
+            # to retry, and all preflight checks must run again.
+            return {
+                "status": "ROLLBACK_REMOTE_BRANCH_ABSENT",
+                "branch": branch, "mergedCommit": merged_commit,
+                "baselineCommit": baseline_commit, "testedMergeTreeSha": tested_tree
+            }
+        _git(bare, env, "fetch", "--no-tags", "--no-write-fetch-head",
+             "--no-recurse-submodules", origin, "refs/heads/main", timeout=60)
+        _git(bare, env, "fetch", "--no-tags", "--no-write-fetch-head",
+             "--no-recurse-submodules", origin, head, timeout=60)
+        parents = _git(bare, env, "rev-list", "--parents", "-n", "1", merged_commit).decode().split()
+        if len(parents) not in (2, 3) or parents[0] != merged_commit or parents[1] != baseline_commit:
+            raise PublishFailure("ROLLBACK_MERGED_PARENT_MISMATCH")
+        if _git(bare, env, "rev-parse", merged_commit + "^{tree}").decode() != tested_tree:
+            raise PublishFailure("ROLLBACK_VERIFIED_MERGE_TREE_MISMATCH")
+        restored = _git(bare, env, "rev-parse", baseline_commit + "^{tree}").decode()
+        head_parents = _git(bare, env, "rev-list", "--parents", "-n", "1", head).decode().split()
+        if head_parents != [head, merged_commit] or (
+            _git(bare, env, "rev-parse", head + "^{tree}").decode() != restored
+        ):
+            raise PublishFailure("ROLLBACK_REMOTE_REVERT_MISMATCH")
+        raw = _git(bare, env, "diff", "--no-renames", "--name-status", "-z",
+                   baseline_commit, merged_commit)
+        fields = [item.decode("utf-8", "strict") for item in raw.split(b"\\x00") if item]
+        if len(fields) != 2 * len(changed) or set(fields[1::2]) != changed or (
+            any(code not in {"A", "D", "M"} for code in fields[::2])
+        ):
+            raise PublishFailure("ROLLBACK_CHANGED_FILES_MISMATCH")
+        summary = _git(bare, env, "diff", "--no-renames", "--summary",
+                       baseline_commit, merged_commit)
+        if b"mode change" in summary or b"rename " in summary or b"symlink" in summary:
+            raise PublishFailure("ROLLBACK_GIT_MODE_UNSAFE")
+
+        # Verify the exact branch tree inside real Docker again, even if a
+        # local pre-crash Docker receipt was never written.
+        archive = root / "reverted-tree.tar"
+        _git(bare, env, "archive", "--format=tar", "-o", str(archive), head, timeout=60)
+        workspace = root / "candidate"
+        workspace.mkdir(mode=0o700)
+        try:
+            extract_safe_snapshot(archive, workspace)
+        except (RunnerFailure, tarfile.TarError, OSError):
+            raise PublishFailure("ROLLBACK_SNAPSHOT_UNSAFE")
+        if test_runner is None:
+            try:
+                proc = subprocess.run(
+                    ["bash", str(RUNNER_ROOT / "sandbox" / "run_sandbox.sh"),
+                     str(workspace), test_command],
+                    cwd=RUNNER_ROOT, timeout=180, capture_output=True, check=False
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                raise PublishFailure("ROLLBACK_DOCKER_UNAVAILABLE")
+            code, stdout = proc.returncode, proc.stdout
+        else:
+            # Test injection is unavailable from CLI / HTTP.
+            code, stdout = test_runner(workspace, test_command)
+        if code != 0 or b"__SUTRADHAR_CONTAINER_TEST_STARTED__" not in stdout[:4096]:
+            raise PublishFailure("ROLLBACK_DOCKER_TEST_NOT_PASSED")
+        if _remote_ref(bare, env, origin, branch_ref) != head:
+            raise PublishFailure("ROLLBACK_REMOTE_BRANCH_CHANGED")
+        if _remote_ref(bare, env, origin, "refs/heads/main") != merged_commit:
+            raise PublishFailure("ROLLBACK_MAIN_MOVED_MANUAL_REVIEW")
+        return {
+            "status": "ROLLBACK_REMOTE_BRANCH_CONFIRMED_NOT_MERGED",
+            "branch": branch, "headSha": head, "treeSha": restored,
+            "mergedCommit": merged_commit, "baselineCommit": baseline_commit,
+            "testedMergeTreeSha": tested_tree,
+            "changedFiles": sorted(changed), "dockerExitCode": code
+        }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", required=True)
@@ -179,8 +307,21 @@ def main() -> None:
     parser.add_argument("--test-command", required=True)
     parser.add_argument("--allowed-file", action="append", default=[])
     parser.add_argument("--changed-file", action="append", default=[])
+    parser.add_argument("--inspect-only", action="store_true",
+                        help="Read-only remote rollback branch inspection with Docker retest")
     args = parser.parse_args()
     try:
+        if args.inspect_only:
+            proof = inspect_rollback_for_recovery(
+                repo_root=args.repo_root, github_repository=args.github_repository,
+                ticket_id=args.ticket_id, merged_commit=args.merged_commit,
+                baseline_commit=args.baseline_commit, tested_tree=args.tested_tree,
+                allowed_files=args.allowed_file, changed_files=args.changed_file,
+                test_command=args.test_command,
+                push_token=os.environ.get("SUTRADHAR_GITHUB_ROLLBACK_TOKEN")
+            )
+            print(json.dumps({"success": True, **proof}, sort_keys=True))
+            return
         proof = prepare_rollback(
             repo_root=args.repo_root, github_repository=args.github_repository,
             ticket_id=args.ticket_id, merged_commit=args.merged_commit,
