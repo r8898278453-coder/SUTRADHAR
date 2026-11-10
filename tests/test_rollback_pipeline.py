@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from sandbox.prepare_rollback import prepare_rollback, PublishFailure
+from sandbox.prepare_rollback import prepare_rollback, inspect_rollback_for_recovery, PublishFailure
 
 MARKER = b"__SUTRADHAR_CONTAINER_TEST_STARTED__\n"
 
@@ -57,6 +57,67 @@ class RollbackBranchTests(unittest.TestCase):
         )
         args.update(kwargs)
         return prepare_rollback(**args)
+
+    def inspect(self, **kwargs):
+        args = dict(
+            repo_root=str(self.source), github_repository="acme/widgets",
+            ticket_id="TKT-ROLL-001", merged_commit=self.merged,
+            baseline_commit=self.baseline, tested_tree=self.merged_tree,
+            changed_files=["value.txt"], allowed_files=["value.txt"],
+            test_command="python3 -c 'print(1)'", allow_local_remote=True,
+            test_runner=lambda workspace, command: (0, MARKER)
+        )
+        args.update(kwargs)
+        return inspect_rollback_for_recovery(**args)
+
+    def test_recovery_sees_remote_absent_without_creating_any_ref(self):
+        result = self.inspect()
+        self.assertEqual(result["status"], "ROLLBACK_REMOTE_BRANCH_ABSENT")
+        self.assertEqual(result["mergedCommit"], self.merged)
+        self.assertNotIn(self.branch, git(self.remote, "for-each-ref", "--format=%(refname:short)"))
+        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/main"), self.merged)
+
+    def test_recovery_confirms_exact_parent_tree_and_reruns_docker(self):
+        pushed = self.run_rollback()
+        tested = []
+        def check(workspace, command):
+            tested.append((Path(workspace) / "value.txt").read_text())
+            return (0, MARKER)
+        result = self.inspect(test_runner=check)
+        self.assertEqual(result["status"], "ROLLBACK_REMOTE_BRANCH_CONFIRMED_NOT_MERGED")
+        self.assertEqual(result["headSha"], pushed["headSha"])
+        self.assertEqual(result["treeSha"], self.baseline_tree)
+        self.assertEqual(result["dockerExitCode"], 0)
+        self.assertEqual(tested, ["SAFE\\n"])
+        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/main"), self.merged)
+
+    def test_recovery_docker_failure_never_records_verified_branch(self):
+        self.run_rollback()
+        for bad in [(1, MARKER), (0, b"missing Docker start marker")]:
+            with self.subTest(bad=bad):
+                with self.assertRaises(PublishFailure) as err:
+                    self.inspect(test_runner=lambda workspace, command: bad)
+                self.assertEqual(err.exception.code, "ROLLBACK_DOCKER_TEST_NOT_PASSED")
+
+    def test_recovery_rejects_unrelated_remote_branch(self):
+        git(self.source, "checkout", "-q", "-b", self.branch)
+        (self.source / "README.md").write_text("UNTESTED\\n")
+        git(self.source, "add", "-A")
+        git(self.source, "commit", "-q", "-m", "wrong revert")
+        git(self.source, "push", "-q", "origin", self.branch)
+        with self.assertRaises(PublishFailure) as err:
+            self.inspect()
+        self.assertEqual(err.exception.code, "ROLLBACK_REMOTE_REVERT_MISMATCH")
+
+    def test_recovery_rejects_main_moving_after_original_merge(self):
+        self.run_rollback()
+        (self.source / "README.md").write_text("NEW MAIN\\n")
+        git(self.source, "add", "-A")
+        git(self.source, "commit", "-q", "-m", "main advanced")
+        git(self.source, "push", "-q", "origin", "main")
+        with self.assertRaises(PublishFailure) as err:
+            self.inspect()
+        self.assertEqual(err.exception.code, "ROLLBACK_MAIN_MOVED_MANUAL_REVIEW")
 
     def test_branch_is_actual_first_parent_revert_and_main_unchanged(self):
         result = self.run_rollback()
