@@ -37,6 +37,7 @@ interface TaskDAGViewProps {
   onAnswerClarification?: (ticketId: string, answer: string) => void;
   onRollback?: (ticketId: string, reason?: string) => void;
   onRollbackPrepare: (ticketId: string) => void;
+  onRollbackReconcile: (ticketId: string) => void;
   onRollbackDraft: (ticketId: string) => void;
   onRollbackVerify: (ticketId: string) => void;
 }
@@ -56,6 +57,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
   onAnswerClarification,
   onRollback,
   onRollbackPrepare,
+  onRollbackReconcile,
   onRollbackDraft,
   onRollbackVerify
 }) => {
@@ -531,6 +533,11 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                     <button onClick={() => onRollbackPrepare(selectedTicket.id)}
                       className="px-2.5 py-1.5 bg-rose-950/50 border border-rose-700 rounded text-xs text-rose-200">
                       1. Docker Test & Push Revert Branch
+                    </button>
+                    <button onClick={() => onRollbackReconcile(selectedTicket.id)}
+                      className="px-2.5 py-1.5 bg-amber-950/50 border border-amber-700 rounded text-xs text-amber-200"
+                      title="Read-only remote Git/GitHub inspection; existing branch is Docker-retested, never automatically re-pushed">
+                      Reconcile Uncertain Rollback
                     </button>
                     <button onClick={() => onRollbackDraft(selectedTicket.id)}
                       className="px-2.5 py-1.5 bg-indigo-950/50 border border-indigo-700 rounded text-xs text-indigo-200">
