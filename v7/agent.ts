@@ -86,7 +86,9 @@ async function reconcileNewMaster(agentId:string,epoch:number){
     const expected=crypto.createHash('sha256').update(cp.summary+'\n'+cp.next_action).digest('hex');
     if(expected!==cp.content_sha256)throw new Error('Checkpoint digest mismatch');
   }
-  const manifest=crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+  const {manifest_sha256,...payload}=snapshot;
+  const manifest=crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  if(manifest!==manifest_sha256)throw new Error('Central recovery manifest hash mismatch');
   const ack=await api('/v7/leadership/reconcile',{
     request_id:'recovery_'+epoch+'_'+agentId,agent_id:agentId,
     expected_master_epoch:epoch,manifest_sha256:manifest});
