@@ -78,12 +78,22 @@ async function leader(c:PoolConnection,lock=true){
 async function idem(c:PoolConnection,actor:string,requestId:string,name:string,input:any,fn:()=>Promise<any>){
   requireId(requestId);
   const op=name+':'+digest(JSON.stringify(input||{}));
-  const prior=await one(c,'SELECT operation,response_json FROM v7_commands WHERE actor=? AND request_id=? FOR UPDATE',[actor,requestId]);
-  if(prior){if(prior.operation!==op)fault('IDEMPOTENCY_KEY_REUSED',409);
-    return typeof prior.response_json==='string'?JSON.parse(prior.response_json):prior.response_json;}
+  // Insert the operation claim before side effects. A concurrent duplicate
+  // blocks on MySQL's unique key, then reads the committed receipt.
+  const [claimed]:any=await c.query(
+    'INSERT IGNORE INTO v7_commands(actor,request_id,operation,response_json) VALUES(?,?,?,?)',
+    [actor,requestId,op,JSON.stringify({pending:true})]);
+  if(claimed.affectedRows===0){
+    const prior=await one(c,'SELECT operation,response_json FROM v7_commands WHERE actor=? AND request_id=? FOR UPDATE',
+      [actor,requestId]);
+    if(!prior||prior.operation!==op)fault('IDEMPOTENCY_KEY_REUSED',409);
+    const saved=typeof prior.response_json==='string'?JSON.parse(prior.response_json):prior.response_json;
+    if(saved?.pending)fault('COMMAND_NOT_RECONCILED',503);
+    return saved;
+  }
   const result=await fn();
-  await c.query('INSERT INTO v7_commands(actor,request_id,operation,response_json) VALUES(?,?,?,?)',
-    [actor,requestId,op,JSON.stringify(result)]);
+  await c.query('UPDATE v7_commands SET response_json=? WHERE actor=? AND request_id=?',
+    [JSON.stringify(result),actor,requestId]);
   return result;
 }
 async function nodeAuth(req:Request){
@@ -418,17 +428,25 @@ app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
       latest_checkpoint:latest};
   });
 }));
+async function recoveryManifest(c:PoolConnection){
+  const ld=await leader(c,false),epoch=Number(ld.epoch);
+  const tickets=await rows(c,'SELECT ticket_id,project_id,status,version,worker_agent_id FROM v7_tickets WHERE status NOT IN ("DONE","CANCELLED") ORDER BY updated_at,ticket_id LIMIT 301');
+  const checkpoints=await rows(c,'SELECT x.ticket_id,x.generation,x.summary,x.next_action,x.content_sha256 FROM v7_checkpoints x INNER JOIN (SELECT ticket_id,MAX(generation) gen FROM v7_checkpoints GROUP BY ticket_id) y ON y.ticket_id=x.ticket_id AND y.gen=x.generation ORDER BY x.ticket_id LIMIT 301');
+  const events=await rows(c,'SELECT event_id,event_type,actor,epoch,resource_id,created_at FROM v7_events ORDER BY event_id DESC LIMIT 301');
+  if(tickets.length>300||checkpoints.length>300||events.length>300)
+    fault('RECOVERY_PAGINATION_REQUIRED',409);
+  const result={epoch,phase:ld.phase,tickets,checkpoints,events};
+  return {...result,manifest_sha256:digest(JSON.stringify(result))};
+}
 app.get('/v7/recovery',jsonRoute(async req=>{
   const node=await nodeAuth(req);
   const agentId=requireId(req.header('x-sutradhar-agent'));
   return transaction(async c=>{
     await signedAgent(c,node.node_id,agentId);
     const ld=await leader(c,false);
-    if(ld.master_agent_id!==agentId)fault('NOT_MASTER',403);
-    const tickets=await rows(c,'SELECT ticket_id,project_id,status,version,worker_agent_id FROM v7_tickets WHERE status NOT IN ("DONE","CANCELLED") ORDER BY updated_at DESC LIMIT 300');
-    const latest=await rows(c,'SELECT x.ticket_id,x.generation,x.summary,x.next_action,x.content_sha256 FROM v7_checkpoints x INNER JOIN (SELECT ticket_id,MAX(generation) gen FROM v7_checkpoints GROUP BY ticket_id) y ON y.ticket_id=x.ticket_id AND y.gen=x.generation LIMIT 300');
-    const events=await rows(c,'SELECT event_id,event_type,actor,epoch,resource_id,created_at FROM v7_events ORDER BY event_id DESC LIMIT 300');
-    return {epoch:Number(ld.epoch),phase:ld.phase,tickets,checkpoints:latest,events};
+    if(ld.master_agent_id!==agentId||!ld.lease_until||
+       Date.parse(ld.lease_until+'Z')<=await dbNow(c))fault('NOT_LIVE_MASTER',403);
+    return recoveryManifest(c);
   });
 }));
 app.post('/v7/leadership/reconcile',jsonRoute(async req=>{
@@ -442,6 +460,10 @@ app.post('/v7/leadership/reconcile',jsonRoute(async req=>{
     if(ld.master_agent_id!==id||Number(ld.epoch)!==epoch||!ld.lease_until||
        Date.parse(ld.lease_until+'Z')<=await dbNow(c))fault('STALE_MASTER_EPOCH',409);
     if(ld.phase!=='RECOVERING')fault('INVALID_PHASE',409);
+    const current=await recoveryManifest(c);
+    if(current.manifest_sha256!==req.body.manifest_sha256)fault('STALE_RECOVERY_MANIFEST',409);
+    if(current.tickets.some(t=>t.status==='RECONCILIATION_REQUIRED'))
+      fault('TASK_RECONCILIATION_REQUIRED',423);
     return idem(c,id,req.body.request_id,'RECOVERY',{epoch,hash:req.body.manifest_sha256},async()=>{
       await c.query('UPDATE v7_cluster SET phase="READY",version=version+1 WHERE singleton=1');
       await event(c,'MASTER_RECOVERY_ACK',id,epoch,null,{manifest_sha256:req.body.manifest_sha256});
