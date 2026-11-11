@@ -81,3 +81,42 @@ jobs:
         env:
           SUTRADHAR_REAL_DOCKER_E2E: "1"
         run: python3 -m unittest discover -s tests -p 'test_rollback_pipeline.py' -v
+
+  v7-mysql:
+    name: V7 real MySQL API integration (disposable database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: testpass
+          MYSQL_DATABASE: sutradhar_v7_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ptestpass"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+    env:
+      NODE_ENV: test
+      SUTRADHAR_V7_NO_LISTEN: "true"
+      SUTRADHAR_RUN_V7_MYSQL_TEST: "1"
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: testpass
+      DB_NAME: sutradhar_v7_ci
+      SUTRADHAR_ADMIN_KEY: ci-only-admin-secret-000000000000001
+      SUTRADHAR_ENROLLMENT_CODE: ci-only-enrollment-secret-000000001
+      SUTRADHAR_ALLOW_MIGRATIONS: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Verify V7 pure election and scope policy
+        run: npm run test:v7
+      - name: Verify signed HTTP/MySQL cluster and independent QA lifecycle
+        run: npm run test:v7-mysql
