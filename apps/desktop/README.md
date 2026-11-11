@@ -1,0 +1,63 @@
+# SUTRADHAR Desktop — guided alpha installation
+
+**Important:** This is a first-run setup UI and a packaging prototype, **NOT a production-signed PC installer**. Edge and Worker implementation remains in ../../v7. The signed Desktop update channel, secure OS key vault, reliable system auto-start and multi-PC real-world acceptance are outstanding.
+
+## Non-developer target workflow
+
+1. Download the approved, signed SUTRADHAR Desktop installer from the Owner's verified release.
+2. Open installer, enter Central's HTTPS domain and a friendly PC name.
+3. Choose 1–4 local agents, enter an Owner-issued enrollment code once.
+4. The app checks MySQL-backed Central health and confirms API protocol version 7.
+5. The local agent starts and requests enrollment with its own Ed25519 identity.
+6. Owner opens Central dashboard and approves the PC and its individual agent/project permissions.
+7. The agent signs an aggregate heartbeat approximately every 60 seconds; Central handles initial 08:00 IST election, sticky Master and backups.
+
+**Current alpha reality:** Stages 2–5 are implemented as an Electron-assisted UI but have **NOT** been executed against an approved physical Windows installer. The child-agent supervisor still needs real packaged-OS testing. The settings file stores Central URL, PC name and generated agent IDs; the enrollment code stays in process memory during enrollment and is not saved to settings. The device's Ed25519 private key is still in a restricted file, **not protected by an OS vault**.
+
+## Developer local prototype (NOT Owner production instructions)
+
+From the repository root with Node.js 22:
+
+~~~sh
+npm install --no-audit --no-fund
+npm run build:desktop
+npm install --prefix apps/desktop --no-audit --no-fund
+npm --prefix apps/desktop run start
+~~~
+
+The Setup window is local and sandboxed. Dashboard and manual AI provider links open HTTPS web content in isolated windows or the system browser; no automated provider policy evasion is used.
+
+**QA-only unsigned Windows installer:** developer/CI can explicitly run:
+
+~~~sh
+# In a trusted Windows QA shell, after the installs and build:
+# Set SUTRADHAR_ALLOW_UNSIGNED_QA_PACKAGE=true in that shell.
+npm --prefix apps/desktop run pack:qa
+~~~
+
+On Windows PowerShell, set $env:SUTRADHAR_ALLOW_UNSIGNED_QA_PACKAGE="true" first. The output goes to apps/desktop/out. It is **not code-signed, not auto-published and must never be distributed as trusted software**.
+
+## Persistent local state
+
+Electron's userData directory contains:
+
+- desktop-settings.json — Central HTTPS URL, PC name and locally generated agent IDs; not admin or enrollment secrets.
+- node/identity.json — Ed25519 machine private key and sequence (alpha, not OS-backed protection).
+- node/enrollment_requested — marker after Central accepts enrollment request; **not proof of Owner approval**.
+- edge-agent.log — process diagnostics. Never log or share private keys or enrollment codes.
+
+Do not move/copy device identity to a different PC. Do not delete identity for a simple update.
+
+**Advanced code/QA worker:** apps/desktop/dist/edge-worker.cjs is an independently compiled CLI, not automatically run by the setup UI. It still requires trusted Git, Docker/Python and approved source checkout; consult [v7 technical runbook](../../v7/README.md). It is intentionally not included in the first-run installer.
+
+## Blockers before routine non-developer deployment
+
+- Reproducible pinned dependencies and signed artifacts.
+- OS-backed machine private key (DPAPI/Keychain) with safe migration and key rotation.
+- Electron child-agent supervision and installer tests on real target OS.
+- Safe, rate-limited enrollment grants and duplicate identity tests.
+- Secure staged updates and identity-preserving rollback.
+- Physical 2-PC failover and full 8–10-PC acceptance.
+- Independent Git/QA/Owner release controls.
+
+See [Owner deployment guide](../../docs/OWNER_SETUP_AND_DEPLOYMENT.md), [Release policy](../../docs/RELEASE_OPERATIONS.md), and [ADR](../../docs/ADR_001_MONOREPO_TWO_APPS.md).
