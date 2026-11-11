@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# New PR commits supersede previous CI attempts. Keep push and PR refs separate.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   node:
     name: TypeScript, unit checks, and build
