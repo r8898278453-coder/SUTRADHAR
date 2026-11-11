@@ -6,7 +6,9 @@
   "version": "7.0.0-alpha.1",
   "main": "main.cjs",
   "type": "commonjs",
-  "engines": { "node": ">=22 <25" },
+  "engines": {
+    "node": ">=22 <25"
+  },
   "scripts": {
     "start": "electron .",
     "pack:qa": "node pack-qa.cjs"
@@ -30,14 +32,23 @@
       "setup.html",
       "setup.js",
       "setup.css",
-      "contract.json"
+      "contract.json",
+      "status.cjs"
     ],
     "extraResources": [
-      { "from": "dist/edge-agent.cjs", "to": "edge-agent.cjs" }
+      {
+        "from": "dist/edge-agent.cjs",
+        "to": "edge-agent.cjs"
+      }
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": [ "x64" ] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {
