@@ -45,6 +45,10 @@ jobs:
         run: npm run test:sandbox-http
       - name: Build
         run: npm run build
+      - name: Desktop setup security validation
+        run: npm run test:desktop
+      - name: Separate Central and Desktop staging builds (no publish)
+        run: npm run test:packages
 
   python:
     name: Python syntax, shell syntax, state tests
