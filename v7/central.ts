@@ -10,7 +10,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import mysql from 'mysql2/promise';
 import type {PoolConnection} from 'mysql2/promise';
-import {fileURLToPath} from 'node:url';
 import {verifyGitHubMergeEvidence} from '../github_merge_verifier.ts';
 import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest} from './rules.ts';
 
@@ -322,7 +321,7 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
       if(seq<=Number(a.last_sequence))fault('REPLAY_AGENT_SEQUENCE',409);
       await c.query('UPDATE v7_agents SET last_sequence=?,last_seen=UTC_TIMESTAMP(3),status=? WHERE agent_id=?',
         [seq,['IDLE','BUSY','BLOCKED','ONLINE'].includes(entry.status)?entry.status:'ONLINE',id]);
-      if(a.master_eligible&&firstElectionOpen(clock)){
+      if(a.master_eligible&&(firstElectionOpen(clock)||Boolean((await leader(c,false)).bootstrapped_at))){
         await c.query('INSERT IGNORE INTO v7_arrivals(agent_id) VALUES(?)',[id]);
       }
     }
@@ -601,7 +600,6 @@ app.use((err:any,_req:Request,res:Response,_next:NextFunction)=>{
   console.error('V7 request failed:',err?.code||err?.name||'UNKNOWN');
   return res.status(503).json({accepted:false,error_code:'CONTROL_UNAVAILABLE',retryable:true});
 });
-const dirname=path.dirname(fileURLToPath(import.meta.url));
 if(process.env.NODE_ENV==='production'){
   const dir=path.resolve(process.cwd(),'dist');
   app.use(express.static(dir,{index:false}));
