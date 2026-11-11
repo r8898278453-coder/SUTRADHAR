@@ -124,3 +124,37 @@ jobs:
         run: npm run test:v7
       - name: Verify signed HTTP/MySQL cluster and independent QA lifecycle
         run: npm run test:v7-mysql
+
+  desktop-windows-qa:
+    name: Windows Desktop unsigned installer smoke (internal QA only)
+    # The unsigned package is never uploaded, published or released.
+    # Run only once per PR update, not twice on push and PR.
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install source build dependencies
+        run: npm install --no-audit --no-fund
+      - name: Test local first-run setup validators
+        run: npm run test:desktop
+      - name: Build Desktop PC agent/worker only
+        run: npm run build:desktop
+      - name: Install unsigned QA Electron packager
+        run: npm install --prefix apps/desktop --no-audit --no-fund
+      - name: Create QA installer without signing or publishing
+        env:
+          SUTRADHAR_ALLOW_UNSIGNED_QA_PACKAGE: "true"
+        run: npm --prefix apps/desktop run pack:qa
+      - name: Verify QA installer was generated
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem -Path apps/desktop/out -Filter *.exe -File -ErrorAction SilentlyContinue)
+          if ($installers.Count -eq 0) { throw 'No Windows QA installer generated' }
+          Write-Host ('Internal QA-only Windows installer generated: ' + $installers.Count)
+          Write-Host 'No artifact uploaded, signed, published, deployed or approved for use.'
