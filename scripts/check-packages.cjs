@@ -43,7 +43,8 @@ for(const rel of [
   'apps/desktop/main.cjs',
   'apps/desktop/preload.cjs',
   'apps/desktop/setup.html',
-  'apps/desktop/setup.js'
+  'apps/desktop/setup.js',
+  'apps/desktop/status.cjs'
 ]){
   assert(exists(rel),'Missing application build file: '+rel);
 }
@@ -64,6 +65,7 @@ for(const rel of ['apps/central/dist/server.cjs',
   'apps/desktop/preload.cjs',
   'apps/desktop/setup.js',
   'apps/desktop/desktop-config.cjs',
+  'apps/desktop/status.cjs',
   'apps/desktop/pack-qa.cjs']){
   cp.execFileSync(process.execPath,['--check',get(rel)],{stdio:'pipe',timeout:20000});
 }
