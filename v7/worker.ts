@@ -94,8 +94,10 @@ async function prepare(id:string){
     throw new Error('Refusing worktree on wrong branch');
   if(git(target,'merge-base','HEAD',t.baseline_sha)!==t.baseline_sha)
     throw new Error('Worktree is not based on authorized source commit');
-  const epoch=Number(process.env.SUTRADHAR_MASTER_EPOCH);
-  if(!Number.isSafeInteger(epoch)||epoch<1)throw new Error('Set current SUTRADHAR_MASTER_EPOCH from Central');
+  const state=await request('/v7/cluster/state',undefined,'GET');
+  const epoch=Number(state.epoch);
+  if(!Number.isSafeInteger(epoch)||epoch<1||state.phase!=='READY'||state.paused)
+    throw new Error('Central must have a current READY Master and be unpaused');
   const claim=await request('/v7/tasks/claim',{request_id:'claim_'+token(),agent_id:agentId,
     ticket_id:id,expected_version:Number(t.version),expected_master_epoch:epoch});
   const local={agent_id:agentId,ticket_id:id,project_id:t.project_id,epoch,
@@ -118,9 +120,9 @@ async function prepare(id:string){
     'Provide implementation in the authorized local worktree; no auto-login or provider account switching.',
     'After coding: commit on ticket branch, checkpoint and submit the exact commit/tree.',
   ].join('\n\n');
-  fs.writeFileSync(path.join(target,'SUTRADHAR_HANDOFF_'+id+'.md'),context,{mode:0o600});
+  fs.writeFileSync(path.join(taskDir,'handoff_'+id+'.md'),context,{mode:0o600});
   console.log(JSON.stringify({ticket:id,worktree:target,lease_seconds:claim.lease_seconds,
-    handoff:path.join(target,'SUTRADHAR_HANDOFF_'+id+'.md')},null,2));
+    handoff:path.join(taskDir,'handoff_'+id+'.md')},null,2));
 }
 async function checkpoint(id:string){
   const local=read(id);
@@ -158,7 +160,12 @@ async function qa(id:string){
   if(!SHA_RE.test(head)||!SHA_RE.test(tree))throw new Error('Candidate hash missing');
   const qaDir=worktree(id+'_qa');
   // Exact SHA must have been fetched by a trusted read-only operator.
-  git(repo,'cat-file','-e',head+'^{commit}');
+  try{git(repo,'cat-file','-e',head+'^{commit}');}
+  catch{
+    // Read-only fetch of the authorized branch, never push/rebase protected main.
+    git(repo,'fetch','--no-tags','origin',t.branch_name);
+    git(repo,'cat-file','-e',head+'^{commit}');
+  }
   if(!fs.existsSync(qaDir)){
     const p=spawnSync('git',['-C',repo,'worktree','add','--detach',qaDir,head],
       {encoding:'utf8',timeout:30000});
