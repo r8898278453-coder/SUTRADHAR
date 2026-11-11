@@ -47,10 +47,27 @@ function safeStatus(){
     const identity=JSON.parse(fs.readFileSync(path.join(nodeDir(),'identity.json'),'utf8'));
     if(typeof identity.node_id==='string')nodeId=identity.node_id;
   }catch{}
+  const agentProcessRunning=Boolean(agent&&agent.exitCode===null);
+  let centralReport=null;
+  try{
+    const detail=JSON.parse(fs.readFileSync(path.join(nodeDir(),'status.json'),'utf8'));
+    if(detail.node_id===nodeId){
+      const accepted=typeof detail.last_accepted_at==='string'?Date.parse(detail.last_accepted_at):NaN;
+      const fresh=Number.isFinite(accepted)&&accepted<=Date.now()+5000&&
+        Date.now()-accepted<=180000;
+      centralReport={
+        acknowledgedNow:Boolean(agentProcessRunning&&fresh&&detail.connection==='ACKNOWLEDGED'),
+        lastAcceptedAt:Number.isFinite(accepted)?new Date(accepted).toISOString():null,
+        errorCode:typeof detail.error_code==='string'?detail.error_code:null,
+        phase:typeof detail.phase==='string'?detail.phase:null,
+        masterAgentId:typeof detail.master_agent_id==='string'?detail.master_agent_id:null
+      };
+    }
+  }catch{}
   return {configured:Boolean(current),centralUrl:current?.centralUrl||null,
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:fs.existsSync(enrollmentMarker()),
-    agentProcessRunning:Boolean(agent&&agent.exitCode===null),
+    agentProcessRunning,centralReport,
     signingStatus:'ALPHA_NOT_OS_VAULT_BACKED',productionReady:false};
 }
 function startAgent(){
