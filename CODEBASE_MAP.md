@@ -1,7 +1,14 @@
 # Codebase Map
 
 ## Architecture Overview
-Sutradhar Multi-Agent Swarm Orchestrator (Blueprint v5.4 & v6.0 Production)
+Sutradhar Multi-Agent Swarm Orchestrator — **current code reflects legacy v5.4/v6.0, NOT a production-ready v7.0 cluster**.
+
+**Target documents (SPECIFIED, not implemented):**
+- [Architecture v7.0](docs/SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md)
+- [Agent / Task / QA / Recovery Contract v7.0](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md)
+- [V7 Requirements / Acceptance Matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md)
+
+The target architecture uses Hostinger Business + MySQL and Electron worker agents, while the code below still uses SQLite and partial simulator/in-memory state. Use [Implementation Tracker](docs/IMPLEMENTATION_TRACKER.md) for actual verification status.
 
 ### Entry Points
 - `server.ts`: Express control plane + Vite dev middleware + REST API endpoints on port 3000.
