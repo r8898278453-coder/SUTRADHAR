@@ -11,6 +11,8 @@ import * as path from 'node:path';
 import mysql from 'mysql2/promise';
 import type {PoolConnection} from 'mysql2/promise';
 import {verifyGitHubMergeEvidence} from '../github_merge_verifier.ts';
+import {createVerifiedDraftPr} from '../github_pr_creator.ts';
+import {inspectGitRemote} from './git_remote.ts';
 import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest} from './rules.ts';
 
 const app=express();
@@ -638,6 +640,137 @@ app.post('/v7/tasks/propose-change',jsonRoute(async req=>{
     });
   });
 }));
+// The PC performs the scoped Git push. Hostinger reserves one attempt, and
+// *independently* reads the remote GitHub commit/tree before accepting proof.
+app.post('/v7/git/reserve',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body||{};
+  const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id);
+  return transaction(async c=>{
+    await signedAgent(c,node.node_id,agentId,true);
+    const ld=await leader(c);
+    if(ld.paused||ld.phase!=='READY'||Number(ld.epoch)!==Number(d.expected_master_epoch)||
+       !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
+      fault('STALE_MASTER_EPOCH',409);
+    return idem(c,agentId,d.request_id,'GIT_RESERVE',{ticketId,epoch:d.expected_master_epoch},async()=>{
+      const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
+      if(!t||t.status!=='INTEGRATING'||t.worker_agent_id===agentId)fault('QA_NOT_COMPLETE',409);
+      const allowed=await one(c,'SELECT can_qa FROM v7_project_agents WHERE project_id=? AND agent_id=?',
+        [t.project_id,agentId]);
+      if(!allowed?.can_qa)fault('PROJECT_QA_ACCESS_DENIED',403);
+      const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? AND agent_id=? AND passed=1 AND head_sha=? AND tree_sha=?',
+        [ticketId,agentId,t.candidate_head_sha,t.candidate_tree_sha]);
+      if(!qa)fault('INDEPENDENT_QA_RECEIPT_REQUIRED',409);
+      if(['HIGH','CORE'].includes(t.risk)){
+        const approval=await one(c,'SELECT proposal_id FROM v7_approvals WHERE ticket_id=? AND state="APPROVED"',[ticketId]);
+        if(!approval)fault('OWNER_APPROVAL_REQUIRED',403);
+      }
+      if(await one(c,'SELECT ticket_id FROM v7_git_jobs WHERE ticket_id=?',[ticketId]))
+        fault('GIT_JOB_ALREADY_RESERVED_RECONCILE',409);
+      await c.query('INSERT INTO v7_git_jobs(ticket_id,agent_id,epoch,request_id,state) VALUES(?,?,?,?,"RUNNING")',
+        [ticketId,agentId,Number(ld.epoch),d.request_id]);
+      await event(c,'GIT_PUBLICATION_RESERVED',agentId,Number(ld.epoch),ticketId);
+      return {accepted:true,ticket_id:ticketId,branch:t.branch_name,baseline_sha:t.baseline_sha,
+        candidate_tree_sha:t.candidate_tree_sha,one_shot:true};
+    });
+  });
+}));
+app.get('/v7/git/job/:ticketId',jsonRoute(async req=>{
+  const node=await nodeAuth(req),agentId=requireId(req.header('x-sutradhar-agent')),
+    ticketId=requireId(req.params.ticketId);
+  return transaction(async c=>{
+    await signedAgent(c,node.node_id,agentId,true);
+    const job=await one(c,'SELECT j.*,t.project_id FROM v7_git_jobs j JOIN v7_tickets t ON t.ticket_id=j.ticket_id WHERE j.ticket_id=?',[ticketId]);
+    if(!job)fault('GIT_JOB_NOT_FOUND',404);
+    const access=await one(c,'SELECT can_qa FROM v7_project_agents WHERE project_id=? AND agent_id=?',
+      [job.project_id,agentId]);
+    if(!access?.can_qa)fault('PROJECT_QA_ACCESS_DENIED',403);
+    return {ticket_id:ticketId,state:job.state,epoch:Number(job.epoch),
+      remote_head_sha:job.remote_head_sha,pr_number:job.pr_number,pr_url:job.pr_url};
+  });
+}));
+app.post('/v7/git/confirm',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body||{};
+  const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id);
+  const expectedHead=d.expected_remote_head_sha;
+  if(expectedHead!==undefined)requireSha(expectedHead);
+  const info=await transaction(async c=>{
+    await signedAgent(c,node.node_id,agentId,true);
+    const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=?',[ticketId]);
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
+    if(!job||!t||job.agent_id!==agentId||job.state==='NEEDS_RECONCILIATION'||
+       t.status!=='INTEGRATING')fault('GIT_PUBLISH_NOT_RESERVED',409);
+    const p=await one(c,'SELECT * FROM v7_projects WHERE project_id=?',[t.project_id]);
+    return {job,t,p};
+  });
+  if(info.job.state==='CONFIRMED'){
+    if(info.job.remote_head_sha!==expectedHead&&expectedHead!==undefined)
+      fault('REMOTE_HEAD_MISMATCH',409);
+    return {accepted:true,already_confirmed:true,ticket_id:ticketId,
+      remote_head_sha:info.job.remote_head_sha,branch:info.t.branch_name};
+  }
+  const proof=await inspectGitRemote({
+    repo:info.p.repository,token:process.env.SUTRADHAR_GITHUB_TOKEN||'',
+    branch:info.t.branch_name,baseline:info.t.baseline_sha,tree:info.t.candidate_tree_sha,
+    writeScopes:typeof info.t.scopes_json==='string'?JSON.parse(info.t.scopes_json):info.t.scopes_json,
+    expectedHead
+  });
+  if(!proof.verified)fault('REMOTE_PUBLISH_UNCERTAIN_'+proof.error_code,409);
+  return transaction(async c=>{
+    await signedAgent(c,node.node_id,agentId,true);
+    const ld=await leader(c);
+    if(ld.paused||ld.phase!=='READY'||Number(ld.epoch)!==Number(info.job.epoch)||
+       !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
+      fault('STALE_MASTER_EPOCH',409);
+    return idem(c,agentId,d.request_id,'GIT_CONFIRM',{ticketId,head:proof.headSha},async()=>{
+      const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',[ticketId]);
+      const t=await one(c,'SELECT status,candidate_tree_sha FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
+      if(job?.state!=='RUNNING'||t?.status!=='INTEGRATING'||t.candidate_tree_sha!==proof.treeSha||
+         Number(job.epoch)!==Number(ld.epoch))fault('GIT_CONFIRM_VERSION_CONFLICT',409);
+      await c.query('UPDATE v7_git_jobs SET state="CONFIRMED",remote_head_sha=?,remote_tree_sha=?,changed_files_json=?,verified_at=UTC_TIMESTAMP(3),updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',
+        [proof.headSha,proof.treeSha,JSON.stringify(proof.changedFiles),ticketId]);
+      await event(c,'GIT_BRANCH_REMOTE_CONFIRMED',agentId,Number(ld.epoch),ticketId,{
+        head:proof.headSha,tree:proof.treeSha});
+      return {accepted:true,ticket_id:ticketId,remote_head_sha:proof.headSha,
+        tree_sha:proof.treeSha,status:'PUSH_CONFIRMED_NOT_MERGED'};
+    });
+  });
+}));
+app.post('/v7/git/pr-draft',jsonRoute(async req=>{
+  admin(req);
+  if(process.env.SUTRADHAR_ENABLE_PR_CREATION!=='true')
+    fault('DRAFT_PR_CREATION_DISABLED',403);
+  const d=req.body||{},ticketId=requireId(d.ticket_id);
+  const info=await transaction(async c=>{
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
+    const j=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=?',[ticketId]);
+    if(!t||!j||j.state!=='CONFIRMED'||t.status!=='INTEGRATING')
+      fault('GIT_PROOF_REQUIRED',409);
+    const p=await one(c,'SELECT * FROM v7_projects WHERE project_id=?',[t.project_id]);
+    return {t,j,p};
+  });
+  const changed=typeof info.j.changed_files_json==='string'?JSON.parse(info.j.changed_files_json):info.j.changed_files_json;
+  const pr=await createVerifiedDraftPr({
+    repo:info.p.repository,token:process.env.SUTRADHAR_GITHUB_PR_TOKEN||'',
+    branch:info.t.branch_name,ticketId,
+    baselineCommit:info.t.baseline_sha,candidateTreeSha:info.t.candidate_tree_sha,
+    changedFiles:changed,allowedFiles:changed,title:info.t.title,description:info.t.description
+  });
+  if(!pr.created||pr.headSha!==info.j.remote_head_sha)
+    fault('DRAFT_PR_REMOTE_UNCERTAIN',409);
+  return transaction(async c=>idem(c,'owner:web',d.request_id,'DRAFT_PR',{ticketId,prNumber:pr.prNumber},async()=>{
+    const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',[ticketId]);
+    if(!job||job.state!=='CONFIRMED'||job.remote_head_sha!==pr.headSha)
+      fault('GIT_RECEIPT_CHANGED',409);
+    if(job.pr_number&&Number(job.pr_number)!==pr.prNumber)
+      fault('DRAFT_PR_NUMBER_CONFLICT',409);
+    await c.query('UPDATE v7_git_jobs SET pr_number=?,pr_url=?,updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',
+      [pr.prNumber,pr.url,ticketId]);
+    await event(c,'GITHUB_DRAFT_PR_VERIFIED','owner:web',Number((await leader(c)).epoch),ticketId,
+      {pr_number:pr.prNumber,head:pr.headSha});
+    return {accepted:true,ticket_id:ticketId,draft:true,pr_number:pr.prNumber,url:pr.url,
+      status:'REVIEW_REQUIRED'};
+  }));
+}));
 app.post('/v7/tasks/verify-merge',jsonRoute(async req=>{
   // This does NOT merge: read-only authenticated remote verification only.
   admin(req);
@@ -649,26 +782,32 @@ app.post('/v7/tasks/verify-merge',jsonRoute(async req=>{
     const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? AND passed=1 AND head_sha=? AND tree_sha=?',
       [ticket,t.candidate_head_sha,t.candidate_tree_sha]);
     if(!qa)fault('QA_REQUIRED',409);
+    const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=?',[ticket]);
+    if(!job||job.state!=='CONFIRMED'||!job.remote_head_sha||!job.pr_number)
+      fault('VERIFIED_GIT_DRAFT_PR_REQUIRED',409);
     if(t.risk==='CORE'||t.risk==='HIGH'){
       const approval=await one(c,'SELECT proposal_id FROM v7_approvals WHERE ticket_id=? AND state="APPROVED"',[ticket]);
       if(!approval)fault('OWNER_APPROVAL_REQUIRED',409);
     }
-    return {t,p};
+    return {t,p,job};
   });
   const token=process.env.SUTRADHAR_GITHUB_TOKEN||'';
   const requiredChecks=(process.env.SUTRADHAR_REQUIRED_CHECKS||'').split(';').filter(Boolean);
   const verification=await verifyGitHubMergeEvidence({
     repo:info.p.repository,token,branch:info.t.branch_name,
-    allowedFiles:typeof info.t.scopes_json==='string'?JSON.parse(info.t.scopes_json):info.t.scopes_json,
+    allowedFiles:typeof info.job.changed_files_json==='string'?JSON.parse(info.job.changed_files_json):info.job.changed_files_json,
     baselineCommit:info.t.baseline_sha,candidateTreeSha:info.t.candidate_tree_sha,
     requiredChecks,requiredApprovals:Math.max(1,Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS||1)),
-    expectedPrNumber:d.pr_number,expectedHeadSha:info.t.candidate_head_sha,
+    expectedPrNumber:Number(info.job.pr_number),expectedHeadSha:info.job.remote_head_sha,
     mainBranch:info.p.base_branch
   });
   if(!verification.verified)fault('GITHUB_VERIFICATION_FAILED_'+verification.error,409);
   return transaction(async c=>idem(c,'owner:web',requestId,'VERIFY_MERGE',d,async()=>{
     const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticket]);
-    if(t.status!=='INTEGRATING'||t.candidate_head_sha!==info.t.candidate_head_sha||
+    const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',[ticket]);
+    if(job?.state!=='CONFIRMED'||job.remote_head_sha!==info.job.remote_head_sha||
+       Number(job.pr_number)!==Number(info.job.pr_number)||
+       t.status!=='INTEGRATING'||t.candidate_head_sha!==info.t.candidate_head_sha||
       t.candidate_tree_sha!==info.t.candidate_tree_sha)fault('VERSION_CONFLICT',409);
     await c.query('INSERT INTO v7_git_receipts(ticket_id,receipt_json) VALUES(?,?)',
       [ticket,JSON.stringify(verification)]);
