@@ -16,7 +16,8 @@
     "edge:start": "node dist/v7-agent.cjs",
     "test:v7": "node --import tsx --test tests/v7_rules.test.ts",
     "edge:worker": "node dist/v7-worker.cjs",
-    "test:v7-mysql": "SUTRADHAR_RUN_V7_MYSQL_TEST=1 SUTRADHAR_V7_NO_LISTEN=true node --import tsx --test tests/v7_mysql_integration.test.ts"
+    "test:v7-mysql": "SUTRADHAR_RUN_V7_MYSQL_TEST=1 SUTRADHAR_V7_NO_LISTEN=true node --import tsx --test tests/v7_mysql_integration.test.ts",
+    "migrate:legacy": "tsx v7/migrate_legacy.ts"
   },
   "dependencies": {
     "@google/genai": "latest",
