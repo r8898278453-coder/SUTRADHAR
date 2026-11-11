@@ -38,19 +38,19 @@ You only manage **one repository** and **one Central website**. Each PC gets **o
 
 **A3. Select the release source, not a development branch.** Once implemented, set Hostinger's deploy branch to protected **release/central-production**. It must move *only* when an Owner-approved workflow promotes a reviewed version. **This branch and release workflow do not currently exist:** do not link a live production site to the existing fix branch or ordinary main.
 
-**A4. Review build settings.** Once the independent Central app refactor is completed and tested, use the settings shipped with its release manifest. **For current alpha/staging experiments only** the verified source paths indicate:
+**A4. Review build settings.** Once the independent Central app refactor is completed and tested, use the settings shipped with its release manifest. **For current alpha/staging experiments only**, the new Central-only build wrapper now provides:
 
 | Current staging setting | Value |
 | --- | --- |
 | Framework | Express / Node.js |
 | Runtime | Node.js 22 |
 | Root directory | Repository root: **./** |
-| Build command | **npm run build** |
-| Output directory | **dist** |
-| Entry file | **dist/server.cjs** |
+| Build command | **npm run build:central** |
+| Output directory | **apps/central/dist** |
+| Entry file | **apps/central/dist/server.cjs** |
 | Public verification URL | **https://YOUR-DOMAIN/v7/health** |
 
-Those are **not** the future apps/central settings. Do not select apps/central yet: the folder does not exist. The current build also creates PC-side bundles and assumes v7/schema.sql is readable at runtime; this must be fixed/verified in the independent production package before go-live.
+Those are **not** the future apps/central settings. Do not select apps/central yet: the folder does not exist. The new Central-only staging bundle copies the UI and v7/schema.sql beside its server entry, and intentionally excludes PC-side bundles; **real Hostinger runtime packaging and restoration are not yet accepted**. The legacy combined npm run build still produces Desktop-side bundles and must not be used as a production Central release.
 
 **A5. Create a separate MySQL database.** In hPanel use **Websites → Manage site → Databases → Management** (exact names may vary). Create a fresh database and dedicated user with a unique long password. Record the **full Hostinger-prefixed database name/user** in your secure password manager. Do **not** import/overwrite the old SQLite database. For a Hostinger-local MySQL connection use host **127.0.0.1**, not localhost.
 
@@ -98,6 +98,9 @@ Only use database TLS settings after verifying actual Hostinger database TLS sup
 **B6. Expand gradually.** After passing physical 2-PC acceptance, enroll remaining PCs in small batches, each with distinct persistent device identity and correct work permissions. Keep QA independent from the code author for a given ticket.
 
 **Current developer-only workaround:** Node.js 22, locally built dist/v7-agent.cjs, process supervision and environment variables including **SUTRADHAR_CENTRAL_URL**, **SUTRADHAR_AGENT_IDS**, **SUTRADHAR_NODE_NAME**, and an enrollment code; see [v7 runbook](../v7/README.md). This is not a non-developer install, does not solve Windows automatic start, and stores a filesystem identity rather than using a production-grade OS vault. The Electron code currently only opens the dashboard and authorized external browser pages.
+
+
+**New code implemented, physical tests pending:** the separate [Desktop alpha app](../apps/desktop/README.md) now has a local first-run Electron wizard, unique generated agent IDs, protocol-7 Central health check and a supervised local agent. It is **not yet a signed installer**, OS-vault identity storage or an approved update mechanism. The [Central staging app](../apps/central/README.md) has a separate bundle and schema copy.
 
 ## Part C — What daily operation should look like
 
