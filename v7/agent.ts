@@ -124,6 +124,7 @@ async function heartbeat(epoch:number|null){
 async function run(){
   let epoch:number|null=null;const registered=new Set<string>();
   for(;;){
+    let heartbeatAccepted=false;
     try{
       if(!fs.existsSync(path.join(home,'enrollment_requested'))){
         try {
@@ -149,6 +150,7 @@ async function run(){
           else if(e.message!=='NODE_NOT_APPROVED')throw e;}}
       if(registered.size===state.agents.length){
         const reply=await heartbeat(epoch);epoch=Number(reply.epoch);
+        heartbeatAccepted=true;
         // An accepted signed reply is a real Central acknowledgment, not a UI guess.
         reportStatus({connection:'ACKNOWLEDGED',last_accepted_at:reply.server_received_at,
           epoch:Number(reply.epoch),master_agent_id:reply.master_agent_id||null,
@@ -158,7 +160,8 @@ async function run(){
           await reconcileNewMaster(reply.master_agent_id,Number(reply.epoch));}
     }catch(e:any){
       console.error('Central unavailable/not approved:',String(e.message).slice(0,100));
-      reportStatus({connection:'NOT_ACKNOWLEDGED',last_error_at:new Date().toISOString(),
+      reportStatus({connection:heartbeatAccepted?'RECOVERY_BLOCKED':'NOT_ACKNOWLEDGED',
+        last_error_at:new Date().toISOString(),
         error_code:String(e.message).slice(0,100),agent_ids:state.agents.map(a=>a.id)});
       const record={at:new Date().toISOString(),node_id:state.node_id,sequence:state.node_sequence,
         event:'CENTRAL_UNAVAILABLE'};
