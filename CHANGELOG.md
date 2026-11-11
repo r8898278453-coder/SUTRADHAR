@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased — owner-directed v7 architecture documentation] - 2026-11-11
+
+### Added — design only
+- [v7 Architecture Blueprint](docs/SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md) reconciles final Hostinger Business + MySQL + Electron, 8–10 PCs, 60s heartbeats, retained 1 Master/2 backups and browser-first agent requirements.
+- [Master / Task / QA / Recovery Contract](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md) specifies atomic state ownership, task contracts, tested-tree proof, human-gated core changes, fail-closed provider capabilities, checkpoints, and recovery.
+- [V7 Requirements / Acceptance Matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) defines test IDs and evidence for 2-PC pilot, Hostinger/MySQL, Electron/browser provider compatibility, safe parallel Git, independent QA and 8–10 PC scaling.
+- Updated codebase map, state/tracker and gap register to explicitly distinguish **new target specifications** from existing CI-scoped implementation.
+
+### Not implemented in this slice
+- No application source code change, deployed Hostinger API, MySQL migration, Electron runtime, live provider browser automation, V7 acceptance test execution or protected GitHub merge.
+- Previously exposed signer rotation, live target PR/rollback acceptance, branch protection and release gates remain unresolved.
+
+
 ## [Unreleased — rollback crash reconciliation] - 2026-11-11
 
 ### Added
