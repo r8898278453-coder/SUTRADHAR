@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>SUTRADHAR Desktop Setup</title>
+<link rel="stylesheet" href="./setup.css">
+</head>
+<body>
+<main>
+<div class="topline">SUTRADHAR / DESKTOP <span class="alpha">ALPHA · NOT FOR PRODUCTION</span></div>
+<h1>Connect this PC to Central</h1>
+<p class="sub">This computer runs the local agent. Hostinger Central is the only source of truth for Master, backups and tasks. Owner approval is required before any work.</p>
+<section class="panel" aria-labelledby="setupTitle">
+<h2 id="setupTitle">First-time connection</h2>
+<form id="setupForm">
+<label for="central">Central HTTPS website</label>
+<input id="central" type="url" autocomplete="url" placeholder="https://central.example.com" required>
+<p class="hint">Use the website address only, without /dashboard or API path.</p>
+<label for="pcName">This PC's name</label>
+<input id="pcName" type="text" maxlength="64" autocomplete="off" placeholder="Office PC 01" required>
+<label for="agentCount">How many agents on this PC?</label>
+<select id="agentCount"><option value="1">1 agent (start here)</option><option value="2">2 agents</option><option value="3">3 agents</option><option value="4">4 agents</option></select>
+<p class="hint">Each gets a unique identity. Master and QA eligibility are approved separately in Central.</p>
+<label for="code">Owner-issued enrollment code</label>
+<input id="code" type="password" minlength="32" autocomplete="off" spellcheck="false" placeholder="At least 32 characters" required>
+<p class="hint">The code is used only for this setup attempt and is not saved to PC settings.</p>
+<button type="submit" id="save">Connect and request approval</button>
+</form>
+<div id="feedback" role="status" aria-live="polite"></div>
+</section>
+<section class="panel">
+<h2>Current local status</h2>
+<div id="status">Loading device status…</div>
+<p class="hint">Agent process running does not mean this PC was approved or that the Master election succeeded.</p>
+<div class="actions"><button id="dashboard" type="button" class="secondary">Open Central dashboard</button><button id="refresh" type="button" class="secondary">Refresh status</button></div>
+</section>
+<section class="panel">
+<h2>AI provider tools (manual)</h2>
+<p class="hint">Opens your normal browser. You remain responsible for account authorization and provider usage terms.</p>
+<div class="actions"><button id="chatgpt" class="secondary" type="button">Open ChatGPT Web</button><button id="studio" class="secondary" type="button">Open Google AI Studio</button></div>
+</section>
+<footer>Device identity is currently stored in a user-restricted local file; OS-vault integration and signed production installers are still required.</footer>
+</main>
+<script src="./setup.js"></script>
+</body></html>
