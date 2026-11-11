@@ -34,6 +34,8 @@ async function loadStatus(){
     }
     get('status').replaceChildren(grid);
     get('dashboard').disabled=!s.configured;
+    get('autostart').disabled=!s.startupSupported;
+    get('autostart').checked=Boolean(s.startupEnabled);
     if(s.enrollmentRequested){get('code').value='';get('code').placeholder='Already enrolled; code not required for later starts';}
   }catch(e){get('status').textContent='Could not read local status: '+String(e.message||e);}
 }
@@ -49,6 +51,14 @@ get('setupForm').addEventListener('submit',async e=>{
     await loadStatus();
   }catch(err){showFeedback(String(err?.message||err));}
   finally{get('save').disabled=false;}
+});
+get('autostart').addEventListener('change',async e=>{
+  const checkbox=e.target;checkbox.disabled=true;
+  try{
+    await api.setStartup(Boolean(checkbox.checked));
+    showFeedback('Login auto-start preference updated locally. Physical installer/startup acceptance is still pending.');
+  }catch(error){showFeedback(String(error.message||error));}
+  await loadStatus();
 });
 get('refresh').addEventListener('click',loadStatus);
 get('dashboard').addEventListener('click',async()=>{try{await api.openDashboard();}catch(e){showFeedback(String(e.message||e));}});
