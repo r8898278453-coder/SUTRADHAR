@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "api_protocol": 7,
+  "central_major": 7,
+  "desktop_major": 7,
+  "heartbeat_interval_seconds": 60,
+  "stale_after_seconds": 180,
+  "initial_master_election_timezone": "Asia/Kolkata",
+  "initial_master_election_at": "08:00",
+  "master_policy": "sticky-healthy-incumbent",
+  "masters_per_cluster": 1,
+  "ranked_backups": 2
+}
