@@ -1,5 +1,10 @@
 # SUTRADHAR v7.0 — implementation and operator guide
 
+> **Start here if you are the Owner:** [Non-developer setup guide](../docs/OWNER_SETUP_AND_DEPLOYMENT.md) · [Architecture/repository decision](../docs/ADR_001_MONOREPO_TWO_APPS.md) · [Release, update and recovery policy](../docs/RELEASE_OPERATIONS.md) · [Repository README](../README.md).
+>
+> **Important as of 12 November 2026:** This runbook describes **current alpha source code and technical experiments**, not a finished installer or approved production deployment. The future apps/central and apps/desktop split, one-click Owner approval/release screens, signed desktop installer and Hostinger promotion branch **do not exist yet**. Do **not** set a live Hostinger site to watch this draft fix branch. The current combined build runs at repository root (./); read the Owner guide before staging anything.
+
+
 Status: **alpha code committed, not production accepted**. Existing v6 security/Git/Docker guards remain in the repository. Only v7 MySQL is authoritative for the new routes; legacy SQLite/demo service is available explicitly via the legacy development command and MUST NOT serve production.
 
 ## Central on Hostinger Business
