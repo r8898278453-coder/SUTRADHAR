@@ -12,7 +12,7 @@
 6. Owner opens Central dashboard and approves the PC and its individual agent/project permissions.
 7. The agent signs an aggregate heartbeat approximately every 60 seconds; Central handles initial 08:00 IST election, sticky Master and backups.
 
-**Current alpha reality:** Stages 2–5 are implemented as an Electron-assisted UI but have **NOT** been executed against an approved physical Windows installer. The child-agent supervisor still needs real packaged-OS testing. The settings file stores Central URL, PC name and generated agent IDs; the enrollment code stays in process memory during enrollment and is not saved to settings. The device's Ed25519 private key is still in a restricted file, **not protected by an OS vault**.
+**Current alpha reality:** Stages 2–5 are implemented as an Electron-assisted UI but have **NOT** been executed against an approved physical Windows installer. The UI also displays the local agent's last Central-accepted heartbeat, pending/error state, and a conditional opt-in to launch the packaged app when the OS user signs in. A system tray keeps the agent process alive when windows are closed; explicit Quit confirms that heartbeats will stop. These are **unverified on physical target PCs**, and signing in is not the same as a boot-time system service. The child-agent supervisor still needs real packaged-OS testing. The settings file stores Central URL, PC name and generated agent IDs; the enrollment code stays in process memory during enrollment and is not saved to settings. The device's Ed25519 private key is still in a restricted file, **not protected by an OS vault**.
 
 ## Developer local prototype (NOT Owner production instructions)
 
@@ -44,6 +44,7 @@ Electron's userData directory contains:
 - desktop-settings.json — Central HTTPS URL, PC name and locally generated agent IDs; not admin or enrollment secrets.
 - node/identity.json — Ed25519 machine private key and sequence (alpha, not OS-backed protection).
 - node/enrollment_requested — marker after Central accepts enrollment request; **not proof of Owner approval**.
+- node/status.json — local, informational receipt of last Central heartbeat response, error and phase. This local file is **not the authoritative database**, can become stale and is not a cryptographic server-side attestation.
 - edge-agent.log — process diagnostics. Never log or share private keys or enrollment codes.
 
 Do not move/copy device identity to a different PC. Do not delete identity for a simple update.
@@ -54,7 +55,7 @@ Do not move/copy device identity to a different PC. Do not delete identity for a
 
 - Reproducible pinned dependencies and signed artifacts.
 - OS-backed machine private key (DPAPI/Keychain) with safe migration and key rotation.
-- Electron child-agent supervision and installer tests on real target OS.
+- Electron tray/child-agent/login-start supervision and installer tests on real target OS; login auto-start remains user opt-in and not an always-on service.
 - Safe, rate-limited enrollment grants and duplicate identity tests.
 - Secure staged updates and identity-preserving rollback.
 - Physical 2-PC failover and full 8–10-PC acceptance.
