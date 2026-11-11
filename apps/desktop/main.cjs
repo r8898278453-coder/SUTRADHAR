@@ -56,7 +56,7 @@ function safeStatus(){
       const fresh=Number.isFinite(accepted)&&accepted<=Date.now()+5000&&
         Date.now()-accepted<=180000;
       centralReport={
-        acknowledgedNow:Boolean(agentProcessRunning&&fresh&&detail.connection==='ACKNOWLEDGED'),
+        acknowledgedNow:Boolean(agentProcessRunning&&fresh&&['ACKNOWLEDGED','RECOVERY_BLOCKED'].includes(detail.connection)),
         lastAcceptedAt:Number.isFinite(accepted)?new Date(accepted).toISOString():null,
         errorCode:typeof detail.error_code==='string'?detail.error_code:null,
         phase:typeof detail.phase==='string'?detail.phase:null,
