@@ -58,6 +58,40 @@ async function register(agent_id:string){
   return api('/v7/agents/register',{agent_id,capabilities:{
     engine:'BROWSER_ASSISTED',providers:['ChatGPT Web','Google AI Studio'],platform:process.platform}});
 }
+async function signedGet(pathname:string){
+  const ts=Date.now(),nonce='nonce_'+crypto.randomUUID().replace(/-/g,'');
+  const value=[String(ts),nonce,'GET',pathname,crypto.createHash('sha256').update('').digest('hex')].join('\n');
+  const signature=crypto.sign(null,Buffer.from(value),key).toString('base64');
+  const result=await fetch(base+pathname,{method:'GET',headers:{
+    'x-sutradhar-node':state.node_id,'x-sutradhar-timestamp':String(ts),
+    'x-sutradhar-nonce':nonce,'x-sutradhar-signature':signature
+  },signal:AbortSignal.timeout(15000)});
+  const reply=await result.json() as any;
+  if(!result.ok)throw new Error(reply.error_code||'HTTP_'+result.status);
+  return reply;
+}
+async function reconcileNewMaster(agentId:string,epoch:number){
+  const snapshot=await signedGet('/v7/recovery');
+  if(snapshot.epoch!==epoch||snapshot.phase!=='RECOVERING')throw new Error('Recovery epoch changed');
+  if(snapshot.tickets.length>=300||snapshot.checkpoints.length>=300||snapshot.events.length>=300)
+    throw new Error('Recovery manifest pagination required; block READY');
+  if(snapshot.tickets.some((t:any)=>t.status==='RECONCILIATION_REQUIRED'))
+    throw new Error('Task reconciliation required before READY; owner must verify remote Git effects');
+  const cursors=new Set<number>();
+  for(const e of snapshot.events){
+    if(cursors.has(Number(e.event_id)))throw new Error('Duplicate event cursor');
+    cursors.add(Number(e.event_id));
+  }
+  for(const cp of snapshot.checkpoints){
+    const expected=crypto.createHash('sha256').update(cp.summary+'\n'+cp.next_action).digest('hex');
+    if(expected!==cp.content_sha256)throw new Error('Checkpoint digest mismatch');
+  }
+  const manifest=crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+  const ack=await api('/v7/leadership/reconcile',{
+    request_id:'recovery_'+epoch+'_'+agentId,agent_id:agentId,
+    expected_master_epoch:epoch,manifest_sha256:manifest});
+  console.info('Master recovery checkpoint verified:',ack.phase,'epoch',epoch);
+}
 async function heartbeat(epoch:number|null){
   state.node_sequence++;for(const a of state.agents)a.sequence++;
   persist(state); // Never reuse sequences after a crash/ambiguous reply.
@@ -79,7 +113,7 @@ async function run(){
       if(registered.size===state.agents.length){
         const reply=await heartbeat(epoch);epoch=Number(reply.epoch);
         if(reply.master_agent_id&&state.agents.some(a=>a.id===reply.master_agent_id)&&reply.phase==='RECOVERING')
-          console.warn('Master promoted. Retrieve and verify recovery context before owner-authorized READY receipt.');}
+          await reconcileNewMaster(reply.master_agent_id,Number(reply.epoch));}
     }catch(e:any){
       console.error('Central unavailable/not approved:',String(e.message).slice(0,100));
       const record={at:new Date().toISOString(),node_id:state.node_id,sequence:state.node_sequence,
