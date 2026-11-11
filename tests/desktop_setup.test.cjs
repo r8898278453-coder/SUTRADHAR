@@ -36,3 +36,34 @@ test('enrollment code is long, space-free and never derived from PC name',()=>{
   for(const bad of ['short','a'.repeat(31),'a'.repeat(257),'abc def'.repeat(6),null])
     assert.throws(()=>cfg.validateEnrollmentCode(bad));
 });
+
+const {summarizeCentralReceipt}=require('../apps/desktop/status.cjs');
+test('signed Central receipt is shown only while fresh, from same node and agent running',()=>{
+  const now=Date.parse('2026-11-12T12:00:00Z');
+  const detail={node_id:'node_abc',connection:'ACKNOWLEDGED',
+    last_accepted_at:new Date(now-60_000).toISOString(),phase:'READY',
+    master_agent_id:'agent_a'};
+  const good=summarizeCentralReceipt(detail,'node_abc',true,now);
+  assert.equal(good.acknowledgedNow,true);
+  assert.equal(good.masterAgentId,'agent_a');
+  assert.equal(summarizeCentralReceipt(detail,'node_abc',false,now).acknowledgedNow,false);
+  assert.equal(summarizeCentralReceipt(detail,'node_other',true,now),null);
+  assert.equal(summarizeCentralReceipt(detail,'node_abc',true,now+181000).acknowledgedNow,false);
+  assert.equal(summarizeCentralReceipt({...detail,last_accepted_at:new Date(now+60000).toISOString()},
+    'node_abc',true,now).acknowledgedNow,false);
+});
+test('blocked Master reconciliation does not erase a real accepted heartbeat',()=>{
+  const now=Date.parse('2026-11-12T12:00:00Z');
+  const base={node_id:'node_abc',last_accepted_at:new Date(now-15000).toISOString()};
+  const blocked=summarizeCentralReceipt({...base,connection:'RECOVERY_BLOCKED',
+    error_code:'TASK_RECONCILIATION_REQUIRED'},'node_abc',true,now);
+  assert.equal(blocked.acknowledgedNow,true);
+  assert.equal(blocked.recoveryBlocked,true);
+  assert.equal(blocked.errorCode,'TASK_RECONCILIATION_REQUIRED');
+  assert.equal(summarizeCentralReceipt({...base,connection:'NOT_ACKNOWLEDGED'},
+    'node_abc',true,now).acknowledgedNow,false);
+  assert.equal(summarizeCentralReceipt({...base,connection:'PENDING'},
+    'node_abc',true,now).acknowledgedNow,false);
+  assert.equal(summarizeCentralReceipt({node_id:'node_abc',connection:'ACKNOWLEDGED'},
+    'node_abc',true,now).acknowledgedNow,false);
+});
