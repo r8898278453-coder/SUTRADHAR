@@ -75,6 +75,8 @@ test('v7 MySQL HTTP election, signed enrollment, replay, takeover and QA gates',
       title:'Implement scoped change',description:'Change a file',risk:'LOW',
       write_scopes:['src/example.ts'],acceptance_criteria:['observable behavior']});
     assert.equal(plan.code,200,JSON.stringify(plan.body));
+    await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:b.agent_id,can_develop:true});
+    await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:c.agent_id,can_qa:true});
     const claim=await b.signed('/v7/tasks/claim',{request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'});
     assert.equal(claim.code,200,JSON.stringify(claim.body));
