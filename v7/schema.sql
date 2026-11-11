@@ -60,9 +60,17 @@ CREATE TABLE IF NOT EXISTS v7_projects (
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS v7_project_agents (
+  project_id VARCHAR(100) NOT NULL, agent_id VARCHAR(100) NOT NULL,
+  can_develop TINYINT(1) NOT NULL DEFAULT 0,
+  can_qa TINYINT(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY(project_id,agent_id),
+  FOREIGN KEY (project_id) REFERENCES v7_projects(project_id),
+  FOREIGN KEY (agent_id) REFERENCES v7_agents(agent_id)
+) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS v7_tickets (
   ticket_id VARCHAR(100) PRIMARY KEY, project_id VARCHAR(100) NOT NULL,
-  creator_agent_id VARCHAR(100) NOT NULL, created_epoch BIGINT UNSIGNED NOT NULL,
+  creator_agent_id VARCHAR(100) NOT NULL, fingerprint CHAR(64) NOT NULL, created_epoch BIGINT UNSIGNED NOT NULL,
   title VARCHAR(220) NOT NULL, description TEXT NOT NULL,
   baseline_sha CHAR(40) NOT NULL, branch_name VARCHAR(120) NOT NULL,
   risk ENUM('LOW','MEDIUM','HIGH','CORE') NOT NULL,
@@ -72,6 +80,7 @@ CREATE TABLE IF NOT EXISTS v7_tickets (
   worker_agent_id VARCHAR(100), candidate_head_sha CHAR(40), candidate_tree_sha CHAR(40),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   FOREIGN KEY (project_id) REFERENCES v7_projects(project_id),
+  UNIQUE KEY uniq_project_intent(project_id,fingerprint),
   INDEX idx_ticket_status(project_id,status)
 ) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS v7_dependencies (
