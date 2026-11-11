@@ -371,6 +371,43 @@ app.get('/v7/tasks',jsonRoute(async req=>{
   admin(req);
   return transaction(c=>rows(c,'SELECT ticket_id,project_id,title,status,risk,version,worker_agent_id FROM v7_tickets ORDER BY updated_at DESC LIMIT 150'));
 }));
+app.get('/v7/tasks/available',jsonRoute(async req=>{
+  const node=await nodeAuth(req),agentId=requireId(req.header('x-sutradhar-agent'));
+  return transaction(async c=>{
+    await signedAgent(c,node.node_id,agentId);
+    const allowed=await rows(c,
+      'SELECT t.ticket_id,t.project_id,t.title,t.risk,t.version FROM v7_tickets t '+
+      'JOIN v7_project_agents a ON a.project_id=t.project_id '+
+      'WHERE a.agent_id=? AND a.can_develop=1 AND t.status="READY" ORDER BY t.updated_at LIMIT 50',
+      [agentId]);
+    const out=[];
+    for(const t of allowed){
+      const unmet=await one(c,'SELECT COUNT(*) n FROM v7_dependencies d JOIN v7_tickets p ON p.ticket_id=d.dependency_id WHERE d.ticket_id=? AND p.status!="DONE"',[t.ticket_id]);
+      if(Number(unmet.n)===0)out.push(t);
+    }
+    return out;
+  });
+}));
+app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
+  const node=await nodeAuth(req),agentId=requireId(req.header('x-sutradhar-agent'));
+  const ticketId=requireId(req.params.ticketId);
+  return transaction(async c=>{
+    await signedAgent(c,node.node_id,agentId);
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
+    if(!t)fault('TASK_NOT_FOUND',404);
+    const access=await one(c,'SELECT can_develop,can_qa FROM v7_project_agents WHERE project_id=? AND agent_id=?',
+      [t.project_id,agentId]);
+    if(!access||(Number(access.can_develop)!==1&&Number(access.can_qa)!==1))fault('PROJECT_ACCESS_DENIED',403);
+    const p=await one(c,'SELECT repository,base_branch FROM v7_projects WHERE project_id=?',[t.project_id]);
+    const latest=await one(c,'SELECT generation,summary,next_action,content_sha256 FROM v7_checkpoints WHERE ticket_id=? ORDER BY generation DESC LIMIT 1',[ticketId]);
+    return {ticket_id:t.ticket_id,project_id:t.project_id,repository:p.repository,base_branch:p.base_branch,
+      title:t.title,description:t.description,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
+      risk:t.risk,status:t.status,version:t.version,write_scopes:t.scopes_json,
+      acceptance_criteria:t.criteria_json,worker_agent_id:t.worker_agent_id,
+      candidate_head_sha:t.candidate_head_sha,candidate_tree_sha:t.candidate_tree_sha,
+      latest_checkpoint:latest};
+  });
+}));
 app.get('/v7/recovery',jsonRoute(async req=>{
   const node=await nodeAuth(req);
   const agentId=requireId(req.header('x-sutradhar-agent'));
