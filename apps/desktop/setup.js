@@ -20,7 +20,7 @@ async function loadStatus(){
       ['Enrollment request',s.enrollmentRequested?'Submitted to Central; Owner approval may still be pending':'Not confirmed'],
       ['Local process',s.agentProcessRunning?'Running':'Not running'],
       ['Central acknowledgment',s.centralReport?.acknowledgedNow?
-        'Accepted signed heartbeat (all listed agents authorized)' :
+        'Agent reports heartbeat accepted by Central (verify in Owner dashboard)' :
         'Not currently acknowledged — pending approval / offline / error'],
       ['Last accepted heartbeat',s.centralReport?.lastAcceptedAt||'Not yet accepted'],
       ['Last Central error',s.centralReport?.errorCode||'None reported'],
