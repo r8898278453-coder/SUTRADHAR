@@ -200,7 +200,13 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
     }else if(command==='APPROVE_PROPOSAL'||command==='DENY_PROPOSAL'){
       const id=requireId(payload.proposal_id),state=command==='APPROVE_PROPOSAL'?'APPROVED':'DENIED';
       const [u]:any=await c.query('UPDATE v7_approvals SET state=?,resolved_at=UTC_TIMESTAMP(3) WHERE proposal_id=? AND state="PENDING"',[state,id]);
-      if(u.affectedRows!==1)fault('PROPOSAL_NOT_PENDING',409);result={proposal_id:id,state};
+      if(u.affectedRows!==1)fault('PROPOSAL_NOT_PENDING',409);
+      const ticketRow=await one(c,'SELECT ticket_id,status FROM v7_tickets WHERE ticket_id=(SELECT ticket_id FROM v7_approvals WHERE proposal_id=?) FOR UPDATE',[id]);
+      if(state==='APPROVED'&&ticketRow?.status==='WAITING_AUTHORIZATION'){
+        const unresolved=await one(c,'SELECT COUNT(*) n FROM v7_approvals WHERE ticket_id=? AND state!="APPROVED"',[ticketRow.ticket_id]);
+        if(Number(unresolved.n)===0)await c.query('UPDATE v7_tickets SET status="READY",version=version+1 WHERE ticket_id=?',[ticketRow.ticket_id]);
+      }
+      result={proposal_id:id,state,ticket_id:ticketRow?.ticket_id||null};
     }else if(command==='RECONCILE_TICKET'){
       const id=requireId(payload.ticket_id),reason=requireStr(payload.reason,500);
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[id]);
