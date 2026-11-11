@@ -52,6 +52,12 @@ SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 
 ## Source layout: current vs target
 
+**Current branch source (real paths, now including independent build wrappers):**
+
+- [Central staging app](apps/central/README.md) — isolated Central bundle (Express + UI + schema), built by npm run build:central; source currently still in v7/.
+- [Desktop alpha app](apps/desktop/README.md) — first-run Electron setup and independently compiled PC agent, built by npm run build:desktop. A signed installer is **not** yet released.
+- [Versioned shared protocol](packages/shared/contract.json) — API protocol 7, heartbeat 60s, stale threshold 180s and initial 08:00 IST rule.
+
 **Current branch source (real paths):**
 
 ~~~text
@@ -71,7 +77,7 @@ SUTRADHAR/
 └── package.json               # current combined alpha build
 ~~~
 
-**Approved target layout, NOT YET MOVED:**
+**Target source organization — app wrappers exist, but most production source has NOT YET MOVED:**
 
 ~~~text
 SUTRADHAR/
@@ -85,7 +91,7 @@ SUTRADHAR/
 └── .github/workflows/         # isolated checks and release pipelines
 ~~~
 
-Do **not** set Hostinger's Root directory to apps/central until that migration actually exists. The current v7 build expects repository root (./), Node.js **22**, build command **npm run build**, output **dist**, entry file **dist/server.cjs**. Even with those settings, a live deployment is **not approved or proven**; developers must complete a staging preflight and schema packaging/restore verification first.
+Do **not** set Hostinger's Root directory to apps/central. The new **Central-only staging build** uses repository root **./**, Node.js **22**, build **npm run build:central**, output **apps/central/dist**, and entry **apps/central/dist/server.cjs**. This bundler now includes the schema, dashboard and a non-production release manifest; it explicitly excludes PC agent and worker binaries. The legacy combined alpha build (npm run build → dist/server.cjs) is still available for compatibility. **Neither build has been accepted on live Hostinger**; the protected release branch, migration/restore procedure and Owner go-live checks are outstanding.
 
 ## Git and release policy
 
@@ -107,6 +113,8 @@ npm install
 npm run lint
 npm test
 npm run build
+npm run test:desktop
+npm run test:packages
 # Uses a disposable, intentionally provisioned MySQL8 database:
 npm run test:v7-mysql
 ~~~
