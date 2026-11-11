@@ -26,8 +26,12 @@ const statusFile=path.join(home,'status.json');
 function reportStatus(info:Record<string,unknown>){
   try{
     const tmp=statusFile+'.'+process.pid+'.tmp';
+    let previous:any={};
+    try{previous=JSON.parse(fs.readFileSync(statusFile,'utf8'));}catch{}
+    const last_accepted_at=typeof info.last_accepted_at==='string'
+      ? info.last_accepted_at : (previous.node_id===state.node_id?previous.last_accepted_at:null);
     fs.writeFileSync(tmp,JSON.stringify({observed_at:new Date().toISOString(),
-      node_id:state.node_id,...info},null,2)+'\n',{mode:0o600});
+      node_id:state.node_id,last_accepted_at,...info},null,2)+'\n',{mode:0o600});
     fs.renameSync(tmp,statusFile);fs.chmodSync(statusFile,0o600);
   }catch{console.error('Could not update local agent status');}
 }
