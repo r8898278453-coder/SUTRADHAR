@@ -27,8 +27,8 @@ const dbConfig=mysqlUrl?{uri:mysqlUrl}:{
   password:process.env.DB_PASSWORD||'',
   database:process.env.DB_NAME||''
 };
-const configured=Boolean(process.env.SUTRADHAR_ADMIN_KEY?.length>=32 &&
-  process.env.SUTRADHAR_ENROLLMENT_CODE?.length>=32 &&
+const configured=Boolean((process.env.SUTRADHAR_ADMIN_KEY||'').length>=32 &&
+  (process.env.SUTRADHAR_ENROLLMENT_CODE||'').length>=32 &&
   (mysqlUrl||(process.env.DB_USER&&process.env.DB_PASSWORD&&process.env.DB_NAME)));
 const pool=configured?mysql.createPool({...dbConfig,waitForConnections:true,connectionLimit:5,
   queueLimit:20,timezone:'Z',dateStrings:true,enableKeepAlive:true,
@@ -41,7 +41,7 @@ const fault=(code:string,status=409):never=>{throw new Fault(code,status);};
 function okId(x:unknown){return typeof x==='string'&&ID_RE.test(x);}
 function requireId(x:unknown){if(!okId(x))fault('INVALID_ID',400);return x as string;}
 function requireSha(x:unknown){if(typeof x!=='string'||!SHA_RE.test(x))fault('INVALID_SHA',400);return x;}
-function requireStr(x:unknown,max=1000){if(typeof x!=='string'||!x.trim()||x.length>max)fault('INVALID_FIELD',400);return x.trim();}
+function requireStr(x:unknown,max=1000):string{if(typeof x!=='string'||!x.trim()||x.length>max)fault('INVALID_FIELD',400);return (x as string).trim();}
 function safeEqual(a:string|undefined,b:string|undefined){
   if(!a||!b)return false;
   const x=crypto.createHash('sha256').update(a).digest();
@@ -99,7 +99,7 @@ async function nodeAuth(req:Request){
     const raw=(req as any).rawBody||Buffer.alloc(0);
     const signed=[String(ts),nonce,req.method,req.path,digest(raw)].join('\n');
     let verified=false;
-    try{verified=crypto.verify(null,Buffer.from(signed),crypto.createPublicKey(n.public_key_pem),Buffer.from(signature,'base64'));}
+    try{verified=crypto.verify(null,Buffer.from(signed),crypto.createPublicKey(n.public_key_pem),Buffer.from(signature||'','base64'));}
     catch{verified=false;}
     if(!verified)fault('SIGNATURE_INVALID',401);
     // Unique nonce is durable across processes and survives crashes.
