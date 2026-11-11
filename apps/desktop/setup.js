@@ -18,7 +18,13 @@ async function loadStatus(){
       ['Node ID',s.nodeId||'Not created'],
       ['Agent IDs',(s.agentIds||[]).join(', ')||'Not created'],
       ['Enrollment request',s.enrollmentRequested?'Submitted to Central; Owner approval may still be pending':'Not confirmed'],
-      ['Local process',s.agentProcessRunning?'Running — Central approval not confirmed':'Not running'],
+      ['Local process',s.agentProcessRunning?'Running':'Not running'],
+      ['Central acknowledgment',s.centralReport?.acknowledgedNow?
+        'Accepted signed heartbeat (all listed agents authorized)' :
+        'Not currently acknowledged — pending approval / offline / error'],
+      ['Last accepted heartbeat',s.centralReport?.lastAcceptedAt||'Not yet accepted'],
+      ['Last Central error',s.centralReport?.errorCode||'None reported'],
+      ['Master recovery phase',s.centralReport?.phase||'Not yet confirmed'],
       ['Security phase','Alpha: OS credential vault and signed installer pending']
     ];
     for(const [label,value] of entries){
@@ -49,3 +55,5 @@ get('dashboard').addEventListener('click',async()=>{try{await api.openDashboard(
 get('chatgpt').addEventListener('click',async()=>{try{await api.openProvider('chatgpt');}catch(e){showFeedback(String(e.message||e));}});
 get('studio').addEventListener('click',async()=>{try{await api.openProvider('ai_studio');}catch(e){showFeedback(String(e.message||e));}});
 loadStatus();
+// The status panel observes local signed-ack receipts; it does not declare success from a running process.
+setInterval(loadStatus,15000);
