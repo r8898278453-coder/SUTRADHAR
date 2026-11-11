@@ -19,6 +19,19 @@ if(fs.existsSync(path.join(home,'enrollment_requested')))delete process.env.SUTR
 const agentNames=(process.env.SUTRADHAR_AGENT_IDS||'').split(',').map(x=>x.trim()).filter(Boolean);
 if(!agentNames.length)throw new Error('SUTRADHAR_AGENT_IDS required');
 fs.mkdirSync(home,{recursive:true,mode:0o700});
+
+// Local status is informational only. Central remains the authority.
+// The Electron setup window reads this file; it contains NO credentials.
+const statusFile=path.join(home,'status.json');
+function reportStatus(info:Record<string,unknown>){
+  try{
+    const tmp=statusFile+'.'+process.pid+'.tmp';
+    fs.writeFileSync(tmp,JSON.stringify({observed_at:new Date().toISOString(),
+      node_id:state.node_id,...info},null,2)+'\n',{mode:0o600});
+    fs.renameSync(tmp,statusFile);fs.chmodSync(statusFile,0o600);
+  }catch{console.error('Could not update local agent status');}
+}
+
 function persist(data:Saved){const tmp=filename+'.'+process.pid+'.tmp';
   fs.writeFileSync(tmp,JSON.stringify(data,null,2),{mode:0o600});fs.renameSync(tmp,filename);fs.chmodSync(filename,0o600);}
 function newIdentity():Saved{
@@ -132,10 +145,17 @@ async function run(){
           else if(e.message!=='NODE_NOT_APPROVED')throw e;}}
       if(registered.size===state.agents.length){
         const reply=await heartbeat(epoch);epoch=Number(reply.epoch);
+        // An accepted signed reply is a real Central acknowledgment, not a UI guess.
+        reportStatus({connection:'ACKNOWLEDGED',last_accepted_at:reply.server_received_at,
+          epoch:Number(reply.epoch),master_agent_id:reply.master_agent_id||null,
+          phase:String(reply.phase||''),backups:Array.isArray(reply.backups)?reply.backups:[],
+          agent_ids:state.agents.map(a=>a.id)});
         if(reply.master_agent_id&&state.agents.some(a=>a.id===reply.master_agent_id)&&reply.phase==='RECOVERING')
           await reconcileNewMaster(reply.master_agent_id,Number(reply.epoch));}
     }catch(e:any){
       console.error('Central unavailable/not approved:',String(e.message).slice(0,100));
+      reportStatus({connection:'NOT_ACKNOWLEDGED',last_error_at:new Date().toISOString(),
+        error_code:String(e.message).slice(0,100),agent_ids:state.agents.map(a=>a.id)});
       const record={at:new Date().toISOString(),node_id:state.node_id,sequence:state.node_sequence,
         event:'CENTRAL_UNAVAILABLE'};
       const json=JSON.stringify(record),signature=crypto.sign(null,Buffer.from(json),key).toString('base64');
