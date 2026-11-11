@@ -8,7 +8,7 @@
 
 Maintain **one GitHub repository** for the product, organized as two independently built and released applications and a versioned shared contract. Do **not** split Central and Desktop into permanent development branches or separate repositories.
 
-The current implementation remains under v7/ with root-level scripts until a reviewed migration; the following is a **target**, not an assertion that these paths already exist:
+The authoritative runtime source is still primarily under v7/ with root scripts. **Staging build wrappers and Desktop setup UI now exist** in apps/central and apps/desktop; source extraction and independent signed releases remain pending. The following describes the complete target (do not infer all paths/subsystems exist):
 
 ~~~text
 apps/central/            # Express, dashboard, MySQL migrations, Hostinger packaging
@@ -103,6 +103,13 @@ Official references:
 - https://www.hostinger.com/support/how-to-deploy-monorepos-with-npm-yarn-or-pnpm-on-hostinger/
 - https://www.hostinger.com/support/hostinger-node-js-limits-for-web-and-cloud-plans/
 - https://www.hostinger.com/support/connecting-a-hostinger-mysql-database-to-a-node-js-application/
+
+
+### Implementation slice after decision — 12 November 2026
+
+**CODED (CI acceptance pending):** [apps/central/build.cjs](../apps/central/build.cjs) creates Central-only staging dist/server.cjs plus dashboard, schema and an alpha manifest; [apps/desktop/build.cjs](../apps/desktop/build.cjs) compiles a separate Edge/Worker bundle; [apps/desktop](../apps/desktop/README.md) includes an isolated Electron first-run wizard; [packages/shared/contract.json](../packages/shared/contract.json) holds the protocol/heartbeat policy. The monorepo root offers npm run test:packages to check boundaries.
+
+**NOT IMPLEMENTED/ACCEPTED:** source extraction into fully independent workspaces; Hostinger real deploy; developer-independent signed installer/OS vault/updater; protected Central promotion; production data restore, release acceptance and physical multi-PC tests. Central should currently use monorepo root ./ with **npm run build:central**, output **apps/central/dist**, entry **apps/central/dist/server.cjs** during approved staging experiments, **not** an apps/central Root setting. There is no authority to deploy production from the draft feature branch.
 
 ## Migration plan (not yet executed)
 
