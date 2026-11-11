@@ -14,6 +14,8 @@ if(!/^https:\/\//.test(central)&&!(process.env.SUTRADHAR_ALLOW_HTTP_LOCAL==='tru
   /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\/?$/.test(central)))
   throw new Error('HTTPS central URL required (local HTTP requires explicit opt-in)');
 const base=central.replace(/\/+$/,'');
+// A previously enrolled daemon must not keep an obsolete enrollment secret.
+if(fs.existsSync(path.join(home,'enrollment_requested')))delete process.env.SUTRADHAR_ENROLLMENT_CODE;
 const agentNames=(process.env.SUTRADHAR_AGENT_IDS||'').split(',').map(x=>x.trim()).filter(Boolean);
 if(!agentNames.length)throw new Error('SUTRADHAR_AGENT_IDS required');
 fs.mkdirSync(home,{recursive:true,mode:0o700});
@@ -110,6 +112,8 @@ async function run(){
         try {
           await enroll();
           fs.writeFileSync(path.join(home,'enrollment_requested'),new Date().toISOString(),{mode:0o600});
+          // One-time enrollment grant no longer needed after Central accepts the node.
+          delete process.env.SUTRADHAR_ENROLLMENT_CODE;
         } catch(e:any) {
           // The previous enrollment request may have succeeded even when the local
           // marker write was interrupted. Reconcile by proving possession of THIS
@@ -118,6 +122,8 @@ async function run(){
           const existing=await signedGet('/v7/nodes/me');
           if(existing.node_id!==state.node_id)throw new Error('ENROLLMENT_IDENTITY_MISMATCH');
           fs.writeFileSync(path.join(home,'enrollment_requested'),new Date().toISOString(),{mode:0o600});
+          // One-time enrollment grant no longer needed after Central accepts the node.
+          delete process.env.SUTRADHAR_ENROLLMENT_CODE;
         }
       }
       for(const a of state.agents){if(registered.has(a.id))continue;
