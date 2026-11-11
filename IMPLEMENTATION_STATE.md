@@ -4,6 +4,17 @@
 
 The prior text in this file incorrectly equated manually persisted fixture data with verified Docker execution, Git push and remote merge. It has been superseded by evidence-based tracking.
 
+## Owner-directed architecture v7.0 — design-only
+
+On 2026-11-11, **three new normative target documents** were committed to the existing fix branch:
+- [Architecture Blueprint v7](docs/SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md)
+- [Agent / Task / QA / Recovery Contract](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md)
+- [V7 Requirements / Acceptance Tests](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md)
+
+Finalized target: owner's existing Hostinger Business web hosting + MySQL + request-driven HTTPS/Telegram web backend; 8–10 Electron PCs with unique node/agent IDs; retained 1 Active Master + 2 backups selected after 08:00 initial bootstrap, 60-second heartbeats; hybrid Master-as-Developer, permitted browser-first AI workflow, safe Git, checkpoints, independent QA and protected review.
+
+**Documentation only: NOT a MySQL migration, Hostinger deployment, Electron browser implementation, browser-provider acceptance or multi-host test.** Existing SQLite code, partially in-memory/demo data, API LLM router and CI-scoped Git/Docker verification remain the current execution reality. All V7 tests are NOT_RUN; live GitHub forward/rollback acceptance and historic signer rotation remain outstanding.
+
 See:
 - [Implementation Tracker](docs/IMPLEMENTATION_TRACKER.md) — module-level implementation/remaining status.
 - [Implementation Log](docs/IMPLEMENTATION_LOG_2026-11-06.md) — changes and validation history.
