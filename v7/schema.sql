@@ -128,6 +128,12 @@ CREATE TABLE IF NOT EXISTS v7_git_receipts (
   verified_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   FOREIGN KEY (ticket_id) REFERENCES v7_tickets(ticket_id)
 ) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS v7_legacy_imports (
+  source_table VARCHAR(80) NOT NULL, source_id VARCHAR(120) NOT NULL,
+  source_sha256 CHAR(64) NOT NULL, safe_payload JSON NOT NULL,
+  migrated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY(source_table,source_id)
+) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS v7_migration_audit (
   migration_id VARCHAR(100) PRIMARY KEY, source_sha256 CHAR(64) NOT NULL,
   record_counts JSON NOT NULL, destination_counts JSON NOT NULL,
