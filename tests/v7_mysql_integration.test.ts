@@ -65,8 +65,10 @@ test('v7 MySQL HTTP election, signed enrollment, replay, takeover and QA gates',
     const status=(await cluster.json() as any).cluster;
     assert.equal(status.master_agent_id,a.agent_id);assert.equal(status.backup1,b.agent_id);
     assert.equal(status.backup2,c.agent_id);
+    const recovered=await a.signed('/v7/recovery',undefined,'GET');
+    assert.equal(recovered.code,200,JSON.stringify(recovered.body));
     const pre=await a.signed('/v7/leadership/reconcile',{agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
-      request_id:'rec_'+(++count),manifest_sha256:'a'.repeat(64)});
+      request_id:'rec_'+(++count),manifest_sha256:recovered.body.manifest_sha256});
     assert.equal(pre.code,200,JSON.stringify(pre.body));
     await owner('CREATE_PROJECT',{project_id:'project_integration',display_name:'Integration Test',repository:'example/repo'});
     const plan=await a.signed('/v7/tasks/plan',{request_id:'plan_'+(++count),agent_id:a.agent_id,
