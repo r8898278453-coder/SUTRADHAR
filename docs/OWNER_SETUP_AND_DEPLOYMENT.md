@@ -89,7 +89,7 @@ Only use database TLS settings after verifying actual Hostinger database TLS sup
 
 **B2. Only use an approved, signed installer.** The target flow is **GitHub Releases → SUTRADHAR Desktop vX → verified installer → Windows install wizard**. Confirm publisher/signature and release version. **Today there is no trusted packaged installer**; do not download random EXEs or treat the Electron source folder as an installable product.
 
-**B3. First-run wizard.** Target screens will ask for the Central **HTTPS URL**, a friendly PC label and a short-lived enrollment grant. The app generates device identity locally (ideally Windows DPAPI/OS-backed secret storage), registers the PC and waits for Owner approval. **This wizard and OS vault integration are NOT implemented yet.**
+**B3. First-run wizard.** Target screens will ask for the Central **HTTPS URL**, a friendly PC label and a short-lived enrollment grant. The app generates device identity locally (ideally Windows DPAPI/OS-backed secret storage), registers the PC and waits for Owner approval. **A local alpha wizard is now coded** in apps/desktop, with HTTPS Central health/protocol check and unique IDs; **it has not been accepted as a physically tested installer**, and OS vault integration, safe updater, signed release and reliable OS startup are **NOT implemented**.
 
 **B4. Approve in Central.** Open Owner dashboard: new **PC pending → inspect node fingerprint/name → approve node**; then review its **agent IDs and roles → approve eligible agents** and project-specific permissions. Confirm the PC is genuinely yours before approval. Do not approve a duplicate/cloned machine identity or give all roles by default.
 
