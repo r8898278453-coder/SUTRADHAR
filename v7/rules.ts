@@ -1,8 +1,9 @@
 import * as crypto from 'node:crypto';
+import contract from '../packages/shared/contract.json';
 export const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/;
 export const SHA_RE = /^[0-9a-f]{40}$/;
-export const LEASE_SECONDS = 180;
-export const HEARTBEAT_SECONDS = 60;
+export const LEASE_SECONDS = contract.stale_after_seconds;
+export const HEARTBEAT_SECONDS = contract.heartbeat_interval_seconds;
 export type Candidate = {agent_id:string;node_id:string;arrival_id:number;last_seen_ms:number;eligible:boolean};
 export type Leader = {master_agent_id:string|null;lease_until_ms:number|null;bootstrapped:boolean;epoch:number;backup1:string|null;backup2:string|null};
 export function firstElectionOpen(utcMs:number) {
