@@ -14,7 +14,7 @@
     "dev:legacy": "tsx server.ts",
     "build:legacy": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "edge:start": "node dist/v7-agent.cjs",
-    "test:v7": "node --import tsx --test tests/v7_rules.test.ts",
+    "test:v7": "node --import tsx --test tests/v7_rules.test.ts tests/v7_git_remote.test.ts",
     "edge:worker": "node dist/v7-worker.cjs",
     "test:v7-mysql": "SUTRADHAR_RUN_V7_MYSQL_TEST=1 SUTRADHAR_V7_NO_LISTEN=true node --import tsx --test tests/v7_mysql_integration.test.ts",
     "migrate:legacy": "tsx v7/migrate_legacy.ts"
