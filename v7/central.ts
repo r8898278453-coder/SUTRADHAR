@@ -701,4 +701,5 @@ if(process.env.NODE_ENV==='production'){
 if(process.env.SUTRADHAR_V7_NO_LISTEN!=='true'){
   app.listen(PORT,'0.0.0.0',()=>console.log('SUTRADHAR v7 MySQL control plane listening; configured='+configured));
 }
+export async function shutdownV7ForTests(){if(process.env.NODE_ENV!=='test')fault('TEST_ONLY',403);await pool?.end();}
 export {app,transaction,evaluate,ownerCommand};
