@@ -7,7 +7,7 @@ import {once} from 'node:events';
 import {app,shutdownV7ForTests} from '../v7/central.ts';
 // Run only against disposable MySQL database. No mocking SQL, no production credentials.
 const enabled=process.env.SUTRADHAR_RUN_V7_MYSQL_TEST==='1';
-test('v7 MySQL HTTP election, signed enrollment, replay, takeover and QA gates',{skip:!enabled},async()=>{
+test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover and QA gates',{skip:!enabled},async()=>{
   const server=http.createServer(app);
   server.listen(0,'127.0.0.1');await once(server,'listening');
   const addr=server.address();if(!addr||typeof addr==='string')throw new Error('Bad server address');
@@ -58,6 +58,16 @@ test('v7 MySQL HTTP election, signed enrollment, replay, takeover and QA gates',
   try{
     process.env.SUTRADHAR_ALLOW_MIGRATIONS='true';
     const mig=await post('/v7/owner/migrate',{},admin);assert.equal(mig.code,200,JSON.stringify(mig.body));
+    // This test exercises a cluster that has *already passed* its initial 08:00 IST bootstrap.
+    // Never depend on the GitHub runner's wall-clock time: if CI runs before 08:00 IST,
+    // a new cluster correctly refuses the first election. The exact 08:00 boundary is
+    // covered separately by deterministic tests/v7_rules.test.ts.
+    // The disposable MySQL instance is dedicated to this test; never run on live data.
+    const bootstrapDb=await mysql.createConnection({host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+      user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+    try {
+      await bootstrapDb.query('UPDATE v7_cluster SET bootstrapped_at=UTC_TIMESTAMP(3) WHERE singleton=1');
+    } finally {await bootstrapDb.end();}
     const a=await edge(1),b=await edge(2),c=await edge(3);
     let h=await a.heartbeat();
     assert.equal(h.code,200,JSON.stringify(h.body));
