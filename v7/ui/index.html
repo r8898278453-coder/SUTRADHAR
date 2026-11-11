@@ -33,6 +33,12 @@
 <div><label>New project ID</label><input id="project-id" placeholder="project_..."><label>Name</label><input id="project-name" placeholder="Project name">
 <label>GitHub repository</label><input id="repository" placeholder="owner/repo">
 <button data-command="CREATE_PROJECT">Create project record</button></div>
+<div><label>Project access: project ID</label><input id="access-project-id" placeholder="project_...">
+<label>Agent ID</label><input id="access-agent-id" placeholder="agent_...">
+<label class="inline"><input type="checkbox" id="can-develop"> Developer access</label>
+<label class="inline"><input type="checkbox" id="can-qa"> QA access</label>
+<div class="flex"><button data-command="GRANT_PROJECT_AGENT">Grant access</button>
+<button class="danger" data-command="REVOKE_PROJECT_AGENT">Revoke access</button></div></div>
 <div><label>Proposal ID</label><input id="proposal-id" placeholder="proposal_...">
 <div class="flex"><button data-command="APPROVE_PROPOSAL">Approve proposal</button><button data-command="DENY_PROPOSAL" class="danger">Deny</button></div></div>
 </div></section></section>
