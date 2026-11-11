@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as crypto from 'node:crypto';
 import http from 'node:http';
+import mysql from 'mysql2/promise';
 import {once} from 'node:events';
 import {app,shutdownV7ForTests} from '../v7/central.ts';
 // Run only against disposable MySQL database. No mocking SQL, no production credentials.
@@ -109,5 +110,51 @@ test('v7 MySQL HTTP election, signed enrollment, replay, takeover and QA gates',
     assert.equal(list.find(t=>t.ticket_id==='ticket_qa_test').status,'INTEGRATING');
     const wrong=await post('/v7/tasks/verify-merge',{request_id:'merge_'+(++count),ticket_id:'ticket_qa_test'},admin);
     assert.notEqual(wrong.code,200,'No fabricated GitHub merge without live verifiable evidence');
+
+    // Test-only fault injection against disposable MySQL: force expired Master,
+    // without waiting 180 seconds and without changing the production clock.
+    const db=await mysql.createConnection({host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+      user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+    try {
+      await db.query('UPDATE v7_cluster SET lease_until=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE singleton=1');
+      await db.query('UPDATE v7_agents SET last_seen=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 400 SECOND) WHERE agent_id=?',
+        [a.agent_id]);
+      const promoted=await b.heartbeat(Number(status.epoch));
+      assert.equal(promoted.code,200,JSON.stringify(promoted.body));
+      assert.equal(promoted.body.master_agent_id,b.agent_id);
+      assert.equal(promoted.body.phase,'RECOVERING');
+      assert.equal(Number(promoted.body.epoch),Number(status.epoch)+1);
+      const oldMaster=await a.signed('/v7/tasks/plan',{request_id:'oldmaster_'+(++count),
+        agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
+        ticket_id:'ticket_stale_master',project_id:'project_integration',
+        baseline_sha:'a'.repeat(40),branch_name:'ai/ticket_stale_master',
+        title:'Stale epoch',description:'Should never be accepted',risk:'LOW',
+        write_scopes:['src/stale.ts'],acceptance_criteria:['Never create ticket']});
+      assert.notEqual(oldMaster.code,200,'Former master must be fenced after failover');
+      const oldClaim=await b.signed('/v7/tasks/checkpoint',{request_id:'oldlease_'+(++count),
+        agent_id:b.agent_id,ticket_id:'ticket_qa_test',lease_id:claim.body.lease_id,
+        expected_master_epoch:Number(status.epoch),summary:'illegal',next_action:'illegal'});
+      assert.notEqual(oldClaim.code,200,'Old epoch worker lease must be fenced');
+      const s=await fetch(base+'/v7/tasks',{headers:{authorization:'Bearer '+admin}});
+      const tasks=await s.json() as any[];
+      assert.equal(tasks.find(t=>t.ticket_id==='ticket_qa_test').status,'RECONCILIATION_REQUIRED');
+
+      // Backup 2 must replace a failed Backup 1 and increment epoch exactly once.
+      await db.query('UPDATE v7_cluster SET lease_until=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE singleton=1');
+      await db.query('UPDATE v7_agents SET last_seen=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 400 SECOND) WHERE agent_id=?',
+        [b.agent_id]);
+      const fallback=await c.heartbeat(Number(promoted.body.epoch));
+      assert.equal(fallback.code,200,JSON.stringify(fallback.body));
+      assert.equal(fallback.body.master_agent_id,c.agent_id);
+      assert.equal(Number(fallback.body.epoch),Number(promoted.body.epoch)+1);
+    }finally{await db.end();}
+    // Same Owner command + request ID must be one durable effect across concurrent retries.
+    const same={request_id:'concurrent_duplicate',command:'PAUSE',payload:{}};
+    const [once,together]=await Promise.all([
+      post('/v7/owner/command',same,admin),post('/v7/owner/command',same,admin)]);
+    assert.equal(once.code,200,JSON.stringify(once.body));
+    assert.equal(together.code,200,JSON.stringify(together.body));
+    assert.deepEqual(once.body,together.body);
+
   }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await shutdownV7ForTests();}
 });
