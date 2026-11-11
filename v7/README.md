@@ -7,6 +7,18 @@
 
 Status: **alpha code committed, not production accepted**. Existing v6 security/Git/Docker guards remain in the repository. Only v7 MySQL is authoritative for the new routes; legacy SQLite/demo service is available explicitly via the legacy development command and MUST NOT serve production.
 
+## New separated staging builds — 12 November 2026
+
+The repository now has **apps/central/** (separate Central bundle) and **apps/desktop/** (Electron first-run setup and supervised PC agent). The actual v7 core source still lives under v7/ and is compiled into each respective app; a full source/workspace migration has not been completed.
+
+- **Central-only staging build:** from repo root, npm run build:central → apps/central/dist/server.cjs, dashboard, dist/v7/schema.sql and an **ALPHA_UNAPPROVED** manifest. Recommended Hostinger staging settings: root ./, Node 22, command npm run build:central, output apps/central/dist, entry apps/central/dist/server.cjs.
+- **Desktop-only staging build:** from repo root, npm run build:desktop → apps/desktop/dist/edge-agent.cjs and edge-worker.cjs; generated apps/desktop/contract.json. Developer prototype: install Electron dev dependencies in apps/desktop and use npm --prefix apps/desktop run start.
+- **Safety tests:** npm run test:desktop checks first-run validation; npm run test:packages builds both and confirms independent boundaries, version protocol and artifact checksums. These are not proof of a live Hostinger deployment or trusted Windows installer.
+- **Internal Windows QA installer:** optional CI smoke builds an unsigned installer without publishing it; production code signing, auto-update and a physical Windows install trial remain blocked.
+- **Master recovery:** the PC agent's signed GET recovery path now includes its agent identity; an interrupted enrollment request can be reconciled only by proving possession of the existing approved node key.
+
+See [Central app README](../apps/central/README.md) and [Desktop app README](../apps/desktop/README.md). The manual steps below remain available for the legacy combined alpha build; do not confuse them with production-ready installation.
+
 ## Central on Hostinger Business
 
 Hostinger Business Node.js supports Express and MySQL, but not inbound WebSockets, Docker or permanent background workers. Hostinger's managed web app should use Node 22, the approved branch, project root, npm build, output directory dist, and entry file dist/server.cjs. Keep the source v7/schema.sql available at runtime. This is a request-driven HTTP API.
