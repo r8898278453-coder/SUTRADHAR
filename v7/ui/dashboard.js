@@ -47,6 +47,11 @@ document.querySelectorAll('[data-command]').forEach(button=>button.addEventListe
   if(command.endsWith('_NODE'))payload.node_id=$('node-id').value.trim();
   if(command.endsWith('_AGENT')){payload.agent_id=$('agent-id').value.trim();
     payload.master_eligible=$('eligible').checked;payload.qa_eligible=$('qa').checked;}
+  if(command==='GRANT_PROJECT_AGENT'||command==='REVOKE_PROJECT_AGENT'){
+    payload.project_id=$('access-project-id').value.trim();
+    payload.agent_id=$('access-agent-id').value.trim();
+    payload.can_develop=$('can-develop').checked;payload.can_qa=$('can-qa').checked;
+  }
   if(command==='CREATE_PROJECT'){payload.project_id=$('project-id').value.trim();
     payload.display_name=$('project-name').value.trim();payload.repository=$('repository').value.trim();}
   if(command.endsWith('_PROPOSAL'))payload.proposal_id=$('proposal-id').value.trim();
