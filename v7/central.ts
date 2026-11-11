@@ -371,6 +371,16 @@ app.get('/v7/tasks',jsonRoute(async req=>{
   admin(req);
   return transaction(c=>rows(c,'SELECT ticket_id,project_id,title,status,risk,version,worker_agent_id FROM v7_tickets ORDER BY updated_at DESC LIMIT 150'));
 }));
+app.get('/v7/cluster/state',jsonRoute(async req=>{
+  const node=await nodeAuth(req);
+  return transaction(async c=>{
+    const mine=await one(c,'SELECT node_id FROM v7_nodes WHERE node_id=? AND state="APPROVED"',[node.node_id]);
+    if(!mine)fault('NODE_NOT_APPROVED',403);
+    const ld=await evaluate(c,'signed-read');
+    return {epoch:Number(ld.epoch),master_agent_id:ld.master_agent_id,
+      phase:ld.phase,paused:Boolean(ld.paused),backups:[ld.backup1,ld.backup2]};
+  });
+}));
 app.get('/v7/tasks/available',jsonRoute(async req=>{
   const node=await nodeAuth(req),agentId=requireId(req.header('x-sutradhar-agent'));
   return transaction(async c=>{
@@ -627,7 +637,7 @@ app.post('/v7/tasks/verify-merge',jsonRoute(async req=>{
   const requiredChecks=(process.env.SUTRADHAR_REQUIRED_CHECKS||'').split(';').filter(Boolean);
   const verification=await verifyGitHubMergeEvidence({
     repo:info.p.repository,token,branch:info.t.branch_name,
-    allowedFiles:JSON.parse(info.t.scopes_json),
+    allowedFiles:typeof info.t.scopes_json==='string'?JSON.parse(info.t.scopes_json):info.t.scopes_json,
     baselineCommit:info.t.baseline_sha,candidateTreeSha:info.t.candidate_tree_sha,
     requiredChecks,requiredApprovals:Math.max(1,Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS||1)),
     expectedPrNumber:d.pr_number,expectedHeadSha:info.t.candidate_head_sha,
