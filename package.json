@@ -1,11 +1,11 @@
 {
   "name": "sutradhar-swarm",
   "private": true,
-  "version": "5.3.0",
+  "version": "7.0.0-alpha.1",
   "type": "module",
   "scripts": {
     "dev": "tsx v7/central.ts",
-    "build": "esbuild v7/central.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/server.cjs && esbuild v7/agent.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/v7-agent.cjs && node v7/copy-ui.cjs",
+    "build": "esbuild v7/central.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/server.cjs && esbuild v7/agent.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/v7-agent.cjs && esbuild v7/worker.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/v7-worker.cjs && node v7/copy-ui.cjs",
     "start": "node dist/server.cjs",
     "lint": "tsc --noEmit",
     "test": "NODE_ENV=test SUTRADHAR_TEST_RUN=true SUTRADHAR_WORKER_KEY=sutradhar-local-tests-only-worker-secret-00001 SUTRADHAR_WORKER_ID=NODE-A8F24C09 node --import tsx --test --test-concurrency=1 tests/security_ed25519.test.ts tests/cluster_db.test.ts tests/e2e_lifecycle.test.ts tests/github_merge_verifier.test.ts tests/github_pr_creator.test.ts tests/draft_pr_http_integration.test.ts tests/tested_branch_http_guard.test.ts tests/git_merge_attestation.test.ts tests/github_merge_http_integration.test.ts tests/rollback_http_integration.test.ts tests/github_rollback_reconciler.test.ts && NODE_ENV=test SUTRADHAR_TEST_RUN=true SUTRADHAR_WORKER_KEY=sutradhar-local-tests-only-worker-secret-00001 SUTRADHAR_WORKER_ID=NODE-A8F24C09 tsx tests/security_and_auth.test.ts && npm run test:v7",
@@ -14,7 +14,9 @@
     "dev:legacy": "tsx server.ts",
     "build:legacy": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "edge:start": "node dist/v7-agent.cjs",
-    "test:v7": "node --import tsx --test tests/v7_rules.test.ts"
+    "test:v7": "node --import tsx --test tests/v7_rules.test.ts",
+    "edge:worker": "node dist/v7-worker.cjs",
+    "test:v7-mysql": "SUTRADHAR_RUN_V7_MYSQL_TEST=1 SUTRADHAR_V7_NO_LISTEN=true node --import tsx --test tests/v7_mysql_integration.test.ts"
   },
   "dependencies": {
     "@google/genai": "latest",
