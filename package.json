@@ -17,7 +17,13 @@
     "test:v7": "node --import tsx --test tests/v7_rules.test.ts tests/v7_git_remote.test.ts",
     "edge:worker": "node dist/v7-worker.cjs",
     "test:v7-mysql": "SUTRADHAR_RUN_V7_MYSQL_TEST=1 SUTRADHAR_V7_NO_LISTEN=true node --import tsx --test tests/v7_mysql_integration.test.ts",
-    "migrate:legacy": "tsx v7/migrate_legacy.ts"
+    "migrate:legacy": "tsx v7/migrate_legacy.ts",
+    "build:central": "node apps/central/build.cjs",
+    "build:desktop": "node apps/desktop/build.cjs",
+    "start:central": "node apps/central/dist/server.cjs",
+    "test:desktop": "node --test tests/desktop_setup.test.cjs",
+    "check:packages": "node scripts/check-packages.cjs",
+    "test:packages": "npm run build:central && npm run build:desktop && npm run check:packages"
   },
   "dependencies": {
     "@google/genai": "latest",
@@ -43,5 +49,8 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vite": "^6.1.0"
+  },
+  "engines": {
+    "node": ">=22 <25"
   }
 }
