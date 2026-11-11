@@ -714,24 +714,24 @@ app.post('/v7/git/confirm',jsonRoute(async req=>{
     writeScopes:typeof info.t.scopes_json==='string'?JSON.parse(info.t.scopes_json):info.t.scopes_json,
     expectedHead
   });
-  if(!proof.verified)fault('REMOTE_PUBLISH_UNCERTAIN_'+proof.error_code,409);
+  const verified=proof.verified?proof:fault('REMOTE_PUBLISH_UNCERTAIN_'+proof.error_code,409);
   return transaction(async c=>{
     await signedAgent(c,node.node_id,agentId,true);
     const ld=await leader(c);
     if(ld.paused||ld.phase!=='READY'||Number(ld.epoch)!==Number(info.job.epoch)||
        !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
       fault('STALE_MASTER_EPOCH',409);
-    return idem(c,agentId,d.request_id,'GIT_CONFIRM',{ticketId,head:proof.headSha},async()=>{
+    return idem(c,agentId,d.request_id,'GIT_CONFIRM',{ticketId,head:verified.headSha},async()=>{
       const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',[ticketId]);
       const t=await one(c,'SELECT status,candidate_tree_sha FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
-      if(job?.state!=='RUNNING'||t?.status!=='INTEGRATING'||t.candidate_tree_sha!==proof.treeSha||
+      if(job?.state!=='RUNNING'||t?.status!=='INTEGRATING'||t.candidate_tree_sha!==verified.treeSha||
          Number(job.epoch)!==Number(ld.epoch))fault('GIT_CONFIRM_VERSION_CONFLICT',409);
       await c.query('UPDATE v7_git_jobs SET state="CONFIRMED",remote_head_sha=?,remote_tree_sha=?,changed_files_json=?,verified_at=UTC_TIMESTAMP(3),updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',
-        [proof.headSha,proof.treeSha,JSON.stringify(proof.changedFiles),ticketId]);
+        [verified.headSha,verified.treeSha,JSON.stringify(verified.changedFiles),ticketId]);
       await event(c,'GIT_BRANCH_REMOTE_CONFIRMED',agentId,Number(ld.epoch),ticketId,{
-        head:proof.headSha,tree:proof.treeSha});
-      return {accepted:true,ticket_id:ticketId,remote_head_sha:proof.headSha,
-        tree_sha:proof.treeSha,status:'PUSH_CONFIRMED_NOT_MERGED'};
+        head:verified.headSha,tree:verified.treeSha});
+      return {accepted:true,ticket_id:ticketId,remote_head_sha:verified.headSha,
+        tree_sha:verified.treeSha,status:'PUSH_CONFIRMED_NOT_MERGED'};
     });
   });
 }));
@@ -755,19 +755,19 @@ app.post('/v7/git/pr-draft',jsonRoute(async req=>{
     baselineCommit:info.t.baseline_sha,candidateTreeSha:info.t.candidate_tree_sha,
     changedFiles:changed,allowedFiles:changed,title:info.t.title,description:info.t.description
   });
-  if(!pr.created||pr.headSha!==info.j.remote_head_sha)
-    fault('DRAFT_PR_REMOTE_UNCERTAIN',409);
-  return transaction(async c=>idem(c,'owner:web',d.request_id,'DRAFT_PR',{ticketId,prNumber:pr.prNumber},async()=>{
+  const created=pr.created?pr:fault('DRAFT_PR_REMOTE_UNCERTAIN',409);
+  if(created.headSha!==info.j.remote_head_sha)fault('DRAFT_PR_REMOTE_UNCERTAIN',409);
+  return transaction(async c=>idem(c,'owner:web',d.request_id,'DRAFT_PR',{ticketId,prNumber:created.prNumber},async()=>{
     const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',[ticketId]);
-    if(!job||job.state!=='CONFIRMED'||job.remote_head_sha!==pr.headSha)
+    if(!job||job.state!=='CONFIRMED'||job.remote_head_sha!==created.headSha)
       fault('GIT_RECEIPT_CHANGED',409);
-    if(job.pr_number&&Number(job.pr_number)!==pr.prNumber)
+    if(job.pr_number&&Number(job.pr_number)!==created.prNumber)
       fault('DRAFT_PR_NUMBER_CONFLICT',409);
     await c.query('UPDATE v7_git_jobs SET pr_number=?,pr_url=?,updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',
-      [pr.prNumber,pr.url,ticketId]);
+      [created.prNumber,created.url,ticketId]);
     await event(c,'GITHUB_DRAFT_PR_VERIFIED','owner:web',Number((await leader(c)).epoch),ticketId,
-      {pr_number:pr.prNumber,head:pr.headSha});
-    return {accepted:true,ticket_id:ticketId,draft:true,pr_number:pr.prNumber,url:pr.url,
+      {pr_number:created.prNumber,head:created.headSha});
+    return {accepted:true,ticket_id:ticketId,draft:true,pr_number:created.prNumber,url:created.url,
       status:'REVIEW_REQUIRED'};
   }));
 }));
