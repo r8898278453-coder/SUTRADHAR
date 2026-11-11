@@ -15,7 +15,7 @@ const {
 }=require('./desktop-config.cjs');
 
 let setupWindow=null,dashboardWindow=null,agent=null;
-let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null;
+let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
 const trustedProviders={
   chatgpt:'https://chatgpt.com/',
   ai_studio:'https://aistudio.google.com/'
@@ -54,6 +54,7 @@ function safeStatus(){
     signingStatus:'ALPHA_NOT_OS_VAULT_BACKED',productionReady:false};
 }
 function startAgent(){
+  if(fs.existsSync(enrollmentMarker()))pendingEnrollmentCode=null;
   if(!current||shuttingDown||agent&&agent.exitCode===null)return;
   const script=agentScript();
   if(!fs.existsSync(script))throw Error('Edge agent not built. Developer: run npm run build:desktop at repo root.');
@@ -135,11 +136,13 @@ async function checkCentral(origin){
 }
 app.whenReady().then(()=>{
   try{current=readSettings();}catch{
+    configurationCorrupt=true;
     dialog.showErrorBox('Invalid Desktop settings','Stored configuration is unreadable. Do not delete device identity; contact the Owner.');
   }
   ipcMain.handle('sutradhar:getStatus',event=>{verifySender(event);return safeStatus();});
   ipcMain.handle('sutradhar:saveSetup',async(event,payload)=>{
     verifySender(event);
+    if(configurationCorrupt)throw Error('Invalid stored device settings. Owner-guided recovery required; never overwrite an existing identity automatically.');
     if(!payload||typeof payload!=='object')throw Error('Invalid configuration');
     const centralUrl=normalizeCentralUrl(payload.centralUrl);
     const pcName=cleanPcName(payload.pcName);
