@@ -62,3 +62,17 @@ document.querySelectorAll('[data-command]').forEach(button=>button.addEventListe
     message('Accepted receipt '+result.receipt_id);await refresh();
   }catch(e){message(e.message,true);}
 }));
+
+async function gitOperation(pathname){
+  const ticket_id=$('git-ticket-id').value.trim();
+  if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(ticket_id)){message('Valid ticket ID required',true);return;}
+  if(!confirm('Perform Owner-authorized Git verification for '+ticket_id+'? This will never merge main.'))return;
+  try{
+    const body={request_id:'git_'+crypto.randomUUID().replaceAll('-',''),ticket_id};
+    const response=await request(pathname,{method:'POST',body:JSON.stringify(body)});
+    message('Git operation accepted: '+JSON.stringify(response).slice(0,600));
+    await refresh();
+  }catch(e){message(e.message,true);}
+}
+$('draft-pr').onclick=()=>gitOperation('/v7/git/pr-draft');
+$('verify-merge').onclick=()=>gitOperation('/v7/tasks/verify-merge');
