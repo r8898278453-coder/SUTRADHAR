@@ -14,7 +14,7 @@
 
 Updating one application does not automatically update the other. Neither channel updates just because a developer pushed a feature branch.
 
-**Current alpha:** One combined root npm build outputs both Central and PC scripts; Electron has no verified signed installer/updater; no independent Central/PC release workflows or manifest. These are work items, **not finished features**.
+**Current alpha (12 November 2026):** New app-specific staging build commands exist: **npm run build:central** writes apps/central/dist; **npm run build:desktop** writes apps/desktop/dist and a local Electron setup wizard is available. Both build scripts record explicit **ALPHA_UNAPPROVED** manifests; these are **not trusted signed release identities**. PR CI checks separation and optionally attempts an **unsigned internal Windows QA installer** without uploading/publishing it. The existing combined npm run build remains for backwards compatibility. There is still **no approved Central promotion pipeline, Windows signing, auto-updater or independent production deployment acceptance**.
 
 ## 2. Version identity and release receipt (required target)
 
@@ -85,7 +85,7 @@ If any gate is unknown: **NO-GO**. "We can fix it later" does not count as an ac
 - Trusted QA, Docker/Git conditions and browser-provider policies satisfied on a supported PC, not Hostinger.
 - Update rollback/install failure does not erase durable local identity, checkpoints or frozen Git worktrees.
 
-**Current status:** manually started Node agent/CLI exists, Electron shell is experimental, and the actual installer/signature/OS vault/updater/multi-PC acceptance are incomplete.
+**Current status:** the Electron app now offers a local first-run Central health check, PC name, unique agent IDs and enrollment-code entry, and starts the existing signed agent. Actual packaged Windows installer behavior, OS vault, signatures, updater and multi-PC acceptance remain incomplete. No approval/heartbeat success is inferred from the child process merely running.
 
 ## 6. Safe staged rollout
 
@@ -147,7 +147,7 @@ A Desktop update should never trigger a Hostinger deployment; a Central-only rel
 
 ## 10. Current implementation gaps before the promised owner UX
 
-**NOT IMPLEMENTED/ACCEPTED:** reproducible lockfile/workspaces; split app-specific builds and selective CI; release/central-production branch creation/protection/promoter; owner release approval UI and immutable deployment receipts; signed installer and updater; OS key vault; first-run enrollment wizard; production migration/backup/restore flow; live Hostinger staging; production rollback controls; real 2-PC and 8–10-PC evidence; full v7 71-case acceptance. No one-click install/update/rollback claim until these are delivered and tested.
+**NOT IMPLEMENTED/ACCEPTED:** reproducible lockfile/fully isolated workspaces; application source extraction, signed/published release workflows and production selective CI; release/central-production branch creation/protection/promoter; owner release approval UI and immutable deployment receipts; signed installer and updater; OS key vault; first-run enrollment wizard; production migration/backup/restore flow; live Hostinger staging; production rollback controls; real 2-PC and 8–10-PC evidence; full v7 71-case acceptance. No one-click install/update/rollback claim until these are delivered and tested.
 
 Use [Implementation Tracker](IMPLEMENTATION_TRACKER.md) for scope-specific evidence, [Owner Setup](OWNER_SETUP_AND_DEPLOYMENT.md) for installation, [ADR](ADR_001_MONOREPO_TWO_APPS.md) for structural decisions, and [V7 Acceptance Matrix](V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) for completion gates.
 
