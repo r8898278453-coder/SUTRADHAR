@@ -13,6 +13,7 @@ const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
 }=require('./desktop-config.cjs');
+const {summarizeCentralReceipt}=require('./status.cjs');
 
 let setupWindow=null,dashboardWindow=null,agent=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
@@ -51,18 +52,7 @@ function safeStatus(){
   let centralReport=null;
   try{
     const detail=JSON.parse(fs.readFileSync(path.join(nodeDir(),'status.json'),'utf8'));
-    if(detail.node_id===nodeId){
-      const accepted=typeof detail.last_accepted_at==='string'?Date.parse(detail.last_accepted_at):NaN;
-      const fresh=Number.isFinite(accepted)&&accepted<=Date.now()+5000&&
-        Date.now()-accepted<=180000;
-      centralReport={
-        acknowledgedNow:Boolean(agentProcessRunning&&fresh&&['ACKNOWLEDGED','RECOVERY_BLOCKED'].includes(detail.connection)),
-        lastAcceptedAt:Number.isFinite(accepted)?new Date(accepted).toISOString():null,
-        errorCode:typeof detail.error_code==='string'?detail.error_code:null,
-        phase:typeof detail.phase==='string'?detail.phase:null,
-        masterAgentId:typeof detail.master_agent_id==='string'?detail.master_agent_id:null
-      };
-    }
+    centralReport=summarizeCentralReceipt(detail,nodeId,agentProcessRunning);
   }catch{}
   return {configured:Boolean(current),centralUrl:current?.centralUrl||null,
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
@@ -152,6 +142,13 @@ async function checkCentral(origin){
     throw Error('Central/Desktop protocol mismatch. Update the compatible Desktop version first.');
 }
 app.whenReady().then(()=>{
+  // Forget the one-time enrollment grant promptly even if the setup window closes.
+  const enrollmentCleanup=setInterval(()=>{
+    if(fs.existsSync(enrollmentMarker())){
+      pendingEnrollmentCode=null;
+      clearInterval(enrollmentCleanup);
+    }
+  },5000);
   try{current=readSettings();}catch{
     configurationCorrupt=true;
     dialog.showErrorBox('Invalid Desktop settings','Stored configuration is unreadable. Do not delete device identity; contact the Owner.');
