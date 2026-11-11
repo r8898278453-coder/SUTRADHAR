@@ -12,3 +12,5 @@ button:hover{filter:brightness(1.1)}button:disabled{opacity:.55;cursor:wait}.sec
 .actions{display:flex;gap:10px;flex-wrap:wrap}.status-grid{display:grid;grid-template-columns:155px 1fr;gap:10px;font-size:13px}
 .status-grid strong{overflow-wrap:anywhere}.status-grid span{color:#afc6df}
 #feedback{color:#ffd6a3;white-space:pre-wrap;line-height:1.5;margin-top:12px}footer{font-size:12px;color:#91acc7;line-height:1.5;margin-top:20px}
+
+.toggle{display:flex;align-items:center;gap:10px;font-size:13px;color:#d3e4f5;margin:14px 0 0}.toggle input{width:18px;height:18px;display:inline-block;flex:none}
