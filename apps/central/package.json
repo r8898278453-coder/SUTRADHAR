@@ -1,0 +1,19 @@
+{
+  "name": "@sutradhar/central",
+  "private": true,
+  "version": "7.0.0-alpha.1",
+  "description": "Independently built Hostinger-compatible SUTRADHAR Central app (alpha)",
+  "type": "commonjs",
+  "engines": { "node": ">=22 <25" },
+  "scripts": {
+    "build": "node build.cjs",
+    "start": "node dist/server.cjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "mysql2": "^3.15.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
