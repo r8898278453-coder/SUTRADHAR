@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS v7_projects (
   repository VARCHAR(190) NOT NULL, base_branch VARCHAR(80) NOT NULL DEFAULT 'main',
   status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,
-  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uniq_repository_base(repository,base_branch)
 ) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS v7_project_agents (
   project_id VARCHAR(100) NOT NULL, agent_id VARCHAR(100) NOT NULL,
