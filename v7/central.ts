@@ -14,6 +14,7 @@ import {verifyGitHubMergeEvidence} from '../github_merge_verifier.ts';
 import {createVerifiedDraftPr} from '../github_pr_creator.ts';
 import {inspectGitRemote} from './git_remote.ts';
 import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest} from './rules.ts';
+import sharedContract from '../packages/shared/contract.json';
 
 const app=express();
 const MAX_BODY='128kb';
@@ -253,12 +254,17 @@ function jsonRoute(fn:(req:Request,res:Response)=>Promise<any>){
 app.get('/v7/health',jsonRoute(async()=>{
   if(!configured)fault('CONTROL_UNAVAILABLE',503);
   await transaction(async c=>{await leader(c,false);});
-  return {service:'sutradhar-v7',ready:true,authority:'mysql'};
+  return {service:'sutradhar-v7',ready:true,authority:'mysql',api_protocol:sharedContract.api_protocol};
 }));
 app.post('/v7/owner/migrate',jsonRoute(async req=>{
   admin(req);
   if(process.env.SUTRADHAR_ALLOW_MIGRATIONS!=='true')fault('MIGRATION_DISABLED',403);
-  const schemaFile=path.resolve(process.cwd(),'v7/schema.sql');
+  // Support BOTH legacy repo-root run and the independent Central bundle.
+  // Never resolve a caller-supplied file path for database schema execution.
+  const localBundleDir=typeof __dirname==='string'?__dirname:path.dirname(process.argv[1]||process.cwd());
+  const bundleSchema=path.resolve(localBundleDir,'v7/schema.sql');
+  const repoSchema=path.resolve(process.cwd(),'v7/schema.sql');
+  const schemaFile=fs.existsSync(bundleSchema)?bundleSchema:repoSchema;
   const sql=fs.readFileSync(schemaFile,'utf8').split('\n').filter(l=>!l.trimStart().startsWith('--')).join('\n');
   const statements=sql.split(';').map(x=>x.trim()).filter(Boolean);
   const c=await getPool().getConnection();
@@ -833,7 +839,8 @@ app.use((err:any,_req:Request,res:Response,_next:NextFunction)=>{
   return res.status(503).json({accepted:false,error_code:'CONTROL_UNAVAILABLE',retryable:true});
 });
 if(process.env.NODE_ENV==='production'){
-  const dir=path.resolve(process.cwd(),'dist');
+  const bundleDir=typeof __dirname==='string'?__dirname:path.dirname(process.argv[1]||process.cwd());
+  const dir=fs.existsSync(path.resolve(bundleDir,'index.html'))?path.resolve(bundleDir):path.resolve(process.cwd(),'dist');
   app.use(express.static(dir,{index:false}));
   app.get('*',(_req,res)=>res.sendFile(path.join(dir,'index.html')));
 }
