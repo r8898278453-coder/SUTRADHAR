@@ -58,20 +58,21 @@ async function register(agent_id:string){
   return api('/v7/agents/register',{agent_id,capabilities:{
     engine:'BROWSER_ASSISTED',providers:['ChatGPT Web','Google AI Studio'],platform:process.platform}});
 }
-async function signedGet(pathname:string){
+async function signedGet(pathname:string,agentId?:string){
   const ts=Date.now(),nonce='nonce_'+crypto.randomUUID().replace(/-/g,'');
   const value=[String(ts),nonce,'GET',pathname,crypto.createHash('sha256').update('').digest('hex')].join('\n');
   const signature=crypto.sign(null,Buffer.from(value),key).toString('base64');
   const result=await fetch(base+pathname,{method:'GET',headers:{
     'x-sutradhar-node':state.node_id,'x-sutradhar-timestamp':String(ts),
-    'x-sutradhar-nonce':nonce,'x-sutradhar-signature':signature
+    'x-sutradhar-nonce':nonce,'x-sutradhar-signature':signature,
+    ...(agentId?{'x-sutradhar-agent':agentId}:{})
   },signal:AbortSignal.timeout(15000)});
   const reply=await result.json() as any;
   if(!result.ok)throw new Error(reply.error_code||'HTTP_'+result.status);
   return reply;
 }
 async function reconcileNewMaster(agentId:string,epoch:number){
-  const snapshot=await signedGet('/v7/recovery');
+  const snapshot=await signedGet('/v7/recovery',agentId);
   if(snapshot.epoch!==epoch||snapshot.phase!=='RECOVERING')throw new Error('Recovery epoch changed');
   if(snapshot.tickets.length>=300||snapshot.checkpoints.length>=300||snapshot.events.length>=300)
     throw new Error('Recovery manifest pagination required; block READY');
@@ -106,7 +107,18 @@ async function run(){
   for(;;){
     try{
       if(!fs.existsSync(path.join(home,'enrollment_requested'))){
-        await enroll();fs.writeFileSync(path.join(home,'enrollment_requested'),new Date().toISOString(),{mode:0o600});
+        try {
+          await enroll();
+          fs.writeFileSync(path.join(home,'enrollment_requested'),new Date().toISOString(),{mode:0o600});
+        } catch(e:any) {
+          // The previous enrollment request may have succeeded even when the local
+          // marker write was interrupted. Reconcile by proving possession of THIS
+          // node's private key to the approved Central; never trust a matching ID alone.
+          if(e.message!=='NODE_ID_ALREADY_EXISTS')throw e;
+          const existing=await signedGet('/v7/nodes/me');
+          if(existing.node_id!==state.node_id)throw new Error('ENROLLMENT_IDENTITY_MISMATCH');
+          fs.writeFileSync(path.join(home,'enrollment_requested'),new Date().toISOString(),{mode:0o600});
+        }
       }
       for(const a of state.agents){if(registered.has(a.id))continue;
         try{await register(a.id);registered.add(a.id);}
