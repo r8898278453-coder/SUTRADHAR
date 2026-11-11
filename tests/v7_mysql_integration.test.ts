@@ -40,7 +40,8 @@ test('v7 MySQL HTTP election, signed enrollment, replay, takeover and QA gates',
       const signature=crypto.sign(null,Buffer.from(signed),keys.privateKey).toString('base64');
       const r=await fetch(base+path,{method,headers:{'content-type':'application/json',
         'x-sutradhar-node':node_id,'x-sutradhar-timestamp':String(ts),
-        'x-sutradhar-nonce':nonce,'x-sutradhar-signature':signature},
+        'x-sutradhar-nonce':nonce,'x-sutradhar-signature':signature,
+        'x-sutradhar-agent':agent_id},
         body:method==='POST'?body:undefined});
       return {code:r.status,body:await r.json() as any};
     }
