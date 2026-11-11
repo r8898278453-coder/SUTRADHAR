@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as crypto from 'node:crypto';
 import http from 'node:http';
 import {once} from 'node:events';
-import {app} from '../v7/central.ts';
+import {app,shutdownV7ForTests} from '../v7/central.ts';
 // Run only against disposable MySQL database. No mocking SQL, no production credentials.
 const enabled=process.env.SUTRADHAR_RUN_V7_MYSQL_TEST==='1';
 test('v7 MySQL HTTP election, signed enrollment, replay, takeover and QA gates',{skip:!enabled},async()=>{
@@ -108,5 +108,5 @@ test('v7 MySQL HTTP election, signed enrollment, replay, takeover and QA gates',
     assert.equal(list.find(t=>t.ticket_id==='ticket_qa_test').status,'INTEGRATING');
     const wrong=await post('/v7/tasks/verify-merge',{request_id:'merge_'+(++count),ticket_id:'ticket_qa_test'},admin);
     assert.notEqual(wrong.code,200,'No fabricated GitHub merge without live verifiable evidence');
-  }finally{server.close();}
+  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await shutdownV7ForTests();}
 });
