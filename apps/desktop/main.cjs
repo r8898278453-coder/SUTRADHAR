@@ -5,7 +5,7 @@
  * Not a production-signed installer or OS-vault backed identity yet.
  */
 'use strict';
-const {app,BrowserWindow,Menu,shell,ipcMain,dialog}=require('electron');
+const {app,BrowserWindow,Menu,Tray,shell,ipcMain,dialog}=require('electron');
 const fs=require('node:fs');
 const path=require('node:path');
 const {spawn}=require('node:child_process');
@@ -15,7 +15,7 @@ const {
 }=require('./desktop-config.cjs');
 const {summarizeCentralReceipt}=require('./status.cjs');
 
-let setupWindow=null,dashboardWindow=null,agent=null;
+let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
 const trustedProviders={
   chatgpt:'https://chatgpt.com/',
@@ -94,6 +94,29 @@ function startAgent(){
       try{startAgent();}catch{ /* User may need to resupply enrollment code. */ }
     },15000);
   });
+}
+async function confirmQuit(){
+  const {response}=await dialog.showMessageBox({
+    type:'warning',buttons:['Keep SUTRADHAR running','Quit and stop local agent'],
+    defaultId:0,cancelId:0,noLink:true,
+    message:'Stop SUTRADHAR on this PC?',
+    detail:'Stopping the local agent stops its 60-second heartbeats. Central may promote an eligible backup after the lease expires.'
+  });
+  if(response===1)app.quit();
+}
+async function createTray(){
+  // Use the installed executable's OS icon; no unsigned remote icon assets.
+  const icon=await app.getFileIcon(process.execPath);
+  if(icon.isEmpty())throw Error('No system tray icon available');
+  tray=new Tray(icon);
+  tray.setToolTip('SUTRADHAR Desktop — local agent status');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {label:'Open SUTRADHAR status',click:showSetup},
+    {label:'Open Central dashboard',click:()=>{try{showDashboard();}catch{showSetup();}}},
+    {type:'separator'},
+    {label:'Quit and stop agent',click:confirmQuit}
+  ]));
+  tray.on('double-click',showSetup);
 }
 function showSetup(){
   if(setupWindow&&!setupWindow.isDestroyed()){setupWindow.focus();return;}
@@ -196,9 +219,10 @@ app.whenReady().then(()=>{
       {type:'separator'},
       {label:'ChatGPT Web (manual)',click:()=>shell.openExternal(trustedProviders.chatgpt)},
       {label:'Google AI Studio (manual)',click:()=>shell.openExternal(trustedProviders.ai_studio)},
-      {type:'separator'},{role:'quit'}]},
+      {type:'separator'},{label:'Quit and stop agent',click:confirmQuit}]},
     {label:'Edit',submenu:[{role:'copy'},{role:'paste'},{role:'selectAll'}]}
   ]));
+  createTray().catch(()=>{/* Tray unavailable: app will exit when all windows close. */});
   showSetup();
 });
 app.on('before-quit',()=>{
@@ -206,5 +230,5 @@ app.on('before-quit',()=>{
   if(retryTimer)clearTimeout(retryTimer);
   if(agent&&agent.exitCode===null){try{agent.kill();}catch{}}
 });
-app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit();});
+app.on('window-all-closed',()=>{if(!tray&&process.platform!=='darwin')app.quit();});
 app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)showSetup();});
