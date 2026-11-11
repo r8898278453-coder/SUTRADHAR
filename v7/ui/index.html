@@ -39,6 +39,10 @@
 <label class="inline"><input type="checkbox" id="can-qa"> QA access</label>
 <div class="flex"><button data-command="GRANT_PROJECT_AGENT">Grant access</button>
 <button class="danger" data-command="REVOKE_PROJECT_AGENT">Revoke access</button></div></div>
+<div><label>Git review: ticket ID</label><input id="git-ticket-id" placeholder="ticket_...">
+<p>Draft PR creation stays disabled until Owner enables the scoped GitHub PR token on Central. No automatic merge or direct main push.</p>
+<div class="flex"><button id="draft-pr" class="outline">Create verified draft PR</button>
+<button id="verify-merge" class="outline">Verify external merge</button></div></div>
 <div><label>Proposal ID</label><input id="proposal-id" placeholder="proposal_...">
 <div class="flex"><button data-command="APPROVE_PROPOSAL">Approve proposal</button><button data-command="DENY_PROPOSAL" class="danger">Deny</button></div></div>
 </div></section></section>
