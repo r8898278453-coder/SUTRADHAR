@@ -49,6 +49,9 @@ function safeStatus(){
     if(typeof identity.node_id==='string')nodeId=identity.node_id;
   }catch{}
   const agentProcessRunning=Boolean(agent&&agent.exitCode===null);
+  const startupSupported=Boolean(app.isPackaged&&['win32','darwin'].includes(process.platform));
+  let startupEnabled=false;
+  try{if(startupSupported)startupEnabled=Boolean(app.getLoginItemSettings().openAtLogin);}catch{}
   let centralReport=null;
   try{
     const detail=JSON.parse(fs.readFileSync(path.join(nodeDir(),'status.json'),'utf8'));
@@ -57,7 +60,7 @@ function safeStatus(){
   return {configured:Boolean(current),centralUrl:current?.centralUrl||null,
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:fs.existsSync(enrollmentMarker()),
-    agentProcessRunning,centralReport,
+    agentProcessRunning,centralReport,startupSupported,startupEnabled,
     signingStatus:'ALPHA_NOT_OS_VAULT_BACKED',productionReady:false};
 }
 function startAgent(){
@@ -196,6 +199,14 @@ app.whenReady().then(()=>{
     }
     pendingEnrollmentCode=code;startAgent();
     // This means the agent process started, NOT that Central approved the PC.
+    return safeStatus();
+  });
+  ipcMain.handle('sutradhar:setStartup',(event,enabled)=>{
+    verifySender(event);
+    if(typeof enabled!=='boolean')throw Error('Invalid auto-start preference');
+    if(!app.isPackaged||!['win32','darwin'].includes(process.platform))
+      throw Error('Auto-start requires a packaged Windows/macOS app');
+    app.setLoginItemSettings({openAtLogin:enabled});
     return safeStatus();
   });
   ipcMain.handle('sutradhar:openDashboard',event=>{
