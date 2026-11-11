@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Pure, conservative presentation of the PC's last *signed Central reply*.
+ * Pure, conservative presentation of the local agent's response to its signed HTTPS heartbeat.
  * Never infer Central approval from merely having a running child process.
  */
 function summarizeCentralReceipt(detail,nodeId,agentRunning,nowMs=Date.now(),staleMs=180000){
