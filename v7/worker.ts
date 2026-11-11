@@ -193,6 +193,73 @@ async function qa(id:string){
   console.log(JSON.stringify({...out,local_evidence:evidenceFile},null,2));
   if(!passed)process.exitCode=1;
 }
+async function publish(id:string,reconcileOnly=false){
+  if(!reconcileOnly&&(process.env.SUTRADHAR_ENABLE_V7_GIT_PUSH!=='true'||
+    !process.env.SUTRADHAR_GITHUB_PUSH_TOKEN))throw new Error('Git publication OFF without explicit local owner enablement + scoped token');
+  const t=await request('/v7/tasks/detail/'+id,undefined,'GET');
+  if(t.status!=='INTEGRATING')throw new Error('Task must pass independent QA before publication');
+  const repo=ensureRepository(t),qaDir=worktree(id+'_qa');
+  const scope=array(t.write_scopes);
+  const job=await request('/v7/git/job/'+id,undefined,'GET').catch(()=>null);
+  if(!job&&!reconcileOnly){
+    const cluster=await request('/v7/cluster/state',undefined,'GET');
+    await request('/v7/git/reserve',{request_id:'publish_'+token(),agent_id:agentId,
+      expected_master_epoch:cluster.epoch,ticket_id:id});
+  }else if(!job)throw new Error('Cannot reconcile unreserved Git publication');
+  else if(job.state==='CONFIRMED'){
+    console.log(JSON.stringify({already_confirmed:true,remote_head_sha:job.remote_head_sha}));
+    return;
+  }else if(!reconcileOnly)throw new Error('Existing publication reservation uncertain; use reconcile-push, NEVER repush');
+  const params=['-m','sandbox.push_tested_branch','--repo-root',repo,
+    '--github-repository',t.repository,'--ticket-id',id,'--branch',t.branch_name,
+    '--baseline-commit',t.baseline_sha,'--candidate-tree-sha',t.candidate_tree_sha];
+  let patchFile='';
+  if(reconcileOnly)params.push('--inspect-only');
+  else {
+    if(!fs.existsSync(qaDir)||git(qaDir,'rev-parse','HEAD')!==t.candidate_head_sha||
+       git(qaDir,'rev-parse','HEAD^{tree}')!==t.candidate_tree_sha)
+      throw new Error('Only the independently QA-accepted local Git tree can be published');
+    if(git(repo,'rev-parse','HEAD')!==t.baseline_sha)
+      throw new Error('Trusted repository HEAD changed since Docker QA');
+    pathsAllowed(qaDir,t.baseline_sha,scope);
+    const diff=execFileSync('git',['-C',qaDir,'diff','--binary','--full-index',t.baseline_sha,'HEAD'],
+      {encoding:'utf8',timeout:20000,maxBuffer:2*1024*1024});
+    if(!diff||Buffer.byteLength(diff)>900000)throw new Error('Patch absent or exceeds review budget');
+    patchFile=path.join(taskDir,'patch_'+id+'_'+token()+'.diff');
+    fs.writeFileSync(patchFile,diff,{mode:0o600});
+    params.push('--patch-sha256',digest(diff),'--patch-file',patchFile);
+    const changed=git(qaDir,'diff','--name-only',t.baseline_sha,'HEAD').split('\n').filter(Boolean);
+    for(const file of changed)params.push('--changed-file',file);
+    for(const file of scope)params.push('--allowed-file',file);
+  }
+  const root=path.resolve(process.env.SUTRADHAR_SUTRADHAR_ROOT||process.cwd());
+  if(!fs.existsSync(path.join(root,'sandbox/push_tested_branch.py')))
+    throw new Error('Reviewed trusted publisher script not found');
+  let result:any;
+  try {
+    const proc=spawnSync(process.env.SUTRADHAR_PYTHON||'python3',params,{
+      cwd:root,env:process.env,encoding:'utf8',timeout:90000,maxBuffer:1024*1024});
+    if(proc.status!==0)throw new Error('Trusted publisher process failed');
+    result=JSON.parse(String(proc.stdout).trim());
+    if(result.success!==true)throw new Error(result.error||'GIT_REMOTE_UNCERTAIN');
+    if(result.status==='REMOTE_BRANCH_ABSENT')
+      throw new Error('Remote branch absent; do not automatically repush after ambiguity');
+    if(!['PUSH_CONFIRMED_NOT_MERGED','REMOTE_BRANCH_CONFIRMED_NOT_MERGED'].includes(result.status))
+      throw new Error('Publisher did not prove remote branch');
+    const cluster=await request('/v7/cluster/state',undefined,'GET');
+    const out=await request('/v7/git/confirm',{request_id:'confirm_'+token(),agent_id:agentId,
+      expected_master_epoch:cluster.epoch,ticket_id:id,
+      expected_remote_head_sha:result.headSha});
+    console.log(JSON.stringify({...out,notice:'Draft PR still needs separate Owner authorization and independent merge review'},null,2));
+  }catch(e){
+    // A failed remote request does NOT prove the push did not happen.
+    const record={ticket:id,at:new Date().toISOString(),action:'GIT_PUBLISH_UNCERTAIN'};
+    fs.appendFileSync(path.join(home,'sealed_outbox.jsonl'),
+      JSON.stringify({record,signature:crypto.sign(null,Buffer.from(JSON.stringify(record)),key).toString('base64')})+'\n',{mode:0o600});
+    console.error('Git result uncertain. DO NOT repush; use reconcile-push after inspecting remote.');
+    throw e;
+  }finally{if(patchFile){try{fs.unlinkSync(patchFile);}catch{}}}
+}
 async function main(){
   if(action==='list')console.log(JSON.stringify(await request('/v7/tasks/available',undefined,'GET'),null,2));
   else if(action==='detail')console.log(JSON.stringify(await request('/v7/tasks/detail/'+ticketId,undefined,'GET'),null,2));
@@ -200,6 +267,8 @@ async function main(){
   else if(action==='checkpoint')await checkpoint(ticketId);
   else if(action==='submit')await submit(ticketId);
   else if(action==='qa')await qa(ticketId);
-  else throw new Error('Usage: worker {list|detail|prepare|checkpoint|submit|qa} AGENT_ID [TICKET_ID] [summary_file] [next_action]');
+  else if(action==='publish')await publish(ticketId,false);
+  else if(action==='reconcile-push')await publish(ticketId,true);
+  else throw new Error('Usage: worker {list|detail|prepare|checkpoint|submit|qa|publish|reconcile-push} AGENT_ID [TICKET_ID] [summary_file] [next_action]');
 }
 main().catch(e=>{console.error('Worker failed closed:',e.message);process.exitCode=1;});
