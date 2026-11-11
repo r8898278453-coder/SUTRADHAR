@@ -230,7 +230,7 @@ async function publish(id:string,reconcileOnly=false){
     params.push('--patch-sha256',digest(diff),'--patch-file',patchFile);
     const changed=git(qaDir,'diff','--name-only',t.baseline_sha,'HEAD').split('\n').filter(Boolean);
     for(const file of changed)params.push('--changed-file',file);
-    for(const file of scope)params.push('--allowed-file',file);
+    for(const file of changed)params.push('--allowed-file',file);
   }
   const root=path.resolve(process.env.SUTRADHAR_SUTRADHAR_ROOT||process.cwd());
   if(!fs.existsSync(path.join(root,'sandbox/push_tested_branch.py')))
