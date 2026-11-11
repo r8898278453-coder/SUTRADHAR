@@ -197,6 +197,16 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
       await c.query('INSERT INTO v7_projects(project_id,display_name,repository,base_branch) VALUES(?,?,?,?)',
         [id,name,repo,base]);
       result={project_id:id,created:true};
+    }else if(command==='GRANT_PROJECT_AGENT'||command==='REVOKE_PROJECT_AGENT'){
+      const projectId=requireId(payload.project_id),agentId=requireId(payload.agent_id);
+      const project=await one(c,'SELECT project_id FROM v7_projects WHERE project_id=? FOR UPDATE',[projectId]);
+      const agent=await one(c,'SELECT state FROM v7_agents WHERE agent_id=?',[agentId]);
+      if(!project||agent?.state!=='APPROVED')fault('INVALID_PROJECT_AGENT',409);
+      if(command==='REVOKE_PROJECT_AGENT')await c.query('DELETE FROM v7_project_agents WHERE project_id=? AND agent_id=?',
+        [projectId,agentId]);
+      else await c.query('INSERT INTO v7_project_agents(project_id,agent_id,can_develop,can_qa) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE can_develop=VALUES(can_develop),can_qa=VALUES(can_qa)',
+        [projectId,agentId,payload.can_develop===true?1:0,payload.can_qa===true?1:0]);
+      result={project_id:projectId,agent_id:agentId,action:command};
     }else if(command==='APPROVE_PROPOSAL'||command==='DENY_PROPOSAL'){
       const id=requireId(payload.proposal_id),state=command==='APPROVE_PROPOSAL'?'APPROVED':'DENIED';
       const [u]:any=await c.query('UPDATE v7_approvals SET state=?,resolved_at=UTC_TIMESTAMP(3) WHERE proposal_id=? AND state="PENDING"',[state,id]);
@@ -404,6 +414,8 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
   if(!Array.isArray(criteria)||!criteria.length||criteria.length>30||criteria.some(x=>typeof x!=='string'||x.length>500))
     fault('MISSING_ACCEPTANCE_CRITERIA',400);
   const baseline=requireSha(d.baseline_sha),title=requireStr(d.title,220),description=requireStr(d.description,10000);
+  const fingerprint=digest(JSON.stringify([projectId,title.trim().toLowerCase(),
+    description.trim().toLowerCase(),[...scope].sort(),[...deps].sort()]));
   const branch=requireStr(d.branch_name,120);
   if(!/^ai\/[A-Za-z0-9._/-]+$/.test(branch)||branch.includes('..'))fault('INVALID_BRANCH',400);
   return transaction(async c=>{
@@ -411,7 +423,7 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
     return idem(c,agentId,d.request_id,'TASK_PLAN',d,async()=>{
       const project=await one(c,'SELECT * FROM v7_projects WHERE project_id=? AND status="ACTIVE" FOR UPDATE',[projectId]);
       if(!project)fault('PROJECT_NOT_FOUND',404);
-      const sensitive=scope.some((s:string)=>/^(v7|core|\.github|server\.ts|server_db\.ts|hooks)(\/|$)/i.test(s));
+      const sensitive=scope.some((s:string)=>/^(v7|core|contracts|migrations|\.github|server\.ts|server_db\.ts|hooks)(\/|$)/i.test(s));
       const approvalNeeded=risk==='CORE'||risk==='HIGH'||sensitive;
       let approved=false;
       if(d.proposal_id){
@@ -424,8 +436,8 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
         const other=await one(c,'SELECT project_id FROM v7_tickets WHERE ticket_id=?',[dependency]);
         if(!other||other.project_id!==projectId)fault('INVALID_DEPENDENCY',409);
       }
-      await c.query('INSERT INTO v7_tickets(ticket_id,project_id,creator_agent_id,created_epoch,title,description,baseline_sha,branch_name,risk,scopes_json,criteria_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-        [ticketId,projectId,agentId,Number(ld.epoch),title,description,baseline,branch,risk,JSON.stringify(scope),JSON.stringify(criteria),status]);
+      await c.query('INSERT INTO v7_tickets(ticket_id,project_id,creator_agent_id,fingerprint,created_epoch,title,description,baseline_sha,branch_name,risk,scopes_json,criteria_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [ticketId,projectId,agentId,fingerprint,Number(ld.epoch),title,description,baseline,branch,risk,JSON.stringify(scope),JSON.stringify(criteria),status]);
       for(const dep of deps)await c.query('INSERT INTO v7_dependencies(ticket_id,dependency_id) VALUES(?,?)',[ticketId,dep]);
       if(approvalNeeded&&!approved){
         const proposalId=d.proposal_id?requireId(d.proposal_id):'approval_'+crypto.randomUUID().replace(/-/g,'');
@@ -456,7 +468,10 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
         if(p?.status!=='DONE')fault('DEPENDENCY_UNVERIFIED',409);}
       const busy=await one(c,'SELECT COUNT(*) n FROM v7_leases WHERE agent_id=? AND revoked=0 AND expires_at>UTC_TIMESTAMP(3)',[agentId]);
       if(Number(busy.n)>=1)fault('AGENT_CAPACITY_EXCEEDED',409);
-      const scope=JSON.parse(locked.scopes_json as string);
+      const access=await one(c,'SELECT can_develop FROM v7_project_agents WHERE project_id=? AND agent_id=?',
+        [t.project_id,agentId]);
+      if(!access?.can_develop)fault('PROJECT_ACCESS_DENIED',403);
+      const scope=typeof locked.scopes_json==='string'?JSON.parse(locked.scopes_json):locked.scopes_json;
       const reserved=await rows(c,'SELECT scope,ticket_id FROM v7_reservations WHERE project_id=? FOR UPDATE',[t.project_id]);
       for(const s of scope)if(reserved.some(x=>scopesOverlap(s,x.scope)))fault('SCOPE_CONFLICT',409);
       for(const s of scope)await c.query('INSERT INTO v7_reservations(project_id,scope,ticket_id) VALUES(?,?,?)',[t.project_id,s,ticketId]);
@@ -521,6 +536,9 @@ app.post('/v7/tasks/qa-receipt',jsonRoute(async req=>{
     return idem(c,id,d.request_id,'QA_RECEIPT',d,async()=>{
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticket]);
       if(!t||t.status!=='SUBMITTED_FOR_REVIEW'||t.worker_agent_id===id)fault('QA_INDEPENDENCE_OR_STATE',409);
+      const access=await one(c,'SELECT can_qa FROM v7_project_agents WHERE project_id=? AND agent_id=?',
+        [t.project_id,id]);
+      if(!access?.can_qa)fault('PROJECT_QA_ACCESS_DENIED',403);
       if(t.candidate_head_sha!==d.candidate_head_sha||t.candidate_tree_sha!==d.candidate_tree_sha)
         fault('CANDIDATE_SHA_MISMATCH',409);
       const receipt=crypto.randomUUID();
