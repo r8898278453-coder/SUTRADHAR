@@ -1,0 +1,52 @@
+name: Hostinger Staging - Verify Only (Owner Manual)
+
+# Does not deploy, migrate, modify hosting, upload artifacts or use secrets.
+# Workflow becomes manually runnable only after reviewed merge to default branch.
+on:
+  workflow_dispatch:
+    inputs:
+      staging_url:
+        description: "Your HTTPS staging URL (must use stage, staging or test hostname)"
+        required: true
+        type: string
+      expected_sha:
+        description: "Full 40-character Git SHA shown in Hostinger Deployments"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sutradhar-staging-readonly
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Read-only staging health and source proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require reviewed default-branch workflow
+        env:
+          ACTUAL_REF: ${{ github.ref }}
+        run: |
+          if [ "$ACTUAL_REF" != "refs/heads/main" ]; then
+            echo "::error::Only the reviewed main-branch workflow may run this preflight."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify Hostinger STAGING ONLY (never mutates)
+        env:
+          SUTRADHAR_STAGING_URL: ${{ inputs.staging_url }}
+          SUTRADHAR_EXPECTED_COMMIT_SHA: ${{ inputs.expected_sha }}
+        run: node scripts/ops/hostinger-staging-preflight.cjs
+      - name: Explain limited proof
+        run: |
+          echo "STAGING PREFLIGHT ONLY: This is not production approval."
+          echo "Hostinger deployment, MySQL restore, Windows certificate and real-PC acceptance need independent receipts."
