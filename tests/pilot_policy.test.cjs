@@ -27,3 +27,16 @@ test('Failover exact Backup1 and epoch fencing uses real before/after receipts',
   assert.equal(compareFailover(one,{...two,epoch:9}).accepted,false);
   assert.equal(compareFailover(one,{...two,master_agent_id:'c'}).accepted,false);
 });
+
+test('Two-PC promotion can succeed with no remaining backup after Master goes offline',()=>{
+  const initial={cluster:{master_agent_id:'a',backup1:'b',backup2:null,epoch:11,phase:'READY'},
+    agents:[agent('a','pc_1'),agent('b','pc_2')]};
+  const before=evaluatePilot(initial,['pc_1','pc_2'],t);
+  assert.equal(before.accepted,true);
+  const promoted={cluster:{master_agent_id:'b',backup1:null,backup2:null,epoch:12,phase:'RECOVERING'},
+    agents:[agent('a','pc_1',new Date(t-250000).toISOString().replace(/Z$/,'')),
+      agent('b','pc_2')]};
+  const after=evaluatePilot(promoted,['pc_1','pc_2'],t,['pc_1']);
+  assert.equal(after.accepted,true);
+  assert.equal(compareFailover(before,after).accepted,true);
+});
