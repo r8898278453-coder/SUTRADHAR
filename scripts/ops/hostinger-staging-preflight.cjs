@@ -9,7 +9,10 @@ async function preflight({origin,expectedSha,fetcher=fetch}){
   function reject(code){issues.push(code);}
   let url;
   try{url=new URL(origin);}catch{return {accepted:false,issues:['STAGING_URL_INVALID']};}
-  if(url.protocol!=='https:'||!/(?:stage|staging|test)/i.test(url.hostname)||
+  // Match a complete staging hostname label, not a substring of a production name.
+  const labels=url.hostname.toLowerCase().split('.');
+  const stagingLabel=labels.some(label=>/^(?:stage|staging|test|qa)(?:-[a-z0-9-]+)?$/.test(label));
+  if(url.protocol!=='https:'||!stagingLabel||
     url.username||url.password||url.pathname!=='/'||url.search||url.hash||
     !SHA.test(expectedSha||''))return {accepted:false,issues:['STAGING_TARGET_OR_COMMIT_INVALID']};
   async function get(path){
