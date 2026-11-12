@@ -19,6 +19,7 @@ const gitSha=()=>{
 fs.mkdirSync(dest,{recursive:true});
 for(const [entry,outfile] of [
   ['v7/agent.ts','edge-agent.cjs'],
+  ['apps/desktop/secure-agent.ts','secure-agent.cjs'],
   ['v7/worker.ts','edge-worker.cjs']
 ]){
   esbuild.buildSync({
@@ -35,9 +36,11 @@ const manifest={
   manifest_version:1,application:'desktop',status:'ALPHA_UNAPPROVED',
   version,source_sha:gitSha(),api_protocol:contract.api_protocol,
   agent_bundle_sha256:digest(path.join(dest,'edge-agent.cjs')),
+  secure_agent_sha256:digest(path.join(dest,'secure-agent.cjs')),
   worker_bundle_sha256:digest(path.join(dest,'edge-worker.cjs')),
   production_approved:false,
-  installer_signed:false,identity_os_vault_protected:false,
+  installer_signed:false,os_vault_runtime_implemented:true,
+  identity_os_vault_protected:false,
   updater_verified:false
 };
 fs.writeFileSync(path.join(dest,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n');
