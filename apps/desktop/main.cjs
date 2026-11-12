@@ -5,7 +5,7 @@
  * Not a production-signed installer or OS-vault backed identity yet.
  */
 'use strict';
-const {app,BrowserWindow,Menu,Tray,shell,ipcMain,dialog}=require('electron');
+const {app,BrowserWindow,Menu,Tray,shell,ipcMain,dialog,safeStorage}=require('electron');
 const fs=require('node:fs');
 const path=require('node:path');
 const {spawn}=require('node:child_process');
@@ -14,9 +14,11 @@ const {
   validateSettings,validateEnrollmentCode
 }=require('./desktop-config.cjs');
 const {summarizeCentralReceipt}=require('./status.cjs');
+const {createVault}=require('./os-vault.cjs');
 
 let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
+let vault=null,vaultError=null;
 const trustedProviders={
   chatgpt:'https://chatgpt.com/',
   ai_studio:'https://aistudio.google.com/'
@@ -38,16 +40,13 @@ function writeSettings(x){
 }
 function agentScript(){
   return app.isPackaged
-    ?path.join(process.resourcesPath,'edge-agent.cjs')
-    :path.join(__dirname,'dist','edge-agent.cjs');
+    ?path.join(process.resourcesPath,'secure-agent.cjs')
+    :path.join(__dirname,'dist','secure-agent.cjs');
 }
 function safeStatus(){
   if(fs.existsSync(enrollmentMarker()))pendingEnrollmentCode=null;
   let nodeId=null;
-  try{
-    const identity=JSON.parse(fs.readFileSync(path.join(nodeDir(),'identity.json'),'utf8'));
-    if(typeof identity.node_id==='string')nodeId=identity.node_id;
-  }catch{}
+  try{nodeId=vault?.read()?.node_id||null;}catch{vaultError='OS_VAULT_IDENTITY_UNREADABLE';}
   const agentProcessRunning=Boolean(agent&&agent.exitCode===null);
   const startupSupported=Boolean(app.isPackaged&&['win32','darwin'].includes(process.platform));
   let startupEnabled=false;
@@ -61,11 +60,12 @@ function safeStatus(){
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:fs.existsSync(enrollmentMarker()),
     agentProcessRunning,centralReport,startupSupported,startupEnabled,
-    signingStatus:'ALPHA_NOT_OS_VAULT_BACKED',productionReady:false};
+    signingStatus:vault?'OS_BACKED_ENCRYPTED_ALPHA':(vaultError||'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent(){
   if(fs.existsSync(enrollmentMarker()))pendingEnrollmentCode=null;
   if(!current||shuttingDown||agent&&agent.exitCode===null)return;
+  if(!vault)throw Error(vaultError||'OS_VAULT_UNAVAILABLE');
   const script=agentScript();
   if(!fs.existsSync(script))throw Error('Edge agent not built. Developer: run npm run build:desktop at repo root.');
   if(!fs.existsSync(enrollmentMarker())&&!pendingEnrollmentCode)
@@ -78,15 +78,35 @@ function startAgent(){
   // Never pass unrelated Central/DB/GitHub administrator secrets to a PC agent.
   for(const k of Object.keys(env))if(
     /^DB_|^DATABASE_URL$|^SUTRADHAR_ADMIN_KEY$|^SUTRADHAR_MYSQL|^SUTRADHAR_GITHUB|^TELEGRAM_/.test(k))delete env[k];
-  if(pendingEnrollmentCode)env.SUTRADHAR_ENROLLMENT_CODE=pendingEnrollmentCode;
-  else delete env.SUTRADHAR_ENROLLMENT_CODE;
+  // The child obtains the one-time grant over private IPC, not process env.
+  delete env.SUTRADHAR_ENROLLMENT_CODE;
+  env.SUTRADHAR_VAULT_BRIDGE='1';
   fs.mkdirSync(nodeDir(),{recursive:true,mode:0o700});
   const fd=fs.openSync(path.join(home(),'edge-agent.log'),'a',0o600);
   try{
     agent=spawn(process.execPath,[script],{
-      env,stdio:['ignore',fd,fd],windowsHide:true
+      env,stdio:['ignore',fd,fd,'ipc'],windowsHide:true
     });
   }finally{fs.closeSync(fd);}
+
+  agent.on('message',async msg=>{
+    if(!msg||msg.type!=='vault:request'||!Number.isSafeInteger(msg.id)||
+      msg.id<1||!['load','save','grant','consumeGrant'].includes(msg.op))return;
+    const reply={type:'vault:response',id:msg.id};
+    try{
+      if(!vault)throw Error('OS_VAULT_UNAVAILABLE');
+      if(JSON.stringify(msg).length>45000)throw Error('VAULT_MESSAGE_TOO_LARGE');
+      if(msg.op==='load')reply.result=vault.read();
+      if(msg.op==='save')reply.result=vault.save(msg.payload);
+      if(msg.op==='grant'){
+        if(fs.existsSync(enrollmentMarker()))throw Error('ENROLLMENT_ALREADY_REQUESTED');
+        if(!pendingEnrollmentCode)throw Error('OWNER_ENROLLMENT_GRANT_REQUIRED');
+        reply.result=pendingEnrollmentCode;
+      }
+      if(msg.op==='consumeGrant'){pendingEnrollmentCode=null;reply.result=true;}
+    }catch(e){reply.error=String(e.message||'VAULT_ERROR').slice(0,100);}
+    try{agent?.send(reply);}catch{}
+  });
   agent.on('error',()=>{ /* Agent stopped: operator can inspect local log. */ });
   agent.on('exit',()=>{
     agent=null;
@@ -168,6 +188,8 @@ async function checkCentral(origin){
     throw Error('Central/Desktop protocol mismatch. Update the compatible Desktop version first.');
 }
 app.whenReady().then(()=>{
+  try{vault=createVault({safeStorage,dir:nodeDir()});}
+  catch(e){vaultError=String(e.message||'OS_VAULT_UNAVAILABLE');}
   // Forget the one-time enrollment grant promptly even if the setup window closes.
   const enrollmentCleanup=setInterval(()=>{
     if(fs.existsSync(enrollmentMarker())){
@@ -191,6 +213,7 @@ app.whenReady().then(()=>{
        count!==current.agentIds.length))
       throw Error('This PC identity is already configured. Request an Owner-guided reconfiguration instead.');
     const code=validateEnrollmentCode(payload.enrollmentCode);
+    if(!vault)throw Error(vaultError||'OS_VAULT_UNAVAILABLE');
     await checkCentral(centralUrl);
     if(!current){
       const candidate={centralUrl,pcName,agentIds:agentIds(count)};
