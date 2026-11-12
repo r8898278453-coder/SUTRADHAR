@@ -20,6 +20,7 @@ SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 | Run the existing **alpha** with developer assistance | [Current v7 implementation/runbook](v7/README.md) |
 | Review original technical requirements | [V7 architecture blueprint](docs/SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md) and [Agent/Task/QA contract](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md) |
 | See what has actually passed and what remains | [Implementation tracker](docs/IMPLEMENTATION_TRACKER.md) and [71-case acceptance matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) |
+| Review Windows signing, OS-vault keys, Hostinger staging, encrypted backup and physical PC acceptance | [Production-readiness checklist](docs/PRODUCTION_READINESS_V7_2026-11-12.md) |
 
 ## Simple picture
 
@@ -122,6 +123,8 @@ npm run test:v7-mysql
 Current combined scripts are defined in [package.json](package.json). The [v7 runbook](v7/README.md) documents experimental Central and PC startup, enrollment, worker CLI and limitations. Never point test commands or migration experiments at production data.
 
 ## Non-negotiable release blockers
+
+**Latest implementation slice:** Windows Authenticode signing gate, OS-safeStorage encrypted Desktop identity (new packaged secure-agent), pinned offline signed update verification, AES-256-GCM backup/staging-only restore and read-only Hostinger/physical-PC evidence tools have been added. **Code/tests are not real account/hardware acceptance.** See the [release checklist](docs/PRODUCTION_READINESS_V7_2026-11-12.md).
 
 Before calling SUTRADHAR "one-click" or "production ready" we still need: an independently deployable Central app; reproducible locked dependencies; safe reviewed migrations and proven backup/restore; protected Owner-gated promotion; a Windows installer with secure machine-key storage and a verified updater; an enrollment wizard and reliable background startup; actual multi-PC failover; browser-provider-permitted workflows; real GitHub PR/QA evidence; and completed acceptance gates. The latest CI results cover only their stated scope, **not** full real-world acceptance.
 
