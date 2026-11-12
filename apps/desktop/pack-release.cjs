@@ -58,7 +58,7 @@ function main(){
     fs.writeFileSync(trustFile,JSON.stringify({
       schema:1,channel:'stable',public_key_pem:trustPem,
       publisher_subject:signed,status:'OWNER_PROTECTED_RELEASE'
-    },null,2)+'\\n',{mode:0o600});
+    },null,2)+'\n',{mode:0o600});
     const r=cp.spawnSync(process.execPath,[builder,'--win','nsis','--x64','--publish','never',
       '--config',cfg],{cwd,env:process.env,stdio:'inherit',timeout:1200000});
     if(r.error||r.status!==0)fail('Windows signed packager failed');
