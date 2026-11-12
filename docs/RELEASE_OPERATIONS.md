@@ -16,6 +16,14 @@ Updating one application does not automatically update the other. Neither channe
 
 **Current alpha (12 November 2026):** New app-specific staging build commands exist: **npm run build:central** writes apps/central/dist; **npm run build:desktop** writes apps/desktop/dist and a local Electron setup wizard is available. Both build scripts record explicit **ALPHA_UNAPPROVED** manifests; these are **not trusted signed release identities**. PR CI checks separation and optionally attempts an **unsigned internal Windows QA installer** without uploading/publishing it. The existing combined npm run build remains for backwards compatibility. There is still **no approved Central promotion pipeline, Windows signing, auto-updater or independent production deployment acceptance**.
 
+## New safeguarded tooling — 12 November 2026
+
+Release tooling now includes an Owner-only Windows signing preflight, a packaged Electron OS-safeStorage encrypted identity/secure agent, Owner-pinned offline Ed25519 update/rollback verification, an encrypted AES-GCM backup/empty staging restore, and read-only Hostinger/physical-PC evidence tools.
+
+**These are safety primitives, not a completed production release channel.** The current release remains alpha. The signed Windows installer requires a genuine Owner-protected signing certificate and immutable stable source tag, which were not supplied. Automatic updater/rollout and identity-preserving unattended rollback remain **NOT IMPLEMENTED**; the Desktop screen only inspects offline downloaded files and **never runs them**. The MySQL backup/restore code was not exercised on live Hostinger. The physical 2/3/8–10-PC trials are still NOT RUN.
+
+See the exact [Owner/engineer setup and acceptance checklist](PRODUCTION_READINESS_V7_2026-11-12.md) before staging any data or installer.
+
 ## 2. Version identity and release receipt (required target)
 
 Every immutable artifact must record:
