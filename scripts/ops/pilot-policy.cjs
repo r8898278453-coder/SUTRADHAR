@@ -3,7 +3,7 @@
  * No simulated PCs, no elections, no remote mutation.
  */
 'use strict';
-function evaluatePilot(snapshot,expectedNodes,nowMs=Date.now()){
+function evaluatePilot(snapshot,expectedNodes,nowMs=Date.now(),allowOfflineNodeIds=[]){
   const failures=[];
   const agents=Array.isArray(snapshot?.agents)?snapshot.agents:[];
   const cluster=snapshot?.cluster||{};
@@ -17,7 +17,8 @@ function evaluatePilot(snapshot,expectedNodes,nowMs=Date.now()){
       Number.isFinite(t)&&nowMs-t>=0&&nowMs-t<180000;
   });
   for(const nodeId of expectedNodes){
-    if(!online.some(a=>a.node_id===nodeId))failures.push('NO_LIVE_APPROVED_AGENT_ON_'+nodeId);
+    if(!online.some(a=>a.node_id===nodeId)&&!allowOfflineNodeIds.includes(nodeId))
+      failures.push('NO_LIVE_APPROVED_AGENT_ON_'+nodeId);
   }
   const master=byId.get(cluster.master_agent_id);
   if(!master||!online.includes(master))failures.push('NO_LIVE_MASTER');
@@ -34,6 +35,7 @@ function evaluatePilot(snapshot,expectedNodes,nowMs=Date.now()){
     accepted:failures.length===0,failures,
     measured_at_utc:new Date(nowMs).toISOString(),
     checked_physical_node_ids:expectedNodes,
+    deliberately_offline_node_ids:allowOfflineNodeIds,
     active_approved_nodes:[...new Set(online.map(a=>a.node_id))].sort(),
     master_agent_id:cluster.master_agent_id||null,
     master_node_id:master?.node_id||null,
