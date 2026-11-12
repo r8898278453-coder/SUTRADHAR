@@ -25,7 +25,8 @@ async function loadStatus(){
       ['Last accepted heartbeat',s.centralReport?.lastAcceptedAt||'Not yet accepted'],
       ['Last Central error',s.centralReport?.errorCode||'None reported'],
       ['Master recovery phase',s.centralReport?.phase||'Not yet confirmed'],
-      ['Security phase','Alpha: OS credential vault and signed installer pending']
+      ['Device key storage',s.signingStatus||'OS vault unavailable'],
+      ['Production release','Not accepted; signed installer and physical vault test pending']
     ];
     for(const [label,value] of entries){
       const k=document.createElement('span');k.textContent=label;
@@ -59,6 +60,17 @@ get('autostart').addEventListener('change',async e=>{
     showFeedback('Login auto-start preference updated locally. Physical installer/startup acceptance is still pending.');
   }catch(error){showFeedback(String(error.message||error));}
   await loadStatus();
+});
+get('verifyUpdate').addEventListener('click',async()=>{
+  const button=get('verifyUpdate');
+  button.disabled=true;
+  get('updateFeedback').textContent='Checking pinned Owner signature and Windows installer…';
+  try{
+    const receipt=await api.verifyLocalUpdate();
+    get('updateFeedback').textContent=receipt.canceled?'No file selected':
+      'Verified offline: '+receipt.version+'. Installer NOT executed. Seek separate Owner approval.';
+  }catch(e){get('updateFeedback').textContent='Update blocked: '+String(e.message||e);}
+  finally{button.disabled=false;}
 });
 get('refresh').addEventListener('click',loadStatus);
 get('dashboard').addEventListener('click',async()=>{try{await api.openDashboard();}catch(e){showFeedback(String(e.message||e));}});
