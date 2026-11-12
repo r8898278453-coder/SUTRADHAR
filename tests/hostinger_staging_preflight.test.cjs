@@ -26,6 +26,10 @@ test('Hostinger staging preflight only accepts real exact-version app response',
   assert.equal(down.accepted,false);
   assert.equal((await preflight({origin:'https://production.example.com',expectedSha:sha,
     fetcher:mock()})).accepted,false);
+  assert.equal((await preflight({origin:'https://contest.example.com',expectedSha:sha,
+    fetcher:mock()})).accepted,false);
+  assert.equal((await preflight({origin:'https://latest.example.com',expectedSha:sha,
+    fetcher:mock()})).accepted,false);
   assert.equal((await preflight({origin:'http://stage.example.com',expectedSha:sha,
     fetcher:mock()})).accepted,false);
 });
