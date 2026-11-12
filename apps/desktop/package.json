@@ -33,12 +33,13 @@
       "setup.js",
       "setup.css",
       "contract.json",
-      "status.cjs"
+      "status.cjs",
+      "os-vault.cjs"
     ],
     "extraResources": [
       {
-        "from": "dist/edge-agent.cjs",
-        "to": "edge-agent.cjs"
+        "from": "dist/secure-agent.cjs",
+        "to": "secure-agent.cjs"
       }
     ],
     "win": {
