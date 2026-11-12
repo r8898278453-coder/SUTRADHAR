@@ -40,7 +40,10 @@ function main(){
     {timeout:30000,encoding:'utf8',windowsHide:true});
   if(check.error||check.status!==0)refuse('Windows signature/publisher verification failed');
   const keyPath=requireEnv('SUTRADHAR_RELEASE_SIGNING_KEY_FILE');
-  if(!path.isAbsolute(keyPath))refuse('signer key must be outside a relative repository path');
+  if(!path.isAbsolute(keyPath))refuse('Owner signer key must use an absolute path');
+  const repoRoot=path.resolve(__dirname,'../..');
+  const insideRepo=keyPath===repoRoot||path.resolve(keyPath).startsWith(repoRoot+path.sep);
+  if(insideRepo)refuse('Owner signing private key MUST be outside Git repository');
   const privateKey=crypto.createPrivateKey(fs.readFileSync(keyPath));
   if(privateKey.asymmetricKeyType!=='ed25519')refuse('Owner release signing key must be Ed25519');
   const now=Date.now();
