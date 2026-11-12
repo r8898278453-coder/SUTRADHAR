@@ -39,6 +39,12 @@ for(const rel of [
   'apps/central/dist/v7/schema.sql',
   'apps/desktop/dist/edge-agent.cjs',
   'apps/desktop/dist/secure-agent.cjs',
+  'apps/desktop/update-policy.cjs',
+  'apps/desktop/pack-release.cjs',
+  'scripts/ops/mysql-ops.cjs',
+  'scripts/ops/hostinger-staging-preflight.cjs',
+  'scripts/ops/pilot-readonly.cjs',
+  'scripts/release/sign-offline-offer.cjs',
   'apps/desktop/dist/edge-worker.cjs',
   'apps/desktop/contract.json',
   'apps/desktop/main.cjs',
@@ -61,6 +67,14 @@ assert.equal(cm.schema_sha256,sha('apps/central/dist/v7/schema.sql'));
 assert.equal(dm.agent_bundle_sha256,sha('apps/desktop/dist/edge-agent.cjs'));
 assert.equal(dm.secure_agent_sha256,sha('apps/desktop/dist/secure-agent.cjs'));
 assert.equal(json('apps/desktop/package.json').build.extraResources[0].to,'secure-agent.cjs');
+const dp=json('apps/desktop/package.json');
+for(const required of ['os-vault.cjs','update-policy.cjs','update-trust.json'])
+  assert(dp.build.files.includes(required),'Sensitive update/vault feature missing in packaged app: '+required);
+const trust=json('apps/desktop/update-trust.json');
+assert.equal(trust.public_key_pem,null,'Unsigned QA package must have no live trusted update key');
+assert.equal(trust.status,'UNCONFIGURED_BLOCKED');
+assert.equal(fs.existsSync(get('apps/desktop/dist/identity.json')),false);
+
 assert.equal(dm.worker_bundle_sha256,sha('apps/desktop/dist/edge-worker.cjs'));
 assert.equal(fs.readFileSync(path.join(desktop,'release-manifest.json'),'utf8').includes('SUTRADHAR_ADMIN_KEY'),false);
 for(const rel of ['apps/central/dist/server.cjs',
