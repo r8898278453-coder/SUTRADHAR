@@ -30,6 +30,10 @@ function main(){
   if(required('SUTRADHAR_RELEASE_TAG')!=='desktop-v'+version)fail('wrong immutable desktop release tag');
   const signed=required('SUTRADHAR_WINDOWS_PUBLISHER_NAME');
   if(!/^CN=.+/.test(signed)||signed.length>250)fail('publisher must equal certificate Distinguished Name');
+  const trustPem=Buffer.from(required('SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
+  let trustKey;
+  try{trustKey=crypto.createPublicKey(trustPem);}catch{fail('Owner Ed25519 update verification public key invalid');}
+  if(trustKey.asymmetricKeyType!=='ed25519')fail('Owner update signing public key must be Ed25519');
   const cert=process.env.WIN_CSC_LINK||process.env.CSC_LINK;
   const password=process.env.WIN_CSC_KEY_PASSWORD||process.env.CSC_KEY_PASSWORD;
   if(!cert||!password)fail('approved Authenticode certificate and private signing secret required');
@@ -47,8 +51,14 @@ function main(){
   signingConfig.win.verifyUpdateCodeSignature=true;
   signingConfig.publish=null;
   const cfg=path.join(cwd,'.protected-signing-config-'+process.pid+'.json');
+  const trustFile=path.join(cwd,'update-trust.json');
+  const originalTrust=fs.readFileSync(trustFile,'utf8');
   fs.writeFileSync(cfg,JSON.stringify(signingConfig),{mode:0o600,flag:'wx'});
   try{
+    fs.writeFileSync(trustFile,JSON.stringify({
+      schema:1,channel:'stable',public_key_pem:trustPem,
+      publisher_subject:signed,status:'OWNER_PROTECTED_RELEASE'
+    },null,2)+'\\n',{mode:0o600});
     const r=cp.spawnSync(process.execPath,[builder,'--win','nsis','--x64','--publish','never',
       '--config',cfg],{cwd,env:process.env,stdio:'inherit',timeout:1200000});
     if(r.error||r.status!==0)fail('Windows signed packager failed');
@@ -74,6 +84,7 @@ function main(){
       installers:receipts
     },null,2)+'\n',{mode:0o600});
     console.log('SIGNED_INSTALLERS_VERIFIED_LOCALLY; NOT PUBLISHED. Owner must review evidence.');
-  }finally{try{fs.unlinkSync(cfg);}catch{}}
+  }finally{try{fs.writeFileSync(trustFile,originalTrust);}catch{}
+    try{fs.unlinkSync(cfg);}catch{}}
 }
 main();
