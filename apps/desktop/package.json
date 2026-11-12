@@ -11,7 +11,8 @@
   },
   "scripts": {
     "start": "electron .",
-    "pack:qa": "node pack-qa.cjs"
+    "pack:qa": "node pack-qa.cjs",
+    "pack:release": "node pack-release.cjs"
   },
   "devDependencies": {
     "electron": "^33.4.11",
@@ -34,7 +35,9 @@
       "setup.css",
       "contract.json",
       "status.cjs",
-      "os-vault.cjs"
+      "os-vault.cjs",
+      "update-policy.cjs",
+      "update-trust.json"
     ],
     "extraResources": [
       {
