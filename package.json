@@ -30,7 +30,8 @@
     "ops:verify-backup": "node scripts/ops/mysql-ops.cjs verify",
     "ops:restore-staging": "node scripts/ops/mysql-ops.cjs restore",
     "ops:hostinger-preflight": "node scripts/ops/hostinger-staging-preflight.cjs",
-    "ops:pc-pilot": "node scripts/ops/pilot-readonly.cjs"
+    "ops:pc-pilot": "node scripts/ops/pilot-readonly.cjs",
+    "release:sign-offer": "node scripts/release/sign-offline-offer.cjs"
   },
   "dependencies": {
     "@google/genai": "latest",
