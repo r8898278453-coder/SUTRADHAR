@@ -23,7 +23,11 @@ function evaluatePilot(snapshot,expectedNodes,nowMs=Date.now(),allowOfflineNodeI
   const master=byId.get(cluster.master_agent_id);
   if(!master||!online.includes(master))failures.push('NO_LIVE_MASTER');
   const b1=byId.get(cluster.backup1);
-  if(!b1||!online.includes(b1))failures.push('NO_LIVE_BACKUP_1');
+  // A two-PC failover has no third physical PC to become the successor's
+  // backup. Requiring another backup would falsely fail the correct promotion.
+  const onlyTwoPcFailover=expectedNodes.length===2&&allowOfflineNodeIds.length===1;
+  if((!b1||!online.includes(b1))&&!onlyTwoPcFailover)
+    failures.push('NO_LIVE_BACKUP_1');
   if(master&&b1&&master.node_id===b1.node_id)
     failures.push('MASTER_AND_BACKUP1_MUST_BE_ON_DISTINCT_PCS');
   if(!Number.isSafeInteger(Number(cluster.epoch))||Number(cluster.epoch)<1)
