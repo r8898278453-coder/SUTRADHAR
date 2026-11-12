@@ -138,3 +138,21 @@ Operational instructions: [v7/README.md](../v7/README.md). Canonical acceptance 
 **Technical Hostinger staging settings, not a live deployment:** Root ./, Node.js 22, build npm run build:central, output apps/central/dist, entry apps/central/dist/server.cjs. The underlying Central source still lives in v7/, and the bundle still depends on root repository dependencies. Desktop production-safe packaging, dependency lock, secure vault, rollback, real Hostinger DB backup/restore, initial schema cutover and 71-case acceptance are blocked.
 
 **Safety:** Windows alpha package must not be uploaded as a trusted installer; the QA workflow has only a private smoke-build step and no release/publication action. The owner retains control of any production promotion. The existing security/deployment release gates in this tracker remain unchanged.
+
+
+## Release-safety implementation slice — 12 November 2026
+
+**CODED on draft PR, not live production. Do not claim physical/device/Hostinger acceptance merely from CI.**
+
+| Priority | Implemented source / tests | Evidence still REQUIRED |
+| --- | --- | --- |
+| Production-signed Windows installer gate | apps/desktop/pack-release.cjs; tests/release_sign_gate.test.cjs | Owner certificate and trusted Windows stable release. Current alpha is intentionally blocked. No signed production artifact. |
+| OS-backed key protection | apps/desktop/os-vault.cjs; secure-agent.ts using Electron safeStorage, private IPC, monotonic signed sequence; tests/desktop_vault.test.cjs | Real Windows DPAPI install/restart, legacy migration, OS recovery, key rotation and QA worker bridge |
+| Verifiable update/rollback | apps/desktop/update-policy.cjs; setup UI offline verification; scripts/release/sign-offline-offer.cjs; tests/desktop_update_policy.test.cjs | Owner signing keys, signed update feed, network distribution/replay protection, safe automatic install and full rollback |
+| Hostinger staging health and immutable SHA | scripts/ops/hostinger-staging-preflight.cjs; tests/hostinger_staging_preflight.test.cjs | Actual Hostinger staging account/subdomain, real HTTPS/DB/asset/deployment log evidence |
+| Encrypted MySQL backup and staging-only restore | scripts/ops/mysql-ops.cjs, backup-crypto.cjs; tests/mysql_backup_crypto.test.cjs | Real mysqldump (authorized off-host) and successful independently inspected restore; no production destructive restore path |
+| Physical 2/3/8–10 PC pilot evidence | scripts/ops/pilot-readonly.cjs and pilot-policy.cjs; tests/pilot_policy.test.cjs | Two or more distinct physical machines, 08:00 IST/sticky Master, actual 180s failover, Backup2, old-epoch fencing, full QA and all 71 cases |
+
+**Deployment status:** No Hostinger site, hPanel, MySQL account or physical PC was accessed. No production release ref advanced, signing certificate used, Windows installer uploaded, update installed, database migrated/restored, or PR merged. Changes remain in fix/p0-containment-2026-11-06.
+
+**Source of truth for the next Owner trial:** [Owner-ready production checklist](PRODUCTION_READINESS_V7_2026-11-12.md). Production go-live requires all missing gates and explicit Owner approval, not just this documentation.
