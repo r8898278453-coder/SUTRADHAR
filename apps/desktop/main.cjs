@@ -70,17 +70,20 @@ function startAgent(){
   if(!fs.existsSync(script))throw Error('Edge agent not built. Developer: run npm run build:desktop at repo root.');
   if(!fs.existsSync(enrollmentMarker())&&!pendingEnrollmentCode)
     throw Error('Enter the one-time enrollment code to request Owner approval');
-  const env={...process.env,ELECTRON_RUN_AS_NODE:'1',
+  // Allowlisted OS process settings only: no inherited DB/GitHub/admin/Telegram
+  // secrets or the one-time enrollment grant in child environment.
+  const env={};
+  for(const name of ['PATH','Path','SystemRoot','WINDIR','TEMP','TMP','USERPROFILE',
+    'APPDATA','LOCALAPPDATA','HOME','LANG','LC_ALL','HOMEDRIVE','HOMEPATH']){
+    if(typeof process.env[name]==='string')env[name]=process.env[name];
+  }
+  Object.assign(env,{
+    ELECTRON_RUN_AS_NODE:'1',SUTRADHAR_VAULT_BRIDGE:'1',
     SUTRADHAR_CENTRAL_URL:current.centralUrl,
     SUTRADHAR_NODE_NAME:current.pcName,
     SUTRADHAR_AGENT_IDS:current.agentIds.join(','),
-    SUTRADHAR_NODE_DIR:nodeDir()};
-  // Never pass unrelated Central/DB/GitHub administrator secrets to a PC agent.
-  for(const k of Object.keys(env))if(
-    /^DB_|^DATABASE_URL$|^SUTRADHAR_ADMIN_KEY$|^SUTRADHAR_MYSQL|^SUTRADHAR_GITHUB|^TELEGRAM_/.test(k))delete env[k];
-  // The child obtains the one-time grant over private IPC, not process env.
-  delete env.SUTRADHAR_ENROLLMENT_CODE;
-  env.SUTRADHAR_VAULT_BRIDGE='1';
+    SUTRADHAR_NODE_DIR:nodeDir()
+  });
   fs.mkdirSync(nodeDir(),{recursive:true,mode:0o700});
   const fd=fs.openSync(path.join(home(),'edge-agent.log'),'a',0o600);
   try{
