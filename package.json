@@ -21,7 +21,7 @@
     "build:central": "node apps/central/build.cjs",
     "build:desktop": "node apps/desktop/build.cjs",
     "start:central": "node apps/central/dist/server.cjs",
-    "test:desktop": "node --test tests/desktop_setup.test.cjs",
+    "test:desktop": "node --test tests/desktop_setup.test.cjs tests/desktop_vault.test.cjs",
     "check:packages": "node scripts/check-packages.cjs",
     "test:packages": "npm run build:central && npm run build:desktop && npm run check:packages"
   },
