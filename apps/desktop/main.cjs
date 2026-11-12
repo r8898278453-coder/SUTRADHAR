@@ -61,7 +61,7 @@ function safeStatus(){
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:fs.existsSync(enrollmentMarker()),
     agentProcessRunning,centralReport,startupSupported,startupEnabled,
-    signingStatus:vault?'OS_BACKED_ENCRYPTED_ALPHA':(vaultError||'OS_VAULT_UNAVAILABLE'),productionReady:false};
+    signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent(){
   if(fs.existsSync(enrollmentMarker()))pendingEnrollmentCode=null;
