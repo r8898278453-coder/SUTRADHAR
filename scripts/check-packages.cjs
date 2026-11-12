@@ -38,13 +38,15 @@ for(const rel of [
   'apps/central/dist/dashboard.js',
   'apps/central/dist/v7/schema.sql',
   'apps/desktop/dist/edge-agent.cjs',
+  'apps/desktop/dist/secure-agent.cjs',
   'apps/desktop/dist/edge-worker.cjs',
   'apps/desktop/contract.json',
   'apps/desktop/main.cjs',
   'apps/desktop/preload.cjs',
   'apps/desktop/setup.html',
   'apps/desktop/setup.js',
-  'apps/desktop/status.cjs'
+  'apps/desktop/status.cjs',
+  'apps/desktop/os-vault.cjs'
 ]){
   assert(exists(rel),'Missing application build file: '+rel);
 }
@@ -57,6 +59,8 @@ for(const rel of [
 assert.equal(cm.bundle_sha256,sha('apps/central/dist/server.cjs'));
 assert.equal(cm.schema_sha256,sha('apps/central/dist/v7/schema.sql'));
 assert.equal(dm.agent_bundle_sha256,sha('apps/desktop/dist/edge-agent.cjs'));
+assert.equal(dm.secure_agent_sha256,sha('apps/desktop/dist/secure-agent.cjs'));
+assert.equal(json('apps/desktop/package.json').build.extraResources[0].to,'secure-agent.cjs');
 assert.equal(dm.worker_bundle_sha256,sha('apps/desktop/dist/edge-worker.cjs'));
 assert.equal(fs.readFileSync(path.join(desktop,'release-manifest.json'),'utf8').includes('SUTRADHAR_ADMIN_KEY'),false);
 for(const rel of ['apps/central/dist/server.cjs',
@@ -66,6 +70,7 @@ for(const rel of ['apps/central/dist/server.cjs',
   'apps/desktop/setup.js',
   'apps/desktop/desktop-config.cjs',
   'apps/desktop/status.cjs',
+  'apps/desktop/dist/secure-agent.cjs',
   'apps/desktop/pack-qa.cjs']){
   cp.execFileSync(process.execPath,['--check',get(rel)],{stdio:'pipe',timeout:20000});
 }
