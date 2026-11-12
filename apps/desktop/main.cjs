@@ -8,7 +8,8 @@
 const {app,BrowserWindow,Menu,Tray,shell,ipcMain,dialog,safeStorage}=require('electron');
 const fs=require('node:fs');
 const path=require('node:path');
-const {spawn}=require('node:child_process');
+const {spawn,spawnSync}=require('node:child_process');
+const {verifyOffer}=require('./update-policy.cjs');
 const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
@@ -237,6 +238,37 @@ app.whenReady().then(()=>{
   });
   ipcMain.handle('sutradhar:openDashboard',event=>{
     verifySender(event);showDashboard();return {opened:true};
+  });
+  ipcMain.handle('sutradhar:verifyLocalUpdate',async(event)=>{
+    verifySender(event);
+    if(process.platform!=='win32'||!app.isPackaged)
+      throw Error('Offline signed update verification requires an approved packaged Windows app.');
+    const trust=JSON.parse(fs.readFileSync(path.join(__dirname,'update-trust.json'),'utf8'));
+    if(trust.schema!==1||trust.status!=='OWNER_PROTECTED_RELEASE'||
+      typeof trust.public_key_pem!=='string'||typeof trust.publisher_subject!=='string')
+      throw Error('UPDATE_TRUST_NOT_CONFIGURED. An Owner-signed production release is required.');
+    const selected=await dialog.showOpenDialog(setupWindow,{
+      title:'Select Owner-signed update offer JSON (inspection only)',
+      properties:['openFile'],filters:[{name:'Signed update JSON',extensions:['json']}]
+    });
+    if(selected.canceled||selected.filePaths.length!==1)return {canceled:true};
+    const signed=JSON.parse(fs.readFileSync(selected.filePaths[0],'utf8'));
+    const installer=path.join(path.dirname(selected.filePaths[0]),
+      String(signed?.signed?.filename||'INVALID'));
+    const kind=signed?.signed?.type==='rollback'?'rollback':'update';
+    const verified=verifyOffer({envelope:signed,pinnedPublicKeyPem:trust.public_key_pem,
+      installerPath:installer,currentVersion:app.getVersion(),protocol:7,
+      publisherSubject:trust.publisher_subject,rolloutApproved:true,kind});
+    if(!verified.accepted)throw Error(String(verified.error_code));
+    const script='$s=Get-AuthenticodeSignature -LiteralPath '+JSON.stringify(installer)+
+      '; if($s.Status -ne "Valid" -or $null -eq $s.SignerCertificate){exit 42};'+
+      ' if($s.SignerCertificate.Subject -cne '+JSON.stringify(trust.publisher_subject)+'){exit 43}';
+    const check=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],
+      {timeout:30000,windowsHide:true,encoding:'utf8'});
+    if(check.error||check.status!==0)throw Error('UPDATE_WINDOWS_SIGNER_VERIFICATION_FAILED');
+    return {verifiedOffline:true,installed:false,version:verified.version,
+      kind,sha256:verified.file_sha256,
+      nextAction:'Owner must separately approve installation/recovery; this tool never runs an installer.'};
   });
   ipcMain.handle('sutradhar:openProvider',(event,provider)=>{
     verifySender(event);
