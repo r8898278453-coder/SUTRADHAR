@@ -28,6 +28,10 @@ function main(){
   if(!sha.test(expected)||git(['rev-parse','HEAD'])!==expected)fail('release commit SHA mismatch');
   if(git(['status','--porcelain'])!=='')fail('dirty source checkout');
   if(required('SUTRADHAR_RELEASE_TAG')!=='desktop-v'+version)fail('wrong immutable desktop release tag');
+  let tagCommit;
+  try{tagCommit=git(['rev-list','-n','1','refs/tags/desktop-v'+version]);}
+  catch{fail('approved immutable desktop version tag does not exist');}
+  if(tagCommit!==expected)fail('tag does not point to the approved release SHA');
   const signed=required('SUTRADHAR_WINDOWS_PUBLISHER_NAME');
   if(!/^CN=.+/.test(signed)||signed.length>250)fail('publisher must equal certificate Distinguished Name');
   const trustPem=Buffer.from(required('SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
