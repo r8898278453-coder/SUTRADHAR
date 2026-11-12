@@ -42,7 +42,12 @@
 <p class="hint">Opens your normal browser. You remain responsible for account authorization and provider usage terms.</p>
 <div class="actions"><button id="chatgpt" class="secondary" type="button">Open ChatGPT Web</button><button id="studio" class="secondary" type="button">Open Google AI Studio</button></div>
 </section>
-<footer>Device identity is currently stored in a user-restricted local file; OS-vault integration and signed production installers are still required.</footer>
+<section class="panel"><h2>Check signed update / rollback (inspection only)</h2>
+<p class="hint">Select an Owner-signed offer JSON next to its downloaded Windows installer. The app checks the pinned release key, SHA-256, release version and Windows publisher without executing the installer. This is locked until the first approved production-signed release.</p>
+<button id="verifyUpdate" class="secondary" type="button">Verify a signed update file</button>
+<div id="updateFeedback" role="status" aria-live="polite"></div>
+</section>
+<footer>Packaged Desktop uses Windows DPAPI/macOS Keychain-backed encrypted device identity when available. Production signing, installation and physical key-vault acceptance are still required.</footer>
 </main>
 <script src="./setup.js"></script>
 </body></html>
