@@ -129,6 +129,20 @@ The rows above include **target UX**; current alpha offers only portions of the 
 - **Desktop update failed:** pause wave, keep last good compatible version, and preserve agent identity. Do not erase the identity/data directory to make the error disappear.
 - **Database migration failed:** stop; do not rerun repeatedly. Use migration receipt, backup checksum, restore test and developer review before a new attempt.
 
+
+## Security and release implementation update — 12 November 2026
+
+The packaged Electron application now has an **OS-safeStorage encrypted identity** implementation, not just the original plaintext alpha Node daemon. On supported Windows this uses DPAPI; on macOS the system Keychain. It uses private parent-child IPC and does not place the private key in an environment variable. **This has been coded and unit-tested, not physically accepted on a trusted signed installer.** Developer-only v7/agent.ts still uses a restricted plaintext file; never use that path as a production installer.
+
+A guarded Windows production signing tool now refuses unapproved, alpha, wrong-commit or unsigned builds. A **signed update/rollback verification screen** checks an Owner-pinned release key and Windows publisher **without executing the update**. The unsigned alpha has no configured trusted release key, so it refuses updates. No automatic updater, signed production release, installer distribution or physically tested rollback exists.
+
+For an authorized staging engineer there are three new commands:
+- npm run ops:hostinger-preflight — **read-only** staging HTTPS/MySQL/commit/UI check, only after a real site exists.
+- npm run ops:backup / ops:verify-backup / ops:restore-staging — authenticated encrypted MySQL backup and **approved empty staging-only** restore; may require off-host MySQL connection unavailable on some Hostinger shared accounts.
+- npm run ops:pc-pilot — read-only before/after real PC snapshot and failover epoch check. It never simulates 2/3/8–10 physical machines.
+
+All five priorities' exact prerequisites, safe settings and acceptance steps are in the [production-readiness checklist](PRODUCTION_READINESS_V7_2026-11-12.md). **Nothing in this implementation constitutes owner permission to deploy, sign with your certificate, restore live data or take real PCs offline.**
+
 ## Final production go/no-go checklist
 
 Mark each line with **real evidence**; no automated status is inferred from these written instructions.
