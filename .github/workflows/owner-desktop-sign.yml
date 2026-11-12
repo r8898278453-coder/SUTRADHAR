@@ -1,0 +1,95 @@
+name: Desktop Windows - Owner Protected Signing (NO PUBLICATION)
+
+# Manual only. Cannot run from feature branches and requires an environment
+# that the Owner configures with required reviewers and restricted secrets.
+# No automatic publishing or installer distribution is performed.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Reviewed stable release 40-character commit SHA (must equal default-branch HEAD)"
+        required: true
+        type: string
+      release_tag:
+        description: "Immutable release tag, e.g. desktop-v7.0.0"
+        required: true
+        type: string
+      confirmation:
+        description: "Type exactly: APPROVE SIGNING WITHOUT PUBLISHING"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sutradhar-protected-windows-signing
+  cancel-in-progress: false
+
+jobs:
+  signed-windows-build:
+    name: Owner-reviewed Authenticode build, no publishing
+    runs-on: windows-latest
+    timeout-minutes: 35
+    environment:
+      name: sutradhar-desktop-signing
+    steps:
+      - name: Require verified environment setup, correct source and explicit confirmation
+        shell: pwsh
+        env:
+          SIGNING_CONTROLS: ${{ vars.SUTRADHAR_SIGNING_CONTROLS_VERIFIED }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if ($env:WORKFLOW_REF -cne 'refs/heads/main') { throw 'Only the reviewed main workflow may sign' }
+          if ($env:SIGNING_CONTROLS -cne 'READY_BY_OWNER') { throw 'Signing environment is not Owner-certified' }
+          if ($env:CONFIRMATION -cne 'APPROVE SIGNING WITHOUT PUBLISHING') { throw 'Explicit signer confirmation is missing' }
+          if ($env:EXPECTED_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'Full release commit SHA required' }
+          if ($env:EXPECTED_SHA -cne $env:WORKFLOW_SHA) { throw 'Only reviewed current main SHA may be signed' }
+          if ($env:RELEASE_TAG -cnotmatch '^desktop-v[0-9]+[.][0-9]+[.][0-9]+$') { throw 'Stable release tag required' }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Require reproducible lockfiles and immutable matching signed tag
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if (!(Test-Path package-lock.json)) { throw 'Root lockfile missing; signing blocked' }
+          if (!(Test-Path apps/desktop/package-lock.json)) { throw 'Desktop lockfile missing; signing blocked' }
+          $commit = git rev-list -n 1 "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0 -or $commit -cne $env:EXPECTED_SHA) { throw 'Immutable release tag does not match reviewed commit' }
+      - name: Install pinned dependencies and compile exact Desktop
+        shell: pwsh
+        run: |
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Root npm ci failed' }
+          npm ci --prefix apps/desktop --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop npm ci failed' }
+          npm run build:desktop
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
+          npm run test:desktop
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop security tests failed' }
+      - name: Owner-protected Authenticode signing gate (never publishes)
+        shell: pwsh
+        env:
+          SUTRADHAR_OWNER_RELEASE_APPROVED: "true"
+          SUTRADHAR_EXPECTED_COMMIT_SHA: ${{ inputs.expected_sha }}
+          SUTRADHAR_RELEASE_TAG: ${{ inputs.release_tag }}
+          SUTRADHAR_WINDOWS_PUBLISHER_NAME: ${{ vars.SUTRADHAR_WINDOWS_PUBLISHER_NAME }}
+          SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64: ${{ vars.SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64 }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          npm --prefix apps/desktop run pack:release
+          if ($LASTEXITCODE -ne 0) { throw 'Signing failed closed' }
+          Write-Host 'Local signed installer and evidence verified; this workflow does not upload or publish.'
