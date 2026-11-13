@@ -21,7 +21,7 @@
     "build:central": "node apps/central/build.cjs",
     "build:desktop": "node apps/desktop/build.cjs",
     "start:central": "node apps/central/dist/server.cjs",
-    "test:desktop": "node --test tests/desktop_setup.test.cjs tests/desktop_vault.test.cjs tests/desktop_update_policy.test.cjs tests/desktop_signer_bridge.test.cjs",
+    "test:desktop": "node --test tests/desktop_setup.test.cjs tests/desktop_vault.test.cjs tests/desktop_update_policy.test.cjs tests/desktop_signer_bridge.test.cjs tests/desktop_enrollment.test.cjs",
     "check:packages": "node scripts/check-packages.cjs",
     "test:packages": "npm run build:central && npm run build:desktop && npm run check:packages",
     "test:ops": "node --test tests/mysql_backup_crypto.test.cjs tests/pilot_policy.test.cjs tests/hostinger_staging_preflight.test.cjs",
