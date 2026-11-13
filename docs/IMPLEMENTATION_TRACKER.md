@@ -168,3 +168,16 @@ Operational instructions: [v7/README.md](../v7/README.md). Canonical acceptance 
 - No actual Hostinger staging deployment, Owner certificate, 2-PC test, secure updater distribution, production branch ref or account secrets were touched.
 
 **Current external prerequisites:** [Owner provisioning runbook](OWNER_PROVISIONING_RUNBOOK.md), [Issue #2](https://github.com/r8898278453-coder/SUTRADHAR/issues/2). Keep production signing workflow locked until lockfiles reviewed, protected environment configured and Owner explicitly authorizes the exact release.
+
+
+## Supported Electron and one-time grant isolation — 13 November 2026
+
+**Draft PR #1 only. No production release or Hostinger/physical-PC acceptance.**
+
+- Replaced **EOL Electron 33.4.11** with supported **Electron 45.3.1**, plus electron-builder 26.18.0. apps/desktop/runtime-policy.cjs checks approved major/patched minimum and fails closed after the 27 April 2027 support review deadline. tests/desktop_runtime_policy.test.cjs and QA pack guard added.
+- Packaged Edge no longer receives the **one-time Owner enrollment grant** via IPC: apps/desktop/enrollment.cjs submits it directly from Electron main to Central over HTTPS, refuses redirects, verifies exact node ID and Owner approval requirement. Child gets success/error only; test coverage in tests/desktop_enrollment.test.cjs.
+- apps/desktop/main.cjs now binds private IPC replies to the original child process instance to prevent a restart-race reply leaking to a replacement process.
+- .github/workflows/dependency-lock-proposal.yml now tests generated root/Desktop candidate locks via **clean npm ci** on both Windows and Linux. Candidate artifact is not automatically committed; actual approved signed release remains blocked until dependency audit and reviewed lockfiles are committed.
+- Sync Electron safeStorage remains supported in Electron 45 but is deprecated; a safe async migration is mandatory before a later runtime removes it. Windows DPAPI does not protect keys from every other process running as the same OS user.
+
+**Required external proof remains:** Owner/independent reviewer, trusted signed Windows installer, OS-vault reboot/recovery, signed update rollout and rollback, Hostinger staging and MySQL restore, and real 2/3/8–10 physical-PC acceptance plus all 71 V7 tests.
