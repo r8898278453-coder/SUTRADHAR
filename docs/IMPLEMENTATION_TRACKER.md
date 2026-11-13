@@ -156,3 +156,15 @@ Operational instructions: [v7/README.md](../v7/README.md). Canonical acceptance 
 **Deployment status:** No Hostinger site, hPanel, MySQL account or physical PC was accessed. No production release ref advanced, signing certificate used, Windows installer uploaded, update installed, database migrated/restored, or PR merged. Changes remain in fix/p0-containment-2026-11-06.
 
 **Source of truth for the next Owner trial:** [Owner-ready production checklist](PRODUCTION_READINESS_V7_2026-11-12.md). Production go-live requires all missing gates and explicit Owner approval, not just this documentation.
+
+
+## Signing boundary + reproducible dependency proposal — 13 November 2026
+
+**Changed code on draft PR #1 (no merge / deploy / signed release).**
+
+- **OS-vault signing isolation CODED:** apps/desktop/vault-bridge.cjs generates/stores Ed25519 private key only inside Electron main-process safeStorage. apps/desktop/secure-agent.ts now receives only public identity plus strictly scoped Central request signatures. Sequence/boot/agent IDs are validated by parent. tests/desktop_signer_bridge.test.cjs covers forgery attempts, private-key non-disclosure, canonical verification and stale counters. **Physical Windows and process threat-model acceptance still NOT RUN.**
+- **Dependency lockfile candidates GENERATED IN CI ONLY:** scripts/release/prepare-lockfile-candidate.cjs and .github/workflows/dependency-lock-proposal.yml resolve and pin @google/genai and emit root + Desktop candidate lockfiles as short-lived review artifact. **These are NOT committed** and must be reviewed/audited and tested with npm ci on Linux/Windows before release. Current root dependency remains \`latest\` on the draft branch until this review is done.
+- Latest-scoped verification must refer to exact SHA; every subsequent commit needs rerun.
+- No actual Hostinger staging deployment, Owner certificate, 2-PC test, secure updater distribution, production branch ref or account secrets were touched.
+
+**Current external prerequisites:** [Owner provisioning runbook](OWNER_PROVISIONING_RUNBOOK.md), [Issue #2](https://github.com/r8898278453-coder/SUTRADHAR/issues/2). Keep production signing workflow locked until lockfiles reviewed, protected environment configured and Owner explicitly authorizes the exact release.
