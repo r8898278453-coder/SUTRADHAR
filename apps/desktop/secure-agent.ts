@@ -82,28 +82,10 @@ async function main(){
     return answer;
   }
   async function enroll(){
-    const file=path.join(home,'enrollment_requested');
-    if(fs.existsSync(file))return;
-    const grant=await bridge<string>('grant');
-    if(!grant||grant.length<32)throw Error('OWNER_ENROLLMENT_GRANT_REQUIRED');
-    try{
-      const {proof}=await bridge<{proof:string}>('sign',{kind:'enroll'});
-      try{
-        await send('POST','/v7/nodes/enroll',{
-          node_id:state!.node_id,public_key_pem:state!.public_key_pem,
-          display_name:process.env.SUTRADHAR_NODE_NAME||'SUTRADHAR Desktop',
-          proof
-        },grant);
-      }catch(e:any){
-        if(e.message!=='NODE_ID_ALREADY_EXISTS')throw e;
-        const existing=await send('GET','/v7/nodes/me');
-        if(existing.node_id!==state!.node_id)throw Error('ENROLLMENT_IDENTITY_CONFLICT');
-      }
-      fs.writeFileSync(file,new Date().toISOString(),{mode:0o600});
-      await bridge('consumeGrant');
-    }finally{
-      // A grant is never written to disk or added to a child environment.
-    }
+    // Electron main owns the one-time grant and posts enrollment over HTTPS.
+    // The child cannot receive/read it or request an arbitrary enrollment proof.
+    const result=await bridge<{accepted:boolean}>('enroll');
+    if(result?.accepted!==true)throw Error('ENROLLMENT_NOT_CONFIRMED');
   }
   async function recovery(masterId:string,epoch:number){
     const data=await send('GET','/v7/recovery',undefined,undefined,masterId);
