@@ -24,6 +24,17 @@ function main(){
   if(process.platform!=='win32')fail('Windows-signed release requires a trusted Windows runner');
   if(process.env.SUTRADHAR_OWNER_RELEASE_APPROVED!=='true')fail('explicit Owner release approval required');
   if(!/^\d+\.\d+\.\d+$/.test(version))fail('stable semver is required; alpha is not a production release');
+  // The 33.x alpha runtime is EOL. Release only with the audited 45.x line;
+  // review support window and update this guard with an independent QA signoff
+  // whenever the Electron major is intentionally upgraded.
+  const electronVersion=pkg.devDependencies?.electron;
+  const builderVersion=pkg.devDependencies?.['electron-builder'];
+  if(!/^45[.]\d+[.]\d+$/.test(electronVersion||'')||
+     !/^26[.]\d+[.]\d+$/.test(builderVersion||''))
+    fail('approved supported Electron 45 / builder 26 dependency pins required');
+  if(Date.now()>Date.parse('2027-04-27T00:00:00Z'))
+    fail('Electron 45 support-window review required; do not release an EOL runtime');
+
   const expected=required('SUTRADHAR_EXPECTED_COMMIT_SHA');
   if(!sha.test(expected)||git(['rev-parse','HEAD'])!==expected)fail('release commit SHA mismatch');
   if(git(['status','--porcelain'])!=='')fail('dirty source checkout');
