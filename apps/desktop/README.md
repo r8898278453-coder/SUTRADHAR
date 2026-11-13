@@ -59,6 +59,17 @@ The enrollment grant still travels over the private local IPC for the first enro
 
 Security regression tests: `tests/desktop_signer_bridge.test.cjs`, `tests/desktop_vault.test.cjs`.
 
+## Supported Electron runtime + parent-only enrollment — 13 November 2026
+
+- Electron 33.4.11 was **end-of-life** and must never be used for a trusted installer. The Desktop prototype now requests **Electron 45.3.1** and **electron-builder 26.18.0** (both exact pins). apps/desktop/runtime-policy.cjs refuses obsolete majors and blocks signing after 27 April 2027 unless a reviewed support-window update occurs. CI validates the upgrade with QA-only Windows packaging and an independent Linux/Windows lockfile \`npm ci\` review flow.
+- The OS-vault Ed25519 private key stays in Electron main process. The agent receives public metadata and narrowly scoped signatures.
+- The **one-time enrollment code stays in Electron main process** and is sent directly to Central HTTPS using apps/desktop/enrollment.cjs. The agent's IPC asks only for the enrollment outcome, and the parent checks Central's matching node identity/Owner approval response. It never puts the grant in agent environment, argv, or IPC replies.
+- Windows DPAPI protects identity from other OS users, **not necessarily other apps running under the same Windows account**. Hardware-backed code signing and real physical PC compromise/restore tests remain required.
+- Electron's synchronous safeStorage APIs are deprecated in current supported versions and need a reviewed migration to the async encryption API before upgrading to a runtime that removes the synchronous interface. Do not silently upgrade to Electron 46 without that work.
+- Dependencies still need committed Owner-reviewed root + Desktop lockfiles. The GitHub review-only workflow generates candidate files and tests clean installs on Linux/Windows, **without changing the PR source or granting production approval**.
+
+Reference: [Electron supported release policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines) and [safeStorage security semantics](https://www.electronjs.org/docs/latest/api/safe-storage).
+
 ## New Owner-gated installer and update security code
 
 - apps/desktop/pack-release.cjs refuses release without a **stable version, exact immutable tagged SHA, Owner approval and an actual Windows signing certificate**. It verifies the resulting EXE with Get-AuthenticodeSignature and emits local receipt; no automatic publishing.
