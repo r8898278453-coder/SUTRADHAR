@@ -94,7 +94,9 @@ function startAgent(){
     });
   }finally{fs.closeSync(fd);}
 
-  agent.on('message',async msg=>{
+  const spawnedAgent=agent;
+  spawnedAgent.on('message',async msg=>{
+    if(agent!==spawnedAgent||!spawnedAgent.connected)return;
     if(!msg||msg.type!=='vault:request'||!Number.isSafeInteger(msg.id)||
       msg.id<1||!['initialize','saveCounters','sign','grant','consumeGrant'].includes(msg.op))return;
     const reply={type:'vault:response',id:msg.id};
@@ -111,10 +113,11 @@ function startAgent(){
       }
       if(msg.op==='consumeGrant'){pendingEnrollmentCode=null;reply.result=true;}
     }catch(e){reply.error=String(e.message||'VAULT_ERROR').slice(0,100);}
-    try{agent?.send(reply);}catch{}
+    try{if(agent===spawnedAgent&&spawnedAgent.connected)spawnedAgent.send(reply);}catch{}
   });
-  agent.on('error',()=>{ /* Agent stopped: operator can inspect local log. */ });
-  agent.on('exit',()=>{
+  spawnedAgent.on('error',()=>{ /* Agent stopped: operator can inspect local log. */ });
+  spawnedAgent.on('exit',()=>{
+    if(agent!==spawnedAgent)return; // Ignore stale child exit after a replacement.
     agent=null;
     if(shuttingDown)return;
     if(retryTimer)clearTimeout(retryTimer);
