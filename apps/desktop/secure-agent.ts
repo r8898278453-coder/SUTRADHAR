@@ -1,18 +1,16 @@
 /**
  * SUTRADHAR v7 packaged Desktop agent. The Electron main process alone
  * performs OS-safeStorage encryption/decryption; this child requests state
- * through a private parent-child IPC pipe. No plaintext identity is written
- * to disk and no private key is passed via env/argv.
+ * through a private parent-child IPC pipe. The process receives only public
+ * identity and scoped signatures, never the private key via IPC/env/argv.
  *
  * The developer-only v7/agent.ts remains a separate, explicitly alpha daemon.
  */
-import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {HEARTBEAT_SECONDS,ID_RE,digest} from '../../v7/rules.ts';
 type Agent={id:string;sequence:number};
-type Saved={node_id:string;private_key_pem:string;public_key_pem:string;
-  node_sequence:number;boot_id:string;agents:Agent[]};
+type Saved={node_id:string;public_key_pem:string;node_sequence:number;boot_id:string;agents:Agent[]};
 type Message={type:string;id:number;op?:string;payload?:unknown;result?:any;error?:string};
 if(process.env.SUTRADHAR_VAULT_BRIDGE!=='1'||typeof process.send!=='function')
   throw Error('SECURE_AGENT_REQUIRES_ELECTRON_OS_VAULT_BRIDGE');
@@ -51,13 +49,6 @@ function bridge<T>(op:string,payload?:unknown):Promise<T>{
     });
   });
 }
-function createIdentity():Saved{
-  const kp=crypto.generateKeyPairSync('ed25519');
-  return {node_id:'node_'+crypto.randomUUID().replace(/-/g,''),
-    private_key_pem:kp.privateKey.export({type:'pkcs8',format:'pem'}).toString(),
-    public_key_pem:kp.publicKey.export({type:'spki',format:'pem'}).toString(),
-    node_sequence:0,boot_id:'boot_'+crypto.randomUUID().replace(/-/g,''),agents:[]};
-}
 function privateStatus(state:Saved,extra:Record<string,unknown>){
   const file=path.join(home,'status.json'),tmp=file+'.'+process.pid+'.tmp';
   try{
@@ -70,28 +61,19 @@ function privateStatus(state:Saved,extra:Record<string,unknown>){
   }catch{try{fs.unlinkSync(tmp);}catch{}}
 }
 async function main(){
-  let state=await bridge<Saved|null>('load');
-  if(!state)state=createIdentity();
-  const ids=new Set(state.agents.map(a=>a.id));
-  if(state.agents.some(a=>!agentNames.includes(a.id)))
-    throw Error('DEVICE_AGENT_LIST_MISMATCH_REQUIRES_OWNER');
-  for(const id of agentNames)if(!ids.has(id))state.agents.push({id,sequence:0});
-  state.boot_id='boot_'+crypto.randomUUID().replace(/-/g,'');
-  await bridge('save',state);
-  const key=crypto.createPrivateKey(state.private_key_pem);
-  function signed(method:string,uri:string,body:string){
-    const ts=Date.now(),nonce='nonce_'+crypto.randomUUID().replace(/-/g,'');
-    const value=[String(ts),nonce,method,uri,digest(body)].join('\n');
-    return {'x-sutradhar-node':state!.node_id,
-      'x-sutradhar-timestamp':String(ts),
-      'x-sutradhar-nonce':nonce,
-      'x-sutradhar-signature':crypto.sign(null,Buffer.from(value),key).toString('base64')};
-  }
+  // The private key is generated and retained inside Electron main's OS vault.
+  // The agent receives public metadata only; all API signatures are returned by
+  // a tightly scoped request-signing bridge.
+  const state=await bridge<Saved>('initialize',{agent_ids:agentNames});
+  if(!state||!Array.isArray(state.agents)||
+    state.agents.length!==agentNames.length||
+    state.agents.some((a,i)=>a.id!==agentNames[i]))
+    throw Error('VAULT_PUBLIC_IDENTITY_INVALID');
   async function send(method:'GET'|'POST',uri:string,data?:any,authorization?:string,agentId?:string){
     const body=method==='POST'?JSON.stringify(data):'';
     const headers:Record<string,string>={'content-type':'application/json'};
     if(authorization)headers.authorization='Bearer '+authorization;
-    else Object.assign(headers,signed(method,uri,body));
+    else Object.assign(headers,await bridge<Record<string,string>>('sign',{kind:'node_api',method,uri,body}));
     if(agentId)headers['x-sutradhar-agent']=agentId;
     const res=await fetch(central+uri,{method,headers,body:method==='POST'?body:undefined,
       signal:AbortSignal.timeout(15000)});
@@ -105,7 +87,7 @@ async function main(){
     const grant=await bridge<string>('grant');
     if(!grant||grant.length<32)throw Error('OWNER_ENROLLMENT_GRANT_REQUIRED');
     try{
-      const proof=crypto.sign(null,Buffer.from('enroll:'+state!.node_id),key).toString('base64');
+      const {proof}=await bridge<{proof:string}>('sign',{kind:'enroll'});
       try{
         await send('POST','/v7/nodes/enroll',{
           node_id:state!.node_id,public_key_pem:state!.public_key_pem,
@@ -158,7 +140,7 @@ async function main(){
         state.node_sequence++;
         for(const a of state.agents)a.sequence++;
         // A durable OS-vault write is mandatory BEFORE sending the heartbeat.
-        await bridge('save',state);
+        await bridge('saveCounters',state);
         const reply=await send('POST','/v7/nodes/heartbeat',{
           boot_id:state.boot_id,sequence:state.node_sequence,expected_master_epoch:epoch,
           agents:state.agents.map(a=>({agent_id:a.id,sequence:a.sequence,status:'ONLINE'}))
