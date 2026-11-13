@@ -56,7 +56,7 @@ jobs:
 
 
   locked-install:
-    name: "Review-only npm ci (\${{ matrix.os }})"
+    name: Review-only npm ci across platforms
     needs: candidate
     strategy:
       fail-fast: false
