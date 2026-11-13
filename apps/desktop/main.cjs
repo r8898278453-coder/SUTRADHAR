@@ -17,6 +17,7 @@ const {
 const {summarizeCentralReceipt}=require('./status.cjs');
 const {createVault}=require('./os-vault.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
+const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 
 let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
@@ -98,20 +99,32 @@ function startAgent(){
   spawnedAgent.on('message',async msg=>{
     if(agent!==spawnedAgent||!spawnedAgent.connected)return;
     if(!msg||msg.type!=='vault:request'||!Number.isSafeInteger(msg.id)||
-      msg.id<1||!['initialize','saveCounters','sign','grant','consumeGrant'].includes(msg.op))return;
+      msg.id<1||!['initialize','saveCounters','sign','enroll'].includes(msg.op))return;
     const reply={type:'vault:response',id:msg.id};
     try{
       if(!vault)throw Error('OS_VAULT_UNAVAILABLE');
       if(JSON.stringify(msg).length>45000)throw Error('VAULT_MESSAGE_TOO_LARGE');
       if(msg.op==='initialize')reply.result=signer.initialize(msg.payload);
       if(msg.op==='saveCounters')reply.result=signer.saveCounters(msg.payload);
-      if(msg.op==='sign')reply.result=signer.sign(msg.payload);
-      if(msg.op==='grant'){
-        if(fs.existsSync(enrollmentMarker()))throw Error('ENROLLMENT_ALREADY_REQUESTED');
-        if(!pendingEnrollmentCode)throw Error('OWNER_ENROLLMENT_GRANT_REQUIRED');
-        reply.result=pendingEnrollmentCode;
+      if(msg.op==='sign'){
+        if(msg.payload?.kind==='enroll')throw Error('ENROLL_PROOF_RESTRICTED_TO_MAIN');
+        reply.result=signer.sign(msg.payload);
       }
-      if(msg.op==='consumeGrant'){pendingEnrollmentCode=null;reply.result=true;}
+      if(msg.op==='enroll'){
+        if(!current)throw Error('DEVICE_SETTINGS_NOT_CONFIGURED');
+        if(fs.existsSync(enrollmentMarker())){
+          reply.result={accepted:true,ownerApprovalRequired:true};
+        }else{
+          const grant=pendingEnrollmentCode;
+          reply.result=await enrollWithOwnerGrant({
+            origin:current.centralUrl,grant,displayName:current.pcName,
+            node:signer.snapshot(),signer
+          });
+          fs.mkdirSync(nodeDir(),{recursive:true,mode:0o700});
+          fs.writeFileSync(enrollmentMarker(),new Date().toISOString(),{mode:0o600,flag:'wx'});
+          pendingEnrollmentCode=null;
+        }
+      }
     }catch(e){reply.error=String(e.message||'VAULT_ERROR').slice(0,100);}
     try{if(agent===spawnedAgent&&spawnedAgent.connected)spawnedAgent.send(reply);}catch{}
   });
