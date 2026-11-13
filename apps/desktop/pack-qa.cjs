@@ -4,6 +4,12 @@
  */
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
+const {verifyRuntime}=require('./runtime-policy.cjs');
+const pkg=JSON.parse(fs.readFileSync(path.join(__dirname,'package.json'),'utf8'));
+const runtime=verifyRuntime({electronVersion:pkg.devDependencies?.electron,
+  builderVersion:pkg.devDependencies?.['electron-builder']});
+if(!runtime.accepted)throw Error('QA_RUNTIME_BLOCKED: '+runtime.error_code);
+
 if(process.env.SUTRADHAR_ALLOW_UNSIGNED_QA_PACKAGE!=='true')
   throw Error('Unsigned QA packaging disabled. Must explicitly set SUTRADHAR_ALLOW_UNSIGNED_QA_PACKAGE=true for an isolated QA environment.');
 const script=path.join(__dirname,'dist','edge-agent.cjs');
