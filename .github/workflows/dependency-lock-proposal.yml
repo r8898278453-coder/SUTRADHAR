@@ -1,0 +1,54 @@
+name: Dependency Lockfile Proposal (review-only)
+
+# Candidate generation is isolated from trusted CI and production signing.
+# No Git writes, merge, deployment, release or installer upload.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "apps/desktop/package.json"
+      - "scripts/release/prepare-lockfile-candidate.cjs"
+      - ".github/workflows/dependency-lock-proposal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lock-proposal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    name: Generate reviewable lockfiles (never commits)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Resolve dependencies without package lifecycle scripts
+        env:
+          SUTRADHAR_PREPARE_LOCK_CANDIDATE: "true"
+        run: node scripts/release/prepare-lockfile-candidate.cjs
+      - name: Confirm all lock candidates are present
+        run: |
+          test -s package-lock.json
+          test -s apps/desktop/package-lock.json
+          test -s lock-candidate-summary.json
+      - name: Upload review-only dependency candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: sutradhar-lockfile-candidate
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            package.json
+            package-lock.json
+            apps/desktop/package.json
+            apps/desktop/package-lock.json
+            lock-candidate-summary.json
