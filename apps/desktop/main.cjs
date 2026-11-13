@@ -16,10 +16,11 @@ const {
 }=require('./desktop-config.cjs');
 const {summarizeCentralReceipt}=require('./status.cjs');
 const {createVault}=require('./os-vault.cjs');
+const {createSignerBridge}=require('./vault-bridge.cjs');
 
 let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
-let vault=null,vaultError=null;
+let vault=null,vaultError=null,signer=null;
 const trustedProviders={
   chatgpt:'https://chatgpt.com/',
   ai_studio:'https://aistudio.google.com/'
@@ -66,7 +67,7 @@ function safeStatus(){
 function startAgent(){
   if(fs.existsSync(enrollmentMarker()))pendingEnrollmentCode=null;
   if(!current||shuttingDown||agent&&agent.exitCode===null)return;
-  if(!vault)throw Error(vaultError||'OS_VAULT_UNAVAILABLE');
+  if(!vault||!signer)throw Error(vaultError||'OS_VAULT_UNAVAILABLE');
   const script=agentScript();
   if(!fs.existsSync(script))throw Error('Edge agent not built. Developer: run npm run build:desktop at repo root.');
   if(!fs.existsSync(enrollmentMarker())&&!pendingEnrollmentCode)
@@ -95,13 +96,14 @@ function startAgent(){
 
   agent.on('message',async msg=>{
     if(!msg||msg.type!=='vault:request'||!Number.isSafeInteger(msg.id)||
-      msg.id<1||!['load','save','grant','consumeGrant'].includes(msg.op))return;
+      msg.id<1||!['initialize','saveCounters','sign','grant','consumeGrant'].includes(msg.op))return;
     const reply={type:'vault:response',id:msg.id};
     try{
       if(!vault)throw Error('OS_VAULT_UNAVAILABLE');
       if(JSON.stringify(msg).length>45000)throw Error('VAULT_MESSAGE_TOO_LARGE');
-      if(msg.op==='load')reply.result=vault.read();
-      if(msg.op==='save')reply.result=vault.save(msg.payload);
+      if(msg.op==='initialize')reply.result=signer.initialize(msg.payload);
+      if(msg.op==='saveCounters')reply.result=signer.saveCounters(msg.payload);
+      if(msg.op==='sign')reply.result=signer.sign(msg.payload);
       if(msg.op==='grant'){
         if(fs.existsSync(enrollmentMarker()))throw Error('ENROLLMENT_ALREADY_REQUESTED');
         if(!pendingEnrollmentCode)throw Error('OWNER_ENROLLMENT_GRANT_REQUIRED');
@@ -192,7 +194,7 @@ async function checkCentral(origin){
     throw Error('Central/Desktop protocol mismatch. Update the compatible Desktop version first.');
 }
 app.whenReady().then(()=>{
-  try{vault=createVault({safeStorage,dir:nodeDir()});}
+  try{vault=createVault({safeStorage,dir:nodeDir()});signer=createSignerBridge(vault);}
   catch(e){vaultError=String(e.message||'OS_VAULT_UNAVAILABLE');}
   // Forget the one-time enrollment grant promptly even if the setup window closes.
   const enrollmentCleanup=setInterval(()=>{
