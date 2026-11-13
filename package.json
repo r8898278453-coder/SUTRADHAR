@@ -25,7 +25,7 @@
     "check:packages": "node scripts/check-packages.cjs",
     "test:packages": "npm run build:central && npm run build:desktop && npm run check:packages",
     "test:ops": "node --test tests/mysql_backup_crypto.test.cjs tests/pilot_policy.test.cjs tests/hostinger_staging_preflight.test.cjs",
-    "test:release-gates": "node --test tests/release_sign_gate.test.cjs",
+    "test:release-gates": "node --test tests/release_sign_gate.test.cjs tests/desktop_runtime_policy.test.cjs",
     "ops:backup": "node scripts/ops/mysql-ops.cjs backup",
     "ops:verify-backup": "node scripts/ops/mysql-ops.cjs verify",
     "ops:restore-staging": "node scripts/ops/mysql-ops.cjs restore",
