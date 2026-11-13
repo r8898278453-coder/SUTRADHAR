@@ -38,7 +38,8 @@
       "os-vault.cjs",
       "update-policy.cjs",
       "update-trust.json",
-      "vault-bridge.cjs"
+      "vault-bridge.cjs",
+      "enrollment.cjs"
     ],
     "extraResources": [
       {
