@@ -51,6 +51,14 @@ Do not move/copy device identity to a different PC. Do not delete identity for a
 
 **Advanced code/QA worker:** apps/desktop/dist/edge-worker.cjs is an independently compiled CLI, not automatically run by the setup UI. It still requires trusted Git, Docker/Python and approved source checkout; consult [v7 technical runbook](../../v7/README.md). It is intentionally not included in the first-run installer.
 
+## Private-key-isolated signing bridge — 13 November 2026
+
+For the packaged Desktop, `apps/desktop/vault-bridge.cjs` keeps the Ed25519 key in the **Electron main process OS-backed vault**. The secure child process receives public node metadata, monotonic heartbeat counters and signatures for a small allowlist of Central API paths; it no longer receives `private_key_pem` through IPC. It cannot ask this bridge to sign arbitrary URLs, a database migration or a GitHub release operation. The parent saves and checks counters before heartbeats.
+
+The enrollment grant still travels over the private local IPC for the first enrollment attempt and is held in memory; it is never persisted in settings or passed on the command line. Production acceptance still needs OS/process isolation, Windows signing and restart tests on real hardware. The legacy developer-only `v7/agent.ts` remains a separate plaintext-alpha path and must not be packaged.
+
+Security regression tests: `tests/desktop_signer_bridge.test.cjs`, `tests/desktop_vault.test.cjs`.
+
 ## New Owner-gated installer and update security code
 
 - apps/desktop/pack-release.cjs refuses release without a **stable version, exact immutable tagged SHA, Owner approval and an actual Windows signing certificate**. It verifies the resulting EXE with Get-AuthenticodeSignature and emits local receipt; no automatic publishing.
