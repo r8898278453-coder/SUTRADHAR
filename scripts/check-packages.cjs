@@ -52,7 +52,8 @@ for(const rel of [
   'apps/desktop/setup.html',
   'apps/desktop/setup.js',
   'apps/desktop/status.cjs',
-  'apps/desktop/os-vault.cjs'
+  'apps/desktop/os-vault.cjs',
+  'apps/desktop/vault-bridge.cjs'
 ]){
   assert(exists(rel),'Missing application build file: '+rel);
 }
@@ -68,7 +69,7 @@ assert.equal(dm.agent_bundle_sha256,sha('apps/desktop/dist/edge-agent.cjs'));
 assert.equal(dm.secure_agent_sha256,sha('apps/desktop/dist/secure-agent.cjs'));
 assert.equal(json('apps/desktop/package.json').build.extraResources[0].to,'secure-agent.cjs');
 const dp=json('apps/desktop/package.json');
-for(const required of ['os-vault.cjs','update-policy.cjs','update-trust.json'])
+for(const required of ['os-vault.cjs','vault-bridge.cjs','update-policy.cjs','update-trust.json'])
   assert(dp.build.files.includes(required),'Sensitive update/vault feature missing in packaged app: '+required);
 const trust=json('apps/desktop/update-trust.json');
 assert.equal(trust.public_key_pem,null,'Unsigned QA package must have no live trusted update key');
