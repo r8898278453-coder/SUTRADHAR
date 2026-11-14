@@ -81,6 +81,8 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm ci --prefix apps/desktop --ignore-scripts --no-audit --no-fund
+      - name: Verify proposal manifest and npm integrity locks before tests
+        run: npm run check:dependency-locks
       - name: Validate release/dependency contracts with proposed locks
         run: |
           npm run lint
