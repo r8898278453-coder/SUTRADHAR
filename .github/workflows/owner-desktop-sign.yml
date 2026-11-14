@@ -68,6 +68,11 @@ jobs:
           if (!(Test-Path apps/desktop/package-lock.json)) { throw 'Desktop lockfile missing; signing blocked' }
           $commit = git rev-list -n 1 "refs/tags/$env:RELEASE_TAG"
           if ($LASTEXITCODE -ne 0 -or $commit -cne $env:EXPECTED_SHA) { throw 'Immutable release tag does not match reviewed commit' }
+      - name: Verify Owner-reviewed lockfile integrity and manifest pairing
+        shell: pwsh
+        run: |
+          npm run check:dependency-locks
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency locks rejected' }
       - name: Install pinned dependencies and compile exact Desktop
         shell: pwsh
         run: |
