@@ -84,6 +84,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
           npm run test:desktop
           if ($LASTEXITCODE -ne 0) { throw 'Desktop security tests failed' }
+      - name: Block release if reviewed dependencies have high or critical npm advisories
+        shell: pwsh
+        run: |
+          npm audit --audit-level=high --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Root dependency advisory check blocked release' }
+          npm audit --prefix apps/desktop --audit-level=high --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop dependency advisory check blocked release' }
       - name: Owner-protected Authenticode signing gate (never publishes)
         shell: pwsh
         env:
