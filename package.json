@@ -1,23 +1,49 @@
 {
   "name": "sutradhar-swarm",
   "private": true,
-  "version": "5.3.0",
+  "version": "7.0.0-alpha.1",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "dev": "tsx v7/central.ts",
+    "build": "esbuild v7/central.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/server.cjs && esbuild v7/agent.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/v7-agent.cjs && esbuild v7/worker.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/v7-worker.cjs && node v7/copy-ui.cjs",
     "start": "node dist/server.cjs",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "NODE_ENV=test SUTRADHAR_TEST_RUN=true SUTRADHAR_WORKER_KEY=sutradhar-local-tests-only-worker-secret-00001 SUTRADHAR_WORKER_ID=NODE-A8F24C09 node --import tsx --test --test-concurrency=1 tests/security_ed25519.test.ts tests/cluster_db.test.ts tests/e2e_lifecycle.test.ts tests/github_merge_verifier.test.ts tests/github_pr_creator.test.ts tests/draft_pr_http_integration.test.ts tests/tested_branch_http_guard.test.ts tests/git_merge_attestation.test.ts tests/github_merge_http_integration.test.ts tests/rollback_http_integration.test.ts tests/github_rollback_reconciler.test.ts && NODE_ENV=test SUTRADHAR_TEST_RUN=true SUTRADHAR_WORKER_KEY=sutradhar-local-tests-only-worker-secret-00001 SUTRADHAR_WORKER_ID=NODE-A8F24C09 tsx tests/security_and_auth.test.ts && npm run test:v7",
+    "test:python": "python3 -m unittest discover -s tests -p 'test_*.py' -v",
+    "test:sandbox-http": "NODE_ENV=test SUTRADHAR_TEST_RUN=true tsx tests/sandbox_http_integration.test.ts",
+    "dev:legacy": "tsx server.ts",
+    "build:legacy": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "edge:start": "node dist/v7-agent.cjs",
+    "test:v7": "node --import tsx --test tests/v7_rules.test.ts tests/v7_git_remote.test.ts",
+    "edge:worker": "node dist/v7-worker.cjs",
+    "test:v7-mysql": "SUTRADHAR_RUN_V7_MYSQL_TEST=1 SUTRADHAR_V7_NO_LISTEN=true node --import tsx --test tests/v7_mysql_integration.test.ts",
+    "migrate:legacy": "tsx v7/migrate_legacy.ts",
+    "build:central": "node apps/central/build.cjs",
+    "build:desktop": "node apps/desktop/build.cjs",
+    "start:central": "node apps/central/dist/server.cjs",
+    "test:desktop": "node --test tests/desktop_setup.test.cjs tests/desktop_vault.test.cjs tests/desktop_update_policy.test.cjs tests/desktop_signer_bridge.test.cjs tests/desktop_enrollment.test.cjs",
+    "check:packages": "node scripts/check-packages.cjs",
+    "test:packages": "npm run build:central && npm run build:desktop && npm run check:packages",
+    "test:ops": "node --test tests/mysql_backup_crypto.test.cjs tests/pilot_policy.test.cjs tests/hostinger_staging_preflight.test.cjs",
+    "test:release-gates": "node --test tests/release_sign_gate.test.cjs tests/desktop_runtime_policy.test.cjs tests/dependency_locks.test.cjs",
+    "ops:backup": "node scripts/ops/mysql-ops.cjs backup",
+    "ops:verify-backup": "node scripts/ops/mysql-ops.cjs verify",
+    "ops:restore-staging": "node scripts/ops/mysql-ops.cjs restore",
+    "ops:hostinger-preflight": "node scripts/ops/hostinger-staging-preflight.cjs",
+    "ops:pc-pilot": "node scripts/ops/pilot-readonly.cjs",
+    "release:sign-offer": "node scripts/release/sign-offline-offer.cjs",
+    "check:dependency-locks": "node scripts/release/verify-dependency-locks.cjs"
   },
   "dependencies": {
-    "@google/genai": "latest",
+    "@google/genai": "3.3.0",
     "clsx": "^2.1.1",
     "express": "^4.21.2",
     "lucide-react": "^1.16.0",
     "motion": "^12.4.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "tailwind-merge": "^3.0.2"
+    "tailwind-merge": "^3.0.2",
+    "mysql2": "^3.15.3"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
@@ -32,5 +58,8 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vite": "^6.1.0"
+  },
+  "engines": {
+    "node": ">=22 <25"
   }
 }

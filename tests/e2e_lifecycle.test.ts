@@ -213,8 +213,8 @@ async function runE2ETests() {
   });
 
   // 9. Git Push Verification & Commit Record
-  it('9. Commits verified parent ticket into tested/ branch and marks COMMITTED_PUSHED', () => {
-    const verifiedCommitSha = crypto.createHash('sha256').update(`COMMIT-${parentId}-${Date.now()}`).digest('hex');
+  it('9. Simulates a persisted merge-state fixture (not an actual Git merge)', () => {
+    const verifiedCommitSha = crypto.createHash('sha256').update(`FIXTURE-ONLY-${parentId}-${Date.now()}`).digest('hex');
 
     db.updateTicket(parentId, {
       status: 'COMMITTED_PUSHED',
@@ -308,24 +308,13 @@ async function runE2ETests() {
   });
 
   // 14. Bad Merge Rollback Workflow
-  it('14. Rolls back bad merge, creates auto-hotfix ticket, and logs audit event', () => {
-    const rollback = db.rollbackMerge(
-      parentId,
-      'Post-merge QA discovered edge-case race condition in JWT caching',
-      'Master Orchestrator'
-    );
-
+  it('14. Records a rollback request and does not invent a Git revert', () => {
+    const rollback = db.rollbackMerge(parentId, 'QA regression', 'Master Orchestrator');
     assert.strictEqual(rollback.success, true);
-    assert.ok(rollback.hotfixId?.startsWith('TKT-HOTFIX-'));
-
-    const hotfixTicket = db.getAllTickets().find(t => t.id === rollback.hotfixId);
-    assert.ok(hotfixTicket, 'Hotfix ticket created in database');
-    assert.strictEqual(hotfixTicket?.priority, 'P0_URGENT');
-    assert.strictEqual(hotfixTicket?.status, 'SYNTHESIZING_DIFF');
-
-    const audit = db.getAuditLogs(10);
-    const rollbackLog = audit.find(a => a.action === 'MERGE_ROLLBACK' || a.action === 'BAD_MERGE_ROLLBACK');
-    assert.ok(rollbackLog, 'Audit log recorded rollback reason');
+    assert.strictEqual(rollback.hotfixId, undefined);
+    const parent = db.getAllTickets().find(t => t.id === parentId);
+    assert.strictEqual(parent?.status, 'ROLLBACK_REQUESTED');
+    assert.ok(db.getAuditLogs(20).some(a => a.action === 'ROLLBACK_REQUESTED'));
   });
 
   // 15. Watchdog Lease Sweeper & Auto-Revocation

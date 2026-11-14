@@ -25,13 +25,21 @@ import type { Ticket, ClusterState } from '../types.ts';
 interface TaskDAGViewProps {
   state: ClusterState;
   onSynthesize: (ticketId: string) => void;
-  onTest: (ticketId: string, simulateFailure?: boolean) => void;
+  onTest: (ticketId: string) => void;
   onVerifyPush: (ticketId: string) => void;
+  onAuthorizeMergeVerification: (ticketId: string) => void;
+  onCreateDraftPr: (ticketId: string) => void;
+  onPushTestedBranch: (ticketId: string) => void;
+  onReconcileWorkerPush: (ticketId: string) => void;
   onSelectTicketForConsole: (ticket: Ticket) => void;
   onClaimTicket?: (ticketId: string, workerId: string) => void;
   onBlockClarification?: (ticketId: string, question: string, reason?: string) => void;
   onAnswerClarification?: (ticketId: string, answer: string) => void;
   onRollback?: (ticketId: string, reason?: string) => void;
+  onRollbackPrepare: (ticketId: string) => void;
+  onRollbackReconcile: (ticketId: string) => void;
+  onRollbackDraft: (ticketId: string) => void;
+  onRollbackVerify: (ticketId: string) => void;
 }
 
 export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
@@ -39,11 +47,19 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
   onSynthesize,
   onTest,
   onVerifyPush,
+  onAuthorizeMergeVerification,
+  onCreateDraftPr,
+  onPushTestedBranch,
+  onReconcileWorkerPush,
   onSelectTicketForConsole,
   onClaimTicket,
   onBlockClarification,
   onAnswerClarification,
-  onRollback
+  onRollback,
+  onRollbackPrepare,
+  onRollbackReconcile,
+  onRollbackDraft,
+  onRollbackVerify
 }) => {
   const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
   const [selectedTicketId, setSelectedTicketId] = useState<string>(state.tickets[2]?.id || state.tickets[0]?.id || 'TKT-104');
@@ -501,10 +517,37 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                         className="w-full py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition"
                       >
                         <Undo2 className="w-3.5 h-3.5" />
-                        Execute Revert & Auto-Spawn Hotfix
+                        Request Rollback (No Git Change Yet)
                       </button>
                     </div>
                   )}
+                </div>
+              )}
+
+              {selectedTicket.status === 'ROLLBACK_REQUESTED' && (
+                <div className="pt-3 space-y-2 border-t border-red-900/70">
+                  <span className="text-xs font-mono text-red-300">
+                    Rollback requested — main unchanged until independently reviewed PR merge
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => onRollbackPrepare(selectedTicket.id)}
+                      className="px-2.5 py-1.5 bg-rose-950/50 border border-rose-700 rounded text-xs text-rose-200">
+                      1. Docker Test & Push Revert Branch
+                    </button>
+                    <button onClick={() => onRollbackReconcile(selectedTicket.id)}
+                      className="px-2.5 py-1.5 bg-amber-950/50 border border-amber-700 rounded text-xs text-amber-200"
+                      title="Read-only remote Git/GitHub inspection; existing branch is Docker-retested, never automatically re-pushed">
+                      Reconcile Uncertain Rollback
+                    </button>
+                    <button onClick={() => onRollbackDraft(selectedTicket.id)}
+                      className="px-2.5 py-1.5 bg-indigo-950/50 border border-indigo-700 rounded text-xs text-indigo-200">
+                      2. Create Draft Rollback PR
+                    </button>
+                    <button onClick={() => onRollbackVerify(selectedTicket.id)}
+                      className="px-2.5 py-1.5 bg-emerald-950/50 border border-emerald-700 rounded text-xs text-emerald-200">
+                      3. Verify Reviewed Rollback Merge
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -584,7 +627,7 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
 
                     <button
                       id={`btn-test-${selectedTicket.id}`}
-                      onClick={() => onTest(selectedTicket.id, false)}
+                      onClick={() => onTest(selectedTicket.id)}
                       className="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
                     >
                       <Play className="w-3.5 h-3.5 text-cyan-400" />
@@ -592,22 +635,51 @@ export const TaskDAGView: React.FC<TaskDAGViewProps> = ({
                     </button>
 
                     <button
+                      onClick={() => onPushTestedBranch(selectedTicket.id)}
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-mono disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Push only a new worker branch containing the exact Docker-tested Git tree"
+                    >
+                      <GitBranch className="w-3.5 h-3.5" />
+                      3. Push Tested Branch
+                    </button>
+                    <button
+                      onClick={() => onReconcileWorkerPush(selectedTicket.id)}
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-amber-600/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-mono disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Read-only inspection of uncertain worker push; never auto-retries"
+                    >
+                      Reconcile Push
+                    </button>
+                    <button
+                      onClick={() => onCreateDraftPr(selectedTicket.id)}
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="A branch containing the exact Docker-tested commit must already be pushed"
+                    >
+                      <GitBranch className="w-3.5 h-3.5" />
+                      4. Create Draft PR
+                    </button>
+                    <button
+                      onClick={() => onAuthorizeMergeVerification(selectedTicket.id)}
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-violet-600/20 text-violet-300 border border-violet-500/30 rounded-lg text-xs font-mono disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Administrator grants a 15-minute read-only verification window after human review; never merges"
+                    >
+                      5. Authorize Merge Check
+                    </button>
+                    <button
                       id={`btn-verify-${selectedTicket.id}`}
                       onClick={() => onVerifyPush(selectedTicket.id)}
-                      className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 transition active:scale-95"
+                      disabled={selectedTicket.status !== 'READY_FOR_REVIEW'}
+                      className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                      3. Git Push
+                      6. Verify GitHub Merge
                     </button>
                   </div>
 
                   <div className="flex items-center justify-between pt-2">
-                    <button
-                      onClick={() => onTest(selectedTicket.id, true)}
-                      className="text-[11px] font-mono text-rose-400 hover:text-rose-300 underline"
-                    >
-                      Simulate Docker Test Failure (Self-Healing Trigger)
-                    </button>
 
                     <button
                       onClick={() => onSelectTicketForConsole(selectedTicket)}

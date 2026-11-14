@@ -1,0 +1,66 @@
+{
+  "name": "@sutradhar/desktop",
+  "productName": "SUTRADHAR Desktop Alpha",
+  "description": "Owner-assisted PC agent with Electron first-run wizard — ALPHA, NOT PRODUCTION",
+  "private": true,
+  "version": "7.0.0-alpha.1",
+  "main": "main.cjs",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "start": "electron .",
+    "pack:qa": "node pack-qa.cjs",
+    "pack:release": "node pack-release.cjs"
+  },
+  "devDependencies": {
+    "electron": "45.3.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "app.sutradhar.desktop.alpha",
+    "productName": "SUTRADHAR Desktop Alpha",
+    "asar": true,
+    "directories": {
+      "output": "out"
+    },
+    "files": [
+      "package.json",
+      "main.cjs",
+      "preload.cjs",
+      "desktop-config.cjs",
+      "setup.html",
+      "setup.js",
+      "setup.css",
+      "contract.json",
+      "status.cjs",
+      "os-vault.cjs",
+      "update-policy.cjs",
+      "update-trust.json",
+      "vault-bridge.cjs",
+      "enrollment.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/secure-agent.cjs",
+        "to": "secure-agent.cjs"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": null
+  }
+}

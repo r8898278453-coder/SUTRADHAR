@@ -1,0 +1,50 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>SUTRADHAR v7 — Central</title>
+<link rel="stylesheet" href="/app.css"></head>
+<body><div class="shell"><header><div><div class="eyebrow">SUTRADHAR / CENTRAL</div>
+<h1>Cluster control <span class="v">v7.0</span></h1><p>MySQL-authoritative control plane · No simulated nodes</p></div>
+<div id="connection" class="chip">Not connected</div></header>
+<section class="credential"><label for="key">Owner API key (held in this tab only; never saved)</label>
+<div class="flex"><input id="key" type="password" placeholder="Enter the 32+ character owner key" autocomplete="off">
+<button id="connect">Connect</button><button id="disconnect" class="outline">Disconnect</button></div>
+<p id="message" class="message" role="status"></p></section>
+<section id="dashboard" hidden><div class="summary">
+<article><div class="eyebrow">Current master</div><strong id="master">—</strong><small id="tenure">—</small></article>
+<article><div class="eyebrow">Epoch & phase</div><strong id="epoch">—</strong><small id="phase">—</small></article>
+<article><div class="eyebrow">Backup order</div><strong id="backup1">—</strong><small id="backup2">—</small></article>
+<article><div class="eyebrow">Control</div><strong id="paused">—</strong><small id="lease">—</small></article></div>
+<div class="grid"><section class="panel"><div class="panelhead"><h2>Registered agents</h2><span id="agentCount"></span></div>
+<div class="scroll"><table><thead><tr><th>Agent</th><th>Machine</th><th>Approval</th><th>Heartbeat</th></tr></thead><tbody id="agents"></tbody></table></div></section>
+<section class="panel"><div class="panelhead"><h2>Projects</h2><span id="projectCount"></span></div>
+<div class="scroll"><table><thead><tr><th>Project</th><th>Repository</th><th>Status</th></tr></thead><tbody id="projects"></tbody></table></div></section>
+<section class="panel"><div class="panelhead"><h2>Task lifecycle</h2><span id="taskCount"></span></div>
+<div class="scroll"><table><thead><tr><th>Ticket</th><th>Worker</th><th>Status</th><th>Version</th></tr></thead><tbody id="tasks"></tbody></table></div></section>
+<section class="panel"><div class="panelhead"><h2>Audit events</h2><span id="auditCount"></span></div>
+<div class="scroll"><table><thead><tr><th>When (UTC)</th><th>Event</th><th>Actor</th></tr></thead><tbody id="audit"></tbody></table></div></section></div>
+<section class="panel owner"><h2>Owner operations</h2><p>Every mutation has an idempotent server receipt. Protected Git merges and deployments cannot be triggered here.</p>
+<div class="flex"><button data-command="PAUSE" class="danger">Pause cluster</button>
+<button data-command="RESUME" class="outline">Resume cluster</button><button id="refresh" class="outline">Refresh</button></div>
+<div class="formgrid">
+<div><label>Node ID</label><input id="node-id" placeholder="node_..."><div class="flex"><button data-command="APPROVE_NODE">Approve node</button><button data-command="REVOKE_NODE" class="danger">Revoke</button></div></div>
+<div><label>Agent ID</label><input id="agent-id" placeholder="agent_...">
+<label class="inline"><input id="eligible" type="checkbox"> Master eligible</label>
+<label class="inline"><input id="qa" type="checkbox"> Independent QA eligible</label>
+<div class="flex"><button data-command="APPROVE_AGENT">Approve agent</button><button data-command="REVOKE_AGENT" class="danger">Revoke</button></div></div>
+<div><label>New project ID</label><input id="project-id" placeholder="project_..."><label>Name</label><input id="project-name" placeholder="Project name">
+<label>GitHub repository</label><input id="repository" placeholder="owner/repo">
+<button data-command="CREATE_PROJECT">Create project record</button></div>
+<div><label>Project access: project ID</label><input id="access-project-id" placeholder="project_...">
+<label>Agent ID</label><input id="access-agent-id" placeholder="agent_...">
+<label class="inline"><input type="checkbox" id="can-develop"> Developer access</label>
+<label class="inline"><input type="checkbox" id="can-qa"> QA access</label>
+<div class="flex"><button data-command="GRANT_PROJECT_AGENT">Grant access</button>
+<button class="danger" data-command="REVOKE_PROJECT_AGENT">Revoke access</button></div></div>
+<div><label>Git review: ticket ID</label><input id="git-ticket-id" placeholder="ticket_...">
+<p>Draft PR creation stays disabled until Owner enables the scoped GitHub PR token on Central. No automatic merge or direct main push.</p>
+<div class="flex"><button id="draft-pr" class="outline">Create verified draft PR</button>
+<button id="verify-merge" class="outline">Verify external merge</button></div></div>
+<div><label>Proposal ID</label><input id="proposal-id" placeholder="proposal_...">
+<div class="flex"><button data-command="APPROVE_PROPOSAL">Approve proposal</button><button data-command="DENY_PROPOSAL" class="danger">Deny</button></div></div>
+</div></section></section>
+<footer>Live state from Central MySQL. UI is read-only unless an owner command is explicitly submitted. No browser session, credential or agent private key is transferred here.</footer>
+</div><script type="module" src="/dashboard.js"></script></body></html>
