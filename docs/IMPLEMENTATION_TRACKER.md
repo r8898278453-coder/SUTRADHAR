@@ -181,3 +181,17 @@ Operational instructions: [v7/README.md](../v7/README.md). Canonical acceptance 
 - Sync Electron safeStorage remains supported in Electron 45 but is deprecated; a safe async migration is mandatory before a later runtime removes it. Windows DPAPI does not protect keys from every other process running as the same OS user.
 
 **Required external proof remains:** Owner/independent reviewer, trusted signed Windows installer, OS-vault reboot/recovery, signed update rollout and rollback, Hostinger staging and MySQL restore, and real 2/3/8–10 physical-PC acceptance plus all 71 V7 tests.
+
+
+## Exact SDK pin and dependency lock security gate — 14 November 2026
+
+**Draft PR #1 only. No merge, Hostinger deployment or signed production installer.**
+
+- The repository root previously declared **@google/genai: latest**. The dependency has been pinned to **3.3.0**, matching the previously successful Windows/Linux candidate install. This is a source dependency choice, **not** an independent vulnerability-audit approval.
+- [scripts/release/verify-dependency-locks.cjs](../scripts/release/verify-dependency-locks.cjs) now verifies npm lockfile v3, manifest/lockfile pairing, resolved npm registry HTTPS URLs and package integrity hashes; rejects untrusted sources, floating latest and unpinned runtime versions.
+- [tests/dependency_locks.test.cjs](../tests/dependency_locks.test.cjs) covers valid locks, tampering, floating versions, invalid registry/integrity, manifest drift and unpinned Electron.
+- The review-only dependency workflow validates proposed locks with clean npm ci on **Windows and Linux**, including the new security check. The Owner-protected Windows signer also invokes this check **before privileged dependency installation**.
+- **Still open:** root package-lock.json and apps/desktop/package-lock.json are generated as short-lived CI proposal artifacts, not yet committed to the draft branch. Production signer remains blocked until they are inspected, audited and committed with Owner/QA review.
+- This lock check protects dependency provenance but **does not** prove installed package signatures, identify all supply-chain vulnerabilities, or replace real release approval.
+
+**Production acceptance:** Windows signing, protected GitHub reviewers, actual Hostinger staging and encrypted restore, real-device OS vault, signed update rollback, physical 2–10 PC trial and all 71 acceptance cases remain not run.
