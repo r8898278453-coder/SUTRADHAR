@@ -25,13 +25,14 @@
     "check:packages": "node scripts/check-packages.cjs",
     "test:packages": "npm run build:central && npm run build:desktop && npm run check:packages",
     "test:ops": "node --test tests/mysql_backup_crypto.test.cjs tests/pilot_policy.test.cjs tests/hostinger_staging_preflight.test.cjs",
-    "test:release-gates": "node --test tests/release_sign_gate.test.cjs tests/desktop_runtime_policy.test.cjs",
+    "test:release-gates": "node --test tests/release_sign_gate.test.cjs tests/desktop_runtime_policy.test.cjs tests/dependency_locks.test.cjs",
     "ops:backup": "node scripts/ops/mysql-ops.cjs backup",
     "ops:verify-backup": "node scripts/ops/mysql-ops.cjs verify",
     "ops:restore-staging": "node scripts/ops/mysql-ops.cjs restore",
     "ops:hostinger-preflight": "node scripts/ops/hostinger-staging-preflight.cjs",
     "ops:pc-pilot": "node scripts/ops/pilot-readonly.cjs",
-    "release:sign-offer": "node scripts/release/sign-offline-offer.cjs"
+    "release:sign-offer": "node scripts/release/sign-offline-offer.cjs",
+    "check:dependency-locks": "node scripts/release/verify-dependency-locks.cjs"
   },
   "dependencies": {
     "@google/genai": "3.3.0",
