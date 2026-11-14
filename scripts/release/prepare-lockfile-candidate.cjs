@@ -1,9 +1,8 @@
 /**
  * CI-only dependency lock candidate generator (never commits/deploys).
  *
- * The current repo has no reproducible lockfiles and uses "latest" for
- * @google/genai. Generate candidate locks and pin the resolved exact
- * SDK version in a reviewable artifact; no production signing until an
+ * Generate candidate locks from the repository's exact Google AI SDK
+ * version in a reviewable artifact; no production signing until an
  * Owner-reviewed PR commits these files and npm ci succeeds.
  */
 'use strict';
@@ -18,13 +17,12 @@ function run(args,cwd){
 }
 const rootPkg=path.join(root,'package.json');
 const pkg=JSON.parse(fs.readFileSync(rootPkg,'utf8'));
-if(pkg.dependencies?.['@google/genai']!=='latest')
-  throw Error('LOCK_PROPOSAL_SOURCE_CHANGED_REVIEW_DEPENDENCIES');
+const requested=pkg.dependencies?.['@google/genai'];
+if(typeof requested!=='string'||!/^\d+\.\d+\.\d+$/.test(requested))
+  throw Error('LOCK_PROPOSAL_REQUIRES_EXACT_AI_SDK_VERSION');
 run(['install','--ignore-scripts','--no-audit','--no-fund'],root);
 const sdk=JSON.parse(fs.readFileSync(path.join(root,'node_modules','@google','genai','package.json'),'utf8'));
-if(!/^\d+\.\d+\.\d+$/.test(sdk.version))throw Error('UNEXPECTED_SDK_RESOLVED_VERSION');
-pkg.dependencies['@google/genai']=sdk.version;
-fs.writeFileSync(rootPkg,JSON.stringify(pkg,null,2)+'\n');
+if(sdk.version!==requested)throw Error('AI_SDK_RESOLVED_VERSION_MISMATCH');
 run(['install','--package-lock-only','--ignore-scripts','--no-audit','--no-fund'],root);
 run(['install','--package-lock-only','--ignore-scripts','--no-audit','--no-fund'],
   path.join(root,'apps','desktop'));
