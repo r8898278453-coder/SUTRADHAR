@@ -11,7 +11,7 @@ const crypto=require('node:crypto');
 const NODE_ID=/^node_[0-9a-f]{32}$/;
 const AGENT_ID=/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/;
 const ALLOWED_REQUESTS=new Set([
-  'GET /v7/nodes/me','GET /v7/recovery',
+  'GET /v7/nodes/me','GET /v7/cluster/state','GET /v7/recovery',
   'POST /v7/agents/register','POST /v7/nodes/heartbeat',
   'POST /v7/leadership/reconcile'
 ]);
