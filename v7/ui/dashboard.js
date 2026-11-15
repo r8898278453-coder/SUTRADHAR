@@ -18,6 +18,19 @@ async function refresh(){
   const [cluster,projects,tasks,audit]=await Promise.all([
     request('/v7/cluster'),request('/v7/projects'),request('/v7/tasks'),request('/v7/audit')]);
   const c=cluster.cluster;
+  // Optional migration-sensitive Owner maintenance surface. Keep the core
+  // dashboard readable if the new staging schema is not yet provisioned,
+  // but disable planning until the server returns valid authoritative rows.
+  let maintenance=null;
+  try{maintenance=await request('/v7/owner/maintenance');}catch{}
+  const maintenanceReady=Array.isArray(maintenance);
+  $('plan-maintenance').disabled=!maintenanceReady;
+  $('cancel-maintenance').disabled=!maintenanceReady;
+  value('maintenanceCount',maintenanceReady?
+    maintenance.length+' records':'Unavailable — schema/health review required');
+  rows('maintenance-plans',maintenanceReady?maintenance.map(p=>[
+    p.plan_id,p.node_id,p.wave_id,p.state,p.expected_epoch,date(p.expires_at)]):[]);
+  $('maintenance-epoch').value=String(c.epoch);
   value('master',c.master_agent_id||'No Master');value('epoch',c.epoch);
   value('phase',c.phase);value('backup1',c.backup1||'None');value('backup2','Backup 2: '+(c.backup2||'None'));
   value('paused',Number(c.paused)?'PAUSED':'RUNNING');
@@ -62,6 +75,48 @@ document.querySelectorAll('[data-command]').forEach(button=>button.addEventListe
     message('Accepted receipt '+result.receipt_id);await refresh();
   }catch(e){message(e.message,true);}
 }));
+
+const maintId=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
+$('plan-maintenance').onclick=async()=>{
+  const node_id=$('maintenance-node-id').value.trim();
+  const wave_id=$('maintenance-wave').value.trim();
+  const target_version=$('maintenance-version').value.trim();
+  const offer_sha256=$('maintenance-offer-sha').value.trim();
+  const expected_epoch=Number($('maintenance-epoch').value);
+  if(!/^node_[0-9a-f]{32}$/.test(node_id)||
+    !/^wave_[a-z0-9][a-z0-9_-]{2,59}$/.test(wave_id)||
+    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(target_version)||
+    !/^[0-9a-f]{64}$/.test(offer_sha256)||
+    !Number.isSafeInteger(expected_epoch)||expected_epoch<1){
+    message('Provide exact node ID, wave, stable version, Owner-signed offer SHA and current epoch.',true);
+    return;
+  }
+  if(!confirm('Record a 5-minute OWNER MAINTENANCE INTENT for '+node_id+
+    '? This does NOT authorize or run an installer.'))return;
+  const plan_id='plan_'+crypto.randomUUID().replaceAll('-','');
+  try{
+    const result=await request('/v7/owner/command',{method:'POST',
+      body:JSON.stringify({request_id:'maint_'+crypto.randomUUID().replaceAll('-',''),
+        command:'PLAN_PC_UPDATE',
+        payload:{plan_id,node_id,wave_id,target_version,offer_sha256,expected_epoch}})});
+    message('INTENT ONLY recorded: '+result.state.plan_id+
+      '. Installer execution NOT approved. Expires in 5 minutes.');
+    $('maintenance-cancel-id').value=result.state.plan_id;
+    await refresh();
+  }catch(e){message('Maintenance plan BLOCKED: '+e.message,true);}
+};
+$('cancel-maintenance').onclick=async()=>{
+  const plan_id=$('maintenance-cancel-id').value.trim();
+  if(!maintId.test(plan_id)){message('Valid exact plan ID required to cancel.',true);return;}
+  if(!confirm('Cancel Owner maintenance intent '+plan_id+'?'))return;
+  try{
+    await request('/v7/owner/command',{method:'POST',
+      body:JSON.stringify({request_id:'maint_'+crypto.randomUUID().replaceAll('-',''),
+        command:'CANCEL_PC_UPDATE',payload:{plan_id}})});
+    message('Maintenance intent cancelled; no installer or agent was touched.');
+    await refresh();
+  }catch(e){message('Cancellation failed: '+e.message,true);}
+};
 
 async function gitOperation(pathname){
   const ticket_id=$('git-ticket-id').value.trim();
