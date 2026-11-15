@@ -254,6 +254,9 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
         expectedEpoch:Number(payload.expected_epoch),nowMs:now
       });
       if(!decision.accepted)fault(decision.error_code||'MAINTENANCE_INTENT_DENIED',409);
+      const activeFence=await one(c,
+        'SELECT node_id FROM v7_pc_maintenance_fences WHERE node_id=? FOR UPDATE',[nodeId]);
+      if(activeFence)fault('MAINTENANCE_NODE_ALREADY_FENCED',409);
       const existing=await one(c,'SELECT plan_id FROM v7_pc_maintenance_plans '+
         'WHERE node_id=? AND state="INTENT_ONLY" AND expires_at>UTC_TIMESTAMP(3) FOR UPDATE',[nodeId]);
       if(existing)fault('MAINTENANCE_PLAN_ALREADY_ACTIVE',409);
@@ -263,13 +266,72 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
         [planId,nodeId,wave,version,offerSha,Number(ld.epoch)]);
       result={plan_id:planId,node_id:nodeId,state:'INTENT_ONLY',expires_in_seconds:300,
         expected_epoch:Number(ld.epoch),installer_execution_allowed:false};
+    }else if(command==='START_PC_DRAIN'){
+      const planId=requireId(payload.plan_id);
+      const plan=await one(c,'SELECT * FROM v7_pc_maintenance_plans '+
+        'WHERE plan_id=? AND state="INTENT_ONLY" '+
+        'AND expires_at>UTC_TIMESTAMP(3) FOR UPDATE',[planId]);
+      if(!plan)fault('MAINTENANCE_INTENT_EXPIRED_OR_CANCELLED',409);
+      const target=await one(c,'SELECT node_id,state FROM v7_nodes WHERE node_id=?',[plan.node_id]);
+      if(target?.state!=='APPROVED')fault('MAINTENANCE_NODE_NOT_APPROVED',403);
+      const now=await dbNow(c),roleIds=[ld.master_agent_id,ld.backup1,ld.backup2];
+      const decision=checkDrainStart({
+        cluster:{...ld,lease_until_ms:ld.lease_until?Date.parse(ld.lease_until+'Z'):null},
+        agents:await maintenanceAgentEvidence(c,plan.node_id),
+        redundancy:await maintenanceRedundancyEvidence(c,roleIds),
+        expectedEpoch:Number(plan.expected_epoch),nowMs:now
+      });
+      if(!decision.accepted)fault(decision.error_code||'MAINTENANCE_DRAIN_DENIED',409);
+      const existing=await one(c,'SELECT node_id FROM v7_pc_maintenance_fences '+
+        'WHERE node_id=? FOR UPDATE',[plan.node_id]);
+      if(existing)fault('MAINTENANCE_NODE_ALREADY_FENCED',409);
+      await c.query('INSERT INTO v7_pc_maintenance_fences '+
+        '(node_id,plan_id,state,expected_epoch) VALUES(?,?,"DRAINING",?)',
+        [plan.node_id,planId,Number(ld.epoch)]);
+      result={plan_id:planId,node_id:plan.node_id,state:'DRAINING',
+        active_worker_leases_preserved:true,new_claims_blocked:true,
+        automatic_expiry:false,installer_execution_allowed:false};
+    }else if(command==='FINALIZE_PC_DRAIN'){
+      const planId=requireId(payload.plan_id);
+      const fence=await one(c,'SELECT * FROM v7_pc_maintenance_fences '+
+        'WHERE plan_id=? FOR UPDATE',[planId]);
+      if(!fence||fence.state!=='DRAINING')fault('MAINTENANCE_DRAIN_NOT_ACTIVE',409);
+      const now=await dbNow(c),roleIds=[ld.master_agent_id,ld.backup1,ld.backup2];
+      const decision=checkMaintenanceIntent({
+        cluster:{...ld,lease_until_ms:ld.lease_until?Date.parse(ld.lease_until+'Z'):null},
+        agents:await maintenanceAgentEvidence(c,fence.node_id),
+        redundancy:await maintenanceRedundancyEvidence(c,roleIds),
+        expectedEpoch:Number(fence.expected_epoch),nowMs:now
+      });
+      if(!decision.accepted)fault(decision.error_code||'MAINTENANCE_DRAIN_NOT_IDLE',409);
+      const unfinished=await one(c,
+        'SELECT COUNT(*) AS n FROM v7_tickets t JOIN v7_agents a '+
+        'ON a.agent_id=t.worker_agent_id WHERE a.node_id=? '+
+        'AND t.status IN ("CLAIMED","RUNNING","CHECKPOINTED",'+
+        '"TEST_FAILED","RECONCILIATION_REQUIRED")',[fence.node_id]);
+      if(Number(unfinished.n)>0)fault('MAINTENANCE_TICKETS_REQUIRE_RECONCILIATION',409);
+      await c.query('UPDATE v7_pc_maintenance_fences '+
+        'SET state="DRAINED",drained_at=UTC_TIMESTAMP(3) WHERE plan_id=?',[planId]);
+      result={plan_id:planId,node_id:fence.node_id,state:'DRAINED',
+        new_claims_blocked:true,automatic_expiry:false,
+        installer_execution_allowed:false};
     }else if(command==='CANCEL_PC_UPDATE'){
       const planId=requireId(payload.plan_id);
+      const plan=await one(c,'SELECT * FROM v7_pc_maintenance_plans '+
+        'WHERE plan_id=? AND state="INTENT_ONLY" FOR UPDATE',[planId]);
+      if(!plan)fault('MAINTENANCE_PLAN_NOT_ACTIVE',409);
+      // Only explicit Owner cancellation unblocks future claims. Deleting
+      // the fence is atomic with cancelling the plan under leader lock.
+      const [released]:any=await c.query(
+        'DELETE FROM v7_pc_maintenance_fences WHERE plan_id=?',[planId]);
       const [u]:any=await c.query('UPDATE v7_pc_maintenance_plans '+
         'SET state="CANCELLED",closed_at=UTC_TIMESTAMP(3) '+
         'WHERE plan_id=? AND state="INTENT_ONLY"',[planId]);
       if(u.affectedRows!==1)fault('MAINTENANCE_PLAN_NOT_ACTIVE',409);
-      result={plan_id:planId,state:'CANCELLED',installer_execution_allowed:false};
+      result={plan_id:planId,state:'CANCELLED',
+        previously_fenced:released.affectedRows===1,
+        new_claims_may_resume:released.affectedRows===1,
+        installer_execution_allowed:false};
     }else if(command==='CREATE_PROJECT'){
       const id=requireId(payload.project_id),name=requireStr(payload.display_name,170);
       const repo=requireStr(payload.repository,190),base=requireStr(payload.base_branch||'main',80);
