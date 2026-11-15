@@ -133,6 +133,20 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(inDrain.code,200);
     assert.equal(inDrain.body.intent.state,'DRAINING');
     assert.equal(inDrain.body.intent.fence_active,true);
+    // Simulate the advisory five-minute plan deadline in disposable MySQL.
+    // The durable drain fence MUST survive without automatically reopening work.
+    const expiryDb=await mysql.createConnection({host:'127.0.0.1',
+      port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,
+      password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+    try{
+      await expiryDb.query('UPDATE v7_pc_maintenance_plans '+
+        'SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE plan_id=?',
+        [pilotPayload.plan_id]);
+    }finally{await expiryDb.end();}
+    const afterIntentExpiry=await d.signed('/v7/nodes/maintenance',undefined,'GET');
+    assert.equal(afterIntentExpiry.code,200);
+    assert.equal(afterIntentExpiry.body.intent.state,'DRAINING');
+    assert.equal(afterIntentExpiry.body.intent.fence_active,true);
     const secondStart=await post('/v7/owner/command',{
       request_id:'drain_again_'+(++count),command:'START_PC_DRAIN',
       payload:{plan_id:pilotPayload.plan_id}},admin);
