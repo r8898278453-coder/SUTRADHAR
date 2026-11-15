@@ -58,11 +58,17 @@
 <label for="maintenance-epoch">Current Master epoch (auto-filled)</label>
 <input id="maintenance-epoch" readonly aria-readonly="true">
 <button id="plan-maintenance" type="button">Record 5-minute intent only</button></div>
+<div><label for="maintenance-drain-id">Drain plan ID (Owner-operated)</label>
+<input id="maintenance-drain-id" autocomplete="off" placeholder="plan_...">
+<button id="start-pc-drain" type="button" class="outline">Start durable fence — block new claims</button>
+<button id="finalize-pc-drain" type="button" class="outline">Verify drained (no outstanding work)</button>
+<p>A started fence never expires automatically. Existing work is not stopped or revoked. Finalize only after Central finds no active work.</p></div>
 <div><label for="maintenance-cancel-id">Cancel existing plan ID</label>
 <input id="maintenance-cancel-id" autocomplete="off" placeholder="plan_...">
-<button id="cancel-maintenance" type="button" class="outline">Cancel maintenance intent</button></div>
+<button id="cancel-maintenance" type="button" class="danger">Cancel intent / RELEASE active fence</button>
+<p>Caution: releasing a fence allows new claims and leadership candidacy to resume. Never release while a physical update is underway.</p></div>
 </div>
-<p>Always recheck the live cluster before physical maintenance. A saved plan can become stale immediately after failover; no installer is executed from this screen.</p>
+<p>Always recheck the live cluster before physical maintenance. A five-minute intent may expire, but an active drain fence persists until Owner release. Fenced status never authorizes software installation.</p>
 <div class="scroll"><table><thead><tr><th>Plan ID</th><th>PC node</th><th>Wave</th><th>State</th><th>Epoch</th><th>Expires (UTC)</th></tr></thead>
 <tbody id="maintenance-plans"></tbody></table></div>
 </section></section>
