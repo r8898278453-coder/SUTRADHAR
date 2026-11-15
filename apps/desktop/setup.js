@@ -74,7 +74,8 @@ get('verifyUpdate').addEventListener('click',async()=>{
   try{
     const receipt=await api.verifyLocalUpdate();
     get('updateFeedback').textContent=receipt.canceled?'No file selected':
-      'Verified offline: '+receipt.version+'. Installer NOT executed. Seek separate Owner approval.';
+      'Verified offline for '+receipt.nodeId+' in '+receipt.waveId+
+      ': '+receipt.version+'. Installer NOT executed. Seek separate Owner approval.';
   }catch(e){get('updateFeedback').textContent='Update blocked: '+String(e.message||e);}
   finally{button.disabled=false;}
 });
