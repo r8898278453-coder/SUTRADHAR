@@ -14,7 +14,7 @@ import {verifyGitHubMergeEvidence} from '../github_merge_verifier.ts';
 import {createVerifiedDraftPr} from '../github_pr_creator.ts';
 import {inspectGitRemote} from './git_remote.ts';
 import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest} from './rules.ts';
-import {checkMaintenanceIntent} from './maintenance.ts';
+import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import sharedContract from '../packages/shared/contract.json';
 
 const app=express();
@@ -123,6 +123,14 @@ async function nodeAuth(req:Request){
   return node;
 }
 
+// Claim/election and Owner fence transitions serialize on v7_cluster row.
+// This DB fence persists until an explicit Owner cancellation, NEVER expires
+// implicitly like an advisory five-minute intent.
+async function requireNoNodeDrain(c:PoolConnection,nodeId:string){
+  const fence=await one(c,
+    'SELECT node_id,state FROM v7_pc_maintenance_fences WHERE node_id=? FOR UPDATE',[nodeId]);
+  if(fence)fault('PC_MAINTENANCE_FENCED',423);
+}
 async function maintenanceAgentEvidence(c:PoolConnection,nodeId:string){
   return rows(c,
     'SELECT a.agent_id,a.state,a.master_eligible,a.qa_eligible,a.status,a.active_ticket,'+
@@ -162,7 +170,9 @@ async function candidates(c:PoolConnection){
     'SELECT a.agent_id,a.node_id,a.last_seen,a.master_eligible,r.arrival_id '+
     'FROM v7_agents a JOIN v7_nodes n ON a.node_id=n.node_id '+
     'JOIN v7_arrivals r ON r.agent_id=a.agent_id '+
-    'WHERE a.state="APPROVED" AND n.state="APPROVED" AND a.master_eligible=1 ORDER BY r.arrival_id');
+    'LEFT JOIN v7_pc_maintenance_fences f ON f.node_id=a.node_id '+
+    'WHERE a.state="APPROVED" AND n.state="APPROVED" AND a.master_eligible=1 '+
+    'AND f.node_id IS NULL ORDER BY r.arrival_id');
   return results.map(x=>({agent_id:x.agent_id,node_id:x.node_id,
     arrival_id:Number(x.arrival_id),last_seen_ms:Date.parse(x.last_seen+'Z'),
     eligible:Boolean(x.master_eligible)}));
@@ -482,7 +492,9 @@ app.get('/v7/cluster/state',jsonRoute(async req=>{
 app.get('/v7/tasks/available',jsonRoute(async req=>{
   const node=await nodeAuth(req),agentId=requireId(req.header('x-sutradhar-agent'));
   return transaction(async c=>{
+    await leader(c); // Serialize availability check with Owner fence.
     await signedAgent(c,node.node_id,agentId);
+    await requireNoNodeDrain(c,node.node_id);
     const allowed=await rows(c,
       'SELECT t.ticket_id,t.project_id,t.title,t.risk,t.version FROM v7_tickets t '+
       'JOIN v7_project_agents a ON a.project_id=t.project_id '+
@@ -609,7 +621,11 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
 app.post('/v7/tasks/claim',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{},agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id);
   return transaction(async c=>{
-    const a=await signedAgent(c,node.node_id,agentId),ld=await leader(c);
+    // Leader row FIRST: this serializes claims with Owner fence activation.
+    // Once fenced, no new claim can race in between verification and insert.
+    const ld=await leader(c);
+    await signedAgent(c,node.node_id,agentId);
+    await requireNoNodeDrain(c,node.node_id);
     if(ld.paused||ld.phase!=='READY'||Number(ld.epoch)!==Number(d.expected_master_epoch)||
        !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))fault('NO_READY_MASTER',423);
     return idem(c,agentId,d.request_id,'TASK_CLAIM',d,async()=>{
