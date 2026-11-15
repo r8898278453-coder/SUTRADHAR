@@ -22,6 +22,7 @@ SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 | See what has actually passed and what remains | [Implementation tracker](docs/IMPLEMENTATION_TRACKER.md) and [71-case acceptance matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) |
 | Review Windows signing, OS-vault keys, Hostinger staging, encrypted backup and physical PC acceptance | [Production-readiness checklist](docs/PRODUCTION_READINESS_V7_2026-11-12.md) |
 | Inspect PC update readiness and local signed no-install evidence | [Windows update safety preflight](docs/DESKTOP_MAINTENANCE_PREFLIGHT_V7.md) |
+| Plan or cancel Owner-approved five-minute **intent-only** PC maintenance | [Owner maintenance intent guide](docs/OWNER_PC_MAINTENANCE_INTENT_V7.md) |
 | Review verified software dependencies and lockfile candidates before Windows signing | [Dependency lockfile review gate](docs/DEPENDENCY_LOCK_REVIEW_V7.md) |
 | Set up external accounts and physical PCs without programming or sharing secrets | **[Owner provisioning checklist](docs/OWNER_PROVISIONING_RUNBOOK.md)** and [GitHub prerequisite tracker](https://github.com/r8898278453-coder/SUTRADHAR/issues/2) |
 

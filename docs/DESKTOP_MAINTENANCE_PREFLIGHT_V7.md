@@ -28,3 +28,10 @@ A repeat of the **same** offer on the same PC verifies the existing signed recei
 - Final acceptance requires a genuine Owner code-signing certificate, trust root, physical Windows PCs, Central staging, live role changes between checks, real Windows signature verification and crash/power-loss tests. **None have been performed in this conversation.**
 
 Read [Owner-signed rollout waves](SIGNED_DESKTOP_ROLLOUT_WAVES.md), [Owner provisioning](OWNER_PROVISIONING_RUNBOOK.md) and [production readiness](PRODUCTION_READINESS_V7_2026-11-12.md).
+
+
+## 15 November 2026 — Central Owner intent linkage
+
+The Desktop now performs a **third signed GET** to `/v7/nodes/maintenance` when checking Master/backup safety. It reports whether an unexpired, same-epoch Owner INTENT_ONLY record exists for that node, and fails closed on mismatched node, stale epoch or malformed expiry. Central's node response also contains server-clock heartbeat age, worker-lease and unresolved Git-job evidence. The PC refuses a noncritical status if any agent is stale, busy or working.
+
+Owner can create/cancel a five-minute intention through the Central dashboard. This is **not a maintenance lease or installer authorization** and will not prevent roles/work from changing after the check. [Detailed Owner guide](OWNER_PC_MAINTENANCE_INTENT_V7.md).

@@ -89,3 +89,10 @@ This is not an update execution or distribution feature. The installed alpha has
 ## 15 November 2026 — Safety before taking a PC offline for an update
 
 The packaged Desktop can now **inspect** a signed update offer and check through Central whether it is currently Master or Backup 1/2. A PC with active role, unknown agents, missing backups, paused cluster or unreachable Central is blocked from claiming update readiness. Even a noncritical result is **not** an installation approval or guaranteed failover; roles may change. Inspection creates a local node-signed **NOT INSTALLED** receipt. For actual updates, get explicit Owner maintenance approval and real physical Windows tests first. [Read the full preflight runbook](DESKTOP_MAINTENANCE_PREFLIGHT_V7.md).
+
+
+## 15 November 2026 — Owner maintenance-intent dashboard
+
+A new reviewed Central schema table and Owner dashboard panel permit a **five-minute update intention** for a specific idle, approved, noncritical PC and signed-offer SHA. The Owner enters node ID, wave, version and offer hash; current Master epoch is shown automatically. No shell/API coding is required for the Owner after staging has been migrated.
+
+Buttons remain blocked if the new table/endpoint is unavailable. **Recording intent is not permission to stop agents or execute any update.** Never take a Master or either backup offline based on one snapshot. [Owner guide](OWNER_PC_MAINTENANCE_INTENT_V7.md).

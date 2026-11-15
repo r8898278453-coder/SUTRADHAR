@@ -94,3 +94,10 @@ These are coded/tested local safeguards, NOT completed physical Windows acceptan
 Before authorizing real signed installer distribution, require a verified v2 Owner-signed offer scoped to one Pilot PC's exact OS-vault node ID, then a second separate wave. Check that a healthy other PC rejects the same signed offer. Reject schema v1, duplicate recipients, forged/expired authorization, incorrect publisher, tampered EXE, changed bytes during Authenticode verification, wrong version direction and automatic rollback without separate Owner emergency approval.
 
 The code currently provides **offline inspection only**. Actual Windows certificate, secure installation, signed delivery, staged pausing/rollback, Central roster approval, identity continuity and real physical test receipts remain outstanding. See [Signed Desktop Rollout Waves](SIGNED_DESKTOP_ROLLOUT_WAVES.md).
+
+
+## 15 November 2026 — Additional maintenance-intent production gates
+
+New draft source includes a Central-maintained, Owner-only, **five-minute advisory** PC update intent. It checks three live Master/backup roles, expected epoch, target approved node and all agents' server-clock heartbeat/idle/lease/Git state. An Owner web UI can record or cancel intent; Desktop reads it through signed requests. **No API grants installer execution or stops an agent.**
+
+Physical acceptance still needs: migration of `v7_pc_maintenance_plans` into disposable Hostinger staging, same node with role reassignment during intent, intent expiry/cancellation, active worker/uncertain Git operations, offline Central, consistent identity post-reboot, and repeated Owner review. A real maintenance *lease* and fenced task drain/install/health rollback are **not implemented**. [Owner maintenance guide](OWNER_PC_MAINTENANCE_INTENT_V7.md).

@@ -250,3 +250,16 @@ Current unsigned alpha has `update-trust.json` unconfigured and cannot accept a 
 | Signed installer execution | NOT IMPLEMENTED and never performed | Signed update runner, secure backup of device state, rollback/health acceptance, physical PCs |
 
 **Evidence status:** Code committed to Draft PR #1; exact-HEAD CI must pass before calling tests verified. User remains responsible for Owner-controlled Hostinger and Windows certificate credentials. [Detailed runbook](DESKTOP_MAINTENANCE_PREFLIGHT_V7.md).
+
+
+## 15 November 2026 — Authoritative Owner maintenance intent (new draft milestone)
+
+| Gate | Code delivered in Draft PR #1 | Still missing for go-live |
+| --- | --- | --- |
+| Fresh work/heartbeat evidence | Central signed `/v7/nodes/me` returns heartbeat age, active leases and unresolved Git jobs; Desktop refuses stale/busy/unfinished agent work | Physical Central heartbeat/workload acceptance |
+| Owner intent | `v7_pc_maintenance_plans` schema, idempotent `PLAN_PC_UPDATE` / `CANCEL_PC_UPDATE`, five-minute MySQL expiry, exact node/wave/offer SHA/epoch and audit event | Owner-approved Hostinger schema migration, manual staging test |
+| Owner UI | Central dashboard can record, view, cancel plans; current epoch prefilled and plan buttons disabled if API/schema is unavailable | Owner hPanel deployment and real authentication rehearsal |
+| Node safety check | Signed `GET /v7/nodes/maintenance` plus node/cluster proof, rejects mismatched or stale intent and critical roles | Atomic maintenance lease/fencing and real failover test |
+| Installer execution and post-update acceptance | **NOT IMPLEMENTED**; all responses explicitly `installer_execution_allowed:false` | Identity-preserving installer runner, rollback, physical Windows signoff |
+
+[Owner maintenance-intent guide](OWNER_PC_MAINTENANCE_INTENT_V7.md). This is not production deployment or release approval.

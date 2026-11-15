@@ -119,3 +119,10 @@ The packaged setup window now includes **Check whether this PC is Master or back
 After valid Owner-signed v2 offer, installer bytes and Authenticode verification, Electron main writes a **node-signed OFFLINE_INSPECTED_ONLY receipt**, never `installed=true`. Repeated identical offers validate existing signed evidence; corrupted/incomplete receipts block further journaling without overwriting. This is local audit data, not a hardware anti-replay counter, installer runner or rollback implementation.
 
 See [Owner maintenance preflight and signed inspection receipts](../../docs/DESKTOP_MAINTENANCE_PREFLIGHT_V7.md). No genuine Windows certificate, active role maintenance freeze, physical PC test or signed installation has been run.
+
+
+## Central Owner maintenance intent — 15 November 2026
+
+The signed Desktop **Check whether this PC is Master or backup** action now also checks live Owner intent through `GET /v7/nodes/maintenance`. Central's signed view must contain the same node ID, current Master epoch and an unexpired `INTENT_ONLY` record. A missing intent is displayed as missing, **not** Owner approval; a stale/malformed intent blocks readiness. The node must also be approved, idle, heartbeat-current and have no active work lease, unresolved Git job or local Master/backup role.
+
+Central's Owner dashboard has a 5-minute maintenance-intent form with cancellation. **This remains an advisory record; no installer is run, agent drained, lease frozen or actual rollback authorized.** [Owner steps](../../docs/OWNER_PC_MAINTENANCE_INTENT_V7.md).
