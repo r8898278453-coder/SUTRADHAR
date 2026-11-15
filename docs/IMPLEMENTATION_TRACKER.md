@@ -239,3 +239,14 @@ No Hostinger deployment, production Windows signing, owner-approved release, act
 | Automatic update and rollback | NOT IMPLEMENTED: verified metadata is inspection-only | Real signed distribution, stop/pause, identity preservation, rollback telemetry, Owner approval |
 
 Current unsigned alpha has `update-trust.json` unconfigured and cannot accept a production offer. **No installer was executed or distributed, no Hostinger account or physical PC was accessed, and main remains unchanged.** [Owner rollout runbook](SIGNED_DESKTOP_ROLLOUT_WAVES.md).
+
+## 15 November 2026 — PC maintenance preflight and signed inspection journal
+
+| New safety check | Code and unit verification scope | Still missing |
+| --- | --- | --- |
+| Live cluster-role preflight | `apps/desktop/update-readiness.cjs` uses scoped signed Central GETs; refuses active Master, Backup 1 or 2, unknown agents, non-READY/paused cluster, missing backups and offline Central | Physical multi-PC role/lease proof and Owner approved maintenance freeze/drain |
+| Local inspection receipt | `apps/desktop/update-inspection-journal.cjs` node-signs one immutable `OFFLINE_INSPECTED_ONLY` record after Owner metadata, installer SHA and Windows Authenticode checks in Electron main | Hardware-backed logging, Central receipt collection and crash-safe install state transitions |
+| Repeated/partial receipt | Duplicate offer checks existing node signature; partial/tampered records block rather than being replaced | Cross-device anti-replay/revocation and recovery with Owner authorization |
+| Signed installer execution | NOT IMPLEMENTED and never performed | Signed update runner, secure backup of device state, rollback/health acceptance, physical PCs |
+
+**Evidence status:** Code committed to Draft PR #1; exact-HEAD CI must pass before calling tests verified. User remains responsible for Owner-controlled Hostinger and Windows certificate credentials. [Detailed runbook](DESKTOP_MAINTENANCE_PREFLIGHT_V7.md).

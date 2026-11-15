@@ -85,3 +85,7 @@ A second Desktop instance is now denied a second local agent process. Real Windo
 For a future **signed** Desktop update, the Owner must select the **exact existing enrolled node IDs** for a named wave (initially one non-critical PC). The trusted release engineer adds the wave ID and 1–10 approved recipients to the **Owner Ed25519-signed offline offer**; another PC must refuse it. A separate emergency rollback offer requires a separate Owner approval. No credentials are shared in chat or Git.
 
 This is not an update execution or distribution feature. The installed alpha has no configured trust root, and actual certificate signing/physical-PC rollout remain blocked. [Full instructions](SIGNED_DESKTOP_ROLLOUT_WAVES.md).
+
+## 15 November 2026 — Safety before taking a PC offline for an update
+
+The packaged Desktop can now **inspect** a signed update offer and check through Central whether it is currently Master or Backup 1/2. A PC with active role, unknown agents, missing backups, paused cluster or unreachable Central is blocked from claiming update readiness. Even a noncritical result is **not** an installation approval or guaranteed failover; roles may change. Inspection creates a local node-signed **NOT INSTALLED** receipt. For actual updates, get explicit Owner maintenance approval and real physical Windows tests first. [Read the full preflight runbook](DESKTOP_MAINTENANCE_PREFLIGHT_V7.md).

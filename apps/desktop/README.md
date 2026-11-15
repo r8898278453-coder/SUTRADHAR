@@ -111,3 +111,11 @@ The installer is streamed through SHA-256 verification rather than read entirely
 The separate Windows offline offer signer now demands `SUTRADHAR_ROLLOUT_WAVE_ID` and `SUTRADHAR_ROLLOUT_NODE_IDS` as well as existing Owner-signing approvals. It outputs no private signing keys and never publishes or executes an EXE.
 
 See [Owner-signed rollout wave guide](../../docs/SIGNED_DESKTOP_ROLLOUT_WAVES.md). Real Windows publisher/installer tests, signed distribution, update execution, rollback and device continuity are NOT RUN.
+
+## 15 November 2026 — Live role-aware update inspection and signed local receipts
+
+The packaged setup window now includes **Check whether this PC is Master or backup**. It sends signed read-only GETs from Electron main to Central, rejects unapproved agents, paused/non-READY clusters, absent/duplicate backup assignments and any PC currently assigned Master, Backup 1 or Backup 2. This is an observation, **not a maintenance/installer authorization**: roles can change immediately and Central may evaluate stale leases while answering a GET.
+
+After valid Owner-signed v2 offer, installer bytes and Authenticode verification, Electron main writes a **node-signed OFFLINE_INSPECTED_ONLY receipt**, never `installed=true`. Repeated identical offers validate existing signed evidence; corrupted/incomplete receipts block further journaling without overwriting. This is local audit data, not a hardware anti-replay counter, installer runner or rollback implementation.
+
+See [Owner maintenance preflight and signed inspection receipts](../../docs/DESKTOP_MAINTENANCE_PREFLIGHT_V7.md). No genuine Windows certificate, active role maintenance freeze, physical PC test or signed installation has been run.

@@ -171,3 +171,9 @@ Use [Implementation Tracker](IMPLEMENTATION_TRACKER.md) for scope-specific evide
 The offline Desktop update/rollback inspection now demands Owner Ed25519 **schema v2** metadata with an exact `wave_` ID and 1–10 explicit node IDs. Electron checks the stored OS-vault node and enrollment receipt before inspecting any signed offer; v1/global offers and wrong-device offers are refused. The local EXE checksum is validated again after Windows Authenticode inspection.
 
 This **does not complete** automatic installer distribution, staged wave orchestration, safe identity-preserving installation or rollback. The signed-offer generator takes Owner-configured target IDs; there is no live Central device inventory approval API tied to the signing key. The unsigned alpha deliberately contains no trusted update verification key. See [Signed Desktop Rollout Waves](SIGNED_DESKTOP_ROLLOUT_WAVES.md).
+
+## 15 November 2026 — Role-aware Desktop maintenance readiness (inspection only)
+
+The Desktop adds a signed local Central preflight that rejects updates on active Master/Backup 1/Backup 2 nodes, unhealthy/paused clusters, missing backups, mismatched enrolled agents and unreachable Central. It also saves a node-signed local audit receipt after a valid Owner-signed v2 EXE offer passes SHA256 and Windows Authenticode checks. A duplicate offer validates the previously recorded receipt rather than implying new approval. **Neither feature executes installers, drains tasks, leases the node, protects a maintenance slot, or constitutes hardware-backed replay protection.** Real signed rollback and owner-gated install remain NOT IMPLEMENTED.
+
+Read [Windows PC maintenance preflight](DESKTOP_MAINTENANCE_PREFLIGHT_V7.md) before planning physical pilot waves.
