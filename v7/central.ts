@@ -380,7 +380,14 @@ app.get('/v7/cluster',jsonRoute(async req=>{
 app.get('/v7/nodes/me',jsonRoute(async req=>{
   const node=await nodeAuth(req);
   return transaction(async c=>({node_id:node.node_id,
-    agents:await rows(c,'SELECT agent_id,state,master_eligible,qa_eligible FROM v7_agents WHERE node_id=?',[node.node_id])}));
+    agents:await rows(c,
+      'SELECT a.agent_id,a.state,a.master_eligible,a.qa_eligible,a.status,a.active_ticket,'+
+      'TIMESTAMPDIFF(SECOND,a.last_seen,UTC_TIMESTAMP(3)) AS heartbeat_age_seconds,'+
+      'EXISTS(SELECT 1 FROM v7_leases l WHERE l.agent_id=a.agent_id AND l.revoked=0 '+
+      'AND l.expires_at>UTC_TIMESTAMP(3)) AS has_live_work_lease,'+
+      'EXISTS(SELECT 1 FROM v7_git_jobs g WHERE g.agent_id=a.agent_id '+
+      'AND g.state IN ("RUNNING","NEEDS_RECONCILIATION")) AS has_unreconciled_git_job '+
+      'FROM v7_agents a WHERE a.node_id=? ORDER BY a.agent_id',[node.node_id])}));
 }));
 app.get('/v7/projects',jsonRoute(async req=>{
   admin(req);return transaction(c=>rows(c,'SELECT * FROM v7_projects ORDER BY created_at DESC LIMIT 100'));
