@@ -458,6 +458,8 @@ app.post('/v7/agents/register',jsonRoute(async req=>{
   const caps=req.body?.capabilities||{};
   if(JSON.stringify(caps).length>1500)fault('CAPABILITY_TOO_LARGE',400);
   return transaction(async c=>{
+    await leader(c); // Serialized with Owner drain activation.
+    await requireNoNodeDrain(c,node.node_id);
     const existing=await one(c,'SELECT agent_id FROM v7_agents WHERE agent_id=?',[id]);
     if(existing)fault('AGENT_ID_ALREADY_EXISTS',409);
     await c.query('INSERT INTO v7_agents(agent_id,node_id,capability_json) VALUES(?,?,?)',[id,node.node_id,JSON.stringify(caps)]);
@@ -775,7 +777,9 @@ app.post('/v7/tasks/qa-receipt',jsonRoute(async req=>{
   const evidenceRef=requireStr(d.evidence_ref,450),hash=requireStr(d.evidence_sha256,64);
   if(!/^[0-9a-f]{64}$/.test(hash)||typeof d.passed!=='boolean')fault('INVALID_QA_RECEIPT',400);
   return transaction(async c=>{
+    await leader(c); // QA work from a fenced PC cannot start anew.
     await signedAgent(c,node.node_id,id,true);
+    await requireNoNodeDrain(c,node.node_id);
     return idem(c,id,d.request_id,'QA_RECEIPT',d,async()=>{
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticket]);
       if(!t||t.status!=='SUBMITTED_FOR_REVIEW'||t.worker_agent_id===id)fault('QA_INDEPENDENCE_OR_STATE',409);
