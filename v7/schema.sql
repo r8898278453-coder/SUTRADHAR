@@ -168,3 +168,18 @@ CREATE TABLE IF NOT EXISTS v7_pc_maintenance_plans (
   FOREIGN KEY (node_id) REFERENCES v7_nodes(node_id),
   INDEX idx_maintenance_node_active(node_id,state,expires_at)
 ) ENGINE=InnoDB;
+
+-- Durable Owner-only node fence. Once DRAINING it NEVER expires automatically.
+-- Its existence blocks NEW worker claims and new leadership candidacy.
+-- Active worker leases are not revoked; they finish or require reconciliation.
+-- Explicit Owner cancellation releases this fence; this is not install approval.
+CREATE TABLE IF NOT EXISTS v7_pc_maintenance_fences (
+  node_id VARCHAR(100) PRIMARY KEY,
+  plan_id VARCHAR(100) NOT NULL UNIQUE,
+  state ENUM('DRAINING','DRAINED') NOT NULL DEFAULT 'DRAINING',
+  expected_epoch BIGINT UNSIGNED NOT NULL,
+  started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  drained_at DATETIME(3),
+  FOREIGN KEY (node_id) REFERENCES v7_nodes(node_id),
+  FOREIGN KEY (plan_id) REFERENCES v7_pc_maintenance_plans(plan_id)
+) ENGINE=InnoDB;
