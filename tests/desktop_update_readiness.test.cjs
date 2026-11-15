@@ -52,6 +52,7 @@ test('deny unapproved/mismatched identities and unhealthy/paused/recovering clus
     {phase:'RECOVERING'},{phase:'NO_MASTER'},{paused:true},{epoch:-1},
     {master_agent_id:null},{backups:['agent_master_01',null]},
     {backups:['agent_backup_01','agent_backup_01']},
+    {backups:[null,null]},{backups:['agent_backup_01',null]},
     {backups:[]}
   ])await assert.rejects(checkReadiness({...args,
     fetcher:makeFetch(me,{...cluster,...changes})}),/CLUSTER_UNHEALTHY/);
