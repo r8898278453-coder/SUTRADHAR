@@ -9,19 +9,22 @@ const safeAgent=(id=mine)=>({agent_id:id,state:'APPROVED',status:'IDLE',
   active_ticket:null,heartbeat_age_seconds:15,
   has_live_work_lease:0,has_unreconciled_git_job:0});
 const me={node_id:nodeId,agents:[safeAgent()]};
+const maintenance={node_id:nodeId,intent:null,installer_execution_allowed:false,owner_maintenance_lease:false};
 const signer={sign:({kind,method,uri,body})=>{
   assert.equal(kind,'node_api');assert.equal(method,'GET');assert.equal(body,'');
-  assert.ok(['/v7/nodes/me','/v7/cluster/state'].includes(uri));
+  assert.ok(['/v7/nodes/me','/v7/cluster/state','/v7/nodes/maintenance'].includes(uri));
   return {'x-sutradhar-node':nodeId,
     'x-sutradhar-signature':'test-sig','x-sutradhar-nonce':'test-nonce'};
 }};
-const makeFetch=(nodeResponse=me,clusterResponse=cluster,calls=[])=>async(url,opts)=>{
+const makeFetch=(nodeResponse=me,clusterResponse=cluster,calls=[],
+  intentResponse=maintenance)=>async(url,opts)=>{
   calls.push({url,opts});
   assert.equal(opts.method,'GET');
   assert.equal(opts.redirect,'error');
   assert.equal(opts.body,undefined);
   assert.equal(url.startsWith('https://stage.example.com/v7/'),true);
-  return {ok:true,json:async()=>url.endsWith('/nodes/me')?nodeResponse:clusterResponse};
+  return {ok:true,json:async()=>url.endsWith('/nodes/me')?nodeResponse:
+    url.endsWith('/nodes/maintenance')?intentResponse:clusterResponse};
 };
 const args={centralOrigin:'https://stage.example.com',nodeId,agentIds:[mine],signer};
 test('signed Central update readiness is advisory, not authorization to execute',async()=>{
@@ -33,9 +36,9 @@ test('signed Central update readiness is advisory, not authorization to execute'
   {status:'NON_CRITICAL_AT_CHECK_TIME',accepted:true,epoch:17,
     installer_execution_allowed:false});
   assert.equal(r.requires_owner_approval,true);
-  assert.equal(calls.length,2);
+  assert.equal(calls.length,3);
   assert.deepEqual(calls.map(c=>new URL(c.url).pathname),
-    ['/v7/nodes/me','/v7/cluster/state']);
+    ['/v7/nodes/me','/v7/cluster/state','/v7/nodes/maintenance']);
 });
 test('deny signed preflight on Master, Backup 1 or Backup 2 PCs',async()=>{
   for(const role of ['agent_master_01','agent_backup_01','agent_backup_02']){
@@ -87,4 +90,29 @@ test('refuse maintenance for stale heartbeat, outstanding lease, Git write or bu
       /HEARTBEAT_STALE|UNFINISHED_AGENT_WORK/,
       'Unfinished/stale condition was not refused: '+JSON.stringify(patch));
   }
+});
+
+test('Owner intent is shown only when signed, epoch-matching, unexpired and still no install permission',async()=>{
+  const now=Date.parse('2026-11-15T12:00:00Z');
+  const intent={plan_id:'plan_pilot_001',state:'INTENT_ONLY',
+    wave_id:'wave_pilot01',offer_sha256:'d'.repeat(64),
+    expected_epoch:17,target_version:'7.1.0',
+    expires_at:'2026-11-15 12:05:00.000'};
+  const valid={...maintenance,intent};
+  const result=await checkReadiness({...args,now,
+    fetcher:makeFetch(me,cluster,[],valid)});
+  assert.equal(result.accepted,true);
+  assert.equal(result.owner_intent_present,true);
+  assert.equal(result.owner_intent_id,intent.plan_id);
+  assert.equal(result.installer_execution_allowed,false);
+  for(const broken of [
+    {...valid,installer_execution_allowed:true},
+    {...valid,node_id:'node_'+'b'.repeat(32)},
+    {...valid,intent:{...intent,state:'STALE_EPOCH'}},
+    {...valid,intent:{...intent,expected_epoch:16}},
+    {...valid,intent:{...intent,offer_sha256:'not-hex'}},
+    {...valid,intent:{...intent,expires_at:'2026-11-15 11:59:59.000'}}
+  ])await assert.rejects(checkReadiness({...args,now,
+    fetcher:makeFetch(me,cluster,[],broken)}),
+    /OWNER_INTENT_RESPONSE_INVALID|OWNER_INTENT_STALE_OR_INVALID|OWNER_INTENT_EXPIRED/);
 });
