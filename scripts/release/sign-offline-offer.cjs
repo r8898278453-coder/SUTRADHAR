@@ -19,6 +19,16 @@ function main(){
   if(!/^\d+\.\d+\.\d+$/.test(version))refuse('stable version required');
   const sha=requireEnv('SUTRADHAR_EXPECTED_COMMIT_SHA');
   if(!/^[0-9a-f]{40}$/.test(sha))refuse('source SHA invalid');
+  // An Owner approval is for a concrete wave on known enrolled PCs, not
+  // a globally reusable release offer shared across all SUTRADHAR devices.
+  const waveId=requireEnv('SUTRADHAR_ROLLOUT_WAVE_ID');
+  if(!/^wave_[a-z0-9][a-z0-9_-]{2,59}$/.test(waveId))
+    refuse('approved wave ID must begin with wave_');
+  const targets=requireEnv('SUTRADHAR_ROLLOUT_NODE_IDS').split(',');
+  if(targets.length<1||targets.length>10||
+    targets.some(id=>!/^node_[0-9a-f]{32}$/.test(id))||
+    new Set(targets).size!==targets.length)
+    refuse('explicit unique Owner-approved node IDs required, maximum ten');
   const signer=requireEnv('SUTRADHAR_WINDOWS_PUBLISHER_NAME');
   if(!/^CN=.{1,220}$/.test(signer))refuse('publisher subject invalid');
   const file=requireEnv('SUTRADHAR_INSTALLER_PATH');
@@ -47,10 +57,11 @@ function main(){
   const privateKey=crypto.createPrivateKey(fs.readFileSync(keyPath));
   if(privateKey.asymmetricKeyType!=='ed25519')refuse('Owner release signing key must be Ed25519');
   const now=Date.now();
-  const body={schema:1,application:'desktop',channel:'stable',type:kind,
+  const body={schema:2,application:'desktop',channel:'stable',type:kind,
     version,source_sha:sha,protocol:7,filename:path.basename(file),
     installer_sha256:hash,installer_bytes:bytes.length,
-    publisher_subject:signer,issued_ms:now,expires_ms:now+7*86400000};
+    publisher_subject:signer,issued_ms:now,expires_ms:now+7*86400000,
+    rollout:{wave_id:waveId,node_ids:targets,owner_approved_at_ms:now}};
   if(kind==='rollback')body.owner_emergency_rollback_approved=true;
   const signature_base64=crypto.sign(null,Buffer.from(JSON.stringify(body)),
     privateKey).toString('base64');
@@ -59,6 +70,6 @@ function main(){
   if(fs.existsSync(destination))refuse('existing signed offer cannot be overwritten');
   fs.writeFileSync(destination,JSON.stringify(envelope,null,2)+'\n',{flag:'wx',mode:0o600});
   console.log(JSON.stringify({offer:destination,sha256:hash,type:kind,version,
-    published:false,automatic_update:false}));
+    wave_id:waveId,target_node_count:targets.length,published:false,automatic_update:false}));
 }
 main();
