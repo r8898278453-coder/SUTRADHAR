@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const crypto=require('node:crypto');
-const {inspect,prepare,markSubmitted,requireSubmitted}=require('../apps/desktop/enrollment-receipt.cjs');
+const {inspect,prepare,markSubmitted,requireSubmitted,reconcilePrepared}=require('../apps/desktop/enrollment-receipt.cjs');
 const {installSingleInstanceGuard}=require('../apps/desktop/single-instance.cjs');
 const origin='https://stage.sutradhar.example.com';
 function node(){
@@ -81,4 +81,39 @@ test('Only one Electron main owns an identity; second launch quits without start
   assert.equal(installSingleInstanceGuard(other,()=>{throw Error('must not run');}),false);
   assert.equal(quits,1);
   assert.equal(subscribed,false);
+});
+
+test('Prepared enrollment reconciles ONLY with approved signed existing node, without re-enrollment',async()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-reconcile-'));
+  try{
+    const identity=node(),args={dir,node:identity,centralUrl:origin};
+    prepare(args);
+    let calls=0;
+    const signer={sign:request=>{
+      assert.deepEqual(request,{kind:'node_api',method:'GET',uri:'/v7/nodes/me',body:''});
+      return {'x-sutradhar-node':identity.node_id,'x-sutradhar-signature':'signed-test-only'};
+    }};
+    const fetcher=async(url,options)=>{
+      calls++;
+      assert.equal(url,origin+'/v7/nodes/me');
+      assert.equal(options.method,'GET');
+      assert.equal(options.redirect,'error');
+      assert.equal(options.body,undefined);
+      assert.equal(options.headers.Accept,'application/json');
+      return {ok:true,json:async()=>({node_id:identity.node_id})};
+    };
+    await assert.rejects(reconcilePrepared({...args,signer,fetcher:async()=>({ok:false,status:403})}),
+      /NOT_YET_OWNER_APPROVED/);
+    assert.equal(inspect(args).state,'PREPARED');
+    await assert.rejects(reconcilePrepared({...args,signer,
+      fetcher:async()=>({ok:true,json:async()=>({node_id:'node_'+('a'.repeat(32))})})}),
+      /NODE_MISMATCH/);
+    assert.equal(inspect(args).state,'PREPARED');
+    const result=await reconcilePrepared({...args,signer,fetcher});
+    assert.deepEqual(result,{accepted:true,ownerApprovalVerified:true});
+    assert.equal(calls,1);
+    assert.equal(requireSubmitted(args),true);
+    await assert.rejects(reconcilePrepared({...args,signer,fetcher}),
+      /REQUIRES_PREPARED_RECEIPT/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
