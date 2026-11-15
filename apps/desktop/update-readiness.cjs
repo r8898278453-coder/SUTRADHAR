@@ -83,9 +83,35 @@ async function checkReadiness({
   const active=new Set([cluster.master_agent_id,...cluster.backups].filter(Boolean));
   if(agentIds.some(id=>active.has(id)))
     fail('UPDATE_READINESS_ACTIVE_MASTER_OR_BACKUP');
+  const maintenance=await read('/v7/nodes/maintenance');
+  if(maintenance.node_id!==nodeId||
+    maintenance.installer_execution_allowed!==false||
+    maintenance.owner_maintenance_lease!==false||
+    !Object.prototype.hasOwnProperty.call(maintenance,'intent'))
+    fail('UPDATE_READINESS_OWNER_INTENT_RESPONSE_INVALID');
+  const intent=maintenance.intent;
+  if(intent!==null){
+    if(!intent||typeof intent!=='object'||Array.isArray(intent)||
+       typeof intent.plan_id!=='string'||!ID.test(intent.plan_id)||
+       typeof intent.wave_id!=='string'||
+       !/^wave_[a-z0-9][a-z0-9_-]{2,59}$/.test(intent.wave_id)||
+       typeof intent.offer_sha256!=='string'||!/^[0-9a-f]{64}$/.test(intent.offer_sha256)||
+       intent.state!=='INTENT_ONLY'||intent.expected_epoch!==cluster.epoch||
+       typeof intent.target_version!=='string'||
+       !/^\d+\.\d+\.\d+$/.test(intent.target_version)||
+       typeof intent.expires_at!=='string')
+      fail('UPDATE_READINESS_OWNER_INTENT_STALE_OR_INVALID');
+    const expiry=Date.parse(intent.expires_at.includes('T')?
+      intent.expires_at:intent.expires_at.replace(' ','T')+'Z');
+    if(!Number.isFinite(expiry)||expiry<=now)
+      fail('UPDATE_READINESS_OWNER_INTENT_EXPIRED');
+  }
   return Object.freeze({
     accepted:true,status:'NON_CRITICAL_AT_CHECK_TIME',
     node_id:nodeId,epoch:cluster.epoch,checked_at_ms:now,
+    owner_intent_id:intent?.plan_id||null,
+    owner_intent_wave_id:intent?.wave_id||null,
+    owner_intent_present:Boolean(intent),
     installer_execution_allowed:false,requires_owner_approval:true,
     warning:'Cluster roles can change immediately after this check; recheck before any real maintenance.'
   });
