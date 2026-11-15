@@ -57,8 +57,6 @@ for(const rel of [
   'apps/desktop/enrollment-receipt.cjs',
   'apps/desktop/single-instance.cjs',
   'apps/desktop/update-readiness.cjs',
-  'apps/desktop/update-inspection-journal.cjs',
-  'apps/desktop/update-readiness.cjs',
   'apps/desktop/update-inspection-journal.cjs'
 ]){
   assert(exists(rel),'Missing application build file: '+rel);
@@ -96,6 +94,8 @@ for(const rel of ['apps/central/dist/server.cjs',
   'apps/desktop/desktop-config.cjs',
   'apps/desktop/enrollment-receipt.cjs',
   'apps/desktop/single-instance.cjs',
+  'apps/desktop/update-readiness.cjs',
+  'apps/desktop/update-inspection-journal.cjs',
   'apps/desktop/status.cjs',
   'apps/desktop/dist/secure-agent.cjs',
   'apps/desktop/pack-qa.cjs']){
