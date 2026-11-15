@@ -473,6 +473,9 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
   if(!Number.isSafeInteger(sequence)||sequence<1||!Array.isArray(data.agents)||data.agents.length>30)
     fault('INVALID_HEARTBEAT',400);
   return transaction(async c=>{
+    // All worker/Owner/heartbeat writes take the leader lock FIRST, avoiding
+    // cross-order deadlocks with task admission and persistent drain fencing.
+    const ld=await leader(c);
     const n=await one(c,'SELECT * FROM v7_nodes WHERE node_id=? FOR UPDATE',[node.node_id]);
     if(sequence<=Number(n.last_sequence))fault('REPLAY_SEQUENCE',409);
     await c.query('UPDATE v7_nodes SET last_sequence=?,boot_id=?,last_seen=UTC_TIMESTAMP(3) WHERE node_id=?',
@@ -486,11 +489,10 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
       if(seq<=Number(a.last_sequence))fault('REPLAY_AGENT_SEQUENCE',409);
       await c.query('UPDATE v7_agents SET last_sequence=?,last_seen=UTC_TIMESTAMP(3),status=? WHERE agent_id=?',
         [seq,['IDLE','BUSY','BLOCKED','ONLINE'].includes(entry.status)?entry.status:'ONLINE',id]);
-      if(a.master_eligible&&(firstElectionOpen(clock)||Boolean((await leader(c,false)).bootstrapped_at))){
+      if(a.master_eligible&&(firstElectionOpen(clock)||Boolean(ld.bootstrapped_at))){
         await c.query('INSERT IGNORE INTO v7_arrivals(agent_id) VALUES(?)',[id]);
       }
     }
-    const ld=await leader(c);
     if(ld.master_agent_id&&seen.has(ld.master_agent_id)&&Number(data.expected_master_epoch)===Number(ld.epoch)&&
       ld.lease_until&&Date.parse(ld.lease_until+'Z')>clock){
       await c.query('UPDATE v7_cluster SET lease_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 180 SECOND) WHERE singleton=1');
@@ -732,8 +734,8 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
   });
 }));
 async function workerLease(c:PoolConnection,nodeId:string,agentId:string,ticketId:string,leaseId:string,epoch:any){
-  await signedAgent(c,nodeId,agentId);
   const ld=await leader(c);
+  await signedAgent(c,nodeId,agentId);
   if(ld.paused||Number(ld.epoch)!==Number(epoch)||!ld.master_agent_id||ld.phase!=='READY')
     fault('STALE_MASTER_EPOCH',409);
   const lease=await one(c,'SELECT * FROM v7_leases WHERE ticket_id=? FOR UPDATE',[ticketId]);
