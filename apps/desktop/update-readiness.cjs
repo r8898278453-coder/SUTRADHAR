@@ -90,6 +90,8 @@ async function checkReadiness({
     !Object.prototype.hasOwnProperty.call(maintenance,'intent'))
     fail('UPDATE_READINESS_OWNER_INTENT_RESPONSE_INVALID');
   const intent=maintenance.intent;
+  if(intent?.fence_active===true||intent?.state==='DRAINING'||intent?.state==='DRAINED')
+    fail('UPDATE_READINESS_PC_DRAIN_FENCED');
   if(intent!==null){
     if(!intent||typeof intent!=='object'||Array.isArray(intent)||
        typeof intent.plan_id!=='string'||!ID.test(intent.plan_id)||
