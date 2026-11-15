@@ -515,24 +515,32 @@ app.get('/v7/nodes/me',jsonRoute(async req=>{
 app.get('/v7/nodes/maintenance',jsonRoute(async req=>{
   const node=await nodeAuth(req);
   return transaction(async c=>{
-    const plan=await one(c,'SELECT plan_id,node_id,wave_id,target_version,'+
-      'offer_sha256,expected_epoch,expires_at FROM v7_pc_maintenance_plans '+
-      'WHERE node_id=? AND state="INTENT_ONLY" AND expires_at>UTC_TIMESTAMP(3) '+
-      'ORDER BY created_at DESC LIMIT 1',[node.node_id]);
+    const plan=await one(c,'SELECT p.plan_id,p.node_id,p.wave_id,p.target_version,'+
+      'p.offer_sha256,p.expected_epoch,p.expires_at,f.state AS fence_state '+
+      'FROM v7_pc_maintenance_plans p '+
+      'LEFT JOIN v7_pc_maintenance_fences f ON f.plan_id=p.plan_id '+
+      'WHERE p.node_id=? AND p.state="INTENT_ONLY" '+
+      'AND (p.expires_at>UTC_TIMESTAMP(3) OR f.node_id IS NOT NULL) '+
+      'ORDER BY p.created_at DESC LIMIT 1',[node.node_id]);
     const ld=await leader(c,false);
     return {node_id:node.node_id,intent:plan?{
       plan_id:plan.plan_id,wave_id:plan.wave_id,target_version:plan.target_version,
       offer_sha256:plan.offer_sha256,
       expected_epoch:Number(plan.expected_epoch),expires_at:plan.expires_at,
-      state:Number(plan.expected_epoch)===Number(ld.epoch)?'INTENT_ONLY':'STALE_EPOCH'
+      state:Number(plan.expected_epoch)!==Number(ld.epoch)?'STALE_EPOCH':
+        plan.fence_state||'INTENT_ONLY',
+      fence_active:Boolean(plan.fence_state),fence_release_requires_owner:true
     }:null,installer_execution_allowed:false,owner_maintenance_lease:false};
   });
 }));
 app.get('/v7/owner/maintenance',jsonRoute(async req=>{
   admin(req);
-  return transaction(c=>rows(c,'SELECT plan_id,node_id,wave_id,target_version,'+
-    'offer_sha256,expected_epoch,state,created_at,expires_at,closed_at '+
-    'FROM v7_pc_maintenance_plans ORDER BY created_at DESC LIMIT 100'));
+  return transaction(c=>rows(c,'SELECT p.plan_id,p.node_id,p.wave_id,p.target_version,'+
+    'p.offer_sha256,p.expected_epoch,COALESCE(f.state,p.state) AS state,'+
+    'p.created_at,p.expires_at,p.closed_at,f.started_at AS drain_started_at,'+
+    'f.drained_at,f.node_id IS NOT NULL AS fence_active '+
+    'FROM v7_pc_maintenance_plans p LEFT JOIN v7_pc_maintenance_fences f '+
+    'ON f.plan_id=p.plan_id ORDER BY p.created_at DESC LIMIT 100'));
 }));
 app.get('/v7/projects',jsonRoute(async req=>{
   admin(req);return transaction(c=>rows(c,'SELECT * FROM v7_projects ORDER BY created_at DESC LIMIT 100'));
