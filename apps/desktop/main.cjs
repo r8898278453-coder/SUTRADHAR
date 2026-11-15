@@ -2,7 +2,8 @@
  * SUTRADHAR Desktop first-run assisted alpha:
  * local setup UI, approved Central health check, persistent per-PC config and
  * supervised signed edge agent. No unapproved provider automation.
- * Not a production-signed installer or OS-vault backed identity yet.
+ * Not a production-signed installer; OS-backed encrypted identity is alpha and
+ * requires physical Windows acceptance.
  */
 'use strict';
 const {app,BrowserWindow,Menu,Tray,shell,ipcMain,dialog,safeStorage}=require('electron');
@@ -18,6 +19,9 @@ const {summarizeCentralReceipt}=require('./status.cjs');
 const {createVault}=require('./os-vault.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
+const {inspect:inspectEnrollment,prepare:prepareEnrollment,
+  markSubmitted:markEnrollmentSubmitted,requireSubmitted}=require('./enrollment-receipt.cjs');
+const {installSingleInstanceGuard}=require('./single-instance.cjs');
 
 let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
@@ -29,7 +33,8 @@ const trustedProviders={
 function home(){return app.getPath('userData');}
 function nodeDir(){return path.join(home(),'node');}
 function configFile(){return path.join(home(),'desktop-settings.json');}
-function enrollmentMarker(){return path.join(nodeDir(),'enrollment_requested');}
+function enrollmentReceiptPath(){return path.join(nodeDir(),'enrollment-receipt.json');}
+function legacyEnrollmentMarker(){return path.join(nodeDir(),'enrollment_requested');}
 function readSettings(){
   if(!fs.existsSync(configFile()))return null;
   return validateSettings(JSON.parse(fs.readFileSync(configFile(),'utf8')));
@@ -47,9 +52,15 @@ function agentScript(){
     :path.join(__dirname,'dist','secure-agent.cjs');
 }
 function safeStatus(){
-  if(fs.existsSync(enrollmentMarker()))pendingEnrollmentCode=null;
-  let nodeId=null;
+  let nodeId=null,enrollmentState='NOT_REQUESTED',enrollmentError=null;
   try{nodeId=vault?.read()?.node_id||null;}catch{vaultError='OS_VAULT_IDENTITY_UNREADABLE';}
+  try{
+    if(current){
+      const state=inspectEnrollment({dir:nodeDir(),node:vault?.read(),centralUrl:current.centralUrl});
+      enrollmentState=state?.state||'NOT_REQUESTED';
+      if(enrollmentState==='SUBMITTED')pendingEnrollmentCode=null;
+    }
+  }catch(e){enrollmentState='OWNER_REVIEW_REQUIRED';enrollmentError=String(e.message||e).slice(0,100);}
   const agentProcessRunning=Boolean(agent&&agent.exitCode===null);
   const startupSupported=Boolean(app.isPackaged&&['win32','darwin'].includes(process.platform));
   let startupEnabled=false;
@@ -61,17 +72,19 @@ function safeStatus(){
   }catch{}
   return {configured:Boolean(current),centralUrl:current?.centralUrl||null,
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
-    nodeId,enrollmentRequested:fs.existsSync(enrollmentMarker()),
+    nodeId,enrollmentRequested:enrollmentState==='SUBMITTED',
+    enrollmentState,enrollmentError,
     agentProcessRunning,centralReport,startupSupported,startupEnabled,
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent(){
-  if(fs.existsSync(enrollmentMarker()))pendingEnrollmentCode=null;
   if(!current||shuttingDown||agent&&agent.exitCode===null)return;
   if(!vault||!signer)throw Error(vaultError||'OS_VAULT_UNAVAILABLE');
+  const enrolled=requireSubmitted({dir:nodeDir(),node:vault.read(),centralUrl:current.centralUrl});
+  if(enrolled)pendingEnrollmentCode=null;
   const script=agentScript();
   if(!fs.existsSync(script))throw Error('Edge agent not built. Developer: run npm run build:desktop at repo root.');
-  if(!fs.existsSync(enrollmentMarker())&&!pendingEnrollmentCode)
+  if(!enrolled&&!pendingEnrollmentCode)
     throw Error('Enter the one-time enrollment code to request Owner approval');
   // Allowlisted OS process settings only: no inherited DB/GitHub/admin/Telegram
   // secrets or the one-time enrollment grant in child environment.
@@ -112,16 +125,22 @@ function startAgent(){
       }
       if(msg.op==='enroll'){
         if(!current)throw Error('DEVICE_SETTINGS_NOT_CONFIGURED');
-        if(fs.existsSync(enrollmentMarker())){
+        const node=signer.snapshot();
+        const scope={dir:nodeDir(),node,centralUrl:current.centralUrl};
+        if(requireSubmitted(scope)){
           reply.result={accepted:true,ownerApprovalRequired:true};
         }else{
           const grant=pendingEnrollmentCode;
+          if(!grant)throw Error('OWNER_ENROLLMENT_GRANT_REQUIRED');
+          // Record intent before transmitting anything. After a crash or
+          // ambiguous network outcome, only Owner review may reconcile.
+          prepareEnrollment(scope);
           reply.result=await enrollWithOwnerGrant({
             origin:current.centralUrl,grant,displayName:current.pcName,
-            node:signer.snapshot(),signer
+            node,signer
           });
-          fs.mkdirSync(nodeDir(),{recursive:true,mode:0o700});
-          fs.writeFileSync(enrollmentMarker(),new Date().toISOString(),{mode:0o600,flag:'wx'});
+          if(reply.result?.accepted!==true)throw Error('ENROLLMENT_UNCONFIRMED');
+          markEnrollmentSubmitted(scope);
           pendingEnrollmentCode=null;
         }
       }
@@ -209,16 +228,11 @@ async function checkCentral(origin){
   if(obj.api_protocol!==local.api_protocol)
     throw Error('Central/Desktop protocol mismatch. Update the compatible Desktop version first.');
 }
+const primaryInstance=installSingleInstanceGuard(app,()=>showSetup());
 app.whenReady().then(()=>{
+  if(!primaryInstance)return;
   try{vault=createVault({safeStorage,dir:nodeDir()});signer=createSignerBridge(vault);}
   catch(e){vaultError=String(e.message||'OS_VAULT_UNAVAILABLE');}
-  // Forget the one-time enrollment grant promptly even if the setup window closes.
-  const enrollmentCleanup=setInterval(()=>{
-    if(fs.existsSync(enrollmentMarker())){
-      pendingEnrollmentCode=null;
-      clearInterval(enrollmentCleanup);
-    }
-  },5000);
   try{current=readSettings();}catch{
     configurationCorrupt=true;
     dialog.showErrorBox('Invalid Desktop settings','Stored configuration is unreadable. Do not delete device identity; contact the Owner.');
@@ -234,8 +248,10 @@ app.whenReady().then(()=>{
     if(current&&(centralUrl!==current.centralUrl||pcName!==current.pcName||
        count!==current.agentIds.length))
       throw Error('This PC identity is already configured. Request an Owner-guided reconfiguration instead.');
-    const code=validateEnrollmentCode(payload.enrollmentCode);
     if(!vault)throw Error(vaultError||'OS_VAULT_UNAVAILABLE');
+    if(current&&requireSubmitted({dir:nodeDir(),node:vault.read(),centralUrl:current.centralUrl}))
+      return safeStatus();
+    const code=validateEnrollmentCode(payload.enrollmentCode);
     await checkCentral(centralUrl);
     if(!current){
       const candidate={centralUrl,pcName,agentIds:agentIds(count)};
@@ -296,8 +312,9 @@ app.whenReady().then(()=>{
   });
   // Restart an already enrolled agent automatically. An un-enrolled machine
   // must re-enter a short-lived grant rather than persisting it on disk.
-  if(current&&fs.existsSync(enrollmentMarker())){
-    try{startAgent();}catch{ /* Setup UI explains any missing build/runtime. */ }
+  if(current&&(fs.existsSync(enrollmentReceiptPath())||
+      fs.existsSync(legacyEnrollmentMarker()))){
+    try{startAgent();}catch{ /* Status UI shows Owner-required enrollment recovery. */ }
   }
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {label:'SUTRADHAR',submenu:[
