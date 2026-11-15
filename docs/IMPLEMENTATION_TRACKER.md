@@ -278,3 +278,8 @@ Current unsigned alpha has `update-trust.json` unconfigured and cannot accept a 
 | Installer/rollback | NOT IMPLEMENTED; all responses remain `installer_execution_allowed:false` | Genuine signing certificate, identity backup/reinstall, rollback health telemetry |
 
 [Owner drain-fence runbook](PC_DRAIN_FENCE_V7.md). This source is draft/unmerged; live staging and physical acceptance have **not** been performed.
+
+
+## 15 November 2026 — Drain admission surface audit
+
+Beyond worker claims and election, new QA receipts, Git reservations, change proposals and agent registration are rejected on fenced PCs. Heartbeats and existing worker checkpoint/submit remain available for graceful completion. An existing Git confirmation remains permitted to reconcile remote side effects; unfinished Git jobs block DRAINED. The Central SQL paths now follow a leader-first lock order to reduce heartbeat/task-claim deadlock risk. Disposable MySQL tests explicitly attempt forbidden admission routes; **real concurrency and external provider acceptance remain pending**.

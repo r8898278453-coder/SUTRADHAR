@@ -47,3 +47,8 @@ An actual safe installer rollout still needs independently reviewed signed packa
 New pure state tests verify intentional DRAINING vs idle-only DRAINED. The disposable MySQL integration exercises a real claimed worker lease, fence activation, refusal of new task admission, checkpoint/submit of existing work, refusal to finalize while the lease is live, controlled expiry of the *test database* lease, explicit finalization and Owner cancellation. The test-only time change must never run against Hostinger production.
 
 Review [Owner maintenance intent](OWNER_PC_MAINTENANCE_INTENT_V7.md), [Windows safety preflight](DESKTOP_MAINTENANCE_PREFLIGHT_V7.md), and [production readiness](PRODUCTION_READINESS_V7_2026-11-12.md). The latest GitHub Actions result on the exact commit is required before counting this phase CI-verified.
+
+
+## Additional concurrent-operation protection — 15 November 2026
+
+For consistent MySQL lock ordering, leader/cluster row is acquired before agent or node state on task claims, heartbeats, worker leases, leadership reconciliation, new change proposals, QA receipts, and Git publication reservations. A new fenced node cannot register agents, submit new QA, reserve a new remote Git publication, or propose new changes. **An existing reserved Git operation may still be confirmed/reconciled** so that uncertain remote side effects are not concealed. FINALIZE continues to reject any unresolved Git job. Real concurrency/load and provider-side interruption testing remains pending.

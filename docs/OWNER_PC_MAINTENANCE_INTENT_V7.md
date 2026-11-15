@@ -47,3 +47,8 @@ The Owner dashboard now includes **Start durable fence — block new claims** an
 **DRAINED** can only be recorded after Central sees no active lease, no unfinished ticket/uncertain Git operation and live idle target agents. A fence NEVER expires automatically after five minutes or on reboot. **Cancel intent / RELEASE active fence** removes the fence and can immediately allow new work. Use only after the Owner confirms maintenance is not underway.
 
 There is still no installer launcher, shutdown, actual signed update, identity restoration or rollback capability. See [PC drain fence runbook](PC_DRAIN_FENCE_V7.md). Owner must rehearse real Windows/Hostinger acceptance separately.
+
+
+## Drain versus remote Git operations
+
+The persistent Owner task fence blocks **new** Git publication reservations and change proposals on the target PC, alongside new claims and QA submissions. It does not invalidate or hide an existing remote Git operation: confirmation/reconciliation of an already reserved Git job remains possible, and the Owner cannot FINALIZE while that job remains unresolved. Central cannot prevent an external process that is outside this agent protocol from running; physical acceptance must include externally initiated work.
