@@ -1,12 +1,14 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
 const os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
-const {verifyOffer,cmp}=require('../apps/desktop/update-policy.cjs');
+const {verifyOffer,cmp,sha256File}=require('../apps/desktop/update-policy.cjs');
 test('versions compare numerically and require stable semantic version',()=>{
   assert.equal(cmp('7.0.10','7.0.9'),1);
   assert.equal(cmp('7.0.0','7.0.0'),0);
   assert.equal(cmp('6.9.9','7.0.0'),-1);
   assert.throws(()=>cmp('7.0.0-alpha.1','7.0.0'));
+  assert.throws(()=>cmp('999999999999999999.0.0','7.0.0'));
+  assert.throws(()=>cmp('1000000.0.0','7.0.0'));
 });
 test('Owner-signed update offer rejects forged, expired, wrong protocol and altered artifacts',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-update-'));
@@ -45,6 +47,14 @@ test('Owner-signed update offer rejects forged, expired, wrong protocol and alte
     assert.equal(check(envelope,{rolloutApproved:false}).error_code,'OWNER_ROLLOUT_APPROVAL_REQUIRED');
     assert.equal(check(envelope,{pinnedPublicKeyPem:other.export({format:'pem',type:'spki'}).toString()}).accepted,false);
     assert.equal(check({...envelope,signed:{...signed,version:'7.2.0'}}).accepted,false);
+    assert.equal(check(wrap({...signed,rollout:{...signed.rollout,
+      wave_id:'invalid-wave'}})).error_code,'UPDATE_SIGNED_ROLLOUT_INVALID');
+    assert.equal(check(wrap({...signed,rollout:{...signed.rollout,
+      owner_approved_at_ms:now+100}})).error_code,'UPDATE_SIGNED_ROLLOUT_INVALID');
+    assert.equal(check(wrap({...signed,rollout:{...signed.rollout,
+      node_ids:[]}})).error_code,'UPDATE_SIGNED_ROLLOUT_INVALID');
+    assert.equal(check(wrap({...signed,rollout:{...signed.rollout,
+      node_ids:['node_notvalid']}})).error_code,'UPDATE_SIGNED_ROLLOUT_INVALID');
     assert.equal(check(wrap({...signed,expires_ms:now-1})).accepted,false);
     assert.equal(check(wrap({...signed,protocol:8})).accepted,false);
     assert.equal(check(wrap({...signed,publisher_subject:'CN=Wrong'})).accepted,false);
@@ -81,5 +91,18 @@ test('rollback is separately signed, cannot be forced by normal update offer',()
       signed:{...s,owner_emergency_rollback_approved:false}}}).accepted,false);
     assert.equal(verifyOffer({...opts,currentVersion:'6.9.0'}).accepted,false);
     assert.equal(verifyOffer({...opts,kind:'update'}).accepted,false);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('Streaming SHA-256 reads large local installers without loading whole file',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-sha-'));
+  try{
+    const file=path.join(dir,'SUTRADHAR Desktop.exe');
+    const bytes=crypto.randomBytes(3*1024*1024+11);
+    fs.writeFileSync(file,bytes);
+    assert.equal(sha256File(file),
+      crypto.createHash('sha256').update(bytes).digest('hex'));
+    assert.throws(()=>sha256File('relative.exe'),/UPDATE_INSTALLER_PATH_INVALID/);
+    assert.throws(()=>sha256File(dir),/UPDATE_INSTALLER_FILE_TYPE_INVALID/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
