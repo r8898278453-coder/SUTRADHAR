@@ -79,4 +79,39 @@ function requireSubmitted({dir,node,centralUrl}){
     fail('ENROLLMENT_SUBMISSION_UNCERTAIN_OWNER_REVIEW_REQUIRED');
   return Boolean(status&&status.state==='SUBMITTED');
 }
-module.exports={inspect,prepare,markSubmitted,requireSubmitted};
+/**
+ * Explicit Owner-assisted recovery: only GET from already configured Central.
+ * A 200 response requires valid Ed25519 signed nodeAuth AND APPROVED node in
+ * Central; a pending/unsubmitted node cannot be silently accepted. No grant
+ * or registration POST is sent and no key material leaves the main process.
+ */
+async function reconcilePrepared({dir,node,centralUrl,signer,fetcher=fetch}){
+  const previous=inspect({dir,node,centralUrl});
+  if(!previous||previous.state!=='PREPARED')
+    fail('ENROLLMENT_RECONCILIATION_REQUIRES_PREPARED_RECEIPT');
+  if(!signer||typeof signer.sign!=='function')
+    fail('ENROLLMENT_SIGNING_UNAVAILABLE');
+  const uri='/v7/nodes/me';
+  const signed=signer.sign({kind:'node_api',method:'GET',uri,body:''});
+  if(!signed||signed['x-sutradhar-node']!==node.node_id||
+    typeof signed['x-sutradhar-signature']!=='string')
+    fail('ENROLLMENT_SIGNED_PROOF_INVALID');
+  let response;
+  try{
+    response=await fetcher(centralUrl+uri,{
+      method:'GET',headers:{...signed,Accept:'application/json'},
+      redirect:'error',signal:AbortSignal.timeout(15000)
+    });
+  }catch{fail('ENROLLMENT_RECONCILIATION_NETWORK_UNAVAILABLE');}
+  if(!response?.ok)
+    fail('ENROLLMENT_NOT_YET_OWNER_APPROVED');
+  let answer;
+  try{answer=await response.json();}
+  catch{fail('ENROLLMENT_RECONCILIATION_RESPONSE_INVALID');}
+  if(answer?.node_id!==node.node_id)
+    fail('ENROLLMENT_RECONCILIATION_NODE_MISMATCH');
+  markSubmitted({dir,node,centralUrl});
+  return {accepted:true,ownerApprovalVerified:true};
+}
+
+module.exports={inspect,prepare,markSubmitted,requireSubmitted,reconcilePrepared};
