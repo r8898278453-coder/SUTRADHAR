@@ -46,6 +46,8 @@
 <section class="panel"><h2>Check signed update / rollback (inspection only)</h2>
 <p class="hint">Select an Owner-signed offer JSON next to its downloaded Windows installer. The app checks the pinned release key, SHA-256, release version and Windows publisher without executing the installer. This is locked until the first approved production-signed release.</p>
 <button id="verifyUpdate" class="secondary" type="button">Verify a signed update file</button>
+<button id="updateReadiness" class="secondary" type="button">Check whether this PC is Master or backup</button>
+<p class="hint">Uses signed Central requests. An unapproved, active Master, Backup 1 or Backup 2, or offline PC cannot be cleared for maintenance. This point-in-time check never authorizes installation or stops agents.</p>
 <div id="updateFeedback" role="status" aria-live="polite"></div>
 </section>
 <footer>Packaged Desktop uses Windows DPAPI/macOS Keychain-backed encrypted device identity when available. Production signing, installation and physical key-vault acceptance are still required.</footer>
