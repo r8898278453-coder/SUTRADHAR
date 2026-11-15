@@ -55,7 +55,11 @@ for(const rel of [
   'apps/desktop/os-vault.cjs',
   'apps/desktop/vault-bridge.cjs',
   'apps/desktop/enrollment-receipt.cjs',
-  'apps/desktop/single-instance.cjs'
+  'apps/desktop/single-instance.cjs',
+  'apps/desktop/update-readiness.cjs',
+  'apps/desktop/update-inspection-journal.cjs',
+  'apps/desktop/update-readiness.cjs',
+  'apps/desktop/update-inspection-journal.cjs'
 ]){
   assert(exists(rel),'Missing application build file: '+rel);
 }
@@ -75,7 +79,7 @@ assert(!secureAgentText.includes('SUTRADHAR_ENROLLMENT_CODE'),'Packaged child co
 
 assert.equal(json('apps/desktop/package.json').build.extraResources[0].to,'secure-agent.cjs');
 const dp=json('apps/desktop/package.json');
-for(const required of ['os-vault.cjs','vault-bridge.cjs','enrollment.cjs','enrollment-receipt.cjs','single-instance.cjs','update-policy.cjs','update-trust.json'])
+for(const required of ['os-vault.cjs','vault-bridge.cjs','enrollment.cjs','enrollment-receipt.cjs','single-instance.cjs','update-policy.cjs','update-readiness.cjs','update-inspection-journal.cjs','update-trust.json'])
   assert(dp.build.files.includes(required),'Sensitive update/vault feature missing in packaged app: '+required);
 const trust=json('apps/desktop/update-trust.json');
 assert.equal(trust.public_key_pem,null,'Unsigned QA package must have no live trusted update key');
