@@ -54,6 +54,17 @@ async function checkReadiness({
     if(!a||typeof a.agent_id!=='string'||!ID.test(a.agent_id)||
        approved.has(a.agent_id)||a.state!=='APPROVED')
       fail('UPDATE_READINESS_AGENTS_NOT_APPROVED');
+    // A live role snapshot is insufficient: an idle-looking PC might have
+    // a running worker lease, uncertain Git mutation or stale heartbeat.
+    // These values are derived from Central's MySQL state/server clock.
+    if(a.heartbeat_age_seconds===null||a.heartbeat_age_seconds===undefined||
+       !Number.isSafeInteger(Number(a.heartbeat_age_seconds))||
+       Number(a.heartbeat_age_seconds)<0||Number(a.heartbeat_age_seconds)>180)
+      fail('UPDATE_READINESS_HEARTBEAT_STALE');
+    if(a.status!=='IDLE'||a.active_ticket!==null||
+       (a.has_live_work_lease!==0&&a.has_live_work_lease!==false)||
+       (a.has_unreconciled_git_job!==0&&a.has_unreconciled_git_job!==false))
+      fail('UPDATE_READINESS_UNFINISHED_AGENT_WORK');
     approved.add(a.agent_id);
   }
   if(agentIds.some(id=>!approved.has(id))||approved.size!==agentIds.length)
