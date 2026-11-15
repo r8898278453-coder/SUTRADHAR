@@ -151,3 +151,20 @@ CREATE TABLE IF NOT EXISTS v7_migration_audit (
   record_counts JSON NOT NULL, destination_counts JSON NOT NULL,
   completed_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB;
+
+-- Owner maintenance intents are read-only plans, NEVER install capabilities.
+-- A 5-minute expiry and current Master epoch keep stale plans visibly fenced.
+CREATE TABLE IF NOT EXISTS v7_pc_maintenance_plans (
+  plan_id VARCHAR(100) PRIMARY KEY,
+  node_id VARCHAR(100) NOT NULL,
+  wave_id VARCHAR(64) NOT NULL,
+  target_version VARCHAR(24) NOT NULL,
+  offer_sha256 CHAR(64) NOT NULL,
+  expected_epoch BIGINT UNSIGNED NOT NULL,
+  state ENUM('INTENT_ONLY','CANCELLED') NOT NULL DEFAULT 'INTENT_ONLY',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  expires_at DATETIME(3) NOT NULL,
+  closed_at DATETIME(3),
+  FOREIGN KEY (node_id) REFERENCES v7_nodes(node_id),
+  INDEX idx_maintenance_node_active(node_id,state,expires_at)
+) ENGINE=InnoDB;
