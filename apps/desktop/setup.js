@@ -42,6 +42,7 @@ async function loadStatus(){
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
     get('autostart').checked=Boolean(s.startupEnabled);
+    get('reconcileEnrollment').disabled=s.enrollmentState!=='OWNER_REVIEW_REQUIRED';
     if(s.enrollmentRequested){get('code').value='';get('code').placeholder='Already enrolled; code not required for later starts';}
   }catch(e){get('status').textContent='Could not read local status: '+String(e.message||e);}
 }
@@ -76,6 +77,18 @@ get('verifyUpdate').addEventListener('click',async()=>{
       'Verified offline: '+receipt.version+'. Installer NOT executed. Seek separate Owner approval.';
   }catch(e){get('updateFeedback').textContent='Update blocked: '+String(e.message||e);}
   finally{button.disabled=false;}
+});
+get('reconcileEnrollment').addEventListener('click',async()=>{
+  const button=get('reconcileEnrollment');button.disabled=true;
+  showFeedback('Checking this same OS-vault identity against Owner-approved Central (read-only)…');
+  try{
+    const status=await api.reconcileEnrollment();
+    showFeedback(status.enrollmentRequested?
+      'Existing PC identity confirmed approved by Central. No new enrollment code used.':
+      'Recovery has not been confirmed by Central.');
+  }catch(e){showFeedback('Recovery blocked: '+String(e.message||e)+
+    '. Ask the Owner to inspect this exact PC identity; do not delete its vault.');}
+  finally{await loadStatus();}
 });
 get('refresh').addEventListener('click',loadStatus);
 get('dashboard').addEventListener('click',async()=>{try{await api.openDashboard();}catch(e){showFeedback(String(e.message||e));}});
