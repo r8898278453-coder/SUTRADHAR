@@ -8,6 +8,7 @@
 'use strict';
 const {app,BrowserWindow,Menu,Tray,shell,ipcMain,dialog,safeStorage}=require('electron');
 const fs=require('node:fs');
+const crypto=require('node:crypto');
 const path=require('node:path');
 const {spawn,spawnSync}=require('node:child_process');
 const {verifyOffer}=require('./update-policy.cjs');
@@ -291,6 +292,11 @@ app.whenReady().then(()=>{
     verifySender(event);
     if(process.platform!=='win32'||!app.isPackaged)
       throw Error('Offline signed update verification requires an approved packaged Windows app.');
+    if(!current||!vault)throw Error('UPDATE_REQUIRES_CONFIGURED_OS_VAULT_IDENTITY');
+    const device=vault.read();
+    if(!device||!requireSubmitted({
+      dir:nodeDir(),node:device,centralUrl:current.centralUrl
+    }))throw Error('UPDATE_REQUIRES_EXISTING_ENROLLED_DEVICE');
     const trust=JSON.parse(fs.readFileSync(path.join(__dirname,'update-trust.json'),'utf8'));
     if(trust.schema!==1||trust.status!=='OWNER_PROTECTED_RELEASE'||
       typeof trust.public_key_pem!=='string'||typeof trust.publisher_subject!=='string')
@@ -300,13 +306,16 @@ app.whenReady().then(()=>{
       properties:['openFile'],filters:[{name:'Signed update JSON',extensions:['json']}]
     });
     if(selected.canceled||selected.filePaths.length!==1)return {canceled:true};
+    const offerStat=fs.statSync(selected.filePaths[0]);
+    if(!offerStat.isFile()||offerStat.size>32768||offerStat.size<100)
+      throw Error('UPDATE_OFFER_FILE_INVALID_OR_TOO_LARGE');
     const signed=JSON.parse(fs.readFileSync(selected.filePaths[0],'utf8'));
     const installer=path.join(path.dirname(selected.filePaths[0]),
       String(signed?.signed?.filename||'INVALID'));
     const kind=signed?.signed?.type==='rollback'?'rollback':'update';
     const verified=verifyOffer({envelope:signed,pinnedPublicKeyPem:trust.public_key_pem,
-      installerPath:installer,currentVersion:app.getVersion(),protocol:7,
-      publisherSubject:trust.publisher_subject,rolloutApproved:true,kind});
+      installerPath:installer,currentVersion:app.getVersion(),nodeId:device.node_id,
+      protocol:7,publisherSubject:trust.publisher_subject,rolloutApproved:true,kind});
     if(!verified.accepted)throw Error(String(verified.error_code));
     const script='$s=Get-AuthenticodeSignature -LiteralPath '+JSON.stringify(installer)+
       '; if($s.Status -ne "Valid" -or $null -eq $s.SignerCertificate){exit 42};'+
@@ -314,8 +323,14 @@ app.whenReady().then(()=>{
     const check=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],
       {timeout:30000,windowsHide:true,encoding:'utf8'});
     if(check.error||check.status!==0)throw Error('UPDATE_WINDOWS_SIGNER_VERIFICATION_FAILED');
+    // The file can change while Authenticode runs. Fail if bytes differ
+    // from the signed Owner manifest after Windows signature verification.
+    if(fs.lstatSync(installer).isSymbolicLink()||
+      crypto.createHash('sha256').update(fs.readFileSync(installer)).digest('hex')!==
+        verified.file_sha256)throw Error('UPDATE_INSTALLER_CHANGED_DURING_VERIFICATION');
     return {verifiedOffline:true,installed:false,version:verified.version,
-      kind,sha256:verified.file_sha256,
+      kind,waveId:verified.wave_id,nodeId:verified.device_node_id,
+      sha256:verified.file_sha256,
       nextAction:'Owner must separately approve installation/recovery; this tool never runs an installer.'};
   });
   ipcMain.handle('sutradhar:openProvider',(event,provider)=>{
