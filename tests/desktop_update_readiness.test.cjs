@@ -5,7 +5,10 @@ const nodeId='node_'+'a'.repeat(32);
 const mine='agent_worker_1';
 const cluster={epoch:17,master_agent_id:'agent_master_01',phase:'READY',
   paused:false,backups:['agent_backup_01','agent_backup_02']};
-const me={node_id:nodeId,agents:[{agent_id:mine,state:'APPROVED'}]};
+const safeAgent=(id=mine)=>({agent_id:id,state:'APPROVED',status:'IDLE',
+  active_ticket:null,heartbeat_age_seconds:15,
+  has_live_work_lease:0,has_unreconciled_git_job:0});
+const me={node_id:nodeId,agents:[safeAgent()]};
 const signer={sign:({kind,method,uri,body})=>{
   assert.equal(kind,'node_api');assert.equal(method,'GET');assert.equal(body,'');
   assert.ok(['/v7/nodes/me','/v7/cluster/state'].includes(uri));
@@ -36,7 +39,7 @@ test('signed Central update readiness is advisory, not authorization to execute'
 });
 test('deny signed preflight on Master, Backup 1 or Backup 2 PCs',async()=>{
   for(const role of ['agent_master_01','agent_backup_01','agent_backup_02']){
-    const nodeResponse={...me,agents:[{agent_id:role,state:'APPROVED'}]};
+    const nodeResponse={...me,agents:[safeAgent(role)]};
     await assert.rejects(checkReadiness({...args,agentIds:[role],
       fetcher:makeFetch(nodeResponse)}),/ACTIVE_MASTER_OR_BACKUP/);
   }
@@ -44,8 +47,8 @@ test('deny signed preflight on Master, Backup 1 or Backup 2 PCs',async()=>{
 test('deny unapproved/mismatched identities and unhealthy/paused/recovering clusters',async()=>{
   for(const nodes of [
     {...me,node_id:'node_'+'b'.repeat(32)},
-    {...me,agents:[{agent_id:mine,state:'PENDING'}]},
-    {...me,agents:[{agent_id:'agent_other',state:'APPROVED'}]}
+    {...me,agents:[{...safeAgent(),state:'PENDING'}]},
+    {...me,agents:[safeAgent('agent_other')]}
   ])await assert.rejects(checkReadiness({...args,fetcher:makeFetch(nodes)}),
     /MISMATCH|NOT_APPROVED/);
   for(const changes of [
@@ -70,4 +73,18 @@ test('deny malformed URL, leaked credentials, and any remote failure',async()=>{
     /AUTH_OR_HEALTH_FAILED/);
   await assert.rejects(checkReadiness({...args,signer:{sign:()=>({})},fetcher:makeFetch()}),
     /SIGNER_PROOF_INVALID/);
+});
+
+test('refuse maintenance for stale heartbeat, outstanding lease, Git write or busy worker',async()=>{
+  for(const patch of [
+    {heartbeat_age_seconds:null},{heartbeat_age_seconds:181},
+    {heartbeat_age_seconds:-10},{heartbeat_age_seconds:'invalid'},
+    {status:'BUSY'},{active_ticket:'ticket_active'},
+    {has_live_work_lease:1},{has_unreconciled_git_job:1}
+  ]){
+    const bad={...me,agents:[{...safeAgent(),...patch}]};
+    await assert.rejects(checkReadiness({...args,fetcher:makeFetch(bad)}),
+      /HEARTBEAT_STALE|UNFINISHED_AGENT_WORK/,
+      'Unfinished/stale condition was not refused: '+JSON.stringify(patch));
+  }
 });
