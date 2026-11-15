@@ -297,8 +297,8 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
       await c.query('DELETE FROM v7_reservations WHERE ticket_id=?',[id]);
       result={ticket_id:id,status:'READY',reason};
     }else fault('UNKNOWN_OWNER_COMMAND',400);
-    await event(c,'OWNER_'+command,actor,Number(ld.epoch),result.project_id||result.ticket_id||result.node_id||null,
-      {command,resource:result.project_id||result.ticket_id||result.node_id||null});
+    await event(c,'OWNER_'+command,actor,Number(ld.epoch),result.project_id||result.ticket_id||result.node_id||result.plan_id||null,
+      {command,resource:result.project_id||result.ticket_id||result.node_id||result.plan_id||null});
     return {accepted:true,receipt_id:body.request_id,state:result};
   });
 }
