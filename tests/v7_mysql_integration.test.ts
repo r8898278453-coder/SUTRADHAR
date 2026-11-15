@@ -169,6 +169,60 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(afterCancel.code,200);
     assert.equal(afterCancel.body.intent,null);
     assert.equal(afterCancel.body.installer_execution_allowed,false);
+    // A second, real disposable MySQL case: graceful draining preserves
+    // work already claimed, blocks fresh claims, then finalizes only after
+    // the old work is submitted and its lease is no longer live.
+    const activePlanId='plan_active_worker_drain';
+    const planForWork=await owner('PLAN_PC_UPDATE',{
+      ...pilotPayload,plan_id:activePlanId});
+    assert.equal(planForWork.state.state,'INTENT_ONLY');
+    const dTicket=await a.signed('/v7/tasks/plan',{
+      request_id:'plan_drain_'+(++count),agent_id:a.agent_id,
+      expected_master_epoch:Number(status.epoch),
+      ticket_id:'ticket_drain_inflight',project_id:'project_integration',
+      baseline_sha:'a'.repeat(40),branch_name:'ai/ticket_drain_inflight',
+      title:'Graceful maintenance worker',description:'Verify existing lease can finish',
+      risk:'LOW',write_scopes:['src/drain-worker.ts'],
+      acceptance_criteria:['Submitted checkpoint before maintenance finalization']});
+    assert.equal(dTicket.code,200,JSON.stringify(dTicket.body));
+    const dLease=await d.signed('/v7/tasks/claim',{
+      request_id:'drain_initial_claim_'+(++count),agent_id:d.agent_id,
+      expected_master_epoch:Number(status.epoch),ticket_id:'ticket_drain_inflight'});
+    assert.equal(dLease.code,200,JSON.stringify(dLease.body));
+    const activeDrain=await owner('START_PC_DRAIN',{plan_id:activePlanId});
+    assert.equal(activeDrain.state.state,'DRAINING');
+    assert.equal(activeDrain.state.active_worker_leases_preserved,true);
+    const premature=await post('/v7/owner/command',{
+      request_id:'premature_drain_'+(++count),command:'FINALIZE_PC_DRAIN',
+      payload:{plan_id:activePlanId}},admin);
+    assert.equal(premature.code,409,'Live worker lease cannot be declared drained');
+    const dCheckpoint=await d.signed('/v7/tasks/checkpoint',{
+      request_id:'drain_checkpoint_'+(++count),agent_id:d.agent_id,
+      ticket_id:'ticket_drain_inflight',lease_id:dLease.body.lease_id,
+      expected_master_epoch:Number(status.epoch),
+      summary:'Existing worker checkpoint saved after fencing',
+      next_action:'Submit for independent QA'});
+    assert.equal(dCheckpoint.code,200,JSON.stringify(dCheckpoint.body));
+    const dSubmitted=await d.signed('/v7/tasks/submit',{
+      request_id:'drain_submit_'+(++count),agent_id:d.agent_id,
+      ticket_id:'ticket_drain_inflight',lease_id:dLease.body.lease_id,
+      expected_master_epoch:Number(status.epoch),
+      candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40)});
+    assert.equal(dSubmitted.code,200,JSON.stringify(dSubmitted.body));
+    // CI-only time injection: wait out a lingering lease without a real
+    // 600-second sleep. DO NOT do this on any live Hostinger database.
+    const finishDb=await mysql.createConnection({host:'127.0.0.1',
+      port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,
+      password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+    try{
+      await finishDb.query('UPDATE v7_leases SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE ticket_id=?',
+        ['ticket_drain_inflight']);
+    }finally{await finishDb.end();}
+    const completedDrain=await owner('FINALIZE_PC_DRAIN',{plan_id:activePlanId});
+    assert.equal(completedDrain.state.state,'DRAINED');
+    assert.equal(completedDrain.state.installer_execution_allowed,false);
+    const releaseAgain=await owner('CANCEL_PC_UPDATE',{plan_id:activePlanId});
+    assert.equal(releaseAgain.state.previously_fenced,true);
     const claim=await b.signed('/v7/tasks/claim',{request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'});
     assert.equal(claim.code,200,JSON.stringify(claim.body));
