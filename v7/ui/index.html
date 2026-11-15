@@ -45,6 +45,26 @@
 <button id="verify-merge" class="outline">Verify external merge</button></div></div>
 <div><label>Proposal ID</label><input id="proposal-id" placeholder="proposal_...">
 <div class="flex"><button data-command="APPROVE_PROPOSAL">Approve proposal</button><button data-command="DENY_PROPOSAL" class="danger">Deny</button></div></div>
-</div></section></section>
+</div></section>
+<section class="panel owner" aria-labelledby="maintenance-title">
+<div class="panelhead"><h2 id="maintenance-title">PC maintenance intents — NOT installer approval</h2><span id="maintenanceCount">—</span></div>
+<p>Owner may record a five-minute advisory intent for an already approved, idle PC. Central checks live Master/Backup 1/2, server-clock heartbeat, active tasks and Master epoch. This does not drain work, stop any agent, reserve a maintenance lease, install software or authorize a rollback.</p>
+<div class="formgrid">
+<div><label for="maintenance-node-id">Exact enrolled PC node ID</label><input id="maintenance-node-id" autocomplete="off" placeholder="node_...">
+<label for="maintenance-wave">Owner-approved rollout wave</label><input id="maintenance-wave" autocomplete="off" placeholder="wave_pilot01">
+<label for="maintenance-version">Target stable version</label><input id="maintenance-version" autocomplete="off" placeholder="7.1.0"></div>
+<div><label for="maintenance-offer-sha">SHA-256 of Owner-signed offer JSON</label>
+<input id="maintenance-offer-sha" autocomplete="off" maxlength="64" placeholder="64 lowercase hex characters">
+<label for="maintenance-epoch">Current Master epoch (auto-filled)</label>
+<input id="maintenance-epoch" readonly aria-readonly="true">
+<button id="plan-maintenance" type="button">Record 5-minute intent only</button></div>
+<div><label for="maintenance-cancel-id">Cancel existing plan ID</label>
+<input id="maintenance-cancel-id" autocomplete="off" placeholder="plan_...">
+<button id="cancel-maintenance" type="button" class="outline">Cancel maintenance intent</button></div>
+</div>
+<p>Always recheck the live cluster before physical maintenance. A saved plan can become stale immediately after failover; no installer is executed from this screen.</p>
+<div class="scroll"><table><thead><tr><th>Plan ID</th><th>PC node</th><th>Wave</th><th>State</th><th>Epoch</th><th>Expires (UTC)</th></tr></thead>
+<tbody id="maintenance-plans"></tbody></table></div>
+</section></section>
 <footer>Live state from Central MySQL. UI is read-only unless an owner command is explicitly submitted. No browser session, credential or agent private key is transferred here.</footer>
 </div><script type="module" src="/dashboard.js"></script></body></html>
