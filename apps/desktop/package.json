@@ -41,7 +41,9 @@
       "vault-bridge.cjs",
       "enrollment.cjs",
       "enrollment-receipt.cjs",
-      "single-instance.cjs"
+      "single-instance.cjs",
+      "update-readiness.cjs",
+      "update-inspection-journal.cjs"
     ],
     "extraResources": [
       {
