@@ -6,6 +6,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const cp=require('node:child_process');
+const {sha256File}=require('../../apps/desktop/update-policy.cjs');
 function requireEnv(n){const x=process.env[n];if(!x||!x.trim())throw Error('OWNER_OFFER_BLOCKED: missing '+n);return x.trim();}
 function refuse(s){throw Error('OWNER_OFFER_BLOCKED: '+s);}
 function main(){
@@ -36,8 +37,11 @@ function main(){
     refuse('trusted absolute installer path required');
   const evidenceFile=path.join(path.dirname(file),'signed-release-evidence.json');
   const evidence=JSON.parse(fs.readFileSync(evidenceFile,'utf8'));
-  const bytes=fs.readFileSync(file);
-  const hash=crypto.createHash('sha256').update(bytes).digest('hex');
+  const stats=fs.lstatSync(file);
+  if(!stats.isFile()||stats.isSymbolicLink()||
+    stats.size<1000||stats.size>1024*1024*1024)
+    refuse('signed installer must be a regular bounded Windows executable');
+  const hash=sha256File(file);
   if(evidence.local_signing_verified!==true||evidence.source_sha!==sha||
     evidence.version!==version||!Array.isArray(evidence.installers)||
     !evidence.installers.some(x=>x.filename===path.basename(file)&&
@@ -49,6 +53,8 @@ function main(){
   const check=cp.spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',powershell],
     {timeout:30000,encoding:'utf8',windowsHide:true});
   if(check.error||check.status!==0)refuse('Windows signature/publisher verification failed');
+  if(sha256File(file)!==hash)
+    refuse('installer bytes changed during Authenticode verification');
   const keyPath=requireEnv('SUTRADHAR_RELEASE_SIGNING_KEY_FILE');
   if(!path.isAbsolute(keyPath))refuse('Owner signer key must use an absolute path');
   const repoRoot=path.resolve(__dirname,'../..');
@@ -59,7 +65,7 @@ function main(){
   const now=Date.now();
   const body={schema:2,application:'desktop',channel:'stable',type:kind,
     version,source_sha:sha,protocol:7,filename:path.basename(file),
-    installer_sha256:hash,installer_bytes:bytes.length,
+    installer_sha256:hash,installer_bytes:stats.size,
     publisher_subject:signer,issued_ms:now,expires_ms:now+7*86400000,
     rollout:{wave_id:waveId,node_ids:targets,owner_approved_at_ms:now}};
   if(kind==='rollback')body.owner_emergency_rollback_approved=true;
