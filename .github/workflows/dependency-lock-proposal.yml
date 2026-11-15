@@ -54,3 +54,21 @@ jobs:
           npm run test:release-gates
       - name: Clarify limited acceptance
         run: echo "Committed dependency locks installed; vulnerability audit and Owner approval still required."
+
+  advisory-audit:
+    name: Review high/critical npm advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Require committed lockfile integrity
+        run: node scripts/release/verify-dependency-locks.cjs
+      - name: Audit root dependencies (including build-time supply chain)
+        run: npm audit --audit-level=high --no-fund
+      - name: Audit Desktop Electron/installer dependencies
+        run: npm audit --prefix apps/desktop --audit-level=high --no-fund
