@@ -629,8 +629,8 @@ app.post('/v7/leadership/reconcile',jsonRoute(async req=>{
   if(typeof req.body?.manifest_sha256!=='string'||!/^[0-9a-f]{64}$/.test(req.body.manifest_sha256))
     fault('MISSING_RECOVERY_MANIFEST',400);
   return transaction(async c=>{
-    await signedAgent(c,node.node_id,id);
     const ld=await leader(c);
+    await signedAgent(c,node.node_id,id);
     if(ld.master_agent_id!==id||Number(ld.epoch)!==epoch||!ld.lease_until||
        Date.parse(ld.lease_until+'Z')<=await dbNow(c))fault('STALE_MASTER_EPOCH',409);
     if(ld.phase!=='RECOVERING')fault('INVALID_PHASE',409);
@@ -806,7 +806,9 @@ app.post('/v7/tasks/propose-change',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{},id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
   const kind=requireStr(d.kind,50),reason=requireStr(d.justification,1500);
   return transaction(async c=>{
+    await leader(c);
     await signedAgent(c,node.node_id,id);
+    await requireNoNodeDrain(c,node.node_id);
     return idem(c,id,d.request_id,'PROPOSE_CHANGE',d,async()=>{
       const t=await one(c,'SELECT ticket_id FROM v7_tickets WHERE ticket_id=?',[ticket]);
       if(!t)fault('TASK_NOT_FOUND',404);
@@ -824,8 +826,9 @@ app.post('/v7/git/reserve',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{};
   const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id);
   return transaction(async c=>{
-    await signedAgent(c,node.node_id,agentId,true);
     const ld=await leader(c);
+    await signedAgent(c,node.node_id,agentId,true);
+    await requireNoNodeDrain(c,node.node_id);
     if(ld.paused||ld.phase!=='READY'||Number(ld.epoch)!==Number(d.expected_master_epoch)||
        !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
       fault('STALE_MASTER_EPOCH',409);
@@ -894,8 +897,10 @@ app.post('/v7/git/confirm',jsonRoute(async req=>{
   });
   const verified=proof.verified?proof:fault('REMOTE_PUBLISH_UNCERTAIN_'+proof.error_code,409);
   return transaction(async c=>{
-    await signedAgent(c,node.node_id,agentId,true);
     const ld=await leader(c);
+    await signedAgent(c,node.node_id,agentId,true);
+    // Existing Git publication may be confirmed for reconciliation, even if
+    // the Owner started draining after it was reserved. No NEW reservation.
     if(ld.paused||ld.phase!=='READY'||Number(ld.epoch)!==Number(info.job.epoch)||
        !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
       fault('STALE_MASTER_EPOCH',409);
