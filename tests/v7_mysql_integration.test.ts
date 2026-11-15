@@ -24,7 +24,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(r.code,200,JSON.stringify(r.body));return r.body;
   }
   const nodes=[] as any[];
-  async function edge(i:number){
+  async function edge(i:number,leaderEligible=true){
     const keys=crypto.generateKeyPairSync('ed25519');
     const node_id='node_test_'+i,agent_id='agent_test_'+i;
     const pub=keys.publicKey.export({format:'pem',type:'spki'}).toString();
@@ -48,7 +48,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     }
     const reg=await signed('/v7/agents/register',{agent_id,capabilities:{}});
     assert.equal(reg.code,200,JSON.stringify(reg.body));
-    await owner('APPROVE_AGENT',{agent_id,master_eligible:true,qa_eligible:i>=2});
+    await owner('APPROVE_AGENT',{agent_id,master_eligible:leaderEligible,qa_eligible:i>=2});
     const client={node_id,agent_id,signed,async heartbeat(epoch:number|null=0){
       sequence++;agentSeq++;
       return signed('/v7/nodes/heartbeat',{sequence,boot_id:'boot_test_'+i,expected_master_epoch:epoch,
@@ -68,11 +68,12 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     try {
       await bootstrapDb.query('UPDATE v7_cluster SET bootstrapped_at=UTC_TIMESTAMP(3) WHERE singleton=1');
     } finally {await bootstrapDb.end();}
-    const a=await edge(1),b=await edge(2),c=await edge(3);
+    const a=await edge(1),b=await edge(2),c=await edge(3),d=await edge(4,false);
     let h=await a.heartbeat();
     assert.equal(h.code,200,JSON.stringify(h.body));
     h=await b.heartbeat();assert.equal(h.code,200);
     h=await c.heartbeat();assert.equal(h.code,200);
+    h=await d.heartbeat();assert.equal(h.code,200);
     // Maintenance eligibility comes from durable Central MySQL state, not
     // a self-declared Desktop status or a screenshot of cluster roles.
     const idleNode=await c.signed('/v7/nodes/me',undefined,'GET');
@@ -93,6 +94,42 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const pre=await a.signed('/v7/leadership/reconcile',{agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
       request_id:'rec_'+(++count),manifest_sha256:recovered.body.manifest_sha256});
     assert.equal(pre.code,200,JSON.stringify(pre.body));
+    // Owner can save a short-lived intent for an IDLE noncritical PC,
+    // but NEVER authorizes installer execution or cluster stop.
+    const pilotPayload={plan_id:'plan_pilot_001',node_id:d.node_id,
+      wave_id:'wave_pilot01',target_version:'7.1.0',
+      offer_sha256:'e'.repeat(64),expected_epoch:Number(status.epoch)};
+    const activeReject=await post('/v7/owner/command',{
+      request_id:'role_reject_'+(++count),command:'PLAN_PC_UPDATE',
+      payload:{...pilotPayload,plan_id:'plan_pilot_master',node_id:a.node_id}},admin);
+    assert.equal(activeReject.code,409,'Current Master must never be planned for updates');
+    const oldEpochReject=await post('/v7/owner/command',{
+      request_id:'epoch_reject_'+(++count),command:'PLAN_PC_UPDATE',
+      payload:{...pilotPayload,expected_epoch:Number(status.epoch)-1}},admin);
+    assert.equal(oldEpochReject.code,409,'Stale Owner epoch cannot approve a maintenance intent');
+    const planned=await owner('PLAN_PC_UPDATE',pilotPayload);
+    assert.equal(planned.state.state,'INTENT_ONLY');
+    assert.equal(planned.state.installer_execution_allowed,false);
+    const signedPlan=await d.signed('/v7/nodes/maintenance',undefined,'GET');
+    assert.equal(signedPlan.code,200,JSON.stringify(signedPlan.body));
+    assert.equal(signedPlan.body.node_id,d.node_id);
+    assert.equal(signedPlan.body.intent.plan_id,pilotPayload.plan_id);
+    assert.equal(signedPlan.body.intent.state,'INTENT_ONLY');
+    assert.equal(signedPlan.body.installer_execution_allowed,false);
+    const adminPlans=await fetch(base+'/v7/owner/maintenance',{
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(adminPlans.status,200);
+    assert.ok((await adminPlans.json() as any[]).some(x=>x.plan_id===pilotPayload.plan_id));
+    const parallelReject=await post('/v7/owner/command',{
+      request_id:'plan_conflict_'+(++count),command:'PLAN_PC_UPDATE',
+      payload:{...pilotPayload,plan_id:'plan_conflicting'}},admin);
+    assert.equal(parallelReject.code,409,'Only one unexpired intent per PC is permitted');
+    const canceled=await owner('CANCEL_PC_UPDATE',{plan_id:pilotPayload.plan_id});
+    assert.equal(canceled.state.state,'CANCELLED');
+    const afterCancel=await d.signed('/v7/nodes/maintenance',undefined,'GET');
+    assert.equal(afterCancel.code,200);
+    assert.equal(afterCancel.body.intent,null);
+    assert.equal(afterCancel.body.installer_execution_allowed,false);
     await owner('CREATE_PROJECT',{project_id:'project_integration',display_name:'Integration Test',repository:'example/repo'});
     const plan=await a.signed('/v7/tasks/plan',{request_id:'plan_'+(++count),agent_id:a.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test',project_id:'project_integration',
