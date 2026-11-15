@@ -75,7 +75,10 @@ get('verifyUpdate').addEventListener('click',async()=>{
     const receipt=await api.verifyLocalUpdate();
     get('updateFeedback').textContent=receipt.canceled?'No file selected':
       'Verified offline for '+receipt.nodeId+' in '+receipt.waveId+
-      ': '+receipt.version+'. Installer NOT executed. Seek separate Owner approval.';
+      ': '+receipt.version+'. '+(receipt.alreadyInspected?
+      'Previously inspected signed receipt revalidated.':
+      'New node-signed local inspection receipt saved.')+
+      ' Installer NOT executed. Seek separate Owner approval.';
   }catch(e){get('updateFeedback').textContent='Update blocked: '+String(e.message||e);}
   finally{button.disabled=false;}
 });
