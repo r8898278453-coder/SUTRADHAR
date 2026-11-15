@@ -8,10 +8,10 @@
 'use strict';
 const {app,BrowserWindow,Menu,Tray,shell,ipcMain,dialog,safeStorage}=require('electron');
 const fs=require('node:fs');
-const crypto=require('node:crypto');
+
 const path=require('node:path');
 const {spawn,spawnSync}=require('node:child_process');
-const {verifyOffer}=require('./update-policy.cjs');
+const {verifyOffer,sha256File}=require('./update-policy.cjs');
 const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
@@ -325,9 +325,8 @@ app.whenReady().then(()=>{
     if(check.error||check.status!==0)throw Error('UPDATE_WINDOWS_SIGNER_VERIFICATION_FAILED');
     // The file can change while Authenticode runs. Fail if bytes differ
     // from the signed Owner manifest after Windows signature verification.
-    if(fs.lstatSync(installer).isSymbolicLink()||
-      crypto.createHash('sha256').update(fs.readFileSync(installer)).digest('hex')!==
-        verified.file_sha256)throw Error('UPDATE_INSTALLER_CHANGED_DURING_VERIFICATION');
+    if(sha256File(installer)!==verified.file_sha256)
+      throw Error('UPDATE_INSTALLER_CHANGED_DURING_VERIFICATION');
     return {verifiedOffline:true,installed:false,version:verified.version,
       kind,waveId:verified.wave_id,nodeId:verified.device_node_id,
       sha256:verified.file_sha256,
