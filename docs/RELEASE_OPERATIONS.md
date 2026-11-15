@@ -155,7 +155,7 @@ A Desktop update should never trigger a Hostinger deployment; a Central-only rel
 
 ## 10. Current implementation gaps before the promised owner UX
 
-**NOT IMPLEMENTED/ACCEPTED:** reproducible lockfile/fully isolated workspaces; application source extraction, signed/published release workflows and production selective CI; release/central-production branch creation/protection/promoter; owner release approval UI and immutable deployment receipts; signed installer and updater; OS key vault; first-run enrollment wizard; production migration/backup/restore flow; live Hostinger staging; production rollback controls; real 2-PC and 8–10-PC evidence; full v7 71-case acceptance. No one-click install/update/rollback claim until these are delivered and tested.
+**NOT IMPLEMENTED/ACCEPTED:** independent security audit of the now-committed npm lockfiles and fully isolated app workspaces; application source extraction, signed/published release workflows and production selective CI; release/central-production branch creation/protection/promoter; owner release approval UI and immutable deployment receipts; signed installer and updater; OS key vault; first-run enrollment wizard; production migration/backup/restore flow; live Hostinger staging; production rollback controls; real 2-PC and 8–10-PC evidence; full v7 71-case acceptance. No one-click install/update/rollback claim until these are delivered and tested.
 
 Use [Implementation Tracker](IMPLEMENTATION_TRACKER.md) for scope-specific evidence, [Owner Setup](OWNER_SETUP_AND_DEPLOYMENT.md) for installation, [ADR](ADR_001_MONOREPO_TWO_APPS.md) for structural decisions, and [V7 Acceptance Matrix](V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) for completion gates.
 

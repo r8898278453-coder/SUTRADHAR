@@ -57,7 +57,7 @@
 | TEST-02 | P1 | Real E2E tests | PARTIAL — DOCKER + LOCAL GIT VERIFIED | Actual Docker integration tests for both forward patch and rollback restored tree; local bare Git proves first-parent rollback branch and unchanged main. GitHub PR creation/review/merge mocked REST only; no live target acceptance. |
 | DOC-01 | P1 | Accurate documentation | CODED / CI PENDING | This tracker, implementation log and revised `IMPLEMENTATION_STATE.md`; keep statuses evidence-based. |
 | OPS-01 | P1 | CI required checks & branch protection | OWNER ACTION | Configure required PR checks, rules and secrets. No unauthorized history rewrite or force push. |
-| OPS-02 | P2 | Reproducible dependencies | BLOCKED | No npm lockfile, floating `@google/genai: latest`, incomplete Python dependency specification. |
+| OPS-02 | P2 | Reproducible dependencies | PARTIAL / CI VERIFIED | Root/Desktop npm v3 locks committed; exact @google/genai 3.3.0; Linux/Windows npm ci verified. Independent dependency audit, Python locking and isolated app workspaces pending. |
 
 ## Release gates (all must pass; no shortcuts)
 
@@ -195,3 +195,21 @@ Operational instructions: [v7/README.md](../v7/README.md). Canonical acceptance 
 - This lock check protects dependency provenance but **does not** prove installed package signatures, identify all supply-chain vulnerabilities, or replace real release approval.
 
 **Production acceptance:** Windows signing, protected GitHub reviewers, actual Hostinger staging and encrypted restore, real-device OS vault, signed update rollback, physical 2–10 PC trial and all 71 acceptance cases remain not run.
+
+## 15 November 2026 — Committed locks and actual disposable MySQL restore
+
+This is the latest state and supersedes older historical entries saying npm lockfiles do not exist or the AI SDK still floats as latest.
+
+| Release gate | Current verified evidence | Outstanding production requirement |
+| --- | --- | --- |
+| Root npm dependency lock | package-lock.json committed; 348 npm package entries with integrity; CI npm ci | Independent security/licenses audit and Owner PR review |
+| Desktop npm dependency lock | apps/desktop/package-lock.json committed; 283 entries; Electron 45.3.1 / builder 26.18.0; Windows CI npm ci and unsigned QA build | Real trusted signing certificate and physical installer acceptance |
+| MySQL recovery tool | Disposable MySQL 8 CI successfully executes mysqldump, encrypted backup, authentication, empty staging restore and original-versus-restored rows | Live Hostinger staging/off-host backup, independent restore rehearsal and recovery timing evidence |
+| Dependency integrity workflow | Reads committed lockfiles directly on Windows and Linux; no candidate regeneration or privileged file overwrite | High-severity advisory review and approved production dependency baseline |
+
+Lockfile SHA-256 for review comparison:
+
+- Root: 14fd124ae3ae40fbd0b516ba8b01fb7372eab31c62719cd7eea600c41f68722a
+- Desktop: b4d305eb2abde14ddc42142391c3f7e528ef0a5af55cdc1ab140ec84c727c1d9
+
+No Hostinger deployment, live MySQL restore, production Windows signing, automatic updater, physical multi-PC test or PR merge was performed.

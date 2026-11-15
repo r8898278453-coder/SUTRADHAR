@@ -69,3 +69,13 @@ The Owner then powers down the Master **on staging only** and allows the ~180-se
 **NOT IMPLEMENTED:** complete signed auto-updater/rollback distribution, privileged production migration wizard, sealed-vault worker QA signing bridge and release-only deployment pipeline.
 
 Do not merge or deploy the draft PR without separate Owner approval. See [Owner setup](OWNER_SETUP_AND_DEPLOYMENT.md), [Release operations](RELEASE_OPERATIONS.md), [V7 acceptance matrix](V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md), and [Implementation tracker](IMPLEMENTATION_TRACKER.md).
+
+## 15 November 2026 — CI-only MySQL restore and dependency lock evidence
+
+**Source improvements on Draft PR #1, not live deployment:**
+
+- Both npm v3 lockfiles (root 348 packages; Desktop 283 packages) are now committed on the development branch. Main, branch protection and production signer have not changed. Linux, Windows and MySQL CI use committed locks and npm ci.
+- Real MySQL 8 disposable integration now exercises mysqldump, AES-256-GCM encrypted backup, verification, restore into a different empty staging-test database, row-level equivalence, target-approval rejection and non-empty restore refusal. This is **not a live Hostinger backup or disaster-recovery rehearsal**.
+- The dependency workflow reads committed lockfiles directly, rather than replacing them with CI-generated proposals. Independent advisory/license assessment, Owner-approved stable release, Windows signing certificate, protected staging setup, physical-PC failover and all 71 acceptance gates remain pending.
+
+**Independent review:** see [Dependency Lock Review](DEPENDENCY_LOCK_REVIEW_V7.md). Do not interpret the disposable test database as evidence of Hostinger account access.

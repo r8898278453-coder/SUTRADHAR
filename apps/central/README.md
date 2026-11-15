@@ -15,7 +15,7 @@ Use the **GitHub monorepo/root workspace** flow, NOT the app-folder Root directo
 | Entry file | **apps/central/dist/server.cjs** |
 | Health | **https://STAGING-DOMAIN/v7/health** |
 
-This build only outputs Central server and static UI, version manifest, and v7 schema. It intentionally does not bundle Electron, PC agent, QA tools or Python/Docker. Root npm dependencies still include existing legacy v6 and desktop development dependencies; full standalone dependency isolation and a lockfile remain pending.
+This build only outputs Central server and static UI, version manifest, and v7 schema. It intentionally does not bundle Electron, PC agent, QA tools or Python/Docker. Root/Desktop npm v3 lockfiles are now committed and checked by clean npm ci on Linux and Windows. The Central build still shares the monorepo's legacy dependencies; standalone Central dependency isolation and independent vulnerability approval remain pending.
 
 **Never attach a production Hostinger website to the draft fix branch or ordinary main.** Hostinger's GitHub integration can automatically deploy whenever the selected branch receives a push. The approved release-only production branch/workflow is not configured yet. This is a staged build target, not permission to deploy.
 
@@ -24,7 +24,7 @@ This build only outputs Central server and static UI, version manifest, and v7 s
 From repository root, with Node.js 22 and a controlled test environment:
 
 ~~~sh
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 npm run lint
 npm test
 npm run build:central

@@ -112,7 +112,7 @@ See [ADR](docs/ADR_001_MONOREPO_TWO_APPS.md) and [release policy](docs/RELEASE_O
 Run these **only on a trusted development machine**, not as a supposed non-developer installation recipe:
 
 ~~~bash
-npm install
+npm ci
 npm run lint
 npm test
 npm run build
@@ -128,7 +128,7 @@ Current combined scripts are defined in [package.json](package.json). The [v7 ru
 
 **Latest implementation slice:** Windows Authenticode signing gate, OS-safeStorage encrypted Desktop identity (new packaged secure-agent), pinned offline signed update verification, AES-256-GCM backup/staging-only restore and read-only Hostinger/physical-PC evidence tools have been added. **Code/tests are not real account/hardware acceptance.** See the [release checklist](docs/PRODUCTION_READINESS_V7_2026-11-12.md).
 
-Before calling SUTRADHAR "one-click" or "production ready" we still need: an independently deployable Central app; reproducible locked dependencies; safe reviewed migrations and proven backup/restore; protected Owner-gated promotion; a Windows installer with secure machine-key storage and a verified updater; an enrollment wizard and reliable background startup; actual multi-PC failover; browser-provider-permitted workflows; real GitHub PR/QA evidence; and completed acceptance gates. The latest CI results cover only their stated scope, **not** full real-world acceptance.
+Before calling SUTRADHAR "one-click" or "production ready" we still need: independently deployable Central production acceptance; **security approval of committed, CI-verified npm locks**; safe reviewed migrations and proven backup/restore; protected Owner-gated promotion; a Windows installer with secure machine-key storage and a verified updater; an enrollment wizard and reliable background startup; actual multi-PC failover; browser-provider-permitted workflows; real GitHub PR/QA evidence; and completed acceptance gates. The latest CI results cover only their stated scope, **not** full real-world acceptance.
 
 **The draft v7 implementation is under [PR #1](https://github.com/r8898278453-coder/SUTRADHAR/pull/1). Keep it unmerged until explicit Owner approval.**
 

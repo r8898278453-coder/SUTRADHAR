@@ -19,9 +19,9 @@
 From the repository root with Node.js 22:
 
 ~~~sh
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 npm run build:desktop
-npm install --prefix apps/desktop --no-audit --no-fund
+npm ci --prefix apps/desktop --no-audit --no-fund
 npm --prefix apps/desktop run start
 ~~~
 
@@ -66,7 +66,7 @@ Security regression tests: `tests/desktop_signer_bridge.test.cjs`, `tests/deskto
 - The **one-time enrollment code stays in Electron main process** and is sent directly to Central HTTPS using apps/desktop/enrollment.cjs. The agent's IPC asks only for the enrollment outcome, and the parent checks Central's matching node identity/Owner approval response. It never puts the grant in agent environment, argv, or IPC replies.
 - Windows DPAPI protects identity from other OS users, **not necessarily other apps running under the same Windows account**. Hardware-backed code signing and real physical PC compromise/restore tests remain required.
 - Electron's synchronous safeStorage APIs are deprecated in current supported versions and need a reviewed migration to the async encryption API before upgrading to a runtime that removes the synchronous interface. Do not silently upgrade to Electron 46 without that work.
-- Dependencies still need committed Owner-reviewed root + Desktop lockfiles. The GitHub review-only workflow generates candidate files and tests clean installs on Linux/Windows, **without changing the PR source or granting production approval**.
+- Root + Desktop npm v3 lockfiles are **committed in the draft branch** and verified by clean Linux/Windows npm ci directly from source. The Owner/independent reviewer must still evaluate vulnerabilities, licenses and software provenance; a green CI build does **not** authorize a signed release.
 
 Reference: [Electron supported release policy](https://www.electronjs.org/docs/latest/tutorial/electron-timelines) and [safeStorage security semantics](https://www.electronjs.org/docs/latest/api/safe-storage).
 

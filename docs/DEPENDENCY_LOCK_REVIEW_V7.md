@@ -1,35 +1,40 @@
-# SUTRADHAR — Dependency Lockfile Review Gate
+# SUTRADHAR — Reviewed dependency lockfile gate
 
-**14 November 2026 | Draft PR only | Not production accepted**
+**Updated 15 November 2026 | Draft PR #1 | Not a production-release approval**
 
-## Current implementation
+## Current facts
 
-- Root @google/genai was a floating **latest** dependency and has been pinned to **3.3.0** from previously tested Linux/Windows candidate builds.
-- Desktop already pins Electron 45.3.1 and electron-builder 26.18.0.
-- The review-only GitHub workflow **Dependency Lockfile Proposal (review-only)** generates root and Desktop npm v3 lockfiles and executes independent clean `npm ci --ignore-scripts` checks on Windows and Linux.
-- The **check:dependency-locks** command verifies manifest-to-lock consistency, npm registry HTTPS resolution, recorded package integrity, and exact security-sensitive version pins.
-- The Owner-protected Windows signing workflow requires **committed lockfiles** and independently rechecks them **before** `npm ci`. An unsigned QA build is not an approved installer.
+- Root package-lock.json and apps/desktop/package-lock.json are committed to the draft feature branch.
+- CI validates their npm v3 structure, manifest pairing, HTTPS npm registry origins and per-package integrity fields before installing any packages.
+- Windows and Linux run clean npm ci directly from these committed source files. The previous temporary artifact generator has been replaced in automated checks; the old candidate artifact remains as historical bootstrap evidence.
+- The signed release workflow requires the same locks and a zero-high/critical-advisory npm audit result, plus an authorized certificate, Owner approval and exact stable tagged commit.
+- A disposable MySQL 8 CI job now proves the encrypted backup and empty staging restore with real database records, but no Hostinger data was accessed.
 
-## Owner-facing review (no terminal or credentials)
+## Candidate provenance
 
-1. Open [Draft PR #1](https://github.com/r8898278453-coder/SUTRADHAR/pull/1) and its newest green **Dependency Lockfile Proposal** workflow. Open the artifact named **sutradhar-lockfile-candidate**. This is a proposal, **not a signed installer**.
-2. Ask the independent reviewer to examine `package.json`, `package-lock.json`, `apps/desktop/package.json`, and `apps/desktop/package-lock.json`. The generated files should correspond to **exactly the source SHA that was reviewed**.
-3. Reviewer checks direct dependency versions, known security advisories, unusual new packages, license obligations, external install scripts and any changes to the production runtime surface. A passing `npm ci` proves clean installation from the locks, not that the dependency set is free of vulnerabilities.
-4. The engineer commits the **exact reviewed lockfiles** on the existing draft branch; rerun the same Linux and Windows CI checks against that commit and compare artifact checksums. No automatic dependency bot commit or privileged PR workflow is allowed.
-5. Only after the Owner and independent QA review, and GitHub branch/environment protection exists, may the signing workflow use those committed locks. Lockfile approval **does not** approve Hostinger deployment, production installation or database migration.
+| File | Nonroot packages | SHA-256 of exact committed candidate |
+| --- | ---: | --- |
+| package-lock.json | 348 | 14fd124ae3ae40fbd0b516ba8b01fb7372eab31c62719cd7eea600c41f68722a |
+| apps/desktop/package-lock.json | 283 | b4d305eb2abde14ddc42142391c3f7e528ef0a5af55cdc1ab140ec84c727c1d9 |
 
-## Current acceptance status
+**Dependency pins:** @google/genai 3.3.0, Electron 45.3.1 and electron-builder 26.18.0. These are exact direct-dependency pins; transitive packages are pinned in the npm integrity lockfiles. Passing CI is not equivalent to an independent vulnerability review.
+
+## Independent reviewer / Owner checklist
+
+1. Open [Draft PR #1](https://github.com/r8898278453-coder/SUTRADHAR/pull/1), review exact source lockfile changes and latest [GitHub Actions](https://github.com/r8898278453-coder/SUTRADHAR/actions).
+2. Examine new direct/transitive packages, lockfile registry domains, integrity hashes, npm lifecycle scripts, license obligations and relevant security advisories. Confirm trusted Electron support and exact SDK/API compatibility.
+3. Compare the lockfile SHA-256 values shown above with a fresh downloaded copy from the reviewed commit. Re-run Linux and Windows clean npm ci on exact approved SHA.
+4. Require a second independent GitHub review under main branch protection. No Owner-held Windows signing private key should be available to an unreviewed PR job.
+5. Treat any later dependency or lockfile change as requiring a fresh audit and exact reviewed commit, not an automatic release.
+
+## Acceptance status
 
 | Gate | Status |
 | --- | --- |
-| Pin previously floating AI SDK | **CODED**; exact version 3.3.0 |
-| Generate candidate root/Desktop lockfiles | **CODED**, CI artifact |
-| Clean Linux/Windows candidate installation | **CI job**; check exact latest commit run |
-| Verify registry integrity and manifest pairing | **CODED**, included in CI/release flow |
-| Independently review vulnerabilities/licenses | **NOT COMPLETE** |
-| Commit reviewed root + Desktop lockfiles | **NOT COMPLETE** |
-| Run actual signed release from protected environment | **BLOCKED** |
-
-**Do not put the certificate private key, tokens or credentials in a candidate archive, issue comment or repository file.**
+| Committed npm locks + manifest/integrity validation | CODED / CI-VERIFIED |
+| Windows/Linux clean install + security/regression tests | CI-VERIFIED on the exact checked commit |
+| Independent known-vulnerability, license and supply-chain approval | NOT APPROVED |
+| Signed production installer with protected certificate | NOT RUN |
+| Live Hostinger backup/restore, multi-PC acceptance and approved release | NOT RUN |
 
 See [Owner provisioning](OWNER_PROVISIONING_RUNBOOK.md), [Production readiness](PRODUCTION_READINESS_V7_2026-11-12.md) and [Release operations](RELEASE_OPERATIONS.md).
