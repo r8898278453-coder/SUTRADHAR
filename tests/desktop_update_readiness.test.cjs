@@ -109,10 +109,12 @@ test('Owner intent is shown only when signed, epoch-matching, unexpired and stil
     {...valid,installer_execution_allowed:true},
     {...valid,node_id:'node_'+'b'.repeat(32)},
     {...valid,intent:{...intent,state:'STALE_EPOCH'}},
+    {...valid,intent:{...intent,state:'DRAINING',fence_active:true}},
+    {...valid,intent:{...intent,state:'DRAINED',fence_active:true}},
     {...valid,intent:{...intent,expected_epoch:16}},
     {...valid,intent:{...intent,offer_sha256:'not-hex'}},
     {...valid,intent:{...intent,expires_at:'2026-11-15 11:59:59.000'}}
   ])await assert.rejects(checkReadiness({...args,now,
     fetcher:makeFetch(me,cluster,[],broken)}),
-    /OWNER_INTENT_RESPONSE_INVALID|OWNER_INTENT_STALE_OR_INVALID|OWNER_INTENT_EXPIRED/);
+    /OWNER_INTENT_RESPONSE_INVALID|OWNER_INTENT_STALE_OR_INVALID|OWNER_INTENT_EXPIRED|PC_DRAIN_FENCED/);
 });
