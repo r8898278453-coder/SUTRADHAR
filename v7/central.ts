@@ -228,11 +228,11 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
       // maintenance lease, installer execution or rollback is granted here.
       const planId=requireId(payload.plan_id),nodeId=requireId(payload.node_id);
       const wave=requireStr(payload.wave_id,64),version=requireStr(payload.target_version,24);
-      const offerSha=requireSha(payload.offer_sha256);
+      const offerSha=payload.offer_sha256;
       if(!/^wave_[a-z0-9][a-z0-9_-]{2,59}$/.test(wave)||
-         !/^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/.test(version)||
-         Number(version.split('.')[0])>999999||
-         !/^[a-f0-9]{64}$/.test(offerSha))
+         !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)||
+         version.split('.').map(Number).some(x=>!Number.isSafeInteger(x)||x>999999)||
+         (typeof offerSha!=='string'||!/^[a-f0-9]{64}$/.test(offerSha)))
         fault('MAINTENANCE_PLAN_FIELDS_INVALID',400);
       const target=await one(c,'SELECT node_id,state FROM v7_nodes WHERE node_id=? FOR UPDATE',[nodeId]);
       if(!target||target.state!=='APPROVED')fault('MAINTENANCE_NODE_NOT_APPROVED',403);
