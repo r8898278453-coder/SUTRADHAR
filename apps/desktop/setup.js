@@ -42,7 +42,7 @@ async function loadStatus(){
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
     get('autostart').checked=Boolean(s.startupEnabled);
-    get('reconcileEnrollment').disabled=s.enrollmentState!=='OWNER_REVIEW_REQUIRED';
+    get('reconcileEnrollment').disabled=!['PREPARED','OWNER_REVIEW_REQUIRED'].includes(s.enrollmentState);
     if(s.enrollmentRequested){get('code').value='';get('code').placeholder='Already enrolled; code not required for later starts';}
   }catch(e){get('status').textContent='Could not read local status: '+String(e.message||e);}
 }
