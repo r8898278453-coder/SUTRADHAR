@@ -64,7 +64,8 @@ async function checkReadiness({
     typeof cluster.master_agent_id!=='string'||!ID.test(cluster.master_agent_id)||
     cluster.phase!=='READY'||cluster.paused!==false||
     !Array.isArray(cluster.backups)||cluster.backups.length!==2||
-    cluster.backups.some(id=>id!==null&&(typeof id!=='string'||!ID.test(id)))||
+    // Do not remove even a non-critical PC while Backup 1 or 2 is absent.
+    cluster.backups.some(id=>typeof id!=='string'||!ID.test(id))||
     new Set([cluster.master_agent_id,...cluster.backups].filter(Boolean)).size!==
       [cluster.master_agent_id,...cluster.backups].filter(Boolean).length)
     fail('UPDATE_READINESS_CLUSTER_UNHEALTHY');
