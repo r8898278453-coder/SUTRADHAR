@@ -79,6 +79,21 @@ get('verifyUpdate').addEventListener('click',async()=>{
   }catch(e){get('updateFeedback').textContent='Update blocked: '+String(e.message||e);}
   finally{button.disabled=false;}
 });
+get('updateReadiness').addEventListener('click',async()=>{
+  const button=get('updateReadiness');
+  button.disabled=true;
+  get('updateFeedback').textContent='Checking live Central membership and Master/backup roles…';
+  try{
+    const r=await api.checkUpdateReadiness();
+    get('updateFeedback').textContent=
+      'Signed Central check: '+r.node_id+' is non-critical at this moment'+
+      ' (epoch '+r.epoch+'). A role can change immediately. NO installer will run.'+
+      ' Owner approval and fresh physical checks are still required.';
+  }catch(e){
+    get('updateFeedback').textContent='Maintenance BLOCKED: '+String(e.message||e)+
+      '. Do not stop the Master, backups or an unverified PC.';
+  }finally{button.disabled=false;}
+});
 get('reconcileEnrollment').addEventListener('click',async()=>{
   const button=get('reconcileEnrollment');button.disabled=true;
   showFeedback('Checking this same OS-vault identity against Owner-approved Central (read-only)…');
