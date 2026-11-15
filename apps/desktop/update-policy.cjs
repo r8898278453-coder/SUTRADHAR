@@ -9,6 +9,8 @@ const crypto=require('node:crypto'),fs=require('node:fs'),path=require('node:pat
 const V=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const H=/^[0-9a-f]{64}$/;
 const S=/^[0-9a-f]{40}$/;
+const NODE=/^node_[0-9a-f]{32}$/;
+const WAVE=/^wave_[a-z0-9][a-z0-9_-]{2,59}$/;
 function cmp(a,b){
   if(!V.test(a)||!V.test(b))throw Error('UPDATE_STABLE_VERSION_REQUIRED');
   const x=a.split('.').map(Number),y=b.split('.').map(Number);
@@ -16,7 +18,7 @@ function cmp(a,b){
   return 0;
 }
 function verifyOffer({envelope,pinnedPublicKeyPem,installerPath,currentVersion,
-  protocol=7,publisherSubject,now=Date.now(),rolloutApproved=false,kind='update'}){
+  nodeId,protocol=7,publisherSubject,now=Date.now(),rolloutApproved=false,kind='update'}){
   function deny(reason){return {accepted:false,error_code:reason};}
   try{
     if(!rolloutApproved)return deny('OWNER_ROLLOUT_APPROVAL_REQUIRED');
@@ -29,7 +31,8 @@ function verifyOffer({envelope,pinnedPublicKeyPem,installerPath,currentVersion,
     if(!body||typeof body!=='object'||Array.isArray(body)||typeof sig!=='string'||
       sig.length>256||!crypto.verify(null,Buffer.from(JSON.stringify(body)),
         key,Buffer.from(sig,'base64')))return deny('UPDATE_SIGNATURE_INVALID');
-    if(body.schema!==1||body.application!=='desktop'||body.channel!=='stable'||
+    // v1 offers lacked recipient scoping and must never authorize a production PC.
+    if(body.schema!==2||body.application!=='desktop'||body.channel!=='stable'||
       body.type!==kind||!V.test(body.version)||!S.test(body.source_sha)||
       !H.test(body.installer_sha256)||!Number.isSafeInteger(body.installer_bytes)||
       body.installer_bytes<1000||body.installer_bytes>1024*1024*1024||
@@ -41,6 +44,22 @@ function verifyOffer({envelope,pinnedPublicKeyPem,installerPath,currentVersion,
       !Number.isSafeInteger(body.expires_ms)||body.issued_ms>now+120000||
       body.expires_ms<=now||body.expires_ms-body.issued_ms>31*86400000)
       return deny('UPDATE_SIGNED_FIELDS_INVALID');
+    const rollout=body.rollout;
+    if(!rollout||typeof rollout!=='object'||Array.isArray(rollout)||
+      Object.keys(rollout).sort().join('|')!=='node_ids|owner_approved_at_ms|wave_id'||
+      typeof rollout.wave_id!=='string'||!WAVE.test(rollout.wave_id)||
+      !Number.isSafeInteger(rollout.owner_approved_at_ms)||
+      rollout.owner_approved_at_ms>body.issued_ms||
+      rollout.owner_approved_at_ms<body.issued_ms-7*86400000||
+      !Array.isArray(rollout.node_ids)||
+      rollout.node_ids.length<1||rollout.node_ids.length>10||
+      rollout.node_ids.some(id=>typeof id!=='string'||!NODE.test(id))||
+      new Set(rollout.node_ids).size!==rollout.node_ids.length)
+      return deny('UPDATE_SIGNED_ROLLOUT_INVALID');
+    if(typeof nodeId!=='string'||!NODE.test(nodeId))
+      return deny('UPDATE_LOCAL_IDENTITY_REQUIRED');
+    if(!rollout.node_ids.includes(nodeId))
+      return deny('UPDATE_DEVICE_NOT_IN_OWNER_WAVE');
     if(kind==='update'&&cmp(body.version,currentVersion)<=0)return deny('UPDATE_NOT_NEWER');
     if(kind==='rollback'&&(cmp(body.version,currentVersion)>=0||
       body.owner_emergency_rollback_approved!==true))
@@ -55,7 +74,8 @@ function verifyOffer({envelope,pinnedPublicKeyPem,installerPath,currentVersion,
     // This validates Owner metadata and bytes. Windows Authenticode validation
     // of the downloaded EXE is a separate mandatory gate before installation.
     return {accepted:true,version:body.version,source_sha:body.source_sha,
-      file_sha256:h,requires_windows_authenticode:true,automatic_install:false};
+      file_sha256:h,wave_id:rollout.wave_id,device_node_id:nodeId,
+      requires_windows_authenticode:true,automatic_install:false};
   }catch{return deny('UPDATE_VERIFICATION_FAILED');}
 }
 module.exports={verifyOffer,cmp};
