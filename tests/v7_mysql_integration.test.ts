@@ -156,6 +156,22 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(finalDrain.state.installer_execution_allowed,false);
     const signedDrained=await d.signed('/v7/nodes/maintenance',undefined,'GET');
     assert.equal(signedDrained.body.intent.state,'DRAINED');
+    const deniedNewAgent=await d.signed('/v7/agents/register',
+      {agent_id:'agent_fenced_registration',capabilities:{}});
+    assert.equal(deniedNewAgent.code,423);
+    assert.equal(deniedNewAgent.body.error_code,'PC_MAINTENANCE_FENCED');
+    const deniedNewQA=await d.signed('/v7/tasks/qa-receipt',{
+      request_id:'qa_fenced_'+(++count),agent_id:d.agent_id,
+      ticket_id:'ticket_not_ready',
+      candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40),
+      evidence_ref:'sha256:fenced',evidence_sha256:'d'.repeat(64),passed:true});
+    assert.equal(deniedNewQA.code,423);
+    assert.equal(deniedNewQA.body.error_code,'PC_MAINTENANCE_FENCED');
+    const deniedGitReserve=await d.signed('/v7/git/reserve',{
+      request_id:'git_fenced_'+(++count),agent_id:d.agent_id,
+      expected_master_epoch:Number(status.epoch),ticket_id:'ticket_not_ready'});
+    assert.equal(deniedGitReserve.code,423);
+    assert.equal(deniedGitReserve.body.error_code,'PC_MAINTENANCE_FENCED');
     await owner('CREATE_PROJECT',{project_id:'project_integration',display_name:'Integration Test',repository:'example/repo'});
     const plan=await a.signed('/v7/tasks/plan',{request_id:'plan_'+(++count),agent_id:a.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test',project_id:'project_integration',
