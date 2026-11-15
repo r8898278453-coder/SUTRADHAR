@@ -20,7 +20,8 @@ const {createVault}=require('./os-vault.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 const {inspect:inspectEnrollment,prepare:prepareEnrollment,
-  markSubmitted:markEnrollmentSubmitted,requireSubmitted}=require('./enrollment-receipt.cjs');
+  markSubmitted:markEnrollmentSubmitted,requireSubmitted,
+  reconcilePrepared:reconcileEnrollment}=require('./enrollment-receipt.cjs');
 const {installSingleInstanceGuard}=require('./single-instance.cjs');
 
 let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
@@ -131,6 +132,7 @@ function startAgent(){
           reply.result={accepted:true,ownerApprovalRequired:true};
         }else{
           const grant=pendingEnrollmentCode;
+          pendingEnrollmentCode=null; // Single use even if network request fails.
           if(!grant)throw Error('OWNER_ENROLLMENT_GRANT_REQUIRED');
           // Record intent before transmitting anything. After a crash or
           // ambiguous network outcome, only Owner review may reconcile.
@@ -260,6 +262,18 @@ app.whenReady().then(()=>{
     }
     pendingEnrollmentCode=code;startAgent();
     // This means the agent process started, NOT that Central approved the PC.
+    return safeStatus();
+  });
+  ipcMain.handle('sutradhar:reconcileEnrollment',async event=>{
+    verifySender(event);
+    if(!current||!vault||!signer)throw Error(vaultError||'DEVICE_NOT_CONFIGURED');
+    const result=await reconcileEnrollment({
+      dir:nodeDir(),node:signer.snapshot(),centralUrl:current.centralUrl,signer
+    });
+    if(result.accepted===true){
+      pendingEnrollmentCode=null;
+      try{startAgent();}catch{ /* Existing child retries; status shows any further error. */ }
+    }
     return safeStatus();
   });
   ipcMain.handle('sutradhar:setStartup',(event,enabled)=>{
