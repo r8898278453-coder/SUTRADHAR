@@ -17,11 +17,11 @@ const reject=(error_code:string):MaintenanceDecision=>({accepted:false,error_cod
 const id=(s:unknown)=>typeof s==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(s);
 const age=(s:unknown)=>s!==null&&s!==undefined&&
   Number.isSafeInteger(Number(s))&&Number(s)>=0&&Number(s)<=180;
-export function checkMaintenanceIntent({
-  cluster,agents,redundancy,expectedEpoch,nowMs
+function decideMaintenance({
+  cluster,agents,redundancy,expectedEpoch,nowMs,allowExistingWork
 }:{
   cluster:Cluster;agents:Agent[];redundancy:Redundancy[];
-  expectedEpoch:number;nowMs:number;
+  expectedEpoch:number;nowMs:number;allowExistingWork:boolean;
 }):MaintenanceDecision{
   if(!cluster||!Number.isSafeInteger(expectedEpoch)||expectedEpoch<1||
     !Number.isSafeInteger(nowMs)||nowMs<=0||
@@ -48,9 +48,21 @@ export function checkMaintenanceIntent({
     return reject('MAINTENANCE_ACTIVE_MASTER_OR_BACKUP');
   if(agents.some(a=>!age(a.heartbeat_age_seconds)))
     return reject('MAINTENANCE_TARGET_HEARTBEAT_STALE');
-  if(agents.some(a=>a.status!=='IDLE'||a.active_ticket!==null||
+  // Starting a fence is allowed while existing work runs. New claims are
+  // blocked atomically; old leases may checkpoint/finish. DRAINED requires
+  // all work to be idle and reconciled, never forced revocation.
+  if(!allowExistingWork&&agents.some(a=>a.status!=='IDLE'||a.active_ticket!==null||
     !(a.has_live_work_lease===0||a.has_live_work_lease===false)||
     !(a.has_unreconciled_git_job===0||a.has_unreconciled_git_job===false)))
     return reject('MAINTENANCE_TARGET_WORK_UNFINISHED');
   return {accepted:true};
+}
+
+type Params={cluster:Cluster;agents:Agent[];redundancy:Redundancy[];
+  expectedEpoch:number;nowMs:number};
+export function checkMaintenanceIntent(input:Params):MaintenanceDecision{
+  return decideMaintenance({...input,allowExistingWork:false});
+}
+export function checkDrainStart(input:Params):MaintenanceDecision{
+  return decideMaintenance({...input,allowExistingWork:true});
 }
