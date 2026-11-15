@@ -25,11 +25,16 @@ async function refresh(){
   try{maintenance=await request('/v7/owner/maintenance');}catch{}
   const maintenanceReady=Array.isArray(maintenance);
   $('plan-maintenance').disabled=!maintenanceReady;
+  $('start-pc-drain').disabled=!maintenanceReady;
+  $('finalize-pc-drain').disabled=!maintenanceReady;
   $('cancel-maintenance').disabled=!maintenanceReady;
   value('maintenanceCount',maintenanceReady?
     maintenance.length+' records':'Unavailable — schema/health review required');
   rows('maintenance-plans',maintenanceReady?maintenance.map(p=>[
-    p.plan_id,p.node_id,p.wave_id,p.state,p.expected_epoch,date(p.expires_at)]):[]);
+    p.plan_id,p.node_id,p.wave_id,
+    p.state+(Number(p.fence_active)===1?' / OWNER RELEASE REQUIRED':''),
+    p.expected_epoch,
+    Number(p.fence_active)===1?'DURABLE FENCE — no automatic expiry':date(p.expires_at)]):[]);
   $('maintenance-epoch').value=String(c.epoch);
   value('master',c.master_agent_id||'No Master');value('epoch',c.epoch);
   value('phase',c.phase);value('backup1',c.backup1||'None');value('backup2','Backup 2: '+(c.backup2||'None'));
@@ -105,15 +110,38 @@ $('plan-maintenance').onclick=async()=>{
     await refresh();
   }catch(e){message('Maintenance plan BLOCKED: '+e.message,true);}
 };
+async function submitDrain(command,label){
+  const plan_id=$('maintenance-drain-id').value.trim();
+  if(!maintId.test(plan_id)){message('Valid exact plan ID required to manage drain.',true);return;}
+  const description=command==='START_PC_DRAIN'?
+    'start a durable fence blocking NEW tasks (existing work continues)':
+    'mark this PC DRAINED only after Central verifies no unfinished work';
+  if(!confirm('Owner confirmation: '+description+' for '+plan_id+
+    '? This does NOT authorize an installer.'))return;
+  try{
+    const response=await request('/v7/owner/command',{method:'POST',
+      body:JSON.stringify({request_id:'drain_'+crypto.randomUUID().replaceAll('-',''),
+        command,payload:{plan_id}})});
+    message(label+': '+response.state.state+'. Installer execution still NOT approved.');
+    $('maintenance-cancel-id').value=plan_id;
+    await refresh();
+  }catch(e){message(label+' BLOCKED: '+e.message,true);}
+}
+$('start-pc-drain').onclick=()=>submitDrain('START_PC_DRAIN','Durable fence');
+$('finalize-pc-drain').onclick=()=>submitDrain('FINALIZE_PC_DRAIN','Drain validation');
+
 $('cancel-maintenance').onclick=async()=>{
   const plan_id=$('maintenance-cancel-id').value.trim();
   if(!maintId.test(plan_id)){message('Valid exact plan ID required to cancel.',true);return;}
-  if(!confirm('Cancel Owner maintenance intent '+plan_id+'?'))return;
+  if(!confirm('RELEASE Owner maintenance fence for '+plan_id+
+    '? New task claims and leader candidacy may resume immediately. Do not release'+
+    ' if any real PC maintenance is underway. This does NOT install software.'))return;
   try{
     await request('/v7/owner/command',{method:'POST',
       body:JSON.stringify({request_id:'maint_'+crypto.randomUUID().replaceAll('-',''),
         command:'CANCEL_PC_UPDATE',payload:{plan_id}})});
-    message('Maintenance intent cancelled; no installer or agent was touched.');
+    message('Maintenance plan cancelled and any durable task fence RELEASED.'+
+      ' New work may resume. No installer or agent was operated.');
     await refresh();
   }catch(e){message('Cancellation failed: '+e.message,true);}
 };
