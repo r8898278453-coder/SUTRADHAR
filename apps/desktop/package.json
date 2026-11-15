@@ -39,7 +39,9 @@
       "update-policy.cjs",
       "update-trust.json",
       "vault-bridge.cjs",
-      "enrollment.cjs"
+      "enrollment.cjs",
+      "enrollment-receipt.cjs",
+      "single-instance.cjs"
     ],
     "extraResources": [
       {
