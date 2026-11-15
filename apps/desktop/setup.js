@@ -90,7 +90,10 @@ get('updateReadiness').addEventListener('click',async()=>{
     const r=await api.checkUpdateReadiness();
     get('updateFeedback').textContent=
       'Signed Central check: '+r.node_id+' is non-critical at this moment'+
-      ' (epoch '+r.epoch+'). A role can change immediately. NO installer will run.'+
+      ' (epoch '+r.epoch+'). '+(r.owner_intent_present?
+        'Active 5-minute Owner intent '+r.owner_intent_id+' ('+r.owner_intent_wave_id+').':
+        'NO active Owner maintenance intent is recorded.')+
+      ' Roles can change immediately. NO installer will run.'+
       ' Owner approval and fresh physical checks are still required.';
   }catch(e){
     get('updateFeedback').textContent='Maintenance BLOCKED: '+String(e.message||e)+
