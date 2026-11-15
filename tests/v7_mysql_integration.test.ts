@@ -73,6 +73,17 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(h.code,200,JSON.stringify(h.body));
     h=await b.heartbeat();assert.equal(h.code,200);
     h=await c.heartbeat();assert.equal(h.code,200);
+    // Maintenance eligibility comes from durable Central MySQL state, not
+    // a self-declared Desktop status or a screenshot of cluster roles.
+    const idleNode=await c.signed('/v7/nodes/me',undefined,'GET');
+    assert.equal(idleNode.code,200,JSON.stringify(idleNode.body));
+    assert.equal(idleNode.body.node_id,c.node_id);
+    assert.equal(idleNode.body.agents.length,1);
+    assert.equal(idleNode.body.agents[0].status,'IDLE');
+    assert.equal(idleNode.body.agents[0].active_ticket,null);
+    assert.ok(Number(idleNode.body.agents[0].heartbeat_age_seconds)<=180);
+    assert.equal(Number(idleNode.body.agents[0].has_live_work_lease),0);
+    assert.equal(Number(idleNode.body.agents[0].has_unreconciled_git_job),0);
     const cluster=await fetch(base+'/v7/cluster',{headers:{authorization:'Bearer '+admin}});
     const status=(await cluster.json() as any).cluster;
     assert.equal(status.master_agent_id,a.agent_id);assert.equal(status.backup1,b.agent_id);
@@ -94,6 +105,10 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const claim=await b.signed('/v7/tasks/claim',{request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'});
     assert.equal(claim.code,200,JSON.stringify(claim.body));
+    const workingNode=await b.signed('/v7/nodes/me',undefined,'GET');
+    assert.equal(workingNode.code,200,JSON.stringify(workingNode.body));
+    assert.equal(Number(workingNode.body.agents[0].has_live_work_lease),1,
+      'Worker with a live ticket lease is never maintenance-idle');
     const attempted=await b.signed('/v7/tasks/submit',{request_id:'submit_'+(++count),agent_id:b.agent_id,
       ticket_id:'ticket_qa_test',lease_id:claim.body.lease_id,
       expected_master_epoch:Number(status.epoch),
@@ -129,6 +144,10 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       await db.query('UPDATE v7_cluster SET lease_until=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE singleton=1');
       await db.query('UPDATE v7_agents SET last_seen=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 400 SECOND) WHERE agent_id=?',
         [a.agent_id]);
+      const staleNode=await a.signed('/v7/nodes/me',undefined,'GET');
+      assert.equal(staleNode.code,200,JSON.stringify(staleNode.body));
+      assert.ok(Number(staleNode.body.agents[0].heartbeat_age_seconds)>=399,
+        'Maintenance read endpoint must use MySQL server clock, not local uptime');
       const promoted=await b.heartbeat(Number(status.epoch));
       assert.equal(promoted.code,200,JSON.stringify(promoted.body));
       assert.equal(promoted.body.master_agent_id,b.agent_id);
