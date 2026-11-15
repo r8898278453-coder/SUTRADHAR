@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkMaintenanceIntent} from '../v7/maintenance.ts';
+import {checkMaintenanceIntent,checkDrainStart} from '../v7/maintenance.ts';
 const epoch=10,nowMs=Date.parse('2026-11-15T12:00:00Z');
 const cluster={epoch,phase:'READY',paused:0,master_agent_id:'agent_master',
   backup1:'agent_backup1',backup2:'agent_backup2',lease_until_ms:nowMs+120000};
@@ -35,4 +35,15 @@ test('Maintenance intent rejects busy, stale or unreconciled target PC',()=>{
     const res=decide({agents:[{...a('agent_noncritical'),...patch}]});
     assert.equal(res.accepted,false,JSON.stringify(patch));
   }
+});
+
+test('Start drain preserves existing workers while idle finalization waits for completion',()=>{
+  const busy={...a('agent_noncritical'),status:'BUSY',
+    active_ticket:'ticket_123',has_live_work_lease:1};
+  const inputs={...healthy,agents:[busy]};
+  assert.deepEqual(checkDrainStart(inputs),{accepted:true});
+  assert.equal(checkMaintenanceIntent(inputs).error_code,'MAINTENANCE_TARGET_WORK_UNFINISHED');
+  assert.equal(checkDrainStart({...inputs,expectedEpoch:epoch-1}).accepted,false);
+  assert.equal(checkDrainStart({...inputs,agents:[a('agent_backup1')]}).accepted,false);
+  assert.equal(checkDrainStart({...inputs,cluster:{...cluster,backup2:null}}).accepted,false);
 });
