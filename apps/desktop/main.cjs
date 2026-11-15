@@ -12,6 +12,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {spawn,spawnSync}=require('node:child_process');
 const {verifyOffer,sha256File}=require('./update-policy.cjs');
+const {checkReadiness}=require('./update-readiness.cjs');
 const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
@@ -287,6 +288,17 @@ app.whenReady().then(()=>{
   });
   ipcMain.handle('sutradhar:openDashboard',event=>{
     verifySender(event);showDashboard();return {opened:true};
+  });
+  ipcMain.handle('sutradhar:checkUpdateReadiness',async event=>{
+    verifySender(event);
+    if(!app.isPackaged||!current||!vault||!signer)
+      throw Error('UPDATE_READINESS_REQUIRES_PACKAGED_CONFIGURED_PC');
+    const node=vault.read();
+    if(!node||!requireSubmitted({
+      dir:nodeDir(),node,centralUrl:current.centralUrl
+    }))throw Error('UPDATE_READINESS_REQUIRES_ENROLLED_IDENTITY');
+    return checkReadiness({centralOrigin:current.centralUrl,
+      nodeId:node.node_id,agentIds:current.agentIds,signer});
   });
   ipcMain.handle('sutradhar:verifyLocalUpdate',async(event)=>{
     verifySender(event);
