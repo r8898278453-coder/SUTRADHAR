@@ -39,7 +39,7 @@ test('Node key, node ID and Central origin are immutable bindings across restart
     prepare(args);markSubmitted(args);
     assert.equal(requireSubmitted({...args,node:{...identity}}),true);
     assert.throws(()=>requireSubmitted({...args,node:node()}),/MISMATCH/);
-    assert.throws(()=>requireSubmitted({...args,node:{...identity,node_id:'node_'+('a'.repeat(32))}),/MISMATCH/);
+    assert.throws(()=>requireSubmitted({...args,node:{...identity,node_id:'node_'+('a'.repeat(32))}}),/MISMATCH/);
     assert.throws(()=>requireSubmitted({...args,centralUrl:'https://new.example.com'}),/MISMATCH/);
     assert.throws(()=>requireSubmitted({...args,node:null}),/IDENTITY_UNAVAILABLE/);
     assert.throws(()=>requireSubmitted({...args,centralUrl:'http://example.com'}),/ORIGIN_INVALID/);
