@@ -90,3 +90,14 @@ See [release readiness checklist](../../docs/PRODUCTION_READINESS_V7_2026-11-12.
 - Independent Git/QA/Owner release controls.
 
 See [Owner deployment guide](../../docs/OWNER_SETUP_AND_DEPLOYMENT.md), [Release policy](../../docs/RELEASE_OPERATIONS.md), and [ADR](../../docs/ADR_001_MONOREPO_TWO_APPS.md).
+
+
+## 15 November 2026 — Identity-bound enrollment and single-instance recovery
+
+**CODED; real Windows installer acceptance NOT RUN.** The packaged Electron main process now acquires a single-instance lock per OS user profile. A second launch focuses the first UI instead of starting a duplicate agent.
+
+First-time enrollment persists a receipt **before the network POST**. PREPARED means an attempt may have reached Central, never confirmed; SUBMITTED means a matching Central enrollment acknowledgment was received, **not that the Owner approved it**. The receipt contains node ID, public-key SHA256, original Central HTTPS origin and status, not an enrollment grant or a private key.
+
+If interrupted, the UI shows Owner recovery required rather than silently enrolling another node. The Owner verifies the original node ID in Central, approves it if legitimate and clicks **Recheck uncertain enrollment**. That sends only a signed read-only GET to /v7/nodes/me; Central independently requires an approved node and matching signed key. On success, the same identity resumes; on pending/unrecognized/mismatched identities it stays blocked. Never delete or manually edit the encrypted identity or receipt. Legacy timestamp-only receipts require Owner-reviewed migration.
+
+Pure tests cover this policy. Real Windows DPAPI, power loss, multiple OS users, app signing and physical multi-PC acceptance are still required.

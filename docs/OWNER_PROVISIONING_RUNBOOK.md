@@ -70,3 +70,12 @@ If external MySQL access is unavailable on Hostinger shared hosting, use hPanel'
 To resume actual environment-specific work, provide **only non-secret status**: “staging domain ready” and its *public* HTTPS URL, “Windows certificate available: yes/no” (no certificate content), “GitHub environment reviewers enabled: yes/no”, and “2 physical PCs available: yes/no”. All actual passwords/private keys should remain in secure Hostinger/GitHub settings and not in this conversation.
 
 [Main README](../README.md) · [Full Owner setup](OWNER_SETUP_AND_DEPLOYMENT.md) · [Release acceptance](PRODUCTION_READINESS_V7_2026-11-12.md) · [Technical tracker](IMPLEMENTATION_TRACKER.md)
+
+
+## 15 November 2026 — Interrupted PC enrollment recovery
+
+If Desktop says **Submission uncertain — Owner review required**, inspect the **same node ID** and approval state in Central. Do not remove the encrypted OS vault or request a new node to bypass the issue.
+
+For a legitimate already-registered node, the Owner can approve that node and the PC user may click **Recheck uncertain enrollment**. Only signed, read-only proof of the existing approved node finalizes the receipt; no new grant is submitted. If no matching approved node exists, the app must remain blocked until an independent Owner-guided recovery or rotation procedure is designed and approved.
+
+A second Desktop instance is now denied a second local agent process. Real Windows reboot, installer, single-instance and crash tests are NOT RUN.

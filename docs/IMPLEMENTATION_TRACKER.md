@@ -213,3 +213,17 @@ Lockfile SHA-256 for review comparison:
 - Desktop: b4d305eb2abde14ddc42142391c3f7e528ef0a5af55cdc1ab140ec84c727c1d9
 
 No Hostinger deployment, live MySQL restore, production Windows signing, automatic updater, physical multi-PC test or PR merge was performed.
+
+
+## 15 November 2026 — Enrollment crash and duplicate-instance protection
+
+| Safety gate | Implemented on Draft PR #1 | Still pending |
+| --- | --- | --- |
+| Single identity owner | Electron single-instance guard, tested pure policy | Real Windows multi-user/tray test |
+| Durable receipt | PREPARED before request, SUBMITTED only after matching Central ACK; OS-vault key SHA and HTTPS origin bound | Real crash/reboot/DPAPI test |
+| Uncertain grant result | No automatic repeat POST or rekey; user UI reports Owner review | Physical network-partition test |
+| Explicit repair | Signed read-only Central /v7/nodes/me check, requiring same Owner-approved identity | Owner-approved recovery/rotation wizard |
+| Malformed/legacy receipt | Fail closed; no silent legacy marker acceptance | Owner-guided migration |
+| CI checks | Enrollment receipt, signed recheck and single-instance negative tests | Signed installer and physical PC acceptance |
+
+No Hostinger deployment, production Windows signing, owner-approved release, actual multi-PC failover or PR merge was performed.

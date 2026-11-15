@@ -79,3 +79,12 @@ Do not merge or deploy the draft PR without separate Owner approval. See [Owner 
 - The dependency workflow reads committed lockfiles directly, rather than replacing them with CI-generated proposals. Independent advisory/license assessment, Owner-approved stable release, Windows signing certificate, protected staging setup, physical-PC failover and all 71 acceptance gates remain pending.
 
 **Independent review:** see [Dependency Lock Review](DEPENDENCY_LOCK_REVIEW_V7.md). Do not interpret the disposable test database as evidence of Hostinger account access.
+
+
+## 15 November 2026 — Extra physical Windows acceptance scenarios
+
+New Desktop implementation binds an encrypted node identity to a durable PREPARED/SUBMITTED enrollment receipt and holds a single-instance lock. An explicit **Recheck uncertain enrollment** button performs signed read-only proof of the original approved Central node, without resending an enrollment code.
+
+On real physical Windows PCs, acceptance must additionally cover: second app launch, reboot during enrollment, Central network timeout, wrong Central origin, changed/missing encrypted key, copied/altered receipt, wrong node ID, Owner approval before recheck, and old-instance shutdown. Ensure PREPARED never appears approved and never causes duplicated node registrations.
+
+These are coded/tested local safeguards, NOT completed physical Windows acceptance or a substitute for Owner-approved identity migration/rotation.
