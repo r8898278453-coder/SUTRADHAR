@@ -17,7 +17,12 @@ async function loadStatus(){
       ['PC',s.pcName||'Not configured'],
       ['Node ID',s.nodeId||'Not created'],
       ['Agent IDs',(s.agentIds||[]).join(', ')||'Not created'],
-      ['Enrollment request',s.enrollmentRequested?'Submitted to Central; Owner approval may still be pending':'Not confirmed'],
+      ['Enrollment request',s.enrollmentState==='SUBMITTED'?
+        'Submitted to Central; Owner approval may still be pending':
+        s.enrollmentState==='OWNER_REVIEW_REQUIRED'?'BLOCKED — Owner must review identity/receipt':
+        s.enrollmentState==='PREPARED'?'Submission uncertain — Owner review required':
+        'Not yet submitted'],
+      ['Enrollment recovery issue',s.enrollmentError||'None reported'],
       ['Local process',s.agentProcessRunning?'Running':'Not running'],
       ['Central acknowledgment',s.centralReport?.acknowledgedNow?
         'Agent reports heartbeat accepted by Central (verify in Owner dashboard)' :
