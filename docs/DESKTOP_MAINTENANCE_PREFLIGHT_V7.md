@@ -35,3 +35,10 @@ Read [Owner-signed rollout waves](SIGNED_DESKTOP_ROLLOUT_WAVES.md), [Owner provi
 The Desktop now performs a **third signed GET** to `/v7/nodes/maintenance` when checking Master/backup safety. It reports whether an unexpired, same-epoch Owner INTENT_ONLY record exists for that node, and fails closed on mismatched node, stale epoch or malformed expiry. Central's node response also contains server-clock heartbeat age, worker-lease and unresolved Git-job evidence. The PC refuses a noncritical status if any agent is stale, busy or working.
 
 Owner can create/cancel a five-minute intention through the Central dashboard. This is **not a maintenance lease or installer authorization** and will not prevent roles/work from changing after the check. [Detailed Owner guide](OWNER_PC_MAINTENANCE_INTENT_V7.md).
+
+
+## 15 November 2026 — Persistent Central drain status
+
+The signed `/v7/nodes/maintenance` response also reports DRAINING/DRAINED states and a persistent `fence_active` flag, including after the earlier five-minute intent expires. The Desktop update-readiness checker **blocks** on active drain status rather than reporting a normal noncritical PC ready for installation. An active fence is a server-side task admission restriction only, never Windows executable permission.
+
+The Central Owner UI can START, FINALIZE and CANCEL a fence. For safe worker continuation and Owner-only release steps, see [PC drain fence guide](PC_DRAIN_FENCE_V7.md).

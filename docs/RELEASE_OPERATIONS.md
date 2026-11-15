@@ -177,3 +177,10 @@ This **does not complete** automatic installer distribution, staged wave orchest
 The Desktop adds a signed local Central preflight that rejects updates on active Master/Backup 1/Backup 2 nodes, unhealthy/paused clusters, missing backups, mismatched enrolled agents and unreachable Central. It also saves a node-signed local audit receipt after a valid Owner-signed v2 EXE offer passes SHA256 and Windows Authenticode checks. A duplicate offer validates the previously recorded receipt rather than implying new approval. **Neither feature executes installers, drains tasks, leases the node, protects a maintenance slot, or constitutes hardware-backed replay protection.** Real signed rollback and owner-gated install remain NOT IMPLEMENTED.
 
 Read [Windows PC maintenance preflight](DESKTOP_MAINTENANCE_PREFLIGHT_V7.md) before planning physical pilot waves.
+
+
+## 15 November 2026 — Task admission fencing before any future installer
+
+Central now separates five-minute INTENT_ONLY from durable Owner-initiated DRAINING/DRAINED states. MySQL leader-row serialization ensures a claim cannot be granted after START commits, and election excludes actively fenced nodes. Existing leases finish/checkpoint or require reconciliation; nothing is forcibly revoked. FINALIZE requires idle/clean Central evidence and does **not** grant OS install permission. Only explicit Owner cancellation releases a fence; no automatic five-minute timeout can reopen work.
+
+No signed installer runner, identity-preserving rollback or physical Windows acceptance is included. See [Owner drain-fence runbook](PC_DRAIN_FENCE_V7.md).

@@ -263,3 +263,18 @@ Current unsigned alpha has `update-trust.json` unconfigured and cannot accept a 
 | Installer execution and post-update acceptance | **NOT IMPLEMENTED**; all responses explicitly `installer_execution_allowed:false` | Identity-preserving installer runner, rollback, physical Windows signoff |
 
 [Owner maintenance-intent guide](OWNER_PC_MAINTENANCE_INTENT_V7.md). This is not production deployment or release approval.
+
+
+## 15 November 2026 — Atomic task admission fence / graceful worker drain (Draft PR #1)
+
+| Gate | Code/test coverage | Remaining external proof |
+| --- | --- | --- |
+| Persistent node fence | New `v7_pc_maintenance_fences` table; no automatic expiration after five-minute intent | Hostinger staging migration, real power-loss/restart tests |
+| Atomic claim exclusion | Worker claim and Owner START serialize on Master/cluster MySQL row, fence checked before lease creation; available-task API refuses fenced PCs | 2/3/8–10 actual PC race/load acceptance |
+| Master/backup protection | Election candidate query excludes fenced nodes; Owner START refuses any current Master or backup and requires 2 live backups | Real Windows election under network partition |
+| Graceful drain | Already issued leases can checkpoint and submit; no forced revocation; new QA/agent-registration work is blocked | Real agent actions, external provider in-flight operation audit |
+| Idle finalization | Owner FINALIZE requires live/idle target, no live lease or unresolved Git/unfinished ticket; fence remains | Real Owner reconciliation and no-loss acceptance |
+| Explicit release | Owner CANCEL atomically releases fence and audits it; does not run installer | Approval review, physical maintenance procedure |
+| Installer/rollback | NOT IMPLEMENTED; all responses remain `installer_execution_allowed:false` | Genuine signing certificate, identity backup/reinstall, rollback health telemetry |
+
+[Owner drain-fence runbook](PC_DRAIN_FENCE_V7.md). This source is draft/unmerged; live staging and physical acceptance have **not** been performed.

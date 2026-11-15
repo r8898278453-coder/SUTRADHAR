@@ -101,3 +101,10 @@ The code currently provides **offline inspection only**. Actual Windows certific
 New draft source includes a Central-maintained, Owner-only, **five-minute advisory** PC update intent. It checks three live Master/backup roles, expected epoch, target approved node and all agents' server-clock heartbeat/idle/lease/Git state. An Owner web UI can record or cancel intent; Desktop reads it through signed requests. **No API grants installer execution or stops an agent.**
 
 Physical acceptance still needs: migration of `v7_pc_maintenance_plans` into disposable Hostinger staging, same node with role reassignment during intent, intent expiry/cancellation, active worker/uncertain Git operations, offline Central, consistent identity post-reboot, and repeated Owner review. A real maintenance *lease* and fenced task drain/install/health rollback are **not implemented**. [Owner maintenance guide](OWNER_PC_MAINTENANCE_INTENT_V7.md).
+
+
+## 15 November 2026 — Required task-drain physical acceptance
+
+New Draft PR code adds an Owner-only nonexpiring Central task-admission fence. Physical acceptance must prove that an active Master, Backup 1 or Backup 2 cannot be drained; a noncritical eligible PC cannot take new work or enter election during a fence; old worker leases can checkpoint and finish without forced cancellation; and unresolved Git/unfinished ticket keeps DRAINED blocked. Simulate race between task claim and Owner START, offline/reboot during DRAINING, expiry of five-minute advisory intent, failover/epoch change, and explicit Owner fence release. Real provider-side effects must be independently reconciled.
+
+Central status is necessary but not sufficient proof that external workers/providers have stopped. No OS-maintenance lock, actual installer/rollback or signed production distribution has been accepted. [Drain-fence Owner guide](PC_DRAIN_FENCE_V7.md).

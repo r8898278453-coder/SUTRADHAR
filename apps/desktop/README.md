@@ -126,3 +126,10 @@ See [Owner maintenance preflight and signed inspection receipts](../../docs/DESK
 The signed Desktop **Check whether this PC is Master or backup** action now also checks live Owner intent through `GET /v7/nodes/maintenance`. Central's signed view must contain the same node ID, current Master epoch and an unexpired `INTENT_ONLY` record. A missing intent is displayed as missing, **not** Owner approval; a stale/malformed intent blocks readiness. The node must also be approved, idle, heartbeat-current and have no active work lease, unresolved Git job or local Master/backup role.
 
 Central's Owner dashboard has a 5-minute maintenance-intent form with cancellation. **This remains an advisory record; no installer is run, agent drained, lease frozen or actual rollback authorized.** [Owner steps](../../docs/OWNER_PC_MAINTENANCE_INTENT_V7.md).
+
+
+## 15 November 2026 — Central task-drain fencing is NOT installer execution
+
+An Owner may use the Central dashboard to START_PC_DRAIN for a current five-minute maintenance intent, preserving existing worker leases while preventing new work, and FINALIZE_PC_DRAIN only after Central sees no outstanding work. The durable fence persists across the intent deadline until explicit Owner cancellation. The Desktop's signed readiness check blocks on a DRAINING/DRAINED record; it must not treat the task fence as a Windows installer execution capability.
+
+[Owner drain-fence runbook](../../docs/PC_DRAIN_FENCE_V7.md). Code is not deployed to physical PCs and real signing/rollback is still pending.

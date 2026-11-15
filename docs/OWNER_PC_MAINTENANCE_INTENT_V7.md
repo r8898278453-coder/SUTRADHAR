@@ -38,3 +38,12 @@ The new Owner-maintenance workflow records a short-lived, auditable intention to
 | Post-install health, crash recovery and automatic rollback | **NOT IMPLEMENTED** | Real physical pilot and independent acceptance |
 
 This development work must stay on [Draft PR #1](https://github.com/r8898278453-coder/SUTRADHAR/pull/1). It does not authorize merging `main`, deploying Hostinger, applying migrations to a live database, signing production releases, or stopping any PC.
+
+
+## 15 November 2026 — Persistent Owner drain fence after a short-lived intent
+
+The Owner dashboard now includes **Start durable fence — block new claims** and **Verify drained (no outstanding work)** controls. Start requires the original five-minute INTENT_ONLY plan still be valid, and a fresh approved/healthy noncritical PC, current Master epoch and live Master plus two distinct backups. From activation onward Central's MySQL fence prevents new task claims, new work discovery, QA submissions and new agent registrations on that PC; it also excludes that PC from leadership election. Existing worker leases are **not revoked** and can checkpoint/submit until completed.
+
+**DRAINED** can only be recorded after Central sees no active lease, no unfinished ticket/uncertain Git operation and live idle target agents. A fence NEVER expires automatically after five minutes or on reboot. **Cancel intent / RELEASE active fence** removes the fence and can immediately allow new work. Use only after the Owner confirms maintenance is not underway.
+
+There is still no installer launcher, shutdown, actual signed update, identity restoration or rollback capability. See [PC drain fence runbook](PC_DRAIN_FENCE_V7.md). Owner must rehearse real Windows/Hostinger acceptance separately.
