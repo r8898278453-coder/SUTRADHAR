@@ -53,7 +53,7 @@ function validateSaved(existing,{node,pub,receiptId,offerHash,centralOrigin}){
   const b=existing.payload;
   if(!b||typeof b!=='object'||Array.isArray(b)||
     Object.keys(b).sort().join('|')!==
-      'authenticode_verified|central_origin|current_version|expires_at_ms|inspected_at_ms|installer_sha256|installed|kind|node_id|node_public_key_sha256|offer_sha256|receipt_id|source_sha|status|target_version|wave_id'||
+      'authenticode_verified|central_origin|current_version|expires_at_ms|inspected_at_ms|installed|installer_sha256|kind|node_id|node_public_key_sha256|offer_sha256|receipt_id|source_sha|status|target_version|wave_id'||
     b.status!=='OFFLINE_INSPECTED_ONLY'||b.installed!==false||
     b.authenticode_verified!==true||b.node_id!==node.node_id||
     b.node_public_key_sha256!==hash(pub.export({type:'spki',format:'der'}))||
