@@ -11,11 +11,36 @@ const H=/^[0-9a-f]{64}$/;
 const S=/^[0-9a-f]{40}$/;
 const NODE=/^node_[0-9a-f]{32}$/;
 const WAVE=/^wave_[a-z0-9][a-z0-9_-]{2,59}$/;
+function parseVersion(value){
+  if(typeof value!=='string'||!V.test(value)||value.length>24)
+    throw Error('UPDATE_STABLE_VERSION_REQUIRED');
+  const segments=value.split('.').map(Number);
+  if(segments.some(x=>!Number.isSafeInteger(x)||x>999999))
+    throw Error('UPDATE_STABLE_VERSION_REQUIRED');
+  return segments;
+}
 function cmp(a,b){
-  if(!V.test(a)||!V.test(b))throw Error('UPDATE_STABLE_VERSION_REQUIRED');
-  const x=a.split('.').map(Number),y=b.split('.').map(Number);
+  const x=parseVersion(a),y=parseVersion(b);
   for(let i=0;i<3;i++){if(x[i]!==y[i])return Math.sign(x[i]-y[i]);}
   return 0;
+}
+function sha256File(file){
+  if(typeof file!=='string'||!path.isAbsolute(file))
+    throw Error('UPDATE_INSTALLER_PATH_INVALID');
+  const stat=fs.lstatSync(file);
+  if(!stat.isFile()||stat.isSymbolicLink())
+    throw Error('UPDATE_INSTALLER_FILE_TYPE_INVALID');
+  const fd=fs.openSync(file,fs.constants.O_RDONLY);
+  const buf=Buffer.allocUnsafe(1024*1024);
+  const h=crypto.createHash('sha256');
+  try{
+    for(;;){
+      const bytes=fs.readSync(fd,buf,0,buf.length,null);
+      if(bytes===0)break;
+      h.update(buf.subarray(0,bytes));
+    }
+  }finally{fs.closeSync(fd);}
+  return h.digest('hex');
 }
 function verifyOffer({envelope,pinnedPublicKeyPem,installerPath,currentVersion,
   nodeId,protocol=7,publisherSubject,now=Date.now(),rolloutApproved=false,kind='update'}){
@@ -33,7 +58,8 @@ function verifyOffer({envelope,pinnedPublicKeyPem,installerPath,currentVersion,
         key,Buffer.from(sig,'base64')))return deny('UPDATE_SIGNATURE_INVALID');
     // v1 offers lacked recipient scoping and must never authorize a production PC.
     if(body.schema!==2||body.application!=='desktop'||body.channel!=='stable'||
-      body.type!==kind||!V.test(body.version)||!S.test(body.source_sha)||
+      body.type!==kind||typeof body.version!=='string'||
+      !V.test(body.version)||body.version.length>24||!S.test(body.source_sha)||
       !H.test(body.installer_sha256)||!Number.isSafeInteger(body.installer_bytes)||
       body.installer_bytes<1000||body.installer_bytes>1024*1024*1024||
       typeof body.filename!=='string'||body.filename.length>180||
@@ -66,10 +92,11 @@ function verifyOffer({envelope,pinnedPublicKeyPem,installerPath,currentVersion,
       return deny('OWNER_ROLLBACK_EVIDENCE_REQUIRED');
     if(typeof installerPath!=='string'||path.basename(installerPath)!==body.filename)
       return deny('UPDATE_FILENAME_MISMATCH');
-    const stat=fs.statSync(installerPath);
-    if(!stat.isFile()||stat.size!==body.installer_bytes)
-      return deny('UPDATE_INSTALLER_SIZE_MISMATCH');
-    const h=crypto.createHash('sha256').update(fs.readFileSync(installerPath)).digest('hex');
+    const stat=fs.lstatSync(installerPath);
+    if(!stat.isFile()||stat.isSymbolicLink()||
+      stat.size!==body.installer_bytes)
+      return deny('UPDATE_INSTALLER_SIZE_OR_TYPE_MISMATCH');
+    const h=sha256File(installerPath);
     if(h!==body.installer_sha256)return deny('UPDATE_INSTALLER_SHA_MISMATCH');
     // This validates Owner metadata and bytes. Windows Authenticode validation
     // of the downloaded EXE is a separate mandatory gate before installation.
@@ -78,4 +105,4 @@ function verifyOffer({envelope,pinnedPublicKeyPem,installerPath,currentVersion,
       requires_windows_authenticode:true,automatic_install:false};
   }catch{return deny('UPDATE_VERIFICATION_FAILED');}
 }
-module.exports={verifyOffer,cmp};
+module.exports={verifyOffer,cmp,sha256File};
