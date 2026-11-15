@@ -88,3 +88,9 @@ New Desktop implementation binds an encrypted node identity to a durable PREPARE
 On real physical Windows PCs, acceptance must additionally cover: second app launch, reboot during enrollment, Central network timeout, wrong Central origin, changed/missing encrypted key, copied/altered receipt, wrong node ID, Owner approval before recheck, and old-instance shutdown. Ensure PREPARED never appears approved and never causes duplicated node registrations.
 
 These are coded/tested local safeguards, NOT completed physical Windows acceptance or a substitute for Owner-approved identity migration/rotation.
+
+## 15 November 2026 — Device-bound update/rollback acceptance cases
+
+Before authorizing real signed installer distribution, require a verified v2 Owner-signed offer scoped to one Pilot PC's exact OS-vault node ID, then a second separate wave. Check that a healthy other PC rejects the same signed offer. Reject schema v1, duplicate recipients, forged/expired authorization, incorrect publisher, tampered EXE, changed bytes during Authenticode verification, wrong version direction and automatic rollback without separate Owner emergency approval.
+
+The code currently provides **offline inspection only**. Actual Windows certificate, secure installation, signed delivery, staged pausing/rollback, Central roster approval, identity continuity and real physical test receipts remain outstanding. See [Signed Desktop Rollout Waves](SIGNED_DESKTOP_ROLLOUT_WAVES.md).

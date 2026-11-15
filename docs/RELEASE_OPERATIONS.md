@@ -165,3 +165,9 @@ Use [Implementation Tracker](IMPLEMENTATION_TRACKER.md) for scope-specific evide
 - https://www.hostinger.com/support/how-to-deploy-monorepos-with-npm-yarn-or-pnpm-on-hostinger/
 - https://www.hostinger.com/support/hostinger-node-js-limits-for-web-and-cloud-plans/
 - https://www.hostinger.com/support/how-to-fix-changes-not-showing-after-a-node-js-deployment-at-hostinger/
+
+## 15 November 2026 — Signed rollout waves for individual PCs
+
+The offline Desktop update/rollback inspection now demands Owner Ed25519 **schema v2** metadata with an exact `wave_` ID and 1–10 explicit node IDs. Electron checks the stored OS-vault node and enrollment receipt before inspecting any signed offer; v1/global offers and wrong-device offers are refused. The local EXE checksum is validated again after Windows Authenticode inspection.
+
+This **does not complete** automatic installer distribution, staged wave orchestration, safe identity-preserving installation or rollback. The signed-offer generator takes Owner-configured target IDs; there is no live Central device inventory approval API tied to the signing key. The unsigned alpha deliberately contains no trusted update verification key. See [Signed Desktop Rollout Waves](SIGNED_DESKTOP_ROLLOUT_WAVES.md).

@@ -79,3 +79,9 @@ If Desktop says **Submission uncertain — Owner review required**, inspect the 
 For a legitimate already-registered node, the Owner can approve that node and the PC user may click **Recheck uncertain enrollment**. Only signed, read-only proof of the existing approved node finalizes the receipt; no new grant is submitted. If no matching approved node exists, the app must remain blocked until an independent Owner-guided recovery or rotation procedure is designed and approved.
 
 A second Desktop instance is now denied a second local agent process. Real Windows reboot, installer, single-instance and crash tests are NOT RUN.
+
+## 15 November 2026 — Preparing Owner rollout wave approvals
+
+For a future **signed** Desktop update, the Owner must select the **exact existing enrolled node IDs** for a named wave (initially one non-critical PC). The trusted release engineer adds the wave ID and 1–10 approved recipients to the **Owner Ed25519-signed offline offer**; another PC must refuse it. A separate emergency rollback offer requires a separate Owner approval. No credentials are shared in chat or Git.
+
+This is not an update execution or distribution feature. The installed alpha has no configured trust root, and actual certificate signing/physical-PC rollout remain blocked. [Full instructions](SIGNED_DESKTOP_ROLLOUT_WAVES.md).

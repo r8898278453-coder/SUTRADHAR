@@ -101,3 +101,13 @@ First-time enrollment persists a receipt **before the network POST**. PREPARED m
 If interrupted, the UI shows Owner recovery required rather than silently enrolling another node. The Owner verifies the original node ID in Central, approves it if legitimate and clicks **Recheck uncertain enrollment**. That sends only a signed read-only GET to /v7/nodes/me; Central independently requires an approved node and matching signed key. On success, the same identity resumes; on pending/unrecognized/mismatched identities it stays blocked. Never delete or manually edit the encrypted identity or receipt. Legacy timestamp-only receipts require Owner-reviewed migration.
 
 Pure tests cover this policy. Real Windows DPAPI, power loss, multiple OS users, app signing and physical multi-PC acceptance are still required.
+
+## Signed update/rollback offer v2: device-bound waves (15 November 2026)
+
+The offline verifier now accepts **only signed schema v2 offers**. The Owner-signed metadata must include a `wave_...` ID and a deduplicated list of 1–10 exact `node_...` recipient IDs. The Desktop reads its own node ID from the OS-backed identity, requires the existing enrollment receipt and refuses offers intended for a different PC. **Legacy v1/global offers are blocked.**
+
+The installer is streamed through SHA-256 verification rather than read entirely into memory. An additional checksum check runs after local Windows Authenticode verification; this remains **inspection only**, not a protected installer execution/update pipeline. No trusted public key is configured in the unsigned alpha.
+
+The separate Windows offline offer signer now demands `SUTRADHAR_ROLLOUT_WAVE_ID` and `SUTRADHAR_ROLLOUT_NODE_IDS` as well as existing Owner-signing approvals. It outputs no private signing keys and never publishes or executes an EXE.
+
+See [Owner-signed rollout wave guide](../../docs/SIGNED_DESKTOP_ROLLOUT_WAVES.md). Real Windows publisher/installer tests, signed distribution, update execution, rollback and device continuity are NOT RUN.

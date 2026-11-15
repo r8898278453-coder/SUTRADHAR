@@ -227,3 +227,15 @@ No Hostinger deployment, live MySQL restore, production Windows signing, automat
 | CI checks | Enrollment receipt, signed recheck and single-instance negative tests | Signed installer and physical PC acceptance |
 
 No Hostinger deployment, production Windows signing, owner-approved release, actual multi-PC failover or PR merge was performed.
+
+## 15 November 2026 — Signed Desktop offer scoped to rollout wave / node IDs
+
+| Gate | Current implementation in draft PR | Outstanding acceptance |
+| --- | --- | --- |
+| Signed per-PC update | `apps/desktop/update-policy.cjs` accepts v2 Owner-signed wave with 1–10 explicit node IDs; checks installed OS-vault node, version, publisher and exact EXE SHA | Trusted Owner key, real Windows signed installer, physical PC test |
+| Owner offline offer creation | `scripts/release/sign-offline-offer.cjs` signs exact version/SHA/Windows Authenticode evidence plus Owner wave/recipients | Protected signing infrastructure; actual Central device roster review |
+| Wrong-target / legacy protection | Unsigned v1/global offers, wrong device, malformed/duplicated wave IDs, expired/tampered data fail closed; tests updated | Real signed staged one-PC/two-PC acceptance |
+| Installer integrity | Chunked SHA256 plus after-Authenticode rehash; no memory-sized load and no symlink acceptance | Safe installer execution/TOCTOU-resistant install/recovery |
+| Automatic update and rollback | NOT IMPLEMENTED: verified metadata is inspection-only | Real signed distribution, stop/pause, identity preservation, rollback telemetry, Owner approval |
+
+Current unsigned alpha has `update-trust.json` unconfigured and cannot accept a production offer. **No installer was executed or distributed, no Hostinger account or physical PC was accessed, and main remains unchanged.** [Owner rollout runbook](SIGNED_DESKTOP_ROLLOUT_WAVES.md).
