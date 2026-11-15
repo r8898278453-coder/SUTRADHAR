@@ -124,12 +124,24 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       request_id:'plan_conflict_'+(++count),command:'PLAN_PC_UPDATE',
       payload:{...pilotPayload,plan_id:'plan_conflicting'}},admin);
     assert.equal(parallelReject.code,409,'Only one unexpired intent per PC is permitted');
-    const canceled=await owner('CANCEL_PC_UPDATE',{plan_id:pilotPayload.plan_id});
-    assert.equal(canceled.state.state,'CANCELLED');
-    const afterCancel=await d.signed('/v7/nodes/maintenance',undefined,'GET');
-    assert.equal(afterCancel.code,200);
-    assert.equal(afterCancel.body.intent,null);
-    assert.equal(afterCancel.body.installer_execution_allowed,false);
+    const drainStarted=await owner('START_PC_DRAIN',{plan_id:pilotPayload.plan_id});
+    assert.equal(drainStarted.state.state,'DRAINING');
+    assert.equal(drainStarted.state.new_claims_blocked,true);
+    assert.equal(drainStarted.state.automatic_expiry,false);
+    assert.equal(drainStarted.state.installer_execution_allowed,false);
+    const inDrain=await d.signed('/v7/nodes/maintenance',undefined,'GET');
+    assert.equal(inDrain.code,200);
+    assert.equal(inDrain.body.intent.state,'DRAINING');
+    assert.equal(inDrain.body.intent.fence_active,true);
+    const secondStart=await post('/v7/owner/command',{
+      request_id:'drain_again_'+(++count),command:'START_PC_DRAIN',
+      payload:{plan_id:pilotPayload.plan_id}},admin);
+    assert.equal(secondStart.code,409);
+    const finalDrain=await owner('FINALIZE_PC_DRAIN',{plan_id:pilotPayload.plan_id});
+    assert.equal(finalDrain.state.state,'DRAINED');
+    assert.equal(finalDrain.state.installer_execution_allowed,false);
+    const signedDrained=await d.signed('/v7/nodes/maintenance',undefined,'GET');
+    assert.equal(signedDrained.body.intent.state,'DRAINED');
     await owner('CREATE_PROJECT',{project_id:'project_integration',display_name:'Integration Test',repository:'example/repo'});
     const plan=await a.signed('/v7/tasks/plan',{request_id:'plan_'+(++count),agent_id:a.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test',project_id:'project_integration',
@@ -139,6 +151,24 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(plan.code,200,JSON.stringify(plan.body));
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:b.agent_id,can_develop:true});
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:c.agent_id,can_qa:true});
+    await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:d.agent_id,can_develop:true});
+    // Actual MySQL fencing: a formerly eligible idle PC cannot obtain
+    // a new task lease, while normal unrelated agents keep operating.
+    const blockedAvailability=await d.signed('/v7/tasks/available',undefined,'GET');
+    assert.equal(blockedAvailability.code,423);
+    assert.equal(blockedAvailability.body.error_code,'PC_MAINTENANCE_FENCED');
+    const blockedClaim=await d.signed('/v7/tasks/claim',{
+      request_id:'fenced_claim_'+(++count),agent_id:d.agent_id,
+      ticket_id:'ticket_qa_test',expected_master_epoch:Number(status.epoch)});
+    assert.equal(blockedClaim.code,423);
+    assert.equal(blockedClaim.body.error_code,'PC_MAINTENANCE_FENCED');
+    const canceled=await owner('CANCEL_PC_UPDATE',{plan_id:pilotPayload.plan_id});
+    assert.equal(canceled.state.state,'CANCELLED');
+    assert.equal(canceled.state.previously_fenced,true);
+    const afterCancel=await d.signed('/v7/nodes/maintenance',undefined,'GET');
+    assert.equal(afterCancel.code,200);
+    assert.equal(afterCancel.body.intent,null);
+    assert.equal(afterCancel.body.installer_execution_allowed,false);
     const claim=await b.signed('/v7/tasks/claim',{request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'});
     assert.equal(claim.code,200,JSON.stringify(claim.body));
