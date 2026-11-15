@@ -87,6 +87,8 @@ assert.equal(fs.existsSync(get('apps/desktop/dist/identity.json')),false);
 assert.equal(dm.worker_bundle_sha256,sha('apps/desktop/dist/edge-worker.cjs'));
 assert.equal(fs.readFileSync(path.join(desktop,'release-manifest.json'),'utf8').includes('SUTRADHAR_ADMIN_KEY'),false);
 for(const rel of ['apps/central/dist/server.cjs',
+  'v7/ui/dashboard.js',
+  'apps/central/dist/dashboard.js',
   'apps/desktop/dist/edge-agent.cjs',
   'apps/desktop/main.cjs',
   'apps/desktop/preload.cjs',
