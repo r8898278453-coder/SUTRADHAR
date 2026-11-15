@@ -13,6 +13,7 @@ const path=require('node:path');
 const {spawn,spawnSync}=require('node:child_process');
 const {verifyOffer,sha256File}=require('./update-policy.cjs');
 const {checkReadiness}=require('./update-readiness.cjs');
+const {recordInspection}=require('./update-inspection-journal.cjs');
 const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
@@ -339,9 +340,15 @@ app.whenReady().then(()=>{
     // from the signed Owner manifest after Windows signature verification.
     if(sha256File(installer)!==verified.file_sha256)
       throw Error('UPDATE_INSTALLER_CHANGED_DURING_VERIFICATION');
+    // A signed LOCAL INSPECTION receipt is not an installation/release approval.
+    // Record once; an interrupted/corrupted journal must never be overwritten.
+    const record=recordInspection({dir:nodeDir(),node:device,
+      centralOrigin:current.centralUrl,envelope:signed,verified,
+      currentVersion:app.getVersion(),authenticodeVerified:true});
     return {verifiedOffline:true,installed:false,version:verified.version,
       kind,waveId:verified.wave_id,nodeId:verified.device_node_id,
-      sha256:verified.file_sha256,
+      sha256:verified.file_sha256,inspectionReceiptId:record.receipt_id,
+      alreadyInspected:record.previously_inspected,ownerInstallApproval:false,
       nextAction:'Owner must separately approve installation/recovery; this tool never runs an installer.'};
   });
   ipcMain.handle('sutradhar:openProvider',(event,provider)=>{
