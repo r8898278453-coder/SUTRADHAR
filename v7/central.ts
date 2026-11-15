@@ -14,6 +14,7 @@ import {verifyGitHubMergeEvidence} from '../github_merge_verifier.ts';
 import {createVerifiedDraftPr} from '../github_pr_creator.ts';
 import {inspectGitRemote} from './git_remote.ts';
 import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest} from './rules.ts';
+import {checkMaintenanceIntent} from './maintenance.ts';
 import sharedContract from '../packages/shared/contract.json';
 
 const app=express();
@@ -121,6 +122,25 @@ async function nodeAuth(req:Request){
   });
   return node;
 }
+
+async function maintenanceAgentEvidence(c:PoolConnection,nodeId:string){
+  return rows(c,
+    'SELECT a.agent_id,a.state,a.master_eligible,a.qa_eligible,a.status,a.active_ticket,'+
+    'TIMESTAMPDIFF(SECOND,a.last_seen,UTC_TIMESTAMP(3)) AS heartbeat_age_seconds,'+
+    'EXISTS(SELECT 1 FROM v7_leases l WHERE l.agent_id=a.agent_id AND l.revoked=0 '+
+    'AND l.expires_at>UTC_TIMESTAMP(3)) AS has_live_work_lease,'+
+    'EXISTS(SELECT 1 FROM v7_git_jobs g WHERE g.agent_id=a.agent_id '+
+    'AND g.state IN ("RUNNING","NEEDS_RECONCILIATION")) AS has_unreconciled_git_job '+
+    'FROM v7_agents a WHERE a.node_id=? ORDER BY a.agent_id',[nodeId]);
+}
+async function maintenanceRedundancyEvidence(c:PoolConnection,ids:any[]){
+  return rows(c,
+    'SELECT a.agent_id,a.state,n.state AS node_state,'+
+    'TIMESTAMPDIFF(SECOND,a.last_seen,UTC_TIMESTAMP(3)) AS heartbeat_age_seconds '+
+    'FROM v7_agents a JOIN v7_nodes n ON n.node_id=a.node_id '+
+    'WHERE a.agent_id IN (?,?,?)',ids);
+}
+
 async function signedAgent(c:PoolConnection,nodeId:string,agentId:string,qa=false){
   const a=await one(c,'SELECT * FROM v7_agents WHERE agent_id=? AND node_id=? FOR UPDATE',[agentId,nodeId]);
   if(!a||a.state!=='APPROVED'||(qa&&!a.qa_eligible))fault('AGENT_NOT_AUTHORIZED',403);
@@ -203,6 +223,43 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
         [state,state==='APPROVED'&&payload.master_eligible===true?1:0,state==='APPROVED'&&payload.qa_eligible===true?1:0,id]);
       if(u.affectedRows!==1)fault('AGENT_NOT_FOUND',404);
       result={agent_id:id,state};await evaluate(c,'agent-revoked');
+    }else if(command==='PLAN_PC_UPDATE'){
+      // Owner-controlled short-lived INTENT. No agent stop, task drain,
+      // maintenance lease, installer execution or rollback is granted here.
+      const planId=requireId(payload.plan_id),nodeId=requireId(payload.node_id);
+      const wave=requireStr(payload.wave_id,64),version=requireStr(payload.target_version,24);
+      const offerSha=requireSha(payload.offer_sha256);
+      if(!/^wave_[a-z0-9][a-z0-9_-]{2,59}$/.test(wave)||
+         !/^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/.test(version)||
+         Number(version.split('.')[0])>999999||
+         !/^[a-f0-9]{64}$/.test(offerSha))
+        fault('MAINTENANCE_PLAN_FIELDS_INVALID',400);
+      const target=await one(c,'SELECT node_id,state FROM v7_nodes WHERE node_id=? FOR UPDATE',[nodeId]);
+      if(!target||target.state!=='APPROVED')fault('MAINTENANCE_NODE_NOT_APPROVED',403);
+      const now=await dbNow(c),roleIds=[ld.master_agent_id,ld.backup1,ld.backup2];
+      const decision=checkMaintenanceIntent({
+        cluster:{...ld,lease_until_ms:ld.lease_until?Date.parse(ld.lease_until+'Z'):null},
+        agents:await maintenanceAgentEvidence(c,nodeId),
+        redundancy:await maintenanceRedundancyEvidence(c,roleIds),
+        expectedEpoch:Number(payload.expected_epoch),nowMs:now
+      });
+      if(!decision.accepted)fault(decision.error_code||'MAINTENANCE_INTENT_DENIED',409);
+      const existing=await one(c,'SELECT plan_id FROM v7_pc_maintenance_plans '+
+        'WHERE node_id=? AND state="INTENT_ONLY" AND expires_at>UTC_TIMESTAMP(3) FOR UPDATE',[nodeId]);
+      if(existing)fault('MAINTENANCE_PLAN_ALREADY_ACTIVE',409);
+      await c.query('INSERT INTO v7_pc_maintenance_plans '+
+        '(plan_id,node_id,wave_id,target_version,offer_sha256,expected_epoch,expires_at) '+
+        'VALUES(?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE))',
+        [planId,nodeId,wave,version,offerSha,Number(ld.epoch)]);
+      result={plan_id:planId,node_id:nodeId,state:'INTENT_ONLY',expires_in_seconds:300,
+        expected_epoch:Number(ld.epoch),installer_execution_allowed:false};
+    }else if(command==='CANCEL_PC_UPDATE'){
+      const planId=requireId(payload.plan_id);
+      const [u]:any=await c.query('UPDATE v7_pc_maintenance_plans '+
+        'SET state="CANCELLED",closed_at=UTC_TIMESTAMP(3) '+
+        'WHERE plan_id=? AND state="INTENT_ONLY"',[planId]);
+      if(u.affectedRows!==1)fault('MAINTENANCE_PLAN_NOT_ACTIVE',409);
+      result={plan_id:planId,state:'CANCELLED',installer_execution_allowed:false};
     }else if(command==='CREATE_PROJECT'){
       const id=requireId(payload.project_id),name=requireStr(payload.display_name,170);
       const repo=requireStr(payload.repository,190),base=requireStr(payload.base_branch||'main',80);
@@ -380,14 +437,30 @@ app.get('/v7/cluster',jsonRoute(async req=>{
 app.get('/v7/nodes/me',jsonRoute(async req=>{
   const node=await nodeAuth(req);
   return transaction(async c=>({node_id:node.node_id,
-    agents:await rows(c,
-      'SELECT a.agent_id,a.state,a.master_eligible,a.qa_eligible,a.status,a.active_ticket,'+
-      'TIMESTAMPDIFF(SECOND,a.last_seen,UTC_TIMESTAMP(3)) AS heartbeat_age_seconds,'+
-      'EXISTS(SELECT 1 FROM v7_leases l WHERE l.agent_id=a.agent_id AND l.revoked=0 '+
-      'AND l.expires_at>UTC_TIMESTAMP(3)) AS has_live_work_lease,'+
-      'EXISTS(SELECT 1 FROM v7_git_jobs g WHERE g.agent_id=a.agent_id '+
-      'AND g.state IN ("RUNNING","NEEDS_RECONCILIATION")) AS has_unreconciled_git_job '+
-      'FROM v7_agents a WHERE a.node_id=? ORDER BY a.agent_id',[node.node_id])}));
+    agents:await maintenanceAgentEvidence(c,node.node_id)}));
+}));
+// A signed node may inspect Owner intent, but it is NEVER an install lease.
+app.get('/v7/nodes/maintenance',jsonRoute(async req=>{
+  const node=await nodeAuth(req);
+  return transaction(async c=>{
+    const plan=await one(c,'SELECT plan_id,node_id,wave_id,target_version,'+
+      'offer_sha256,expected_epoch,expires_at FROM v7_pc_maintenance_plans '+
+      'WHERE node_id=? AND state="INTENT_ONLY" AND expires_at>UTC_TIMESTAMP(3) '+
+      'ORDER BY created_at DESC LIMIT 1',[node.node_id]);
+    const ld=await leader(c,false);
+    return {node_id:node.node_id,intent:plan?{
+      plan_id:plan.plan_id,wave_id:plan.wave_id,target_version:plan.target_version,
+      offer_sha256:plan.offer_sha256,
+      expected_epoch:Number(plan.expected_epoch),expires_at:plan.expires_at,
+      state:Number(plan.expected_epoch)===Number(ld.epoch)?'INTENT_ONLY':'STALE_EPOCH'
+    }:null,installer_execution_allowed:false,owner_maintenance_lease:false};
+  });
+}));
+app.get('/v7/owner/maintenance',jsonRoute(async req=>{
+  admin(req);
+  return transaction(c=>rows(c,'SELECT plan_id,node_id,wave_id,target_version,'+
+    'offer_sha256,expected_epoch,state,created_at,expires_at,closed_at '+
+    'FROM v7_pc_maintenance_plans ORDER BY created_at DESC LIMIT 100'));
 }));
 app.get('/v7/projects',jsonRoute(async req=>{
   admin(req);return transaction(c=>rows(c,'SELECT * FROM v7_projects ORDER BY created_at DESC LIMIT 100'));
