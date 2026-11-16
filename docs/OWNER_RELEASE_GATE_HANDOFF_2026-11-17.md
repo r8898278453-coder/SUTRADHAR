@@ -61,3 +61,9 @@ npm run ops:verify-owner-acceptance
 ~~~
 
 A PASS means **signed evidence-index syntax only**. The verifier does not pull files at `evidence_location` or check that their hashes match actual files; reviewers must do that independently. File hashes or references do not make a fictional test real. For this reason production promotion and Windows installation remain manual Owner-controlled processes. Regression coverage runs via `npm run test:release-gates` in existing CI, using temporary test-only keys with no relation to real Owner approval.
+
+## Signed post-update continuity policy (code only, not wired to real installers)
+
+`scripts/release/verify-post-update-health.cjs` exports `verify` for **offline, read-only** inspection of two device-signed `BEFORE` and `AFTER` observations, each carrying exact OS-vault node ID/key SHA-256, target release version, signed wave, signed offer hash, local approved/agent count/heartbeat fields and an observation timestamp. It rejects forged, stale, reordered, wrong-wave, wrong-key, wrong-version and changed-agent-count observations. `npm run test:release-gates` includes test-only cryptographic regression coverage.
+
+**Limitations:** The runtime does not yet produce the required receipts on physical Windows systems. Self-reported `central_approved` is not independent Central authorization. Correct node signatures also cannot prove a real signed installer ran, that MySQL work was completed, that the OS clock was honest, or that rollback is safe. The returned field `installation_verified` is **always false**. A future implementation must obtain independent authenticated Central evidence, actual Windows Authenticode installation receipts, reboot/health telemetry and Owner-approved rollback policy before an installer executor is permitted.
