@@ -44,3 +44,20 @@ The evidence register is **not** a credential store. Prefer file hashes and priv
 - Provider-compliant browser worker, full external-Git side-effect reconciliation, physical concurrency/failover and all 71 acceptance cases.
 
 References: [current readiness](PRODUCTION_READINESS_V7_2026-11-12.md), [release operations](RELEASE_OPERATIONS.md), [PC drain fence](PC_DRAIN_FENCE_V7.md), [acceptance matrix](V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md).
+
+## Offline machine-readable evidence verifier (draft source)
+
+The implementation under `scripts/release/verify-owner-acceptance.cjs` validates the **format and Ed25519 signature** of one Owner-signed, short-lived evidence index. It **cannot authenticate real-world facts without reviewing the underlying receipts**, cannot install software, and **always returns `production_release_authorized: false`**. It is a reviewer aid only, not a production promotion mechanism.
+
+The envelope is JSON with exactly `payload` and `signature_base64`. Its signature is Ed25519 over UTF-8 bytes of `SUTRADHAR_OWNER_ACCEPTANCE_V1\\n` (actual newline after V1) followed immediately by `JSON.stringify(payload)`. Use a dedicated Owner-controlled signing key and an independently pinned public key (not a key shipped beside a self-asserted report). Never place the private signing key in code, test fixtures, CI artifacts or chat. The payload must contain `schema:1`, exact `source_sha`, millisecond `issued_at_ms` and `expires_at_ms` (valid for no more than seven days), and exactly one G0–G7 gate entry. Each PASS gate must name a reviewer, UTC review timestamp, same source SHA, required real environment, private evidence location, SHA-256, nonempty acceptance-test IDs, limitations and Owner approval reference. Unsigned, malformed, stale, wrong-target, duplicate, incomplete or blocked gate reports are rejected.
+
+A trusted reviewer, on a private operator workstation, may check a prepared envelope as follows (paths must be absolute and controlled):
+
+~~~sh
+export SUTRADHAR_OWNER_ACCEPTANCE_FILE=/secure/acceptance-envelope.json
+export SUTRADHAR_OWNER_ACCEPTANCE_PUBLIC_KEY_FILE=/secure/owner-acceptance-public.pem
+export SUTRADHAR_EXPECTED_COMMIT_SHA=<full-reviewed-40-character-SHA>
+npm run ops:verify-owner-acceptance
+~~~
+
+A PASS means **signed evidence-index syntax only**. The verifier does not pull files at `evidence_location` or check that their hashes match actual files; reviewers must do that independently. File hashes or references do not make a fictional test real. For this reason production promotion and Windows installation remain manual Owner-controlled processes. Regression coverage runs via `npm run test:release-gates` in existing CI, using temporary test-only keys with no relation to real Owner approval.
