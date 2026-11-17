@@ -106,3 +106,21 @@ test('Streaming SHA-256 reads large local installers without loading whole file'
     assert.throws(()=>sha256File(dir),/UPDATE_INSTALLER_FILE_TYPE_INVALID/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('installer hash rejects symbolic links and changed file type',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-link-'));
+  try{
+    const file=path.join(dir,'SUTRADHAR Desktop.exe');
+    fs.writeFileSync(file,crypto.randomBytes(2048));
+    assert.equal(sha256File(file),crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'));
+    const link=path.join(dir,'copy.exe');
+    try{
+      fs.symlinkSync(file,link);
+      assert.throws(()=>sha256File(link),/UPDATE_INSTALLER_FILE_TYPE_INVALID/);
+    }catch(e){
+      if(e.code!=='EPERM'&&e.code!=='EACCES'&&e.code!=='ENOTSUP')throw e;
+    }
+    assert.throws(()=>sha256File(dir),/UPDATE_INSTALLER_FILE_TYPE_INVALID/);
+    assert.throws(()=>sha256File(path.join(dir,'missing.exe')));
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
