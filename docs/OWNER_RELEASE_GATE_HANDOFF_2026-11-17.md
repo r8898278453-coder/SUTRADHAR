@@ -118,3 +118,23 @@ The authenticated `POST /v7/owner/migrate` endpoint is now deliberately **one-ti
 These environment controls belong in a tightly scoped *staging-only* operator session, not permanent Hostinger production configuration. Remove or disable them immediately after approved staging initialization. MySQL DDL is not transactionally rolled back by the advisory lock; a partial failure leaves tables requiring independent inspection and a fresh disposable database. An external actor with separate database credentials is not fenced by this advisory lock. Do not attempt to migrate an existing live database with this endpoint.
 
 The disposable MySQL integration test asserts that the first initialization succeeds and a repeat is rejected, preserving existing rows. **Incremental production migrations are still unimplemented**, requiring a reviewed versioned migration engine, backward-compatibility checks, independent restore verification and separately authorized promotion.
+
+## 17 November — Versioned migration planning foundation (strictly read-only)
+
+`migrations/manifest.json` now pins the SHA-256 of the actual v7 baseline schema and contains **zero unreviewed upgrade scripts**. Future upgrades require contiguous `from_version`/`to_version` entries, a safe filename (`v8__description.sql` etc.), and an exact SHA-256 of every reviewed migration file. The validator rejects missing, duplicated or reordered versions, path traversal, tampered files, mismatched baseline and a database version newer than repository source. It never executes migration SQL, applies DDL, or approves release.
+
+An operator with a **read-only credential for a separate staging/test MySQL database** can inspect its actual `v7_schema_versions` history and compare it against the reviewed repository manifest. On the operator machine:
+
+~~~sh
+export DB_NAME=sutradhar_source
+export SUTRADHAR_STAGING_DB_NAME=sutradhar_staging_ci
+export SUTRADHAR_MIGRATION_PLAN_APPROVED=yes
+export SUTRADHAR_MIGRATION_TARGET_VERSION=7
+export DB_HOST=<approved-db-host>
+export DB_PORT=3306
+export DB_USER=<read-only-staging-user>
+# Set DB_PASSWORD via an approved private operator secret manager.
+npm run ops:plan-versioned-migrations
+~~~
+
+For this release baseline, the only legitimate plan is version 7 with **no pending migrations**. A future version 8 must be separately developed and reviewed; simply editing the manifest cannot authorize execution. The read-only planner checks version history and source-file hashes, **not actual table definitions, indexes, foreign keys, data integrity, backup restoration, or compatibility with old Desktop agents**. Existing [staging schema inventory](OWNER_RELEASE_GATE_HANDOFF_2026-11-17.md) and real migration rehearsals remain separate gates. The command does not perform any action on Hostinger on its own; no real database was accessed in this implementation.
