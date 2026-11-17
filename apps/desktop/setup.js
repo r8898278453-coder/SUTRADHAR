@@ -118,6 +118,18 @@ get('isolatePc').addEventListener('click',async()=>{
     '. Do not manually delete identity or maintenance hold.';}
   finally{button.disabled=false;}
 });
+get('checkRecovery').addEventListener('click',async()=>{
+  const button=get('checkRecovery');button.disabled=true;
+  get('updateFeedback').textContent='Verifying signed cancellation of the exact held maintenance plan…';
+  try{
+    const result=await api.checkMaintenanceRecovery();
+    get('updateFeedback').textContent='Owner cancellation verified for '+result.plan_id+
+      ' on '+result.node_id+'. LOCAL HOLD STILL ACTIVE. No agent restart or installer execution is authorized. Owner-assisted recovery is required.';
+    await loadStatus();
+  }catch(e){get('updateFeedback').textContent='Recovery BLOCKED: '+
+    String(e.message||e)+'. Keep the local hold and contact Owner.';}
+  finally{button.disabled=false;}
+});
 get('reconcileEnrollment').addEventListener('click',async()=>{
   const button=get('reconcileEnrollment');button.disabled=true;
   showFeedback('Checking this same OS-vault identity against Owner-approved Central (read-only)…');
