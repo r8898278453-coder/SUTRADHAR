@@ -14,6 +14,7 @@ const {spawn,spawnSync}=require('node:child_process');
 const {verifyOffer,sha256File}=require('./update-policy.cjs');
 const {checkReadiness}=require('./update-readiness.cjs');
 const {recordInspection}=require('./update-inspection-journal.cjs');
+const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
@@ -65,6 +66,10 @@ function safeStatus(){
       if(enrollmentState==='SUBMITTED')pendingEnrollmentCode=null;
     }
   }catch(e){enrollmentState='OWNER_REVIEW_REQUIRED';enrollmentError=String(e.message||e).slice(0,100);}
+  let maintenanceHold='NONE';
+  try{const hold=inspectHold({dir:nodeDir(),nodeId});
+    if(hold.active)maintenanceHold='OWNER_REVIEW_REQUIRED';}
+  catch(e){maintenanceHold='CORRUPT_OWNER_REVIEW_REQUIRED';}
   const agentProcessRunning=Boolean(agent&&agent.exitCode===null);
   const startupSupported=Boolean(app.isPackaged&&['win32','darwin'].includes(process.platform));
   let startupEnabled=false;
@@ -78,11 +83,15 @@ function safeStatus(){
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:enrollmentState==='SUBMITTED',
     enrollmentState,enrollmentError,
-    agentProcessRunning,centralReport,startupSupported,startupEnabled,
+    agentProcessRunning,centralReport,maintenanceHold,startupSupported,startupEnabled,
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent(){
   if(!current||shuttingDown||agent&&agent.exitCode===null)return;
+  // Persisted local hold overrides automatic restart even if Central currently
+  // appears healthy; corrupted holds also fail closed for Owner review.
+  const hold=inspectHold({dir:nodeDir(),nodeId:vault?.read()?.node_id});
+  if(hold.active)throw Error('MAINTENANCE_HOLD_OWNER_REVIEW_REQUIRED');
   if(!vault||!signer)throw Error(vaultError||'OS_VAULT_UNAVAILABLE');
   const enrolled=requireSubmitted({dir:nodeDir(),node:vault.read(),centralUrl:current.centralUrl});
   if(enrolled)pendingEnrollmentCode=null;
