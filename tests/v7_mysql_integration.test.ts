@@ -57,6 +57,8 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
   }
   try{
     process.env.SUTRADHAR_ALLOW_MIGRATIONS='true';
+    process.env.SUTRADHAR_BOOTSTRAP_EMPTY_DB_APPROVED='yes';
+    process.env.SUTRADHAR_BOOTSTRAP_TARGET_DB=process.env.DB_NAME!;
     const mig=await post('/v7/owner/migrate',{},admin);assert.equal(mig.code,200,JSON.stringify(mig.body));
     assert.equal(mig.body.bootstrap_only,true);
     assert.equal(mig.body.production_migration_approved,false);
