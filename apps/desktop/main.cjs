@@ -172,6 +172,13 @@ function startAgent(){
     if(agent!==spawnedAgent)return; // Ignore stale child exit after a replacement.
     agent=null;
     if(shuttingDown)return;
+    // A confirmed or uncertain maintenance stop must not schedule retries.
+    // Even malformed on-disk holds require Owner review, never a restart.
+    if(fs.existsSync(nodeDir())){
+      try{
+        if(inspectHold({dir:nodeDir(),nodeId:vault?.read()?.node_id}).active)return;
+      }catch{return;}
+    }
     if(retryTimer)clearTimeout(retryTimer);
     retryTimer=setTimeout(()=>{
       retryTimer=null;
