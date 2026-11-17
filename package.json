@@ -37,7 +37,8 @@
     "ops:inspect-staging-schema": "node scripts/ops/staging-schema-inspect.cjs",
     "ops:bootstrap-empty-staging": "node scripts/ops/bootstrap-empty-staging.cjs",
     "ops:plan-versioned-migrations": "node scripts/ops/versioned-migration-plan.cjs",
-    "ops:rehearse-staging-migration": "node scripts/ops/staging-migration-rehearsal.cjs"
+    "ops:rehearse-staging-migration": "node scripts/ops/staging-migration-rehearsal.cjs",
+    "release:sign-maintenance-grant": "node scripts/release/sign-maintenance-release.cjs"
   },
   "dependencies": {
     "@google/genai": "3.3.0",
