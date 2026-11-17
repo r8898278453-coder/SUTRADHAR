@@ -9,6 +9,7 @@ const base={target:'sutradhar_staging_ci',source:'sutradhar_live',approved:'yes'
 const all=expectedTables(schema);
 async function fake(sql){
   if(sql.includes('information_schema.tables'))return [all.map(name=>({table_name:name,engine:'InnoDB'}))];
+  if(sql.includes('information_schema.columns'))return [all.map(table_name=>({table_name,column_name:'id'}))];
   if(sql.includes('v7_schema_versions'))return [[{version:7}]];
   throw Error('Unexpected query');
 }
@@ -40,4 +41,19 @@ test('missing, unexpected, non-InnoDB tables and wrong version fail closed',asyn
   const bad=async sql=>sql.includes('information_schema.tables')?
     [all.map(table_name=>({table_name,engine:'MyISAM'}))]:[[{version:7}]];
   await assert.rejects(inspect({...base,query:bad}),/NON_INNODB/);
+});
+
+test('missing and unexpected columns reject otherwise matching staging tables',async()=>{
+  const query=(columns)=>async sql=>{
+    if(sql.includes('information_schema.tables'))return [all.map(table_name=>({table_name,engine:'InnoDB'}))];
+    if(sql.includes('information_schema.columns'))return [columns];
+    return [[{version:7}]];
+  };
+  const baseline=all.map(table_name=>({table_name,column_name:'id'}));
+  const missing=await inspect({...base,query:query(baseline.slice(1))});
+  assert.equal(missing.accepted,false);
+  assert.ok(missing.column_inventory.missing.includes(all[0]+'.id'));
+  const extra=await inspect({...base,query:query([...baseline,{table_name:all[0],column_name:'unexpected'}])});
+  assert.equal(extra.accepted,false);
+  assert.ok(extra.column_inventory.extra.includes(all[0]+'.unexpected'));
 });
