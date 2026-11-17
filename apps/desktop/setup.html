@@ -49,6 +49,8 @@
 <button id="updateReadiness" class="secondary" type="button">Check whether this PC is Master or backup</button>
 <button id="isolatePc" class="secondary" type="button">Owner maintenance: isolate this drained PC</button>
 <button id="checkRecovery" class="secondary" type="button">Verify Owner cancellation (no restart)</button>
+<button id="releaseHold" class="secondary" type="button">Owner-signed hold release (no restart)</button>
+<p class="hint">Release needs a separate Owner-signed grant and two fresh Central cancellation checks. It archives the hold, but a durable reconciliation barrier keeps automatic agent restart blocked.</p>
 <p class="hint">Use only after Owner marked this exact PC DRAINED in Central. A separate confirmation verifies signed Central state, then saves a persistent local hold before requesting agent stop. No installer runs. An Owner must assist recovery.</p>
 <p class="hint">Uses signed Central requests. An unapproved, active Master, Backup 1 or Backup 2, or offline PC cannot be cleared for maintenance. This point-in-time check never authorizes installation or stops agents.</p>
 <div id="updateFeedback" role="status" aria-live="polite"></div>
