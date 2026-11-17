@@ -80,4 +80,4 @@ function compareColumns(expected,rows){
     observed_column_count:[...observed.values()].reduce((n,a)=>n+a.size,0),
     verified_column_names_only:true,types_indexes_and_foreign_keys_verified:false};
 }
-module.exports={expectedColumns,compareColumns};
+module.exports={expectedColumns,compareColumns,splitTopLevel};
