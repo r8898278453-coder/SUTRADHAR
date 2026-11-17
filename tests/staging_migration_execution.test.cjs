@@ -70,3 +70,26 @@ test('failed DDL leaves STARTED receipt and forbids automatic retry',async()=>{
     readFile:()=>sql}),/EXISTING_ATTEMPT/);
   assert.equal(second.calls.some(x=>x.q.startsWith('ALTER TABLE')),false);
 });
+
+test('changed SQL bytes between planning and execution are blocked before audit claim',async()=>{
+  const {db,calls}=fakeDb();
+  let reads=0;
+  await assert.rejects(rehearsal({db,manifest,schemaText:schema,intent,
+    readFile:()=>++reads===1?sql:sql.replace('release_note','swapped_note')}),
+    /EXECUTION_SOURCE_CHANGED/);
+  assert.equal(reads,2);
+  assert.equal(calls.some(x=>x.q.startsWith('INSERT INTO v7_migration_audit')),false);
+  assert.equal(calls.some(x=>x.q.startsWith('ALTER TABLE')),false);
+});
+test('failed audit finalization after DDL is never presented as migration success',async()=>{
+  const {db,calls}=fakeDb(),original=db.query;
+  db.query=async(q,args)=>{
+    if(q.startsWith('UPDATE v7_migration_audit')){
+      calls.push({q,args});return [{affectedRows:0}];
+    }
+    return original(q,args);
+  };
+  await assert.rejects(rehearsal({db,manifest,schemaText:schema,intent,
+    readFile:()=>sql}),/PARTIAL_DDL_MANUAL_REVIEW_AFTER_1/);
+  assert.ok(calls.some(x=>x.q.startsWith('INSERT INTO v7_schema_versions')));
+});
