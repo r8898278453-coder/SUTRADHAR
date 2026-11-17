@@ -138,3 +138,9 @@ npm run ops:plan-versioned-migrations
 ~~~
 
 For this release baseline, the only legitimate plan is version 7 with **no pending migrations**. A future version 8 must be separately developed and reviewed; simply editing the manifest cannot authorize execution. The read-only planner checks version history and source-file hashes, **not actual table definitions, indexes, foreign keys, data integrity, backup restoration, or compatibility with old Desktop agents**. Existing [staging schema inventory](OWNER_RELEASE_GATE_HANDOFF_2026-11-17.md) and real migration rehearsals remain separate gates. The command does not perform any action on Hostinger on its own; no real database was accessed in this implementation.
+
+## 17 November — Staging column drift detection
+
+The staging read-only checker now parses the pinned v7 baseline `CREATE TABLE` definitions, including comma-bearing `ENUM(...)` fields, to derive the expected table-to-column-name inventory. It performs an additional read-only `SELECT table_name,column_name FROM information_schema.columns WHERE table_schema=?`, compares each `v7_` table's expected columns, and rejects any missing/extra columns even when the table count and `v7_schema_versions` value appear correct. Report output includes `column_inventory.missing`, `column_inventory.extra`, and `column_inventory.accepted`. Changes are covered by `tests/schema_column_inventory.test.cjs` and `tests/staging_schema_inspect.test.cjs` in `npm run test:ops`.
+
+**This detects column NAMES only.** It does not establish data-type/default/collation equivalence, index or foreign-key integrity, table definition checksum, application backward compatibility, transactional upgrade behavior, or restorable backups. An empty `missing/extra` list is not migration approval; the result continues to set `production_accepted:false` and `migration_executed:false`. No Hostinger MySQL connection was made during this code change.
