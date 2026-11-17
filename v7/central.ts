@@ -408,6 +408,11 @@ app.post('/v7/owner/migrate',jsonRoute(async req=>{
     held=true;
     const dbName=(await one(c,'SELECT DATABASE() AS name'))?.name;
     if(typeof dbName!=='string'||!dbName)fault('SCHEMA_TARGET_INVALID',409);
+    // Approval must name this exact database; an enabled migration toggle
+    // alone does not permit schema creation in a wrongly configured MySQL DB.
+    if(process.env.SUTRADHAR_BOOTSTRAP_EMPTY_DB_APPROVED!=='yes'||
+       process.env.SUTRADHAR_BOOTSTRAP_TARGET_DB!==dbName)
+      fault('SCHEMA_BOOTSTRAP_EXACT_TARGET_APPROVAL_REQUIRED',403);
     const tables=await one(c,
       'SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=?',[dbName]);
     if(!tables||Number(tables.n)!==0)fault('SCHEMA_BOOTSTRAP_REQUIRES_EMPTY_DATABASE',409);
