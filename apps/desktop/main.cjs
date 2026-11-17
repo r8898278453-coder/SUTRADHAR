@@ -17,6 +17,7 @@ const {recordInspection}=require('./update-inspection-journal.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {isolateDrainedPc}=require('./maintenance-local-isolation.cjs');
 const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
+const {checkRecovery}=require('./maintenance-recovery-preflight.cjs');
 const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
@@ -348,6 +349,17 @@ app.whenReady().then(()=>{
     // A failed/uncertain stop does not erase the persisted hold. The agent
     // cannot auto-restart; Owner must review the actual local process.
     return {...isolated,...stopped};
+  });
+  ipcMain.handle('sutradhar:checkMaintenanceRecovery',async event=>{
+    verifySender(event);
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('MAINTENANCE_RECOVERY_REQUIRES_PACKAGED_WINDOWS_PC');
+    const node=vault.read();
+    if(!node||!requireSubmitted({
+      dir:nodeDir(),node,centralUrl:current.centralUrl
+    }))throw Error('MAINTENANCE_RECOVERY_REQUIRES_ENROLLED_IDENTITY');
+    return checkRecovery({dir:nodeDir(),centralOrigin:current.centralUrl,
+      nodeId:node.node_id,signer});
   });
   ipcMain.handle('sutradhar:verifyLocalUpdate',async(event)=>{
     verifySender(event);
