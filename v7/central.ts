@@ -544,6 +544,33 @@ app.get('/v7/nodes/me',jsonRoute(async req=>{
   return transaction(async c=>({node_id:node.node_id,
     agents:await maintenanceAgentEvidence(c,node.node_id)}));
 }));
+// Signed recovery evidence for this node's EXACT historical maintenance plan.
+// Read only. Cancellation is Owner-authenticated in /v7/owner/command;
+// this endpoint NEVER grants permission to restart a Windows process.
+app.get('/v7/nodes/maintenance/recovery',jsonRoute(async req=>{
+  const node=await nodeAuth(req);
+  const planId=requireId(req.query.plan_id);
+  return transaction(async c=>{
+    const plan=await one(c,'SELECT p.plan_id,p.node_id,p.wave_id,p.offer_sha256,'+
+      'p.state,p.closed_at,f.node_id AS fence_node_id '+
+      'FROM v7_pc_maintenance_plans p '+
+      'LEFT JOIN v7_pc_maintenance_fences f ON f.plan_id=p.plan_id '+
+      'WHERE p.plan_id=? AND p.node_id=?',[planId,node.node_id]);
+    if(!plan)fault('MAINTENANCE_RECOVERY_PLAN_NOT_FOUND',404);
+    const live=await one(c,'SELECT COUNT(*) AS n FROM v7_pc_maintenance_fences WHERE node_id=?',[node.node_id]);
+    const pending=await one(c,'SELECT COUNT(*) AS n FROM v7_pc_maintenance_plans '+
+      'WHERE node_id=? AND state="INTENT_ONLY"',[node.node_id]);
+    const cancellationVerified=plan.state==='CANCELLED'&&Boolean(plan.closed_at)&&
+      !plan.fence_node_id&&Number(live?.n)===0&&Number(pending?.n)===0;
+    return {node_id:node.node_id,plan_id:plan.plan_id,
+      wave_id:plan.wave_id,offer_sha256:plan.offer_sha256,
+      state:plan.state,cancellation_verified:cancellationVerified,
+      any_active_fence:Number(live?.n)!==0,
+      any_active_maintenance_intent:Number(pending?.n)!==0,
+      local_hold_release_allowed:false,installer_execution_allowed:false,
+      recovery_requires_owner:true};
+  });
+}));
 // A signed node may inspect Owner intent, but it is NEVER an install lease.
 app.get('/v7/nodes/maintenance',jsonRoute(async req=>{
   const node=await nodeAuth(req);
