@@ -53,9 +53,9 @@ async function inspect({target,source,approved,expectedSha,schemaText,query}){
     [target]);
   const structure=compareStructure(expectedStructure(schemaText),columnRows,indexRows);
   const [foreignKeyRows]=await query(
-    'SELECT k.table_name,k.constraint_name,k.column_name,k.ordinal_position,k.referenced_table_name,k.referenced_column_name,r.delete_rule,r.update_rule FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints r ON r.constraint_schema=k.constraint_schema AND r.constraint_name=k.constraint_name AND r.table_name=k.table_name WHERE k.table_schema=? AND k.referenced_table_name IS NOT NULL ORDER BY k.table_name,k.constraint_name,k.ordinal_position',
+    'SELECT k.table_name,k.constraint_name,k.column_name,k.ordinal_position,k.referenced_table_schema,k.referenced_table_name,k.referenced_column_name,r.delete_rule,r.update_rule FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints r ON r.constraint_schema=k.constraint_schema AND r.constraint_name=k.constraint_name AND r.table_name=k.table_name WHERE k.table_schema=? AND k.referenced_table_name IS NOT NULL ORDER BY k.table_name,k.constraint_name,k.ordinal_position',
     [target]);
-  const foreignKeys=compareForeignKeys(expectedForeignKeys(schemaText),foreignKeyRows);
+  const foreignKeys=compareForeignKeys(expectedForeignKeys(schemaText),foreignKeyRows,target);
   let schemaVersion=null;
   if(!missing.includes('v7_schema_versions')){
     const [v]=await query('SELECT version FROM v7_schema_versions ORDER BY version DESC LIMIT 2',[]);
