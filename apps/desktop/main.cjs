@@ -68,9 +68,11 @@ function safeStatus(){
     }
   }catch(e){enrollmentState='OWNER_REVIEW_REQUIRED';enrollmentError=String(e.message||e).slice(0,100);}
   let maintenanceHold='NONE';
-  try{const hold=inspectHold({dir:nodeDir(),nodeId});
-    if(hold.active)maintenanceHold='OWNER_REVIEW_REQUIRED';}
-  catch(e){maintenanceHold='CORRUPT_OWNER_REVIEW_REQUIRED';}
+  if(fs.existsSync(nodeDir())){
+    try{const hold=inspectHold({dir:nodeDir(),nodeId});
+      if(hold.active)maintenanceHold='OWNER_REVIEW_REQUIRED';}
+    catch(e){maintenanceHold='CORRUPT_OWNER_REVIEW_REQUIRED';}
+  }
   const agentProcessRunning=Boolean(agent&&agent.exitCode===null);
   const startupSupported=Boolean(app.isPackaged&&['win32','darwin'].includes(process.platform));
   let startupEnabled=false;
