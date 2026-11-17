@@ -15,7 +15,7 @@ async function checkRecovery({dir,centralOrigin,nodeId,signer,
     fail('MAINTENANCE_RECOVERY_IDENTITY_REQUIRED');
   const held=inspectHold({dir,nodeId});
   if(!held.active)fail('MAINTENANCE_RECOVERY_NO_LOCAL_HOLD');
-  const uri='/v7/nodes/maintenance/recovery?plan_id='+encodeURIComponent(held.plan_id);
+  const uri='/v7/nodes/maintenance/recovery/'+encodeURIComponent(held.plan_id);
   const signed=signer.sign({kind:'node_api',method:'GET',uri,body:''});
   if(!signed||signed['x-sutradhar-node']!==nodeId||
      typeof signed['x-sutradhar-nonce']!=='string'||
