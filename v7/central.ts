@@ -547,9 +547,9 @@ app.get('/v7/nodes/me',jsonRoute(async req=>{
 // Signed recovery evidence for this node's EXACT historical maintenance plan.
 // Read only. Cancellation is Owner-authenticated in /v7/owner/command;
 // this endpoint NEVER grants permission to restart a Windows process.
-app.get('/v7/nodes/maintenance/recovery',jsonRoute(async req=>{
+app.get('/v7/nodes/maintenance/recovery/:planId',jsonRoute(async req=>{
   const node=await nodeAuth(req);
-  const planId=requireId(req.query.plan_id);
+  const planId=requireId(req.params.planId);
   return transaction(async c=>{
     const plan=await one(c,'SELECT p.plan_id,p.node_id,p.wave_id,p.offer_sha256,'+
       'p.state,p.closed_at,f.node_id AS fence_node_id '+
