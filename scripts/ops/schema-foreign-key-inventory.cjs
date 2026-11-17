@@ -49,14 +49,18 @@ function expectedForeignKeys(schema){
   if(unique.size!==result.length)fail('SCHEMA_FK_DUPLICATE_EXPECTED');
   return result;
 }
-function compareForeignKeys(expected,rows){
-  if(!Array.isArray(expected)||!Array.isArray(rows))fail('SCHEMA_FK_INVENTORY_INVALID');
+function compareForeignKeys(expected,rows,expectedSchema){
+  if(!Array.isArray(expected)||!Array.isArray(rows)||
+     (expectedSchema!==undefined&&!/^[A-Za-z0-9_]{1,64}$/.test(expectedSchema)))
+    fail('SCHEMA_FK_INVENTORY_INVALID');
   const groups=new Map();
   for(const r of rows){
     const table=String(r?.table_name||'').toLowerCase();
     const constraint=String(r?.constraint_name||'');
     if(!TABLE.test(table)||!constraint||constraint.length>128)
       fail('SCHEMA_FK_METADATA_INVALID');
+    if(expectedSchema!==undefined&&r.referenced_table_schema!==expectedSchema)
+      fail('SCHEMA_FK_CROSS_DATABASE_REFERENCE');
     const name=String(r.column_name||'').toLowerCase();
     const parent=String(r.referenced_table_name||'').toLowerCase();
     const parentName=String(r.referenced_column_name||'').toLowerCase();
