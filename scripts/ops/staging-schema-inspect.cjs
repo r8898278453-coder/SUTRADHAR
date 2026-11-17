@@ -8,6 +8,7 @@ const DB=/^[A-Za-z0-9_]{1,64}$/;
 const HEX=/^[a-f0-9]{64}$/;
 const {expectedColumns,compareColumns}=require('./schema-column-inventory.cjs');
 const {expectedStructure,compareStructure}=require('./schema-structure-inventory.cjs');
+const {expectedForeignKeys,compareForeignKeys}=require('./schema-foreign-key-inventory.cjs');
 function expectedTables(schema){
   if(typeof schema!=='string'||schema.length>1024*1024)throw Error('SCHEMA_SOURCE_INVALID');
   const tables=[...schema.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+`?(v7_[A-Za-z0-9_]+)`?\s*\(/gi)]
@@ -51,6 +52,10 @@ async function inspect({target,source,approved,expectedSha,schemaText,query}){
     'SELECT table_name,index_name,seq_in_index,column_name,non_unique FROM information_schema.statistics WHERE table_schema=?',
     [target]);
   const structure=compareStructure(expectedStructure(schemaText),columnRows,indexRows);
+  const [foreignKeyRows]=await query(
+    'SELECT k.table_name,k.constraint_name,k.column_name,k.ordinal_position,k.referenced_table_name,k.referenced_column_name,r.delete_rule,r.update_rule FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints r ON r.constraint_schema=k.constraint_schema AND r.constraint_name=k.constraint_name AND r.table_name=k.table_name WHERE k.table_schema=? AND k.referenced_table_name IS NOT NULL ORDER BY k.table_name,k.constraint_name,k.ordinal_position',
+    [target]);
+  const foreignKeys=compareForeignKeys(expectedForeignKeys(schemaText),foreignKeyRows);
   let schemaVersion=null;
   if(!missing.includes('v7_schema_versions')){
     const [v]=await query('SELECT version FROM v7_schema_versions ORDER BY version DESC LIMIT 2',[]);
@@ -58,9 +63,9 @@ async function inspect({target,source,approved,expectedSha,schemaText,query}){
       throw Error('STAGING_SCHEMA_VERSION_INVALID');
     schemaVersion=Number(v[0].version);
   }
-  return {accepted:missing.length===0&&extra.length===0&&schemaVersion===7&&columns.accepted&&structure.accepted,
+  return {accepted:missing.length===0&&extra.length===0&&schemaVersion===7&&columns.accepted&&structure.accepted&&foreignKeys.accepted,
     status:'STAGING_SCHEMA_READ_ONLY_INVENTORY',source_sha256:expectedSha,
-    column_inventory:columns,structure_inventory:structure,
+    column_inventory:columns,structure_inventory:structure,foreign_key_inventory:foreignKeys,
     expected_table_count:tables.length,observed_table_count:observed.size,
     missing,extra,schema_version:schemaVersion,production_accepted:false,
     migration_executed:false,restore_proven:false};
