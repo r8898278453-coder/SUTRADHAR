@@ -4,6 +4,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),cryp
 const {createHold,inspectHold}=require('../apps/desktop/maintenance-recovery-hold.cjs');
 const {verifyRecoveryGrant}=require('../apps/desktop/maintenance-release-grant.cjs');
 const {releaseHold}=require('../apps/desktop/maintenance-release-executor.cjs');
+const {requiresReconciliation}=require('../apps/desktop/maintenance-reconciliation-barrier.cjs');
 const nodeId='node_'+'a'.repeat(32),planId='plan_pc_123',waveId='wave_pilot01';
 const offerSha256='b'.repeat(64),grantId='c'.repeat(64);
 const keys=crypto.generateKeyPairSync('ed25519');
@@ -51,6 +52,7 @@ test('Owner-signed cancellation releases hold into archive but never restarts an
   const r=await releaseHold({...base,dir,grantEnvelope:sample(),fetcher:makeFetch()});
   assert.equal(r.released,true);assert.equal(r.agent_started,false);
   assert.equal(inspectHold({dir,nodeId}).active,false);
+  assert.equal(requiresReconciliation(dir),true,'Archived hold must not unlock auto-start');
   assert.equal(fs.existsSync(path.join(dir,'maintenance-release-'+grantId+'.json')),true);
   assert.equal(fs.existsSync(path.join(dir,'maintenance-recovery-hold.released.'+grantId+'.json')),true);
   await assert.rejects(releaseHold({...base,dir,grantEnvelope:sample(),fetcher:makeFetch()}),/NO_HOLD/);
@@ -74,4 +76,10 @@ test('existing attempt receipt blocks release without auto-retry or replacing ho
   await assert.rejects(releaseHold({...base,dir,grantEnvelope:sample(),
     fetcher:makeFetch()}),/ATTEMPT_ALREADY_RECORDED/);
   assert.equal(inspectHold({dir,nodeId}).active,true);
+}));
+
+test('a corrupt or interrupted release receipt still preserves the restart barrier',()=>fixture(dir=>{
+  assert.equal(requiresReconciliation(dir),false);
+  fs.writeFileSync(path.join(dir,'maintenance-release-'+'f'.repeat(64)+'.json'),'interrupted');
+  assert.equal(requiresReconciliation(dir),true);
 }));
