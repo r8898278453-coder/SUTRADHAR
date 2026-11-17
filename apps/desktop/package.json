@@ -44,7 +44,8 @@
       "single-instance.cjs",
       "update-readiness.cjs",
       "update-inspection-journal.cjs",
-      "maintenance-recovery-hold.cjs"
+      "maintenance-recovery-hold.cjs",
+      "maintenance-local-isolation.cjs"
     ],
     "extraResources": [
       {
