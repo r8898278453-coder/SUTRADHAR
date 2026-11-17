@@ -397,13 +397,37 @@ app.post('/v7/owner/migrate',jsonRoute(async req=>{
   const sql=fs.readFileSync(schemaFile,'utf8').split('\n').filter(l=>!l.trimStart().startsWith('--')).join('\n');
   const statements=sql.split(';').map(x=>x.trim()).filter(Boolean);
   const c=await getPool().getConnection();
+  let held=false;
   try{
     await c.query("SET time_zone = '+00:00'");
-    for(const stmt of statements)await c.query(stmt);
-    await c.query('INSERT IGNORE INTO v7_schema_versions(version) VALUES(7)');
-    await c.query('INSERT IGNORE INTO v7_cluster(singleton) VALUES(1)');
-    return {accepted:true,schema_version:7,statements:statements.length};
-  }finally{c.release();}
+    // MySQL DDL auto-commits; this is ONLY a one-time empty-DB bootstrap,
+    // never an in-place migration on existing data.
+    const lockName='sut_v7_init_'+crypto.createHash('sha256').update(String((await one(c,'SELECT DATABASE() AS name'))?.name||'')).digest('hex').slice(0,32);
+    const lock=await one(c,'SELECT GET_LOCK(?,0) AS acquired',[lockName]);
+    if(Number(lock?.acquired)!==1)fault('SCHEMA_BOOTSTRAP_ALREADY_RUNNING',409);
+    held=true;
+    const dbName=(await one(c,'SELECT DATABASE() AS name'))?.name;
+    if(typeof dbName!=='string'||!dbName)fault('SCHEMA_TARGET_INVALID',409);
+    const tables=await one(c,
+      'SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=?',[dbName]);
+    if(!tables||Number(tables.n)!==0)fault('SCHEMA_BOOTSTRAP_REQUIRES_EMPTY_DATABASE',409);
+    // Do not try to clean up partial tables on failure. Operator must inspect
+    // and recreate a disposable DB rather than blindly retrying DDL.
+    let completed=0;
+    try{
+      for(const stmt of statements){await c.query(stmt);completed++;}
+      await c.query('INSERT IGNORE INTO v7_schema_versions(version) VALUES(7)');
+      await c.query('INSERT IGNORE INTO v7_cluster(singleton) VALUES(1)');
+    }catch{fault('SCHEMA_BOOTSTRAP_PARTIAL_FAILURE_AFTER_'+completed,503);}
+    return {accepted:true,schema_version:7,statements:statements.length,
+      bootstrap_only:true,production_migration_approved:false};
+  }finally{
+    if(held){try{
+      const name='sut_v7_init_'+crypto.createHash('sha256').update(String((await one(c,'SELECT DATABASE() AS name'))?.name||'')).digest('hex').slice(0,32);
+      await c.query('SELECT RELEASE_LOCK(?)',[name]);
+    }catch{}}
+    c.release();
+  }
 }));
 app.post('/v7/nodes/enroll',jsonRoute(async req=>{
   if(!safeEqual(req.header('authorization')?.replace(/^Bearer /i,''),process.env.SUTRADHAR_ENROLLMENT_CODE))
