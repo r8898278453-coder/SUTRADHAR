@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   verifyLocalUpdate:()=>ipcRenderer.invoke('sutradhar:verifyLocalUpdate'),
   checkUpdateReadiness:()=>ipcRenderer.invoke('sutradhar:checkUpdateReadiness'),
   isolateDrainedPc:()=>ipcRenderer.invoke('sutradhar:isolateDrainedPc'),
+  checkMaintenanceRecovery:()=>ipcRenderer.invoke('sutradhar:checkMaintenanceRecovery'),
   openDashboard:()=>ipcRenderer.invoke('sutradhar:openDashboard'),
   openProvider:name=>ipcRenderer.invoke('sutradhar:openProvider',name)
 }));
