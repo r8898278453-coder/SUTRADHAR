@@ -27,20 +27,38 @@ function cmp(a,b){
 function sha256File(file){
   if(typeof file!=='string'||!path.isAbsolute(file))
     throw Error('UPDATE_INSTALLER_PATH_INVALID');
-  const stat=fs.lstatSync(file);
-  if(!stat.isFile()||stat.isSymbolicLink())
+  const initial=fs.lstatSync(file,{bigint:true});
+  if(!initial.isFile()||initial.isSymbolicLink())
     throw Error('UPDATE_INSTALLER_FILE_TYPE_INVALID');
-  const fd=fs.openSync(file,fs.constants.O_RDONLY);
+  // Open the exact descriptor we hash. O_NOFOLLOW refuses link swapping on
+  // supported platforms; lstat/fstat comparison also protects Windows.
+  const flags=fs.constants.O_RDONLY|(fs.constants.O_NOFOLLOW||0);
+  const fd=fs.openSync(file,flags);
   const buf=Buffer.allocUnsafe(1024*1024);
   const h=crypto.createHash('sha256');
   try{
+    const opened=fs.fstatSync(fd,{bigint:true});
+    if(!opened.isFile()||opened.dev!==initial.dev||opened.ino!==initial.ino||
+       opened.size!==initial.size||opened.size>1073741824n)
+      throw Error('UPDATE_INSTALLER_FILE_CHANGED');
+    let total=0n;
     for(;;){
       const bytes=fs.readSync(fd,buf,0,buf.length,null);
       if(bytes===0)break;
+      total+=BigInt(bytes);
+      if(total>1073741824n)throw Error('UPDATE_INSTALLER_TOO_LARGE');
       h.update(buf.subarray(0,bytes));
     }
+    const finished=fs.fstatSync(fd,{bigint:true});
+    const current=fs.lstatSync(file,{bigint:true});
+    if(total!==opened.size||finished.size!==opened.size||
+       finished.mtimeNs!==opened.mtimeNs||finished.ctimeNs!==opened.ctimeNs||
+       current.dev!==opened.dev||current.ino!==opened.ino||
+       current.size!==opened.size||current.mtimeNs!==opened.mtimeNs||
+       current.ctimeNs!==opened.ctimeNs||current.isSymbolicLink())
+      throw Error('UPDATE_INSTALLER_FILE_CHANGED');
+    return h.digest('hex');
   }finally{fs.closeSync(fd);}
-  return h.digest('hex');
 }
 function verifyOffer({envelope,pinnedPublicKeyPem,installerPath,currentVersion,
   nodeId,protocol=7,publisherSubject,now=Date.now(),rolloutApproved=false,kind='update'}){
