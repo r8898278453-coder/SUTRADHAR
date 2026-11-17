@@ -130,6 +130,20 @@ get('checkRecovery').addEventListener('click',async()=>{
     String(e.message||e)+'. Keep the local hold and contact Owner.';}
   finally{button.disabled=false;}
 });
+get('releaseHold').addEventListener('click',async()=>{
+  const button=get('releaseHold');button.disabled=true;
+  get('updateFeedback').textContent='Checking Owner-signed release grant and live cancellation…';
+  try{
+    const result=await api.releaseMaintenanceHold();
+    get('updateFeedback').textContent=result.canceled?'Release canceled.':
+      'Owner release archived for '+result.node_id+
+      '. Agent NOT restarted. Separate reconciliation required; do not delete the audit receipt.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='Release BLOCKED: '+String(e.message||e)+
+      '. Keep existing recovery records for Owner review.';
+  }finally{button.disabled=false;}
+});
 get('reconcileEnrollment').addEventListener('click',async()=>{
   const button=get('reconcileEnrollment');button.disabled=true;
   showFeedback('Checking this same OS-vault identity against Owner-approved Central (read-only)…');
