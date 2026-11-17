@@ -18,6 +18,8 @@ const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {isolateDrainedPc}=require('./maintenance-local-isolation.cjs');
 const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
 const {checkRecovery}=require('./maintenance-recovery-preflight.cjs');
+const {releaseHold,boundedFile}=require('./maintenance-release-executor.cjs');
+const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
 const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
@@ -70,6 +72,8 @@ function safeStatus(){
     }
   }catch(e){enrollmentState='OWNER_REVIEW_REQUIRED';enrollmentError=String(e.message||e).slice(0,100);}
   let maintenanceHold='NONE';
+  try{if(requiresReconciliation(nodeDir()))maintenanceHold='RELEASE_RECONCILIATION_REQUIRED';}
+  catch{maintenanceHold='CORRUPT_OWNER_REVIEW_REQUIRED';}
   if(fs.existsSync(nodeDir())){
     try{const hold=inspectHold({dir:nodeDir(),nodeId});
       if(hold.active)maintenanceHold='OWNER_REVIEW_REQUIRED';}
@@ -93,6 +97,7 @@ function safeStatus(){
 }
 function startAgent(){
   if(!current||shuttingDown||agent&&agent.exitCode===null)return;
+  if(requiresReconciliation(nodeDir()))throw Error('MAINTENANCE_POST_RELEASE_RECONCILIATION_REQUIRED');
   // Persisted local hold overrides automatic restart even if Central currently
   // appears healthy; corrupted holds also fail closed for Owner review.
   if(fs.existsSync(nodeDir())){
@@ -173,6 +178,7 @@ function startAgent(){
     if(agent!==spawnedAgent)return; // Ignore stale child exit after a replacement.
     agent=null;
     if(shuttingDown)return;
+    try{if(requiresReconciliation(nodeDir()))return;}catch{return;}
     // A confirmed or uncertain maintenance stop must not schedule retries.
     // Even malformed on-disk holds require Owner review, never a restart.
     if(fs.existsSync(nodeDir())){
@@ -360,6 +366,37 @@ app.whenReady().then(()=>{
     }))throw Error('MAINTENANCE_RECOVERY_REQUIRES_ENROLLED_IDENTITY');
     return checkRecovery({dir:nodeDir(),centralOrigin:current.centralUrl,
       nodeId:node.node_id,signer});
+  });
+  ipcMain.handle('sutradhar:releaseMaintenanceHold',async event=>{
+    verifySender(event);
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('RECOVERY_RELEASE_REQUIRES_PACKAGED_WINDOWS_PC');
+    if(agent&&agent.exitCode===null&&agent.signalCode===null)
+      throw Error('RECOVERY_RELEASE_AGENT_MUST_BE_STOPPED');
+    const node=vault.read();
+    if(!node||!requireSubmitted({dir:nodeDir(),node,centralUrl:current.centralUrl}))
+      throw Error('RECOVERY_RELEASE_REQUIRES_ENROLLED_IDENTITY');
+    const trust=JSON.parse(fs.readFileSync(
+      path.join(__dirname,'maintenance-release-trust.json'),'utf8'));
+    if(trust.schema!==1||trust.status!=='OWNER_PROTECTED_RELEASE'||
+       typeof trust.public_key_pem!=='string')
+      throw Error('RECOVERY_RELEASE_OWNER_TRUST_NOT_CONFIGURED');
+    const confirm=await dialog.showMessageBox(setupWindow,{
+      type:'warning',buttons:['Cancel','Verify signed Owner grant and archive hold'],
+      defaultId:0,cancelId:0,noLink:true,
+      message:'Owner-authorized maintenance hold release?',
+      detail:'The local hold is archived only after checking the Owner Ed25519 grant and Central cancellation twice. Agent remains blocked pending separate reconciliation. No installer executes.'
+    });
+    if(confirm.response!==1)return {canceled:true};
+    const selected=await dialog.showOpenDialog(setupWindow,{
+      title:'Select exact Owner-signed maintenance release grant',
+      properties:['openFile'],filters:[{name:'Owner release grant JSON',extensions:['json']}]
+    });
+    if(selected.canceled||selected.filePaths.length!==1)return {canceled:true};
+    return releaseHold({dir:nodeDir(),centralOrigin:current.centralUrl,
+      nodeId:node.node_id,signer,agentStopped:true,
+      pinnedPublicKeyPem:trust.public_key_pem,
+      grantEnvelope:boundedFile(selected.filePaths[0])});
   });
   ipcMain.handle('sutradhar:verifyLocalUpdate',async(event)=>{
     verifySender(event);
