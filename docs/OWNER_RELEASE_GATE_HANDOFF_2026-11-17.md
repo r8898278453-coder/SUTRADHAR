@@ -156,3 +156,24 @@ This is **not a complete schema equivalence checker**: default expressions, coll
 Staging schema inspection now also validates foreign-key relationships. It parses the pinned v7 baseline SQL, reads `information_schema.key_column_usage` joined to `information_schema.referential_constraints` using **SELECT only**, and compares child tables, ordered child columns, parent tables, ordered parent columns, and `ON DELETE`/`ON UPDATE` actions. The database may assign foreign-key constraint names automatically; names are not treated as a stable security identity. For InnoDB, `NO ACTION` and `RESTRICT` are normalized for this inspection. Missing, extra, redirected or changed-action relationships block staging acceptance. The referenced database/schema must also match the exact staging database; a foreign key pointing to production or any other schema is rejected.
 
 Regression coverage: `tests/schema_foreign_key_inventory.test.cjs` via `npm run test:ops`. Report: `foreign_key_inventory` with accepted/missing/extra and expected/observed counts. The checker **still does not approve production**, execute migrations, or prove row-level referential integrity, cross-version compatibility, backup restoration, or clean Hostinger staging availability. This is one additional read-only structural gate.
+
+## Experimental staging-only incremental v7→v8 DDL rehearsal
+
+`scripts/ops/staging-migration-rehearsal.cjs` is an **operator-controlled staging experiment**, not a general migration runner or production release permission. It requires an exact, distinct staging database name and separate approval, a 64-character backup receipt reference, the pinned repository manifest, an exact v7 schema history, an actual **complete read-only v7 schema-drift check**, a MySQL advisory lock, and a single reviewed SHA-256-pinned v8 script. Only a narrow set of additive `ALTER TABLE v7_* ADD COLUMN ... NULL` and `CREATE [UNIQUE] INDEX ... ON v7_*` SQL is supported; no destructive/drop/update/delete statements or unreviewed SQL. The MySQL `v7_migration_audit` attempt record is written **before** the first DDL statement. If an operation fails or the process crashes, the persistent attempt blocks blind retries and requires independent operator recovery. The command does **not** automatically undo MySQL DDL because it cannot be atomically rolled back as a group.
+
+The committed `migrations/manifest.json` **contains no v8 script**, so running the command against current repository source cannot execute an upgrade. A future v8 must undergo separate code review, Owner approval, disposable-database backup and restore rehearsal, compatibility testing and post-DDL schema acceptance. This implementation has **no production authority** and must never be given production credentials.
+
+The operator invocation (ONLY after a separately reviewed v8 manifest and an isolated staging backup) is:
+
+~~~sh
+export SUTRADHAR_STAGING_DB_NAME=sutradhar_staging_ci
+export DB_NAME=sutradhar_source
+export SUTRADHAR_STAGING_REHEARSAL_APPROVED=yes
+export SUTRADHAR_STAGING_REHEARSAL_CONFIRM_DB=sutradhar_staging_ci
+export SUTRADHAR_STAGING_REHEARSAL_TARGET_VERSION=8
+export SUTRADHAR_STAGING_BACKUP_RECEIPT_SHA256=<verified-backup-receipt-sha256>
+# DB_HOST, DB_PORT, DB_USER, DB_PASSWORD must be restricted STAGING credentials
+npm run ops:rehearse-staging-migration
+~~~
+
+A backup hash supplied by an operator is only a **self-reported reference**; this runner does not independently validate backup media or prove restore success. It also cannot prove old/new client compatibility, migration semantic correctness, post-DDL data correctness, exact per-constraint schema equivalence or safe production upgrade. The result explicitly sets `production_approved:false` and `restore_verified:false`. This tool must not run with permanent Hostinger production environment variables. Zero live migrations have been executed by this repository change.
