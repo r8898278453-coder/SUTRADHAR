@@ -371,8 +371,10 @@ app.whenReady().then(()=>{
     verifySender(event);
     if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
       throw Error('RECOVERY_RELEASE_REQUIRES_PACKAGED_WINDOWS_PC');
-    if(agent&&agent.exitCode===null&&agent.signalCode===null)
-      throw Error('RECOVERY_RELEASE_AGENT_MUST_BE_STOPPED');
+    // The tracked child reference is cleared ONLY by the observed exit
+    // callback. signalCode/kill() do not prove that the process has exited.
+    if(agent)
+      throw Error('RECOVERY_RELEASE_AGENT_EXIT_NOT_CONFIRMED');
     const node=vault.read();
     if(!node||!requireSubmitted({dir:nodeDir(),node,centralUrl:current.centralUrl}))
       throw Error('RECOVERY_RELEASE_REQUIRES_ENROLLED_IDENTITY');
