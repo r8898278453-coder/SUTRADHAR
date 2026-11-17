@@ -7,6 +7,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const DB=/^[A-Za-z0-9_]{1,64}$/;
 const HEX=/^[a-f0-9]{64}$/;
 const {expectedColumns,compareColumns}=require('./schema-column-inventory.cjs');
+const {expectedStructure,compareStructure}=require('./schema-structure-inventory.cjs');
 function expectedTables(schema){
   if(typeof schema!=='string'||schema.length>1024*1024)throw Error('SCHEMA_SOURCE_INVALID');
   const tables=[...schema.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+`?(v7_[A-Za-z0-9_]+)`?\s*\(/gi)]
@@ -46,6 +47,10 @@ async function inspect({target,source,approved,expectedSha,schemaText,query}){
     'SELECT table_name,column_name FROM information_schema.columns WHERE table_schema=?',
     [target]);
   const columns=compareColumns(expectedColumns(schemaText),columnRows);
+  const [indexRows]=await query(
+    'SELECT table_name,index_name,seq_in_index,column_name,non_unique FROM information_schema.statistics WHERE table_schema=?',
+    [target]);
+  const structure=compareStructure(expectedStructure(schemaText),columnRows,indexRows);
   let schemaVersion=null;
   if(!missing.includes('v7_schema_versions')){
     const [v]=await query('SELECT version FROM v7_schema_versions ORDER BY version DESC LIMIT 2',[]);
@@ -53,9 +58,9 @@ async function inspect({target,source,approved,expectedSha,schemaText,query}){
       throw Error('STAGING_SCHEMA_VERSION_INVALID');
     schemaVersion=Number(v[0].version);
   }
-  return {accepted:missing.length===0&&extra.length===0&&schemaVersion===7&&columns.accepted,
+  return {accepted:missing.length===0&&extra.length===0&&schemaVersion===7&&columns.accepted&&structure.accepted,
     status:'STAGING_SCHEMA_READ_ONLY_INVENTORY',source_sha256:expectedSha,
-    column_inventory:columns,
+    column_inventory:columns,structure_inventory:structure,
     expected_table_count:tables.length,observed_table_count:observed.size,
     missing,extra,schema_version:schemaVersion,production_accepted:false,
     migration_executed:false,restore_proven:false};
