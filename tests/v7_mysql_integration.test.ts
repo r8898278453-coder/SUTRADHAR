@@ -58,6 +58,13 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
   try{
     process.env.SUTRADHAR_ALLOW_MIGRATIONS='true';
     const mig=await post('/v7/owner/migrate',{},admin);assert.equal(mig.code,200,JSON.stringify(mig.body));
+    assert.equal(mig.body.bootstrap_only,true);
+    assert.equal(mig.body.production_migration_approved,false);
+    // A second migration request MUST fail closed on an initialized database.
+    // CREATE IF NOT EXISTS is not a migration or drift-verification strategy.
+    const repeated=await post('/v7/owner/migrate',{},admin);
+    assert.equal(repeated.code,409,JSON.stringify(repeated.body));
+    assert.equal(repeated.body.error,'SCHEMA_BOOTSTRAP_REQUIRES_EMPTY_DATABASE');
     // This test exercises a cluster that has *already passed* its initial 08:00 IST bootstrap.
     // Never depend on the GitHub runner's wall-clock time: if CI runs before 08:00 IST,
     // a new cluster correctly refuses the first election. The exact 08:00 boundary is
