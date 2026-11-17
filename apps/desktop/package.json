@@ -43,7 +43,8 @@
       "enrollment-receipt.cjs",
       "single-instance.cjs",
       "update-readiness.cjs",
-      "update-inspection-journal.cjs"
+      "update-inspection-journal.cjs",
+      "maintenance-recovery-hold.cjs"
     ],
     "extraResources": [
       {
