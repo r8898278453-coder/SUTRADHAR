@@ -43,7 +43,8 @@ function inspectHold({dir,nodeId}){
     fail('MAINTENANCE_HOLD_IDENTITY_MISMATCH');
   return Object.freeze({active:true,agent_start_allowed:false,
     status:record.state,node_id:record.node_id,plan_id:record.plan_id,
-    wave_id:record.wave_id,owner_release_allowed:false,installer_execution_allowed:false});
+    wave_id:record.wave_id,offer_sha256:record.offer_sha256,
+    owner_release_allowed:false,installer_execution_allowed:false});
 }
 function createHold({dir,nodeId,planId,waveId,offerSha256,now=Date.now()}){
   const file=location(dir);
