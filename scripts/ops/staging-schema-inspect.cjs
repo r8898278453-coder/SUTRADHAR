@@ -29,7 +29,7 @@ function validateTarget({target,source,approved,expectedSha,schemaText}){
 async function inspect({target,source,approved,expectedSha,schemaText,query}){
   const tables=validateTarget({target,source,approved,expectedSha,schemaText});
   if(typeof query!=='function')throw Error('STAGING_SCHEMA_DB_READER_UNAVAILABLE');
-  const [rows]=await query('SELECT table_name, engine FROM information_schema.tables WHERE table_schema=? AND table_type=?',
+  const [rows]=await query('SELECT table_name AS table_name,engine AS engine FROM information_schema.tables WHERE table_schema=? AND table_type=?',
     [target,'BASE TABLE']);
   if(!Array.isArray(rows))throw Error('STAGING_SCHEMA_INVENTORY_INVALID');
   const observed=new Map();
@@ -45,15 +45,15 @@ async function inspect({target,source,approved,expectedSha,schemaText,query}){
   // Read-only live column inventory: names cannot silently disappear/appear.
   // This does not prove type/default/index/FK compatibility.
   const [columnRows]=await query(
-    'SELECT table_name,column_name,column_type,is_nullable FROM information_schema.columns WHERE table_schema=?',
+    'SELECT table_name AS table_name,column_name AS column_name,column_type AS column_type,is_nullable AS is_nullable FROM information_schema.columns WHERE table_schema=?',
     [target]);
   const columns=compareColumns(expectedColumns(schemaText),columnRows);
   const [indexRows]=await query(
-    'SELECT table_name,index_name,seq_in_index,column_name,non_unique FROM information_schema.statistics WHERE table_schema=?',
+    'SELECT table_name AS table_name,index_name AS index_name,seq_in_index AS seq_in_index,column_name AS column_name,non_unique AS non_unique FROM information_schema.statistics WHERE table_schema=?',
     [target]);
   const structure=compareStructure(expectedStructure(schemaText),columnRows,indexRows);
   const [foreignKeyRows]=await query(
-    'SELECT k.table_name,k.constraint_name,k.column_name,k.ordinal_position,k.referenced_table_schema,k.referenced_table_name,k.referenced_column_name,r.delete_rule,r.update_rule FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints r ON r.constraint_schema=k.constraint_schema AND r.constraint_name=k.constraint_name AND r.table_name=k.table_name WHERE k.table_schema=? AND k.referenced_table_name IS NOT NULL ORDER BY k.table_name,k.constraint_name,k.ordinal_position',
+    'SELECT k.table_name AS table_name,k.constraint_name AS constraint_name,k.column_name AS column_name,k.ordinal_position AS ordinal_position,k.referenced_table_schema AS referenced_table_schema,k.referenced_table_name AS referenced_table_name,k.referenced_column_name AS referenced_column_name,r.delete_rule AS delete_rule,r.update_rule AS update_rule FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints r ON r.constraint_schema=k.constraint_schema AND r.constraint_name=k.constraint_name AND r.table_name=k.table_name WHERE k.table_schema=? AND k.referenced_table_name IS NOT NULL ORDER BY k.table_name,k.constraint_name,k.ordinal_position',
     [target]);
   const foreignKeys=compareForeignKeys(expectedForeignKeys(schemaText),foreignKeyRows,target);
   let schemaVersion=null;
