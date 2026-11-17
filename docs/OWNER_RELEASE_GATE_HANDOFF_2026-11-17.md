@@ -67,3 +67,25 @@ A PASS means **signed evidence-index syntax only**. The verifier does not pull f
 `scripts/release/verify-post-update-health.cjs` exports `verify` for **offline, read-only** inspection of two device-signed `BEFORE` and `AFTER` observations, each carrying exact OS-vault node ID/key SHA-256, target release version, signed wave, signed offer hash, local approved/agent count/heartbeat fields and an observation timestamp. It rejects forged, stale, reordered, wrong-wave, wrong-key, wrong-version and changed-agent-count observations. `npm run test:release-gates` includes test-only cryptographic regression coverage.
 
 **Limitations:** The runtime does not yet produce the required receipts on physical Windows systems. Self-reported `central_approved` is not independent Central authorization. Correct node signatures also cannot prove a real signed installer ran, that MySQL work was completed, that the OS clock was honest, or that rollback is safe. The returned field `installation_verified` is **always false**. A future implementation must obtain independent authenticated Central evidence, actual Windows Authenticode installation receipts, reboot/health telemetry and Owner-approved rollback policy before an installer executor is permitted.
+
+## 17 November follow-on: immutable installer hash and staging schema drift
+
+**Installer inspection hardening:** `apps/desktop/update-policy.cjs` hashes the already opened local file descriptor, validates pre-open and post-read file identity/size/timestamps, rejects symbolic links and oversized changed installer files, and still **never executes** an installer. CI regression includes symlink-file rejection. This narrows common inspection-time substitution attacks but cannot replace a privileged installation service that safely binds execution to already approved bytes.
+
+**Read-only staging schema inventory:** `scripts/ops/staging-schema-inspect.cjs` checks exact SHA-256 of the reviewed `v7/schema.sql`, requires a distinct staging/test database name plus explicit check approval, and only SELECTs MySQL `information_schema.tables` and `v7_schema_versions`. It reports missing/extra `v7_` tables, wrong storage engine or schema version. It **does not run schema migrations, validate every column/index/foreign-key, compare data rows, perform a backup/restore or authorize deployment**. These additional migration-compatibility proofs remain mandatory.
+
+To run on a trusted operator PC with authorized staging DB access only:
+
+~~~sh
+export SUTRADHAR_STAGING_SCHEMA_CHECK_APPROVED=yes
+export SUTRADHAR_STAGING_DB_NAME=sutradhar_staging_ci
+export DB_NAME=sutradhar_source
+export DB_HOST=<staging-mysql-host>
+export DB_PORT=3306
+export DB_USER=<read-only-staging-user>
+# Set DB_PASSWORD privately through your operator secret manager.
+export SUTRADHAR_EXPECTED_SCHEMA_SHA256=<sha256-of-reviewed-v7/schema.sql>
+npm run ops:inspect-staging-schema
+~~~
+
+Never use a production DB credential, production name, or the same source DB as the target. A passing inventory is only a snapshot of the staging schema and **not** proof that production migrations are safe. CI uses mocked SELECT responses; no live Hostinger database has been inspected. Engineering still needs reviewed, immutable incremental migration scripts with a deployment gate and proven rollback/forward recovery.
