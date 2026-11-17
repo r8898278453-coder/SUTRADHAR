@@ -175,6 +175,14 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(finalDrain.state.installer_execution_allowed,false);
     const signedDrained=await d.signed('/v7/nodes/maintenance',undefined,'GET');
     assert.equal(signedDrained.body.intent.state,'DRAINED');
+    const recoveryPath='/v7/nodes/maintenance/recovery/'+pilotPayload.plan_id;
+    const beforeCancellation=await d.signed(recoveryPath,undefined,'GET');
+    assert.equal(beforeCancellation.code,200,JSON.stringify(beforeCancellation.body));
+    assert.equal(beforeCancellation.body.cancellation_verified,false);
+    assert.equal(beforeCancellation.body.any_active_fence,true);
+    assert.equal(beforeCancellation.body.local_hold_release_allowed,false);
+    const otherNodeDenied=await a.signed(recoveryPath,undefined,'GET');
+    assert.equal(otherNodeDenied.code,404,'A node cannot inspect another PC historical maintenance plan');
     const deniedNewAgent=await d.signed('/v7/agents/register',
       {agent_id:'agent_fenced_registration',capabilities:{}});
     assert.equal(deniedNewAgent.code,423);
@@ -218,6 +226,18 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(afterCancel.code,200);
     assert.equal(afterCancel.body.intent,null);
     assert.equal(afterCancel.body.installer_execution_allowed,false);
+    const cancellationProof=await d.signed(recoveryPath,undefined,'GET');
+    assert.equal(cancellationProof.code,200,JSON.stringify(cancellationProof.body));
+    assert.equal(cancellationProof.body.node_id,d.node_id);
+    assert.equal(cancellationProof.body.plan_id,pilotPayload.plan_id);
+    assert.equal(cancellationProof.body.wave_id,pilotPayload.wave_id);
+    assert.equal(cancellationProof.body.offer_sha256,pilotPayload.offer_sha256);
+    assert.equal(cancellationProof.body.state,'CANCELLED');
+    assert.equal(cancellationProof.body.cancellation_verified,true);
+    assert.equal(cancellationProof.body.any_active_fence,false);
+    assert.equal(cancellationProof.body.any_active_maintenance_intent,false);
+    assert.equal(cancellationProof.body.local_hold_release_allowed,false);
+    assert.equal(cancellationProof.body.installer_execution_allowed,false);
     // A second, real disposable MySQL case: graceful draining preserves
     // work already claimed, blocks fresh claims, then finalizes only after
     // the old work is submitted and its lease is no longer live.
