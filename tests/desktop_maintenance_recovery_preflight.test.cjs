@@ -16,12 +16,12 @@ const evidence={node_id:nodeId,plan_id:planId,wave_id:waveId,offer_sha256:offerS
   installer_execution_allowed:false,recovery_requires_owner:true};
 const signer={sign:({kind,method,uri,body})=>{
   assert.equal(kind,'node_api');assert.equal(method,'GET');assert.equal(body,'');
-  assert.equal(uri,'/v7/nodes/maintenance/recovery?plan_id='+planId);
+  assert.equal(uri,'/v7/nodes/maintenance/recovery/'+planId);
   return {'x-sutradhar-node':nodeId,'x-sutradhar-nonce':'nonce',
     'x-sutradhar-signature':'signed'};
 }};
 function fetcher(value=evidence){return async(url,opts)=>{
-  assert.equal(new URL(url).pathname,'/v7/nodes/maintenance/recovery');
+  assert.equal(new URL(url).pathname,'/v7/nodes/maintenance/recovery/'+planId);
   assert.equal(opts.redirect,'error');
   return {ok:true,json:async()=>value};
 };}
