@@ -47,7 +47,11 @@
       "maintenance-recovery-hold.cjs",
       "maintenance-local-isolation.cjs",
       "maintenance-stop-confirm.cjs",
-      "maintenance-recovery-preflight.cjs"
+      "maintenance-recovery-preflight.cjs",
+      "maintenance-release-grant.cjs",
+      "maintenance-release-executor.cjs",
+      "maintenance-reconciliation-barrier.cjs",
+      "maintenance-release-trust.json"
     ],
     "extraResources": [
       {
