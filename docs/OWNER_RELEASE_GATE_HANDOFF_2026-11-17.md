@@ -89,3 +89,24 @@ npm run ops:inspect-staging-schema
 ~~~
 
 Never use a production DB credential, production name, or the same source DB as the target. A passing inventory is only a snapshot of the staging schema and **not** proof that production migrations are safe. CI uses mocked SELECT responses; no live Hostinger database has been inspected. Engineering still needs reviewed, immutable incremental migration scripts with a deployment gate and proven rollback/forward recovery.
+
+## Approved *empty* staging database bootstrap — operator only
+
+The new `scripts/ops/bootstrap-empty-staging.cjs` can create the baseline v7 tables **only in a separate, initially empty, dedicated staging database**. It is not an in-place schema migration, production cutover, application deployment or recovery tool. It validates the reviewed schema SHA-256 and only allows static `CREATE TABLE IF NOT EXISTS v7_...` statements from repository `v7/schema.sql`, then inserts baseline version 7 and a single cluster row. It refuses an existing nonempty DB, unsafe target name, mismatched reviewed schema, unapproved execution or unallowlisted DDL.
+
+This first-time initialization is operator-controlled and **mutating**. Do not run unless the Owner has explicitly approved that disposable staging database:
+
+~~~sh
+export SUTRADHAR_STAGING_DB_NAME=sutradhar_staging_ci
+export SUTRADHAR_STAGING_BOOTSTRAP_APPROVED=yes
+export SUTRADHAR_EXPECTED_SCHEMA_SHA256=<sha256-of-exact-reviewed-v7/schema.sql>
+export DB_NAME=sutradhar_live_source
+export DB_HOST=<staging-db-host>
+export DB_PORT=3306
+export DB_USER=<dedicated-staging-create-tables-user>
+# Supply DB_PASSWORD using trusted secret management outside Git/chat.
+npm run ops:bootstrap-empty-staging
+npm run ops:inspect-staging-schema
+~~~
+
+**MySQL DDL is not transactionally reversible as a group.** If a statement fails after others succeeded, the command exits with a partial-failure error and requires manual inspection: it must not be blindly rerun, and a new blank staging DB is preferable. The script never creates the database itself and never touches production intentionally; database-name guardrails are not an authorization substitute for restricted MySQL credentials. It does not validate FK/index drift in an existing database, establish backward-compatible migrations or complete backup/restore rehearsal. No Hostinger account actions or live SQL were executed by this development commit.
