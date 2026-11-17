@@ -46,7 +46,8 @@
       "update-inspection-journal.cjs",
       "maintenance-recovery-hold.cjs",
       "maintenance-local-isolation.cjs",
-      "maintenance-stop-confirm.cjs"
+      "maintenance-stop-confirm.cjs",
+      "maintenance-recovery-preflight.cjs"
     ],
     "extraResources": [
       {
