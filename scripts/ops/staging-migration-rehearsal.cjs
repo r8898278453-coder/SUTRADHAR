@@ -51,7 +51,12 @@ async function rehearsal({db,manifest,readFile,schemaText,intent}){
     const status=await inspect({target:intent.target,source:intent.source,approved:'yes',
       expectedSha:hash(schemaText),schemaText,query:(q,args)=>db.query(q,args)});
     if(!status.accepted)fail('STAGING_REHEARSAL_BASELINE_DRIFT');
-    const m=p.pending[0],statements=additiveStatements(readFile(m.file));
+    // The planning read is not the execution read. Recheck the EXACT bytes
+    // used for DDL so a swapped source file cannot bypass manifest approval.
+    const m=p.pending[0],executionSource=readFile(m.file);
+    if(typeof executionSource!=='string'||hash(executionSource)!==m.sha256)
+      fail('STAGING_REHEARSAL_EXECUTION_SOURCE_CHANGED');
+    const statements=additiveStatements(executionSource);
     const id='schema_version_8';
     // Existing STARTED/SUCCEEDED/FAILED audit row blocks ALL reruns.
     const [prior]=await db.query('SELECT migration_id FROM v7_migration_audit WHERE migration_id=?',[id]);
@@ -67,8 +72,11 @@ async function rehearsal({db,manifest,readFile,schemaText,intent}){
     try{
       for(const sql of statements){await db.query(sql);completed++;}
       await db.query('INSERT INTO v7_schema_versions(version) VALUES(?)',[8]);
-      await db.query('UPDATE v7_migration_audit SET destination_counts=? WHERE migration_id=? AND source_sha256=?',
+      const [auditUpdated]=await db.query(
+        'UPDATE v7_migration_audit SET destination_counts=? WHERE migration_id=? AND source_sha256=?',
         [JSON.stringify({status:'DDL_COMPLETE_UNVERIFIED',statements:completed}),id,m.sha256]);
+      if(Number(auditUpdated?.affectedRows)!==1)
+        fail('STAGING_REHEARSAL_AUDIT_FINALIZATION_FAILED');
     }catch{
       throw Error('STAGING_REHEARSAL_PARTIAL_DDL_MANUAL_REVIEW_AFTER_'+completed);
     }
