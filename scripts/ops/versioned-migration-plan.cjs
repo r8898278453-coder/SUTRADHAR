@@ -62,18 +62,35 @@ function plan({manifest,readFile,observedVersions,actualBaselineSha,expectedTarg
     migration_execution_allowed:false,production_approved:false,
     warning:'This checks manifest integrity and version sequence only; column/index/FK drift, real data, backward compatibility and restore require independent validation.'};
 }
-function main(){
+async function main(){
   const base=path.resolve(__dirname,'../../migrations');
-  const manifestPath=path.join(base,'manifest.json');
-  const manifest=JSON.parse(fs.readFileSync(manifestPath,'utf8'));
-  const result=plan({manifest,
-    readFile:file=>fs.readFileSync(path.join(base,file),'utf8'),
-    observedVersions:JSON.parse(process.env.SUTRADHAR_OBSERVED_SCHEMA_VERSIONS||'null'),
-    actualBaselineSha:process.env.SUTRADHAR_BASELINE_SCHEMA_SHA256,
-    expectedTarget:Number(process.env.SUTRADHAR_MIGRATION_TARGET_VERSION)});
-  console.log(JSON.stringify(result,null,2));
+  const manifest=JSON.parse(fs.readFileSync(path.join(base,'manifest.json'),'utf8'));
+  const schema=fs.readFileSync(path.resolve(__dirname,'../../v7/schema.sql'));
+  const target=process.env.SUTRADHAR_STAGING_DB_NAME||'';
+  const source=process.env.DB_NAME||'';
+  if(!/^[a-zA-Z0-9_]{1,64}$/.test(target)||
+     !/(?:^|_)(?:staging|stage|test|disposable|ci|qa)(?:_|$)/i.test(target)||
+     !/^[a-zA-Z0-9_]{1,64}$/.test(source)||source===target||
+     process.env.SUTRADHAR_MIGRATION_PLAN_APPROVED!=='yes')
+    fail('MIGRATION_READ_ONLY_STAGING_TARGET_INVALID');
+  if(!process.env.DB_HOST||!process.env.DB_USER||!process.env.DB_PASSWORD)
+    fail('MIGRATION_STAGING_READ_ONLY_CREDENTIALS_REQUIRED');
+  const mysql=require('mysql2/promise');
+  const db=await mysql.createConnection({host:process.env.DB_HOST,
+    port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,
+    password:process.env.DB_PASSWORD,database:target,
+    connectTimeout:10000,multipleStatements:false});
+  try{
+    const [versions]=await db.query('SELECT version FROM v7_schema_versions ORDER BY version ASC');
+    if(!Array.isArray(versions)||versions.length>101)fail('MIGRATION_HISTORY_INVALID');
+    const r=plan({manifest,readFile:file=>fs.readFileSync(path.join(base,file),'utf8'),
+      observedVersions:versions.map(row=>Number(row.version)),
+      actualBaselineSha:hash(schema),
+      expectedTarget:Number(process.env.SUTRADHAR_MIGRATION_TARGET_VERSION)});
+    console.log(JSON.stringify({...r,staging_db:target,observed_from_database:true},null,2));
+  }finally{await db.end();}
 }
 if(require.main===module){
-  try{main();}catch(e){console.error(e.message||'MIGRATION_PLAN_REJECTED');process.exitCode=1;}
+  main().catch(e=>{console.error(e.message||'MIGRATION_PLAN_REJECTED');process.exitCode=1;});
 }
 module.exports={validateManifest,plan,hash};
