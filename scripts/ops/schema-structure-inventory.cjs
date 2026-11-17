@@ -22,8 +22,21 @@ function expectedStructure(source){
     for(const item of splitTopLevel(m[2])){
       const field=/^([a-z][a-z0-9_]*)\s+(ENUM\([^)]*\)|(?:BIGINT|INT|INTEGER|TINYINT|SMALLINT|VARCHAR|CHAR|TEXT|LONGTEXT|MEDIUMTEXT|DATETIME|TIMESTAMP|JSON|BOOLEAN|DECIMAL|BLOB|VARBINARY)(?:\([^)]*\))?(?:\s+UNSIGNED)?)(.*)$/i.exec(item);
       if(field){
-        col[field[1].toLowerCase()]={type:normalizeType(field[2]),
-          required_non_null:/\bNOT\s+NULL\b/i.test(field[3])};
+        const fieldName=field[1].toLowerCase();
+        const inlinePrimary=/\bPRIMARY\s+KEY\b/i.test(field[3]);
+        const inlineUnique=/\bUNIQUE\b/i.test(field[3]);
+        col[fieldName]={type:normalizeType(field[2]),
+          required_non_null:/\bNOT\s+NULL\b/i.test(field[3])||inlinePrimary};
+        // The baseline declares several PKs directly on columns rather than
+        // with separate PRIMARY KEY(...) clauses. Never silently skip them.
+        if(inlinePrimary){
+          if(indexes.PRIMARY)fault('SCHEMA_INDEX_DUPLICATE');
+          indexes.PRIMARY={columns:[fieldName],unique:true};
+        }
+        if(inlineUnique){
+          if(indexes[fieldName])fault('SCHEMA_INDEX_DUPLICATE');
+          indexes[fieldName]={columns:[fieldName],unique:true};
+        }
         continue;
       }
       const index=/^(PRIMARY\s+KEY|UNIQUE\s+KEY\s+[a-z][a-z0-9_]*|INDEX\s+[a-z][a-z0-9_]*|KEY\s+[a-z][a-z0-9_]*)\s*\(([^)]*)\)/i.exec(item);
