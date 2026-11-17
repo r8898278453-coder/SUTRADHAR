@@ -11,6 +11,7 @@ async function fake(sql){
   if(sql.includes('information_schema.tables'))return [all.map(name=>({table_name:name,engine:'InnoDB'}))];
   if(sql.includes('information_schema.columns'))return [all.map(table_name=>({table_name,column_name:'id',column_type:'int',is_nullable:'YES'}))];
   if(sql.includes('information_schema.statistics'))return [[]];
+  if(sql.includes('information_schema.key_column_usage'))return [[]];
   if(sql.includes('v7_schema_versions'))return [[{version:7}]];
   throw Error('Unexpected query');
 }
@@ -30,17 +31,17 @@ test('refuses production names, same source, missing approval or mismatched sche
 });
 test('missing, unexpected, non-InnoDB tables and wrong version fail closed',async()=>{
   const missing=async sql=>sql.includes('information_schema.tables')?
-    [all.slice(1).map(table_name=>({table_name,engine:'InnoDB'}))]:[[{version:7}]];
+    [all.slice(1).map(table_name=>({table_name,engine:'InnoDB'}))]:fake(sql);
   const m=await inspect({...base,query:missing});
   assert.equal(m.accepted,false);assert.equal(m.missing.length,1);
   const wrong=async sql=>sql.includes('information_schema.tables')?
-    [all.map(table_name=>({table_name,engine:'InnoDB'}))]:[[{version:8}]];
+    [all.map(table_name=>({table_name,engine:'InnoDB'}))]:(sql.includes('v7_schema_versions')?[[{version:8}]]:fake(sql));
   assert.equal((await inspect({...base,query:wrong})).accepted,false);
   const extra=async sql=>sql.includes('information_schema.tables')?
-    [[...all.map(table_name=>({table_name,engine:'InnoDB'})),{table_name:'v7_unknown',engine:'InnoDB'}]]:[[ {version:7} ]];
+    [[...all.map(table_name=>({table_name,engine:'InnoDB'})),{table_name:'v7_unknown',engine:'InnoDB'}]]:fake(sql);
   assert.equal((await inspect({...base,query:extra})).accepted,false);
   const bad=async sql=>sql.includes('information_schema.tables')?
-    [all.map(table_name=>({table_name,engine:'MyISAM'}))]:[[{version:7}]];
+    [all.map(table_name=>({table_name,engine:'MyISAM'}))]:fake(sql);
   await assert.rejects(inspect({...base,query:bad}),/NON_INNODB/);
 });
 
@@ -49,6 +50,7 @@ test('missing and unexpected columns reject otherwise matching staging tables',a
     if(sql.includes('information_schema.tables'))return [all.map(table_name=>({table_name,engine:'InnoDB'}))];
     if(sql.includes('information_schema.columns'))return [columns];
     if(sql.includes('information_schema.statistics'))return [[]];
+    if(sql.includes('information_schema.key_column_usage'))return [[]];
     return [[{version:7}]];
   };
   const baseline=all.map(table_name=>({table_name,column_name:'id',column_type:'int',is_nullable:'YES'}));
