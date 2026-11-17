@@ -9,7 +9,8 @@ const base={target:'sutradhar_staging_ci',source:'sutradhar_live',approved:'yes'
 const all=expectedTables(schema);
 async function fake(sql){
   if(sql.includes('information_schema.tables'))return [all.map(name=>({table_name:name,engine:'InnoDB'}))];
-  if(sql.includes('information_schema.columns'))return [all.map(table_name=>({table_name,column_name:'id'}))];
+  if(sql.includes('information_schema.columns'))return [all.map(table_name=>({table_name,column_name:'id',column_type:'int',is_nullable:'YES'}))];
+  if(sql.includes('information_schema.statistics'))return [[]];
   if(sql.includes('v7_schema_versions'))return [[{version:7}]];
   throw Error('Unexpected query');
 }
@@ -47,13 +48,14 @@ test('missing and unexpected columns reject otherwise matching staging tables',a
   const query=(columns)=>async sql=>{
     if(sql.includes('information_schema.tables'))return [all.map(table_name=>({table_name,engine:'InnoDB'}))];
     if(sql.includes('information_schema.columns'))return [columns];
+    if(sql.includes('information_schema.statistics'))return [[]];
     return [[{version:7}]];
   };
-  const baseline=all.map(table_name=>({table_name,column_name:'id'}));
+  const baseline=all.map(table_name=>({table_name,column_name:'id',column_type:'int',is_nullable:'YES'}));
   const missing=await inspect({...base,query:query(baseline.slice(1))});
   assert.equal(missing.accepted,false);
   assert.ok(missing.column_inventory.missing.includes(all[0]+'.id'));
-  const extra=await inspect({...base,query:query([...baseline,{table_name:all[0],column_name:'unexpected'}])});
+  const extra=await inspect({...base,query:query([...baseline,{table_name:all[0],column_name:'unexpected',column_type:'int',is_nullable:'YES'}])});
   assert.equal(extra.accepted,false);
   assert.ok(extra.column_inventory.extra.includes(all[0]+'.unexpected'));
 });
