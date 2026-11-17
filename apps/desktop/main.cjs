@@ -15,6 +15,7 @@ const {verifyOffer,sha256File}=require('./update-policy.cjs');
 const {checkReadiness}=require('./update-readiness.cjs');
 const {recordInspection}=require('./update-inspection-journal.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
+const {isolateDrainedPc}=require('./maintenance-local-isolation.cjs');
 const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
@@ -311,6 +312,36 @@ app.whenReady().then(()=>{
     }))throw Error('UPDATE_READINESS_REQUIRES_ENROLLED_IDENTITY');
     return checkReadiness({centralOrigin:current.centralUrl,
       nodeId:node.node_id,agentIds:current.agentIds,signer});
+  });
+  ipcMain.handle('sutradhar:isolateDrainedPc',async event=>{
+    verifySender(event);
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('MAINTENANCE_ISOLATION_REQUIRES_PACKAGED_WINDOWS_PC');
+    const node=vault.read();
+    if(!node||!requireSubmitted({dir:nodeDir(),node,centralUrl:current.centralUrl}))
+      throw Error('MAINTENANCE_ISOLATION_REQUIRES_ENROLLED_IDENTITY');
+    const confirmation=await dialog.showMessageBox(setupWindow,{
+      type:'warning',
+      buttons:['Cancel — keep agent running','Verify Owner drain and stop local agent'],
+      defaultId:0,cancelId:0,noLink:true,
+      message:'Isolate this PC for Owner maintenance?',
+      detail:'Only a signed Central DRAINED fence for this non-Master/non-backup PC will be accepted. A persistent recovery hold will prevent future automatic agent starts. No installer runs. Owner-assisted recovery is required.'
+    });
+    if(confirmation.response!==1)return {canceled:true,agent_stopped:false};
+    const isolated=await isolateDrainedPc({dir:nodeDir(),
+      centralOrigin:current.centralUrl,nodeId:node.node_id,
+      agentIds:current.agentIds,signer});
+    // Persisted hold precedes termination. Its existence also rejects the
+    // already-installed auto-restart timer on the child-process exit path.
+    if(retryTimer){clearTimeout(retryTimer);retryTimer=null;}
+    if(agent&&agent.exitCode===null){
+      try{agent.kill();}catch{
+        throw Error('MAINTENANCE_ISOLATION_HOLD_SAVED_AGENT_STOP_UNCONFIRMED');
+      }
+      // A successful kill request is not proof that the child has exited.
+      return {...isolated,agent_stop_requested:true,agent_stopped:false};
+    }
+    return {...isolated,agent_stop_requested:false,agent_stopped:true};
   });
   ipcMain.handle('sutradhar:verifyLocalUpdate',async(event)=>{
     verifySender(event);
