@@ -177,3 +177,11 @@ npm run ops:rehearse-staging-migration
 ~~~
 
 A backup hash supplied by an operator is only a **self-reported reference**; this runner does not independently validate backup media or prove restore success. It also cannot prove old/new client compatibility, migration semantic correctness, post-DDL data correctness, exact per-constraint schema equivalence or safe production upgrade. The result explicitly sets `production_approved:false` and `restore_verified:false`. This tool must not run with permanent Hostinger production environment variables. Zero live migrations have been executed by this repository change.
+
+## 17 November — Real disposable MySQL migration rehearsal verification
+
+The dedicated MySQL 8 CI job now additionally executes `tests/staging_migration_mysql_e2e.test.cjs` against a **new fixed-name disposable database**, `sut_rehearsal_ci`. The test has multiple explicit environment sentinels and hardcoded localhost-only conditions, creates the v7 baseline schema, exercises an in-memory SHA-pinned **synthetic** additive v8 migration through the same staging rehearsal runner, queries the actual resulting column, version rows and durable migration-audit JSON, verifies a second run is refused, and drops the disposable DB. The actual committed manifest remains version 7 with zero migration entries; the CI-only synthetic SQL is **not** a deployable production migration.
+
+Two additional failure-mode hardenings are in place: the executor re-reads and re-hashes the exact SQL bytes immediately before the audit claim and DDL (preventing a read-between-validation/execution swap), and it rejects a failed or zero-row audit finalization rather than reporting success. The staging structure checker now retrieves MySQL `COLUMN_TYPE` and `IS_NULLABLE` from `information_schema.columns` in its actual query, instead of relying on fields supplied only by unit-test fixtures.
+
+Passing this CI integration proves only isolated MySQL 8 staging mechanics and post-DDL receipt checks; it **does not** prove Hostinger behavior, production backup restore, transactional rollback of DDL, client compatibility or safe version-8 production migration. Current source still intentionally provides no approved v8 migration file. Do not use a real Hostinger or production database for CI.
