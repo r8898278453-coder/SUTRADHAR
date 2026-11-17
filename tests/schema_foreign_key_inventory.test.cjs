@@ -4,7 +4,7 @@ const {expectedForeignKeys,compareForeignKeys}=require('../scripts/ops/schema-fo
 const sql=fs.readFileSync(path.resolve(__dirname,'../v7/schema.sql'),'utf8');
 function rows(spec){
   return spec.flatMap((fk,i)=>fk.columns.map((column_name,j)=>({
-    table_name:fk.table,constraint_name:'fk_generated_'+i,column_name,
+    table_name:fk.table,constraint_name:'fk_generated_'+i,referenced_table_schema:'sut_staging',column_name,
     ordinal_position:j+1,referenced_table_name:fk.ref_table,
     referenced_column_name:fk.ref_columns[j],delete_rule:fk.on_delete,
     update_rule:fk.on_update
@@ -34,4 +34,15 @@ test('out of order and malformed metadata are rejected',()=>{
   assert.throws(()=>compareForeignKeys(expected,[...base,{...base[0],ordinal_position:0}]),/METADATA_INVALID/);
   assert.throws(()=>compareForeignKeys(expected,[...base,{...base[0],constraint_name:base[0].constraint_name}]),/METADATA_CONFLICT/);
   assert.throws(()=>expectedForeignKeys(sql.replace('REFERENCES v7_nodes(node_id)','REFERENCES unknown(node_id)')),/CLAUSE_UNSUPPORTED/);
+});
+
+test('cross-database FK target is never accepted for the staging schema',()=>{
+  const spec=expectedForeignKeys(sql),matched=rows(spec);
+  assert.equal(compareForeignKeys(spec,matched,'sut_staging').accepted,true);
+  const redirected=matched.map(x=>({...x}));
+  redirected[0].referenced_table_schema='production';
+  assert.throws(()=>compareForeignKeys(spec,redirected,'sut_staging'),/CROSS_DATABASE_REFERENCE/);
+  assert.throws(()=>compareForeignKeys(spec,matched.map(x=>{
+    const out={...x};delete out.referenced_table_schema;return out;
+  }),'sut_staging'),/CROSS_DATABASE_REFERENCE/);
 });
