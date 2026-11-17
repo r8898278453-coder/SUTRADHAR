@@ -57,7 +57,17 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
   }
   try{
     process.env.SUTRADHAR_ALLOW_MIGRATIONS='true';
+    // Refuse even an EMPTY DB until the exact database name and separate
+    // operator acknowledgement match. This is not production authorization.
+    delete process.env.SUTRADHAR_BOOTSTRAP_EMPTY_DB_APPROVED;
+    delete process.env.SUTRADHAR_BOOTSTRAP_TARGET_DB;
+    const notApproved=await post('/v7/owner/migrate',{},admin);
+    assert.equal(notApproved.code,403,JSON.stringify(notApproved.body));
+    assert.equal(notApproved.body.error_code,'SCHEMA_BOOTSTRAP_EXACT_TARGET_APPROVAL_REQUIRED');
     process.env.SUTRADHAR_BOOTSTRAP_EMPTY_DB_APPROVED='yes';
+    process.env.SUTRADHAR_BOOTSTRAP_TARGET_DB='wrong_staging_database';
+    const wrongTarget=await post('/v7/owner/migrate',{},admin);
+    assert.equal(wrongTarget.code,403,JSON.stringify(wrongTarget.body));
     process.env.SUTRADHAR_BOOTSTRAP_TARGET_DB=process.env.DB_NAME!;
     const mig=await post('/v7/owner/migrate',{},admin);assert.equal(mig.code,200,JSON.stringify(mig.body));
     assert.equal(mig.body.bootstrap_only,true);
