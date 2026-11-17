@@ -45,7 +45,7 @@ async function inspect({target,source,approved,expectedSha,schemaText,query}){
   // Read-only live column inventory: names cannot silently disappear/appear.
   // This does not prove type/default/index/FK compatibility.
   const [columnRows]=await query(
-    'SELECT table_name,column_name FROM information_schema.columns WHERE table_schema=?',
+    'SELECT table_name,column_name,column_type,is_nullable FROM information_schema.columns WHERE table_schema=?',
     [target]);
   const columns=compareColumns(expectedColumns(schemaText),columnRows);
   const [indexRows]=await query(
