@@ -108,7 +108,9 @@ get('isolatePc').addEventListener('click',async()=>{
     const result=await api.isolateDrainedPc();
     get('updateFeedback').textContent=result.canceled?'Isolation canceled. No local hold created.':
       'Persistent recovery hold created for '+result.node_id+
-      '. Local agent '+(result.agent_stop_requested?'stop requested; confirm process exit in status.':'already stopped.')+
+      '. Local agent '+(result.agent_stopped?
+        'stop confirmed ('+result.exit_confirmed_by+').':
+        'STOP NOT CONFIRMED ('+result.exit_confirmed_by+'); Owner review required.')+
       ' No installer executed. Ask Owner for recovery instructions.';
     await loadStatus();
   }catch(err){get('updateFeedback').textContent=
