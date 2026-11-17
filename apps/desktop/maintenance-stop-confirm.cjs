@@ -19,7 +19,7 @@ function requestStopAndConfirm(child,{timeoutMs=12000}={}){
     return Promise.resolve(Object.freeze({agent_stopped:true,
       agent_stop_requested:false,exit_confirmed_by:'CHILD_EXIT_STATE'}));
   return new Promise(resolve=>{
-    let finished=false,requested=false;
+    let finished=false,requested=false,timer=null;
     const clean=()=>{clearTimeout(timer);
       child.removeListener('exit',onExit);
       child.removeListener('error',onError);};
@@ -32,7 +32,7 @@ function requestStopAndConfirm(child,{timeoutMs=12000}={}){
     const onError=()=>finish(false,'CHILD_PROCESS_ERROR_OWNER_REVIEW');
     child.once('exit',onExit);
     child.once('error',onError);
-    const timer=setTimeout(()=>finish(false,'EXIT_TIMEOUT_OWNER_REVIEW'),timeoutMs);
+    timer=setTimeout(()=>finish(false,'EXIT_TIMEOUT_OWNER_REVIEW'),timeoutMs);
     try{
       requested=child.kill();
       if(requested!==true)finish(false,'STOP_REQUEST_REJECTED_OWNER_REVIEW');
