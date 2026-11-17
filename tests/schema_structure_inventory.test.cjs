@@ -20,6 +20,8 @@ test('real v7 schema structural metadata has a clean read-only match',()=>{
   const spec=expectedStructure(source),e=evidence(spec);
   assert.ok(Object.keys(spec).length>=20);
   assert.ok(Object.keys(spec.v7_tickets.indexes).length>=2);
+  assert.deepEqual(spec.v7_cluster.indexes.PRIMARY.columns,['singleton']);
+  assert.equal(spec.v7_arrivals.indexes.agent_id.unique,true);
   const result=compareStructure(spec,e.cols,e.indexes);
   assert.equal(result.accepted,true,JSON.stringify(result.problems));
   assert.equal(result.production_approved,false);
