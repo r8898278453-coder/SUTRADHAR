@@ -151,6 +151,11 @@ jobs:
           SUTRADHAR_RUN_MYSQL_RECOVERY_E2E: "true"
           SUTRADHAR_MYSQL_RECOVERY_TEST_SENTINEL: "disposable-only"
         run: node --test tests/mysql_backup_restore_e2e.test.cjs
+      - name: Real staging v7-to-v8 additive DDL rehearsal on disposable MySQL 8
+        env:
+          SUTRADHAR_RUN_STAGING_MIGRATION_E2E: "1"
+          SUTRADHAR_STAGING_REHEARSAL_TEST_SENTINEL: "disposable-only"
+        run: node --test tests/staging_migration_mysql_e2e.test.cjs
 
   desktop-windows-qa:
     name: Windows Desktop unsigned installer smoke (internal QA only)
