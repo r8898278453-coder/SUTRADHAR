@@ -35,21 +35,8 @@ test('REAL MySQL 8: staging-only v8 rehearsal persists non-retryable audit after
     for(const statement of statements)await staging.query(statement);
     await staging.query('INSERT INTO v7_schema_versions(version) VALUES(7)');
     await staging.query('INSERT INTO v7_cluster(singleton) VALUES(1)');
-    let result;
-    try {
-      result=await rehearsal({db:staging,schemaText,manifest,intent,
-        readFile:name=>{assert.equal(name,file);return sql;}});
-    }catch(e){
-      // Read-only CI diagnostic: only MySQL FK structural metadata. No rows,
-      // application data, credentials, tokens or connection strings.
-      if(e.message==='SCHEMA_FK_METADATA_INVALID'){
-        const [fkDebug]=await staging.query(
-          'SELECT k.table_name,k.column_name,k.ordinal_position,k.referenced_table_name,k.referenced_column_name FROM information_schema.key_column_usage k WHERE k.table_schema=? AND k.referenced_table_name IS NOT NULL',
-          [DB]);
-        console.error('CI_FK_METADATA_DIAGNOSTIC',JSON.stringify(fkDebug));
-      }
-      throw e;
-    }
+    const result=await rehearsal({db:staging,schemaText,manifest,intent,
+      readFile:name=>{assert.equal(name,file);return sql;}});
     assert.equal(result.accepted,true);
     assert.equal(result.production_approved,false);
     assert.equal(result.restore_verified,false);
