@@ -64,7 +64,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     // CREATE IF NOT EXISTS is not a migration or drift-verification strategy.
     const repeated=await post('/v7/owner/migrate',{},admin);
     assert.equal(repeated.code,409,JSON.stringify(repeated.body));
-    assert.equal(repeated.body.error,'SCHEMA_BOOTSTRAP_REQUIRES_EMPTY_DATABASE');
+    assert.equal(repeated.body.error_code,'SCHEMA_BOOTSTRAP_REQUIRES_EMPTY_DATABASE');
     // This test exercises a cluster that has *already passed* its initial 08:00 IST bootstrap.
     // Never depend on the GitHub runner's wall-clock time: if CI runs before 08:00 IST,
     // a new cluster correctly refuses the first election. The exact 08:00 boundary is
