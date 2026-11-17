@@ -90,8 +90,10 @@ function startAgent(){
   if(!current||shuttingDown||agent&&agent.exitCode===null)return;
   // Persisted local hold overrides automatic restart even if Central currently
   // appears healthy; corrupted holds also fail closed for Owner review.
-  const hold=inspectHold({dir:nodeDir(),nodeId:vault?.read()?.node_id});
-  if(hold.active)throw Error('MAINTENANCE_HOLD_OWNER_REVIEW_REQUIRED');
+  if(fs.existsSync(nodeDir())){
+    const hold=inspectHold({dir:nodeDir(),nodeId:vault?.read()?.node_id});
+    if(hold.active)throw Error('MAINTENANCE_HOLD_OWNER_REVIEW_REQUIRED');
+  }
   if(!vault||!signer)throw Error(vaultError||'OS_VAULT_UNAVAILABLE');
   const enrolled=requireSubmitted({dir:nodeDir(),node:vault.read(),centralUrl:current.centralUrl});
   if(enrolled)pendingEnrollmentCode=null;
