@@ -16,6 +16,7 @@ const {checkReadiness}=require('./update-readiness.cjs');
 const {recordInspection}=require('./update-inspection-journal.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {isolateDrainedPc}=require('./maintenance-local-isolation.cjs');
+const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
 const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
@@ -336,14 +337,10 @@ app.whenReady().then(()=>{
     // Persisted hold precedes termination. Its existence also rejects the
     // already-installed auto-restart timer on the child-process exit path.
     if(retryTimer){clearTimeout(retryTimer);retryTimer=null;}
-    if(agent&&agent.exitCode===null){
-      try{agent.kill();}catch{
-        throw Error('MAINTENANCE_ISOLATION_HOLD_SAVED_AGENT_STOP_UNCONFIRMED');
-      }
-      // A successful kill request is not proof that the child has exited.
-      return {...isolated,agent_stop_requested:true,agent_stopped:false};
-    }
-    return {...isolated,agent_stop_requested:false,agent_stopped:true};
+    const stopped=await requestStopAndConfirm(agent,{timeoutMs:12000});
+    // A failed/uncertain stop does not erase the persisted hold. The agent
+    // cannot auto-restart; Owner must review the actual local process.
+    return {...isolated,...stopped};
   });
   ipcMain.handle('sutradhar:verifyLocalUpdate',async(event)=>{
     verifySender(event);
