@@ -24,6 +24,7 @@ async function loadStatus(){
         'Not yet submitted'],
       ['Enrollment recovery issue',s.enrollmentError||'None reported'],
       ['Local process',s.agentProcessRunning?'Running':'Not running'],
+      ['Maintenance recovery hold',s.maintenanceHold||'NONE'],
       ['Central acknowledgment',s.centralReport?.acknowledgedNow?
         'Agent reports heartbeat accepted by Central (verify in Owner dashboard)' :
         'Not currently acknowledged — pending approval / offline / error'],
@@ -99,6 +100,21 @@ get('updateReadiness').addEventListener('click',async()=>{
     get('updateFeedback').textContent='Maintenance BLOCKED: '+String(e.message||e)+
       '. Do not stop the Master, backups or an unverified PC.';
   }finally{button.disabled=false;}
+});
+get('isolatePc').addEventListener('click',async()=>{
+  const button=get('isolatePc');button.disabled=true;
+  get('updateFeedback').textContent='Checking signed Owner drain and local agent safety…';
+  try{
+    const result=await api.isolateDrainedPc();
+    get('updateFeedback').textContent=result.canceled?'Isolation canceled. No local hold created.':
+      'Persistent recovery hold created for '+result.node_id+
+      '. Local agent '+(result.agent_stop_requested?'stop requested; confirm process exit in status.':'already stopped.')+
+      ' No installer executed. Ask Owner for recovery instructions.';
+    await loadStatus();
+  }catch(err){get('updateFeedback').textContent=
+    'Isolation BLOCKED: '+String(err.message||err)+
+    '. Do not manually delete identity or maintenance hold.';}
+  finally{button.disabled=false;}
 });
 get('reconcileEnrollment').addEventListener('click',async()=>{
   const button=get('reconcileEnrollment');button.disabled=true;
