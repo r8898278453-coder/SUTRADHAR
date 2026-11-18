@@ -54,12 +54,14 @@ async function loadStatus(){
       option.value=id;option.textContent=id;select.append(option);
     }
     if((s.agentIds||[]).includes(before))select.value=before;
-    const approvedReadOnly=Boolean(s.agentProcessRunning&&
+    const approvedReadOnly=Boolean(s.workerClaimSupported&&s.agentProcessRunning&&
       s.centralReport?.acknowledgedNow&&s.maintenanceHold==='NONE'&&
       s.enrollmentState==='SUBMITTED');
     select.disabled=!approvedReadOnly;
     get('workerList').disabled=!approvedReadOnly;
     get('workerDetail').disabled=!approvedReadOnly;
+    get('workerClaim').disabled=!approvedReadOnly;
+    get('workerResume').disabled=!approvedReadOnly;
 
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
@@ -341,4 +343,41 @@ get('workerDetail').addEventListener('click',async()=>{
     output.textContent=JSON.stringify(reply.task,null,2);
   }catch(error){output.textContent='Read-only inspection blocked: '+String(error?.message||error);}
   finally{await loadStatus();}
+});
+
+function exactWorkerTicket(){
+  const ticket=get('workerTicket').value.trim();
+  if(!/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(ticket))
+    throw Error('Enter an exact ticket ID before claiming or verifying the lease.');
+  return ticket;
+}
+get('workerClaim').addEventListener('click',async()=>{
+  const button=get('workerClaim');button.disabled=true;
+  const output=get('workerTasks');
+  try{
+    const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+    output.textContent='Choose your already-trusted local Git checkout. You must confirm before any task is claimed.';
+    const r=await api.claimWorkerTask(agent,ticket);
+    output.textContent=r.canceled?
+      'Canceled. No new claim request was sent.':
+      'Central accepted task '+r.ticket_id+' for '+r.agent_id+
+      '. Isolated worktree: '+r.worktree+
+      '. Live lease verified; no AI, QA or Git push started. Claim must be checkpointed or renewed within Central limits.';
+  }catch(error){
+    output.textContent='Claim/recovery blocked: '+String(error?.message||error)+
+      '. Preserve any local worktree and pending journal. Retry only the same ticket, agent and trusted checkout if the Master epoch has not changed; otherwise ask Owner to reconcile.';
+  }finally{await loadStatus();}
+});
+get('workerResume').addEventListener('click',async()=>{
+  const button=get('workerResume');button.disabled=true;
+  const output=get('workerTasks');
+  try{
+    const r=await api.resumeWorkerTask(get('workerAgent').value,exactWorkerTicket());
+    output.textContent='Original work lease is live for '+r.agent_id+' / '+r.ticket_id+
+      ' (status '+r.status+'). Local branch: '+r.worktree+
+      '. This is a read-only continuity check; does not renew, run code or publish.';
+  }catch(error){
+    output.textContent='Signed lease verification blocked: '+String(error?.message||error)+
+      '. Do not use an expired/unknown task lease; contact Owner if recovery is uncertain.';
+  }finally{await loadStatus();}
 });
