@@ -108,6 +108,15 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const status=(await cluster.json() as any).cluster;
     assert.equal(status.master_agent_id,a.agent_id);assert.equal(status.backup1,b.agent_id);
     assert.equal(status.backup2,c.agent_id);
+    const anonymousQueue=await fetch(base+'/v7/owner/git-recovery');
+    assert.equal(anonymousQueue.status,401,'Recovery queue is Owner-only');
+    const emptyQueueResponse=await fetch(base+'/v7/owner/git-recovery',
+      {headers:{authorization:'Bearer '+admin}});
+    assert.equal(emptyQueueResponse.status,200);
+    const emptyQueue=await emptyQueueResponse.json() as any;
+    assert.equal(emptyQueue.phase,'RECOVERING');
+    assert.equal(emptyQueue.master_live,true);
+    assert.deepEqual(emptyQueue.unresolved_jobs,[]);
     // A legitimate long-running cluster has >300 historical audit events.
     // Their existence must not permanently prevent a healthy Master recovery.
     const auditDb=await mysql.createConnection({host:'127.0.0.1',
@@ -379,6 +388,20 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       const uncertain=await b.signed('/v7/recovery',undefined,'GET');
       assert.equal(uncertain.code,200,JSON.stringify(uncertain.body));
       assert.equal(uncertain.body.unresolved_git_jobs.length,1);
+      const queueResponse=await fetch(base+'/v7/owner/git-recovery',
+        {headers:{authorization:'Bearer '+admin}});
+      assert.equal(queueResponse.status,200);
+      const ownerQueue=await queueResponse.json() as any;
+      assert.equal(ownerQueue.phase,'RECOVERING');
+      assert.equal(ownerQueue.epoch,Number(promoted.body.epoch));
+      assert.equal(ownerQueue.master_live,true);
+      assert.equal(ownerQueue.unresolved_jobs.length,1);
+      assert.equal(ownerQueue.unresolved_jobs[0].ticket_id,'ticket_qa_test');
+      assert.equal(ownerQueue.unresolved_jobs[0].preflight_eligible,true);
+      assert.equal(ownerQueue.unresolved_jobs[0].matching_qa_receipt,true);
+      assert.equal(ownerQueue.unresolved_jobs[0].candidate_head_sha,'b'.repeat(40));
+      assert.equal(JSON.stringify(ownerQueue).includes('ci-only-admin-secret'),false,
+        'Owner queue must never include secret values');
       const rejectGit=await b.signed('/v7/leadership/reconcile',{
         agent_id:b.agent_id,expected_master_epoch:Number(promoted.body.epoch),
         request_id:'reject_uncertain_git_'+(++count),
@@ -458,6 +481,11 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         ...recoveryRequest,request_id:'mismatched_qa_'+(++count)},admin);
       assert.equal(mismatchedQA.code,409,JSON.stringify(mismatchedQA.body));
       assert.equal(mismatchedQA.body.error_code,'GIT_RECOVERY_QA_INDEPENDENCE_REQUIRED');
+      const unsafeQueue=await fetch(base+'/v7/owner/git-recovery',
+        {headers:{authorization:'Bearer '+admin}});
+      assert.equal(unsafeQueue.status,200);
+      assert.equal((await unsafeQueue.json() as any).unresolved_jobs[0].preflight_eligible,false,
+        'A self-QA publication may not be offered for Owner proof');
       // A different agent cannot borrow the QA receipt signed by agent C.
       await db.query('UPDATE v7_git_jobs SET agent_id=? WHERE ticket_id=?',
         [d.agent_id,'ticket_qa_test']);
@@ -529,6 +557,11 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       const nowSafeGit=await c.signed('/v7/recovery',undefined,'GET');
       assert.equal(nowSafeGit.code,200,JSON.stringify(nowSafeGit.body));
       assert.equal(nowSafeGit.body.unresolved_git_jobs.length,0);
+      const clearedQueue=await fetch(base+'/v7/owner/git-recovery',
+        {headers:{authorization:'Bearer '+admin}});
+      assert.equal(clearedQueue.status,200);
+      assert.deepEqual((await clearedQueue.json() as any).unresolved_jobs,[],
+        'Owner queue must reflect committed exact remote proof receipt');
     }finally{await db.end();}
     // Same Owner command + request ID must be one durable effect across concurrent retries.
     const same={request_id:'concurrent_duplicate',command:'PAUSE',payload:{}};
