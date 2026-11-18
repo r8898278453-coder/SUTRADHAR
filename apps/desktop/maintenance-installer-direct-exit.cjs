@@ -172,11 +172,16 @@ function inspectDirectExitFromJournals({dir,node,agentIds,observedVersion}={}){
      attempt.automatic_retry_allowed!==false||
      launched.automatic_retry_allowed!==false)
     fail('INSTALL_DIRECT_EXIT_EXECUTION_CHAIN_MISMATCH');
-  return inspectDirectExit({dir,node,scope:{
+  const evidence=inspectDirectExit({dir,node,scope:{
     node_id:attempt.node_id,plan_id:attempt.plan_id,
     wave_id:attempt.wave_id,offer_sha256:attempt.offer_sha256,
     installer_sha256:attempt.installer_sha256,grant_id:attempt.grant_id,
     target_version:attempt.target_version,kind:attempt.kind}});
+  if(evidence.observed&&(
+     !Number.isSafeInteger(launched.direct_process_pid)||
+     launched.direct_process_pid!==evidence.direct_process_pid))
+    fail('INSTALL_DIRECT_EXIT_SIGNED_LAUNCH_PID_MISMATCH');
+  return evidence;
 }
 
 module.exports={createDirectExitTracker,inspectDirectExit,inspectDirectExitFromJournals};
