@@ -12,6 +12,7 @@ const {verifyFailureReview}=require('../apps/desktop/maintenance-failure-review-
 const {verifyOwnerFailureReviewGrant}=require('../apps/desktop/maintenance-failure-owner-grant.cjs');
 const {prepareFailedInstallRecoveryReview}=
   require('../apps/desktop/maintenance-failure-owner-review.cjs');
+const {releaseHold}=require('../apps/desktop/maintenance-release-executor.cjs');
 const nodeId='node_'+'a'.repeat(32),agentId='agent_noncritical_1';
 const offerKey=crypto.generateKeyPairSync('ed25519');
 const execKey=crypto.generateKeyPairSync('ed25519');
@@ -318,4 +319,15 @@ test('offline Owner signer verifies all three device-signed receipts before gran
   assert.equal(fs.existsSync(output),false);
   result=run({...env,SUTRADHAR_OWNER_FAILURE_RECOVERY_REVIEW_APPROVED:'no'});
   assert.notEqual(result.status,0);
+}));
+
+test('standard success-path hold release refuses ANY failed-install diagnostic, even after Owner review',()=>fixtures(async dir=>{
+  const {f,context}=await preparedReview(dir);
+  const args={dir:f.nodeDir,nodeId,agentStopped:true};
+  await assert.rejects(releaseHold(args),
+    /FAILED_INSTALL_REQUIRES_DISTINCT_OWNER_RESOLUTION/);
+  await prepareFailedInstallRecoveryReview(context);
+  await assert.rejects(releaseHold(args),
+    /FAILED_INSTALL_REQUIRES_DISTINCT_OWNER_RESOLUTION/);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
 }));
