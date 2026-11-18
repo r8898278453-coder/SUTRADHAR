@@ -104,6 +104,7 @@ function launcherRecorder(){
   const runner=(file,args,options)=>{
     launches.push({file,args,options});
     const child=new EventEmitter();
+    child.pid=34000+launches.length;
     child.unref=()=>{child.unrefCalled=true;};
     setImmediate(()=>child.emit('spawn'));
     return child;
@@ -121,7 +122,7 @@ async function setupFailure(dir,{launched=true}={}){
     const {runner}=launcherRecorder();
     await launchStagedInstaller({...f.args,grantEnvelope:f.grant(),runner});
   }else{
-    const runner=()=>{const c=new EventEmitter();
+    const runner=()=>{const c=new EventEmitter();c.pid=34101;
       setImmediate(()=>c.emit('error',Error('setup refused')));return c;};
     await assert.rejects(launchStagedInstaller({...f.args,
       grantEnvelope:f.grant(),runner}),/SPAWN_FAILED_OWNER_REVIEW/);
