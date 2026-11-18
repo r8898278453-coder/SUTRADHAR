@@ -69,6 +69,20 @@ get('autostart').addEventListener('change',async e=>{
   }catch(error){showFeedback(String(error.message||error));}
   await loadStatus();
 });
+get('inspectPostUpdateIdentity').addEventListener('click',async()=>{
+  const button=get('inspectPostUpdateIdentity');button.disabled=true;
+  get('updateFeedback').textContent='Checking device public-key and agent identity against staged baseline…';
+  try{
+    const r=await api.inspectPostUpdateIdentity();
+    get('updateFeedback').textContent='Identity fingerprint and agent IDs unchanged for '+r.node_id+
+      '. Installed version observed '+r.observed_version+
+      ', staged target '+r.target_version+
+      (r.version_matches_target?' (version matches).':' (version NOT matched).')+
+      ' This does NOT prove installer execution or Central reconciliation.';
+  }catch(e){get('updateFeedback').textContent='Identity continuity BLOCKED: '+
+    String(e.message||e)+'. Preserve local identity and call Owner.';}
+  finally{button.disabled=false;}
+});
 get('prepareInstaller').addEventListener('click',async()=>{
   const button=get('prepareInstaller');button.disabled=true;
   get('updateFeedback').textContent='Verifying Owner DRAINED fence, signed offer, Windows publisher and identity…';
