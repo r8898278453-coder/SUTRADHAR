@@ -46,6 +46,30 @@
 <div><label>Proposal ID</label><input id="proposal-id" placeholder="proposal_...">
 <div class="flex"><button data-command="APPROVE_PROPOSAL">Approve proposal</button><button data-command="DENY_PROPOSAL" class="danger">Deny</button></div></div>
 </div></section>
+<section class="panel owner" aria-labelledby="git-recovery-title">
+<div class="panelhead"><h2 id="git-recovery-title">Uncertain Git publication — Owner recovery review</h2>
+<span id="git-recovery-count" role="status">Not loaded</span></div>
+<p>This queue is read-only until you explicitly authorize exact remote GitHub evidence verification. It cannot push, republish, merge, retry a failed task or change production. Missing remote evidence is never permission to push again. A live RECOVERING Master and matching independent QA receipt are required.</p>
+<div class="scroll"><table><thead><tr><th>Ticket</th><th>Remote job</th><th>Task status</th><th>Original epoch</th><th>Exact candidate HEAD</th><th>Preflight</th><th>Review</th></tr></thead>
+<tbody id="git-recovery-jobs"></tbody></table></div>
+<p id="git-recovery-status" role="status">Choose an eligible job to review its exact commit.</p>
+<div class="formgrid">
+<div><label for="git-recovery-ticket">Selected ticket (read-only)</label>
+<input id="git-recovery-ticket" readonly aria-readonly="true" placeholder="Select an eligible job above">
+<label for="git-recovery-expected-head">Central-approved commit SHA (read-only)</label>
+<input id="git-recovery-expected-head" readonly aria-readonly="true" placeholder="Exact 40-character SHA">
+<label for="git-recovery-epoch">Current Master epoch (read-only)</label>
+<input id="git-recovery-epoch" readonly aria-readonly="true" placeholder="RECOVERING epoch"></div>
+<div><label for="git-recovery-confirm-sha">Type the full 40-character SHA to confirm</label>
+<input id="git-recovery-confirm-sha" spellcheck="false" autocomplete="off" maxlength="40" placeholder="Paste exact candidate commit SHA">
+<label for="git-recovery-reason">Owner incident reason (12–500 characters)</label>
+<input id="git-recovery-reason" autocomplete="off" maxlength="500" placeholder="Reason for verifying the remote effect">
+<label class="inline" for="git-recovery-consent"><input type="checkbox" id="git-recovery-consent">
+I authorize read-only GitHub proof for this exact commit; no push, PR or merge.</label>
+<div class="flex"><button id="git-recovery-verify" disabled>Verify exact remote evidence</button>
+<button id="git-recovery-clear" type="button" class="outline">Clear review / retry</button></div>
+<p>After a lost response, retry with unchanged fields to reuse the same request ID. Clearing a review discards this browser-only retry ID; it does not undo a server receipt.</p></div>
+</div></section>
 <section class="panel owner" aria-labelledby="maintenance-title">
 <div class="panelhead"><h2 id="maintenance-title">PC maintenance intents — NOT installer approval</h2><span id="maintenanceCount">—</span></div>
 <p>Owner may record a five-minute advisory intent for an already approved, idle PC. Central checks live Master/Backup 1/2, server-clock heartbeat, active tasks and Master epoch. This does not drain work, stop any agent, reserve a maintenance lease, install software or authorize a rollback.</p>
