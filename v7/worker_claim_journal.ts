@@ -48,7 +48,7 @@ function read(file:string):Journal{
   const stat=fs.lstatSync(file);
   if(!stat.isFile()||stat.isSymbolicLink()||stat.size===0||stat.size>8192)
     die('CLAIM_JOURNAL_UNTRUSTED_FILE');
-  let record:Journal;
+  let record:Journal|undefined;
   try{record=JSON.parse(fs.readFileSync(file,'utf8'));}
   catch{die('CLAIM_JOURNAL_CORRUPT');}
   if(!record||record.schema_version!==1||!record.context||!record.body||
