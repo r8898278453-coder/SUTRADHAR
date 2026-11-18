@@ -50,8 +50,11 @@ function main(){
     required('SUTRADHAR_INSTALL_EXECUTION_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
   const maintenanceReleasePem=Buffer.from(
     required('SUTRADHAR_MAINTENANCE_RELEASE_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
+  const failureReviewPem=Buffer.from(
+    required('SUTRADHAR_FAILURE_REVIEW_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
   for(const [name,pem] of [['installer execution',installerExecutionPem],
-    ['maintenance release',maintenanceReleasePem]]){
+    ['maintenance release',maintenanceReleasePem],
+    ['failed-install Owner review',failureReviewPem]]){
     let publicKey;
     try{publicKey=crypto.createPublicKey(pem);}catch{
       fail('Owner '+name+' public key invalid');
@@ -79,9 +82,11 @@ function main(){
   const trustFile=path.join(cwd,'update-trust.json');
   const executionTrustFile=path.join(cwd,'installer-execution-trust.json');
   const maintenanceTrustFile=path.join(cwd,'maintenance-release-trust.json');
+  const failureReviewTrustFile=path.join(cwd,'failure-review-trust.json');
   const originalTrust=fs.readFileSync(trustFile,'utf8');
   const originalExecutionTrust=fs.readFileSync(executionTrustFile,'utf8');
   const originalMaintenanceTrust=fs.readFileSync(maintenanceTrustFile,'utf8');
+  const originalFailureReviewTrust=fs.readFileSync(failureReviewTrustFile,'utf8');
   fs.writeFileSync(cfg,JSON.stringify(signingConfig),{mode:0o600,flag:'wx'});
   try{
     fs.writeFileSync(trustFile,JSON.stringify({
@@ -95,6 +100,10 @@ function main(){
     fs.writeFileSync(maintenanceTrustFile,JSON.stringify({
       schema:1,status:'OWNER_PROTECTED_RELEASE',
       public_key_pem:maintenanceReleasePem
+    },null,2)+'\n',{mode:0o600});
+    fs.writeFileSync(failureReviewTrustFile,JSON.stringify({
+      schema:1,status:'OWNER_PROTECTED_RELEASE',
+      public_key_pem:failureReviewPem
     },null,2)+'\n',{mode:0o600});
     const r=cp.spawnSync(process.execPath,[builder,'--win','nsis','--x64','--publish','never',
       '--config',cfg],{cwd,env:process.env,stdio:'inherit',timeout:1200000});
@@ -125,6 +134,7 @@ function main(){
     try{fs.writeFileSync(trustFile,originalTrust);}catch{}
     try{fs.writeFileSync(executionTrustFile,originalExecutionTrust);}catch{}
     try{fs.writeFileSync(maintenanceTrustFile,originalMaintenanceTrust);}catch{}
+    try{fs.writeFileSync(failureReviewTrustFile,originalFailureReviewTrust);}catch{}
     try{fs.unlinkSync(cfg);}catch{}
   }
 }
