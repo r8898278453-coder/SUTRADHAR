@@ -17,6 +17,7 @@ const {recordInspection}=require('./update-inspection-journal.cjs');
 const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
 const {prepareInstaller,inspectPreparedIdentity}=require('./maintenance-install-preparation.cjs');
 const {launchStagedInstaller}=require('./maintenance-installer-execution.cjs');
+const {observePostInstall}=require('./maintenance-postinstall-verification.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {isolateDrainedPc}=require('./maintenance-local-isolation.cjs');
 const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
@@ -44,6 +45,7 @@ let vault=null,vaultError=null,signer=null;
 let maintenanceRestartBusy=false;
 let installerPreparationBusy=false;
 let installerExecutionBusy=false;
+let postInstallBusy=false;
 const trustedProviders={
   chatgpt:'https://chatgpt.com/',
   ai_studio:'https://aistudio.google.com/'
@@ -79,6 +81,11 @@ function safeStatus(){
       if(enrollmentState==='SUBMITTED')pendingEnrollmentCode=null;
     }
   }catch(e){enrollmentState='OWNER_REVIEW_REQUIRED';enrollmentError=String(e.message||e).slice(0,100);}
+  let postInstallObservation='NOT_RECORDED';
+  try{
+    if(fs.existsSync(path.join(nodeDir(),'installer-postinstall-observed.json')))
+      postInstallObservation='OBSERVATION_RECORDED_NOT_INSTALL_PROVEN';
+  }catch{postInstallObservation='OWNER_REVIEW_REQUIRED';}
   let installerExecution='NOT_ATTEMPTED';
   try{
     if(fs.existsSync(path.join(nodeDir(),'installer-execution-attempt.json')))
@@ -113,7 +120,7 @@ function safeStatus(){
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:enrollmentState==='SUBMITTED',
     enrollmentState,enrollmentError,
-    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,startupSupported,startupEnabled,
+    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,postInstallObservation,startupSupported,startupEnabled,
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent({manualOwnerRestart=false}={}){
@@ -398,6 +405,8 @@ app.whenReady().then(()=>{
     // callback. signalCode/kill() do not prove that the process has exited.
     if(agent)
       throw Error('RECOVERY_RELEASE_AGENT_EXIT_NOT_CONFIRMED');
+    if(postInstallBusy||installerExecutionBusy||installerPreparationBusy)
+      throw Error('RECOVERY_RELEASE_INSTALL_OPERATION_IN_PROGRESS');
     const node=vault.read();
     if(!node||!requireSubmitted({dir:nodeDir(),node,centralUrl:current.centralUrl}))
       throw Error('RECOVERY_RELEASE_REQUIRES_ENROLLED_IDENTITY');
@@ -420,6 +429,7 @@ app.whenReady().then(()=>{
     if(selected.canceled||selected.filePaths.length!==1)return {canceled:true};
     return releaseHold({dir:nodeDir(),centralOrigin:current.centralUrl,
       nodeId:node.node_id,signer,agentStopped:true,
+      node,agentIds:current.agentIds,currentVersion:app.getVersion(),
       pinnedPublicKeyPem:trust.public_key_pem,
       grantEnvelope:boundedFile(selected.filePaths[0])});
   });
@@ -501,6 +511,34 @@ app.whenReady().then(()=>{
       }
       throw e;
     }finally{maintenanceRestartBusy=false;}
+  });
+  ipcMain.handle('sutradhar:observePostInstall',async event=>{
+    verifySender(event);
+    if(postInstallBusy||installerExecutionBusy||installerPreparationBusy||
+       maintenanceRestartBusy)
+      throw Error('POSTINSTALL_ANOTHER_OPERATION_IN_PROGRESS');
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('POSTINSTALL_PACKAGED_WINDOWS_PC_REQUIRED');
+    if(agent||shuttingDown)
+      throw Error('POSTINSTALL_LOCAL_AGENT_MUST_REMAIN_STOPPED');
+    const device=vault.read();
+    if(!device||!requireSubmitted({dir:nodeDir(),node:device,
+      centralUrl:current.centralUrl}))
+      throw Error('POSTINSTALL_EXISTING_ENROLLED_VAULT_REQUIRED');
+    const trust=JSON.parse(fs.readFileSync(
+      path.join(__dirname,'update-trust.json'),'utf8'));
+    if(trust.schema!==1||trust.status!=='OWNER_PROTECTED_RELEASE'||
+       trust.channel!=='stable'||typeof trust.publisher_subject!=='string')
+      throw Error('POSTINSTALL_OWNER_PUBLISHER_NOT_CONFIGURED');
+    postInstallBusy=true;
+    try{
+      return await observePostInstall({dir:nodeDir(),node:device,
+        agentIds:current.agentIds,observedVersion:app.getVersion(),
+        installedExecutable:app.getPath('exe'),
+        publisherSubject:trust.publisher_subject,
+        centralOrigin:current.centralUrl,signer,
+        platform:process.platform});
+    }finally{postInstallBusy=false;}
   });
   ipcMain.handle('sutradhar:inspectPostUpdateIdentity',event=>{
     verifySender(event);
