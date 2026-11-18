@@ -55,7 +55,8 @@ function read(file:string):Journal{
     !/^[a-f0-9]{64}$/.test(String(record.content_sha256||''))||
     hash({schema_version:1,context:record.context,body:record.body})!==record.content_sha256)
     die('CLAIM_JOURNAL_DIGEST_INVALID');
-  return record;
+  // The strict branch above rejects undefined; keep this explicit for TS.
+  return record as Journal;
 }
 export function getOrCreateClaimIntent(input:{
   dir:string;task:any;agentId:string;scope:string[];epoch:number;
