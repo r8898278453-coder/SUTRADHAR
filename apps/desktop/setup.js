@@ -27,6 +27,7 @@ async function loadStatus(){
       ['Maintenance recovery hold',s.maintenanceHold||'NONE'],
       ['Installer preparation',s.installerPreparation||'NONE'],
       ['Installer execution',s.installerExecution||'NOT_ATTEMPTED'],
+      ['Direct installer exit',s.directInstallerExit||'NOT_OBSERVED'],
       ['Post-install observation',s.postInstallObservation||'NOT_RECORDED'],
       ['Failed install review',s.failedInstallReview||'NOT_RECORDED'],
       ['Owner recovery investigation',s.failedRecoveryApproval||'NOT_RECORDED'],
@@ -129,6 +130,22 @@ get('inspectPostUpdateIdentity').addEventListener('click',async()=>{
   }catch(e){get('updateFeedback').textContent='Identity continuity BLOCKED: '+
     String(e.message||e)+'. Preserve local identity and call Owner.';}
   finally{button.disabled=false;}
+});
+get('inspectDirectInstallerExit').addEventListener('click',async()=>{
+  const button=get('inspectDirectInstallerExit');button.disabled=true;
+  get('updateFeedback').textContent='Verifying device-signed launch chain and any direct installer exit observation…';
+  try{
+    const v=await api.inspectDirectInstallerExit();
+    get('updateFeedback').textContent=v.observed?
+      'DIRECT installer process exit observed. Code: '+
+      String(v.direct_process_exit_code===null?'unknown':v.direct_process_exit_code)+
+      ', signal: '+String(v.direct_process_exit_signal||'none')+
+      '. NSIS/UAC completion and successful installation remain UNPROVEN. Hold and automatic retry are blocked.':
+      'No direct process exit record is available. Outcome UNKNOWN. Do not infer success/failure or delete the hold.';
+  }catch(e){
+    get('updateFeedback').textContent='EXIT INSPECTION BLOCKED: '+
+      String(e.message||e)+'. Preserve original installer receipts for Owner review.';
+  }finally{button.disabled=false;}
 });
 get('launchStagedInstaller').addEventListener('click',async()=>{
   const button=get('launchStagedInstaller');button.disabled=true;
