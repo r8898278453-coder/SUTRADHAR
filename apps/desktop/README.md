@@ -51,6 +51,16 @@ Do not move/copy device identity to a different PC. Do not delete identity for a
 
 **Advanced code/QA worker:** apps/desktop/dist/edge-worker.cjs is an independently compiled CLI, not automatically run by the setup UI. It still requires trusted Git, Docker/Python and approved source checkout; consult [v7 technical runbook](../../v7/README.md). It is intentionally not included in the first-run installer.
 
+## Windows OS-vault task discovery (read-only alpha, 19 November 2026)
+
+The packaged Windows Setup screen now includes **My assigned development tasks (read-only)**. After an approved PC/agent has a recent signed Central heartbeat, choose an approved local agent to list READY, dependency-unblocked tasks in projects for which Central grants `can_develop`. Enter an exact ticket ID to inspect its description, allowed scopes and acceptance criteria. Results use text-only rendering; nothing is converted to HTML or executed.
+
+The renderer only invokes `inspectWorkerTasks(agentId,ticketId)`. Electron main checks its own sandboxed setup window, packaged Windows runtime, submitted enrollment receipt, recent Central acknowledgement and absence of maintenance/recovery/installer fences. `worker-inspection.cjs` accepts only fixed HTTPS GET endpoints. The OS vault's **new separate `signWorkerReadOnly` capability** signs only those endpoints for one of this PC's enrolled agent IDs. The existing heartbeat child IPC remains unchanged and **cannot** invoke this worker signer. Central separately verifies the signed approved node/agent and the project ACL.
+
+This does **not** claim work, renew a lease, create a Git worktree, run prompts, read browser sessions, sign QA receipts, publish Git, or run automation. The alpha developer CLI `edge-worker.cjs` still depends on its separate plaintext identity and is **not shipped** in the installer. Real packaged-Windows/Hostinger/physical-PC acceptance is pending.
+
+Tests: `tests/desktop_worker_inspection.test.cjs`, `tests/desktop_signer_bridge.test.cjs`, plus existing signed HTTP/MySQL project ACL tests.
+
 ## Private-key-isolated signing bridge — 13 November 2026
 
 For the packaged Desktop, `apps/desktop/vault-bridge.cjs` keeps the Ed25519 key in the **Electron main process OS-backed vault**. The secure child process receives public node metadata, monotonic heartbeat counters and signatures for a small allowlist of Central API paths; it no longer receives `private_key_pem` through IPC. It cannot ask this bridge to sign arbitrary URLs, a database migration or a GitHub release operation. The parent saves and checks counters before heartbeats.
