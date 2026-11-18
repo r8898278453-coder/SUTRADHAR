@@ -44,6 +44,21 @@ function main(){
   let trustKey;
   try{trustKey=crypto.createPublicKey(trustPem);}catch{fail('Owner Ed25519 update verification public key invalid');}
   if(trustKey.asymmetricKeyType!=='ed25519')fail('Owner update signing public key must be Ed25519');
+  // Separate public trust roots for interactive installation and post-maintenance
+  // release. No private Ed25519 key is ever included in the Desktop package.
+  const installerExecutionPem=Buffer.from(
+    required('SUTRADHAR_INSTALL_EXECUTION_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
+  const maintenanceReleasePem=Buffer.from(
+    required('SUTRADHAR_MAINTENANCE_RELEASE_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
+  for(const [name,pem] of [['installer execution',installerExecutionPem],
+    ['maintenance release',maintenanceReleasePem]]){
+    let publicKey;
+    try{publicKey=crypto.createPublicKey(pem);}catch{
+      fail('Owner '+name+' public key invalid');
+    }
+    if(publicKey.asymmetricKeyType!=='ed25519')
+      fail('Owner '+name+' public key must be Ed25519');
+  }
   const cert=process.env.WIN_CSC_LINK||process.env.CSC_LINK;
   const password=process.env.WIN_CSC_KEY_PASSWORD||process.env.CSC_KEY_PASSWORD;
   if(!cert||!password)fail('approved Authenticode certificate and private signing secret required');
@@ -62,12 +77,24 @@ function main(){
   signingConfig.publish=null;
   const cfg=path.join(cwd,'.protected-signing-config-'+process.pid+'.json');
   const trustFile=path.join(cwd,'update-trust.json');
+  const executionTrustFile=path.join(cwd,'installer-execution-trust.json');
+  const maintenanceTrustFile=path.join(cwd,'maintenance-release-trust.json');
   const originalTrust=fs.readFileSync(trustFile,'utf8');
+  const originalExecutionTrust=fs.readFileSync(executionTrustFile,'utf8');
+  const originalMaintenanceTrust=fs.readFileSync(maintenanceTrustFile,'utf8');
   fs.writeFileSync(cfg,JSON.stringify(signingConfig),{mode:0o600,flag:'wx'});
   try{
     fs.writeFileSync(trustFile,JSON.stringify({
       schema:1,channel:'stable',public_key_pem:trustPem,
       publisher_subject:signed,status:'OWNER_PROTECTED_RELEASE'
+    },null,2)+'\n',{mode:0o600});
+    fs.writeFileSync(executionTrustFile,JSON.stringify({
+      schema:1,status:'OWNER_PROTECTED_RELEASE',
+      public_key_pem:installerExecutionPem
+    },null,2)+'\n',{mode:0o600});
+    fs.writeFileSync(maintenanceTrustFile,JSON.stringify({
+      schema:1,status:'OWNER_PROTECTED_RELEASE',
+      public_key_pem:maintenanceReleasePem
     },null,2)+'\n',{mode:0o600});
     const r=cp.spawnSync(process.execPath,[builder,'--win','nsis','--x64','--publish','never',
       '--config',cfg],{cwd,env:process.env,stdio:'inherit',timeout:1200000});
@@ -94,7 +121,11 @@ function main(){
       installers:receipts
     },null,2)+'\n',{mode:0o600});
     console.log('SIGNED_INSTALLERS_VERIFIED_LOCALLY; NOT PUBLISHED. Owner must review evidence.');
-  }finally{try{fs.writeFileSync(trustFile,originalTrust);}catch{}
-    try{fs.unlinkSync(cfg);}catch{}}
+  }finally{
+    try{fs.writeFileSync(trustFile,originalTrust);}catch{}
+    try{fs.writeFileSync(executionTrustFile,originalExecutionTrust);}catch{}
+    try{fs.writeFileSync(maintenanceTrustFile,originalMaintenanceTrust);}catch{}
+    try{fs.unlinkSync(cfg);}catch{}
+  }
 }
 main();
