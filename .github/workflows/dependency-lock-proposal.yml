@@ -72,6 +72,8 @@ jobs:
         run: node scripts/release/verify-dependency-locks.cjs
       - name: Require known-vulnerable picomatch not enter production dependency graph
         run: node scripts/release/dependency-exposure.cjs
+      - name: Audit production-only dependency graph (independent remote advisory verification)
+        run: npm audit --omit=dev --audit-level=high --no-fund
       - name: Audit root dependencies (including build-time supply chain)
         run: npm audit --audit-level=high --no-fund
       - name: Audit Desktop Electron/installer dependencies
