@@ -143,4 +143,39 @@ function inspectDirectExit({dir,node,scope}={}){
     local_hold_release_allowed:false,
     automatic_retry_allowed:false,agent_restart_allowed:false});
 }
-module.exports={createDirectExitTracker,inspectDirectExit};
+/**
+ * Trusted UI inspection uses the ORIGINAL OS-vault-signed execution chain.
+ * No on-disk filename or unsigned JSON determines which grant was launched.
+ */
+function inspectDirectExitFromJournals({dir,node,agentIds,observedVersion}={}){
+  const {inspectPreparedIdentity}=require('./maintenance-install-preparation.cjs');
+  const {jsonFile,verifySigned}=require('./maintenance-postinstall-verification.cjs');
+  const baseline=inspectPreparedIdentity({dir,node,agentIds,observedVersion});
+  if(baseline.identity_preserved!==true)
+    fail('INSTALL_DIRECT_EXIT_DEVICE_IDENTITY_CHANGED');
+  const attempt=verifySigned(
+    jsonFile(path.join(dir,'installer-execution-attempt.json')),node,
+    'SUTRADHAR_INSTALL_EXECUTION_V1\n');
+  const launched=verifySigned(
+    jsonFile(path.join(dir,'installer-execution-launch-observed.json')),node,
+    'SUTRADHAR_INSTALL_EXECUTION_V1\n');
+  if(attempt.state!=='EXECUTION_ATTEMPT_OWNER_REVIEW_REQUIRED'||
+     launched.state!=='WINDOWS_INSTALLER_PROCESS_STARTED_UNVERIFIED'||
+     attempt.node_id!==node.node_id||launched.node_id!==node.node_id||
+     launched.grant_id!==attempt.grant_id||
+     launched.installer_sha256!==attempt.installer_sha256||
+     launched.kind!==attempt.kind||
+     launched.target_version!==attempt.target_version||
+     launched.installer_installation_verified!==false||
+     attempt.installer_installation_verified!==false||
+     attempt.automatic_retry_allowed!==false||
+     launched.automatic_retry_allowed!==false)
+    fail('INSTALL_DIRECT_EXIT_EXECUTION_CHAIN_MISMATCH');
+  return inspectDirectExit({dir,node,scope:{
+    node_id:attempt.node_id,plan_id:attempt.plan_id,
+    wave_id:attempt.wave_id,offer_sha256:attempt.offer_sha256,
+    installer_sha256:attempt.installer_sha256,grant_id:attempt.grant_id,
+    target_version:attempt.target_version,kind:attempt.kind}});
+}
+
+module.exports={createDirectExitTracker,inspectDirectExit,inspectDirectExitFromJournals};
