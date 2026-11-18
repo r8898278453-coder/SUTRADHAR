@@ -25,7 +25,8 @@ function receiptLocation(dir,grantId){
 }
 async function releaseHold({dir,centralOrigin,nodeId,signer,grantEnvelope,
   pinnedPublicKeyPem,agentStopped,node,agentIds,currentVersion,
-  fetcher,now=Date.now()}={}){
+  installedExecutable,publisherSubject,platform=process.platform,
+  verifyPublisher,fetcher,now=Date.now()}={}){
   if(agentStopped!==true)fail('RECOVERY_RELEASE_AGENT_STOP_NOT_CONFIRMED');
   if(typeof nodeId!=='string'||!Number.isSafeInteger(now))
     fail('RECOVERY_RELEASE_IDENTITY_INVALID');
@@ -43,7 +44,8 @@ async function releaseHold({dir,centralOrigin,nodeId,signer,grantEnvelope,
        typeof currentVersion!=='string')
       fail('RECOVERY_RELEASE_POSTINSTALL_PROOF_REQUIRED');
     const observed=verifyObservedReceipt({dir,node,agentIds,
-      observedVersion:currentVersion});
+      observedVersion:currentVersion,installedExecutable,
+      publisherSubject,platform,...(verifyPublisher?{verifyPublisher}:{})});
     if(observed.observed!==true||
        observed.node_id!==nodeId||
        observed.plan_id!==original.plan_id||
