@@ -10,6 +10,7 @@ const {observePostInstall,verifyObservedReceipt}=
   require('../apps/desktop/maintenance-postinstall-verification.cjs');
 const {verifyInstalledDesktopPublisher}=
   require('../apps/desktop/windows-authenticode.cjs');
+const {releaseHold}=require('../apps/desktop/maintenance-release-executor.cjs');
 const nodeId='node_'+'a'.repeat(32),agentId='agent_noncritical_1';
 const offerKey=crypto.generateKeyPairSync('ed25519');
 const execKey=crypto.generateKeyPairSync('ed25519');
@@ -216,4 +217,40 @@ test('installed-app Authenticode verifier checks real file SHA before/after and 
   assert.throws(()=>verifyInstalledDesktopPublisher({executablePath,
     publisherSubject:'CN=SUTRADHAR Verified',platform:'win32',
     runner:()=>({status:43})}),/PUBLISHER_VERIFICATION_FAILED/);
+}));
+
+test('after installer attempt Owner cannot release hold before postinstall observation; later still needs signed cancellation',()=>fixtures(async dir=>{
+  const {f,check}=await launched(dir);
+  const releaseKeys=crypto.generateKeyPairSync('ed25519');
+  const pub=releaseKeys.publicKey.export({type:'spki',format:'pem'}).toString();
+  const now=Date.now();
+  const releaseEnvelope=envelope({schema:1,action:'release_maintenance_hold',
+    node_id:nodeId,plan_id:planId,wave_id:waveId,
+    offer_sha256:f.prep.envelope?crypto.createHash('sha256')
+      .update(JSON.stringify(f.prep.envelope)).digest('hex'):f.offer.signed.installer_sha256,
+    grant_id:'e'.repeat(64),issued_ms:now-1000,expires_ms:now+120000},releaseKeys);
+  const cancelFetcher=async url=>{
+    assert.equal(new URL(url).pathname,
+      '/v7/nodes/maintenance/recovery/'+planId);
+    return {ok:true,json:async()=>({
+      node_id:nodeId,plan_id:planId,wave_id:waveId,
+      offer_sha256:releaseEnvelope.signed.offer_sha256,
+      state:'CANCELLED',cancellation_verified:true,any_active_fence:false,
+      any_active_maintenance_intent:false,
+      local_hold_release_allowed:false,installer_execution_allowed:false,
+      recovery_requires_owner:true
+    })};
+  };
+  const releaseArgs={dir:f.nodeDir,centralOrigin:check.centralOrigin,
+    nodeId,signer:check.signer,grantEnvelope:releaseEnvelope,
+    pinnedPublicKeyPem:pub,agentStopped:true,node,
+    agentIds:[agentId],currentVersion:'7.1.0',fetcher:cancelFetcher};
+  await assert.rejects(releaseHold(releaseArgs),/POSTINSTALL_RECEIPT_MISSING_OR_CORRUPT/);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+  await observePostInstall(check);
+  const released=await releaseHold(releaseArgs);
+  assert.equal(released.released,true);
+  assert.equal(released.agent_started,false);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,false);
+  assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-postinstall-observed.json')),true);
 }));
