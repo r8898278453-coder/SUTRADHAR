@@ -27,7 +27,12 @@ function checkedSignature(raw,key,prefix){
      raw.signature_base64.length<80||raw.signature_base64.length>256)
     fail('OWNER_FAILURE_GRANT_DEVICE_RECEIPT_INVALID');
   const {signature_base64,...payload}=raw;
-  if(!crypto.verify(null,Buffer.from(prefix+'\n'+JSON.stringify(payload)),
+  // The original escrow v1 journal used a literal backslash + "n"
+  // separator, while execution/diagnostic journals use a newline byte.
+  // Preserve the actual signed bytes; never skip verification or re-sign.
+  const separator=prefix==='SUTRADHAR_INSTALLER_ESCROW_V1'?
+    String.fromCharCode(92,110):String.fromCharCode(10);
+  if(!crypto.verify(null,Buffer.from(prefix+separator+JSON.stringify(payload)),
       key,Buffer.from(signature_base64,'base64')))
     fail('OWNER_FAILURE_GRANT_DEVICE_SIGNATURE_INVALID');
   return payload;
