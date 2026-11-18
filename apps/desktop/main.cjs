@@ -16,6 +16,7 @@ const {checkReadiness}=require('./update-readiness.cjs');
 const {recordInspection}=require('./update-inspection-journal.cjs');
 const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
 const {prepareInstaller,inspectPreparedIdentity}=require('./maintenance-install-preparation.cjs');
+const {launchStagedInstaller}=require('./maintenance-installer-execution.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {isolateDrainedPc}=require('./maintenance-local-isolation.cjs');
 const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
@@ -42,6 +43,7 @@ let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,c
 let vault=null,vaultError=null,signer=null;
 let maintenanceRestartBusy=false;
 let installerPreparationBusy=false;
+let installerExecutionBusy=false;
 const trustedProviders={
   chatgpt:'https://chatgpt.com/',
   ai_studio:'https://aistudio.google.com/'
@@ -77,6 +79,12 @@ function safeStatus(){
       if(enrollmentState==='SUBMITTED')pendingEnrollmentCode=null;
     }
   }catch(e){enrollmentState='OWNER_REVIEW_REQUIRED';enrollmentError=String(e.message||e).slice(0,100);}
+  let installerExecution='NOT_ATTEMPTED';
+  try{
+    if(fs.existsSync(path.join(nodeDir(),'installer-execution-attempt.json')))
+      installerExecution=fs.existsSync(path.join(nodeDir(),'installer-execution-launch-observed.json'))?
+        'PROCESS_STARTED_INSTALL_RESULT_UNKNOWN':'ATTEMPT_UNCERTAIN_OWNER_REVIEW';
+  }catch{installerExecution='UNKNOWN_OWNER_REVIEW';}
   let installerPreparation='NONE';
   try{
     const attempt=path.join(nodeDir(),'installer-preparation-attempt.json');
@@ -105,7 +113,7 @@ function safeStatus(){
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:enrollmentState==='SUBMITTED',
     enrollmentState,enrollmentError,
-    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,startupSupported,startupEnabled,
+    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,startupSupported,startupEnabled,
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent({manualOwnerRestart=false}={}){
@@ -504,6 +512,54 @@ app.whenReady().then(()=>{
       throw Error('UPDATE_IDENTITY_POSTCHECK_ENROLLED_DEVICE_REQUIRED');
     return inspectPreparedIdentity({dir:nodeDir(),node:device,
       agentIds:current.agentIds,observedVersion:app.getVersion()});
+  });
+  ipcMain.handle('sutradhar:launchStagedInstaller',async event=>{
+    verifySender(event);
+    if(installerExecutionBusy||installerPreparationBusy||maintenanceRestartBusy)
+      throw Error('UPDATE_EXECUTION_OPERATION_ALREADY_IN_PROGRESS');
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('UPDATE_EXECUTION_REQUIRES_PACKAGED_WINDOWS_PC');
+    // An exit signal is NOT enough: the tracked agent reference must be null.
+    if(agent||shuttingDown)
+      throw Error('UPDATE_EXECUTION_AGENT_EXIT_UNCONFIRMED');
+    const node=vault.read();
+    if(!node||!requireSubmitted({dir:nodeDir(),node,
+      centralUrl:current.centralUrl}))
+      throw Error('UPDATE_EXECUTION_ENROLLED_VAULT_REQUIRED');
+    const trust=JSON.parse(fs.readFileSync(
+      path.join(__dirname,'installer-execution-trust.json'),'utf8'));
+    const updates=JSON.parse(fs.readFileSync(
+      path.join(__dirname,'update-trust.json'),'utf8'));
+    if(trust.schema!==1||trust.status!=='OWNER_PROTECTED_RELEASE'||
+       typeof trust.public_key_pem!=='string'||
+       updates.schema!==1||updates.status!=='OWNER_PROTECTED_RELEASE'||
+       updates.channel!=='stable'||typeof updates.publisher_subject!=='string')
+      throw Error('UPDATE_EXECUTION_OWNER_TRUST_UNCONFIGURED');
+    const confirmation=await dialog.showMessageBox(setupWindow,{
+      type:'warning',buttons:['Cancel','Owner approved — launch interactive installer'],
+      defaultId:0,cancelId:0,noLink:true,
+      message:'Launch the exact Owner-authorized Windows installer?',
+      detail:'This action may change Windows software. It requires a SECOND independent, short-lived Owner signing grant, an unchanged local hold, the staged signed EXE and fresh Central DRAINED evidence. A one-shot journal prevents automatic retry. Windows UAC and setup prompts remain visible; SUTRADHAR will quit when process launch is confirmed. Installation success is NOT proven.'
+    });
+    if(confirmation.response!==1)return {canceled:true};
+    const picked=await dialog.showOpenDialog(setupWindow,{
+      title:'Select Owner-signed one-time installer execution grant JSON',
+      properties:['openFile'],filters:[{name:'Owner execution grant',extensions:['json']}]
+    });
+    if(picked.canceled||picked.filePaths.length!==1)return {canceled:true};
+    installerExecutionBusy=true;
+    try{
+      const grantEnvelope=boundedFile(picked.filePaths[0]);
+      const result=await launchStagedInstaller({dir:nodeDir(),
+        node,agentIds:current.agentIds,observedVersion:app.getVersion(),
+        centralOrigin:current.centralUrl,signer,grantEnvelope,
+        pinnedExecutionPublicKeyPem:trust.public_key_pem,
+        publisherSubject:updates.publisher_subject,platform:process.platform});
+      // No automatic retries. The installer runs in its own visible Windows
+      // process; Electron quits to avoid locking installed binaries.
+      if(result.launched) setTimeout(()=>app.quit(),600);
+      return result;
+    }finally{installerExecutionBusy=false;}
   });
   ipcMain.handle('sutradhar:prepareInstaller',async event=>{
     verifySender(event);
