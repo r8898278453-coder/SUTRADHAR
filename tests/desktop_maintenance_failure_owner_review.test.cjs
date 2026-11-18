@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const crypto=require('node:crypto'),{EventEmitter}=require('node:events');
+const cp=require('node:child_process');
 const {createHold,inspectHold}=require('../apps/desktop/maintenance-recovery-hold.cjs');
 const {prepareInstaller}=require('../apps/desktop/maintenance-install-preparation.cjs');
 const {verifyExecutionGrant}=require('../apps/desktop/maintenance-installer-execution-grant.cjs');
@@ -274,4 +275,47 @@ test('same request cannot be reused after release-review record exists, even wit
   await assert.rejects(prepareFailedInstallRecoveryReview({...context,
     grantEnvelope:signedGrant(evidence)}),/PREVIOUS_REVIEW_OWNER_INTERVENTION/);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+}));
+
+test('offline Owner signer verifies all three device-signed receipts before granting a one-PC review',()=>fixtures(async dir=>{
+  const {f,evidence}=await preparedReview(dir);
+  const privateFile=path.join(dir,'owner-review-private.pem');
+  const devicePublicFile=path.join(dir,'device-public.pem');
+  const output=path.join(dir,'owner-grant.json');
+  fs.writeFileSync(privateFile,ownerKey.privateKey.export({
+    type:'pkcs8',format:'pem'}).toString());
+  fs.writeFileSync(devicePublicFile,node.public_key_pem);
+  const env={...process.env,
+    SUTRADHAR_OWNER_FAILURE_RECOVERY_REVIEW_APPROVED:'yes',
+    SUTRADHAR_FAILURE_DIAGNOSTIC_JSON:path.join(f.nodeDir,
+      'installer-failure-review-observed.json'),
+    SUTRADHAR_FAILURE_PREPARED_JSON:path.join(f.nodeDir,
+      'installer-preparation-ready.json'),
+    SUTRADHAR_FAILURE_EXECUTION_ATTEMPT_JSON:path.join(f.nodeDir,
+      'installer-execution-attempt.json'),
+    SUTRADHAR_FAILURE_DEVICE_PUBLIC_KEY_FILE:devicePublicFile,
+    SUTRADHAR_FAILURE_OWNER_SIGNING_KEY_FILE:privateFile,
+    SUTRADHAR_FAILURE_OWNER_GRANT_OUTPUT:output};
+  const script=path.resolve(__dirname,
+    '../scripts/release/sign-failed-install-owner-review.cjs');
+  const run=e=>cp.spawnSync(process.execPath,[script],
+    {encoding:'utf8',env:e,timeout:10000});
+  let result=run(env);
+  assert.equal(result.status,0,result.stderr);
+  const grant=JSON.parse(fs.readFileSync(output));
+  assert.equal(grant.signed.review_sha256,evidence.review_sha256);
+  assert.equal(grant.signed.node_id,nodeId);
+  assert.equal(grant.signed.expires_ms-grant.signed.issued_ms,300000);
+  assert.equal(verifyOwnerFailureReviewGrant({envelope:grant,
+    pinnedPublicKeyPem:ownerPublicKey,evidence}).accepted,true);
+  assert.equal(run(env).status!==0,true,'never overwrite signed grant');
+  fs.unlinkSync(output);
+  const corrupted=JSON.parse(fs.readFileSync(env.SUTRADHAR_FAILURE_DIAGNOSTIC_JSON));
+  corrupted.installer_outcome_known=true;
+  fs.writeFileSync(env.SUTRADHAR_FAILURE_DIAGNOSTIC_JSON,JSON.stringify(corrupted));
+  result=run(env);
+  assert.notEqual(result.status,0);
+  assert.equal(fs.existsSync(output),false);
+  result=run({...env,SUTRADHAR_OWNER_FAILURE_RECOVERY_REVIEW_APPROVED:'no'});
+  assert.notEqual(result.status,0);
 }));
