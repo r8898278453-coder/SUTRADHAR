@@ -56,7 +56,10 @@
       "maintenance-restart.cjs",
       "maintenance-restart-ack.cjs",
       "windows-authenticode.cjs",
-      "maintenance-install-preparation.cjs"
+      "maintenance-install-preparation.cjs",
+      "maintenance-installer-execution-grant.cjs",
+      "maintenance-installer-execution.cjs",
+      "installer-execution-trust.json"
     ],
     "extraResources": [
       {
