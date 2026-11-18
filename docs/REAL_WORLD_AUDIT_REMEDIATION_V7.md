@@ -35,6 +35,15 @@ This is a traceable engineering response to the 19 November real-world audit. It
 - Tests cover stable replay, rejected stale epoch/stolen identity/tampered record, and the real disposable-MySQL idempotent claim receipt.
 - **Limit:** This is not the OS-vault worker bridge. Checkpoint/submit operation journals, automatic worker operation, and crash/failover reassignment are still incomplete. A local journal is not a substitute for a Central signed receipt.
 
+## RWA-003 — OS-vault manual claim and signed continuity proof (second alpha phase)
+
+- The packaged Windows Setup window may now initiate an **explicitly confirmed** single-ticket claim after the human selects an existing trusted local Git checkout. No code execution / Git push / AI automation is delegated to the renderer or heartbeat child.
+- Electron Main's `signWorkerAction` has two **separate fixed contract endpoints**: exact `POST /v7/tasks/claim` and read-only `POST /v7/tasks/resume-check`. The pre-existing `sign(kind:'node_api')` supervised child bridge remains unchanged and cannot invoke this signer. The private key remains inside the OS-backed Electron vault.
+- Before claim, app checks GitHub repository origin, immutable local baseline, Git filters/hooks, project worktree, current Master phase and a fresh approved signed heartbeat/maintenance state. Central independently enforces Owner-approved node/agent/project grants, scopes, deps, capacity and Master epoch.
+- A private, checksum-protected local **claim intent is flushed before HTTP**; lost replies replay the same request ID without creating a second claim. A durable local lease receipt and signed current Central resume proof are required before acknowledging a successful claim. Stale epoch, changed scope, invalid journal and existing receipt fail closed.
+- New CI tests exercise real local Git worktrees, Ed25519 canonical signatures, ambiguous reply replay, stale Master epochs and rejection of mismatched repository/receipt. This is **source and QA CI** verification, not a physical installed PC test.
+- **Still missing:** Packaged OS-vault checkpoint/renewal/submit and trusted independently verified QA; an autonomous AI worker/provider orchestrator; Windows Git installer/prerequisite wizard; automated lease expiry/reassignment; end-to-end physical Windows and Hostinger acceptance. The local Git checkout must already be trusted by the Owner.
+
 ## RWA-003 — OS-vault packaged worker bridge, first read-only phase
 
 - Windows Electron Main can now use an independent `signWorkerReadOnly` vault capability to query signed HTTPS `GET /v7/tasks/available` and `GET /v7/tasks/detail/:ticketId` on behalf of one of its own approved local agents. A sandboxed Setup UI chooses the agent and displays text-only results.
