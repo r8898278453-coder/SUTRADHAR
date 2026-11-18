@@ -41,7 +41,8 @@
     "release:sign-maintenance-grant": "node scripts/release/sign-maintenance-release.cjs",
     "check:dependency-exposure": "node scripts/release/dependency-exposure.cjs",
     "test:dependency-exposure": "node --test tests/dependency_exposure.test.cjs",
-    "release:sign-maintenance-restart": "node scripts/release/sign-maintenance-restart.cjs"
+    "release:sign-maintenance-restart": "node scripts/release/sign-maintenance-restart.cjs",
+    "release:offer-maintenance-digest": "node scripts/release/print-maintenance-offer-digest.cjs"
   },
   "dependencies": {
     "@google/genai": "3.3.0",
