@@ -174,4 +174,56 @@ async function prepareInstaller({dir,installerPath,envelope,node,agentIds,
     automatic_rollback_allowed:false,
     next_action:'Owner must review staged evidence; no Windows installation or rollback has run.'});
 }
-module.exports={prepareInstaller,identityEvidence};
+/**
+ * Read-only identity continuity check after any Owner-supervised installation.
+ * Does not assume an installer ran merely because app.getVersion() matches.
+ * Never imports, overwrites, exports, or resets the OS-vault private key.
+ */
+function inspectPreparedIdentity({dir,node,agentIds,observedVersion}={}){
+  if(typeof dir!=='string'||!path.isAbsolute(dir)||
+     !Array.isArray(agentIds)||agentIds.length<1||
+     !/^\\d+\\.\\d+\\.\\d+$/.test(observedVersion||''))
+    fail('UPDATE_IDENTITY_POSTCHECK_ARGUMENTS_INVALID');
+  const identity=identityEvidence(node,agentIds);
+  function read(file){
+    let st,p;
+    try{
+      st=fs.lstatSync(path.join(dir,file));
+      if(!st.isFile()||st.isSymbolicLink()||st.size<200||st.size>8192)
+        fail('UPDATE_IDENTITY_POSTCHECK_RECEIPT_INVALID');
+      p=JSON.parse(fs.readFileSync(path.join(dir,file),'utf8'));
+    }catch{fail('UPDATE_IDENTITY_POSTCHECK_RECEIPT_CORRUPT');}
+    return p;
+  }
+  const attempt=read('installer-preparation-attempt.json');
+  const ready=read('installer-preparation-ready.json');
+  if(attempt.schema!==1||ready.schema!==1||
+     attempt.status!=='PREPARATION_ATTEMPT_OWNER_REVIEW'||
+     ready.status!=='OFFLINE_STAGED_NOT_INSTALLED'||
+     attempt.node_id!==identity.node_id||
+     ready.node_id!==identity.node_id||
+     attempt.identity_public_key_sha256!==identity.public_key_sha256||
+     ready.identity_public_key_sha256!==identity.public_key_sha256||
+     JSON.stringify(attempt.agent_ids)!==JSON.stringify(identity.agent_ids)||
+     JSON.stringify(ready.agent_ids)!==JSON.stringify(identity.agent_ids)||
+     attempt.offer_sha256!==ready.offer_sha256||
+     attempt.installer_sha256!==ready.installer_sha256||
+     attempt.target_version!==ready.target_version||
+     attempt.kind!==ready.kind||
+     attempt.plan_id!==ready.plan_id||attempt.wave_id!==ready.wave_id||
+     attempt.installer_executed!==false||ready.installer_executed!==false||
+     attempt.installer_execution_allowed!==false||
+     ready.installer_execution_allowed!==false||
+     !HEX.test(ready.installer_sha256||''))
+    fail('UPDATE_IDENTITY_POSTCHECK_MISMATCH_OWNER_REVIEW');
+  return Object.freeze({node_id:identity.node_id,
+    identity_preserved:true,
+    public_key_fingerprint_matched:true,agent_id_set_matched:true,
+    observed_version:observedVersion,target_version:ready.target_version,
+    version_matches_target:observedVersion===ready.target_version,
+    installer_executed_proven:false,
+    central_reconciliation_proven:false,
+    automatic_rollback_allowed:false});
+}
+
+module.exports={prepareInstaller,identityEvidence,inspectPreparedIdentity};
