@@ -51,7 +51,10 @@
       "maintenance-release-grant.cjs",
       "maintenance-release-executor.cjs",
       "maintenance-reconciliation-barrier.cjs",
-      "maintenance-release-trust.json"
+      "maintenance-release-trust.json",
+      "maintenance-restart-grant.cjs",
+      "maintenance-restart.cjs",
+      "maintenance-restart-ack.cjs"
     ],
     "extraResources": [
       {
