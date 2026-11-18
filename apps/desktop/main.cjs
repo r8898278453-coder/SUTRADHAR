@@ -19,6 +19,7 @@ const {prepareInstaller,inspectPreparedIdentity}=require('./maintenance-install-
 const {launchStagedInstaller}=require('./maintenance-installer-execution.cjs');
 const {observePostInstall}=require('./maintenance-postinstall-verification.cjs');
 const {observeFailedAttempt}=require('./maintenance-failed-install-review.cjs');
+const {prepareFailedInstallRecoveryReview}=require('./maintenance-failure-owner-review.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {isolateDrainedPc}=require('./maintenance-local-isolation.cjs');
 const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
@@ -48,6 +49,7 @@ let installerPreparationBusy=false;
 let installerExecutionBusy=false;
 let postInstallBusy=false;
 let failedInstallReviewBusy=false;
+let failedRecoveryApprovalBusy=false;
 const trustedProviders={
   chatgpt:'https://chatgpt.com/',
   ai_studio:'https://aistudio.google.com/'
@@ -83,6 +85,11 @@ function safeStatus(){
       if(enrollmentState==='SUBMITTED')pendingEnrollmentCode=null;
     }
   }catch(e){enrollmentState='OWNER_REVIEW_REQUIRED';enrollmentError=String(e.message||e).slice(0,100);}
+  let failedRecoveryApproval='NOT_RECORDED';
+  try{
+    if(fs.existsSync(path.join(nodeDir(),'installer-failure-exception-reviewed.json')))
+      failedRecoveryApproval='OWNER_REVIEW_RECORDED_NO_RELEASE';
+  }catch{failedRecoveryApproval='OWNER_REVIEW_REQUIRED';}
   let failedInstallReview='NOT_RECORDED';
   try{
     if(fs.existsSync(path.join(nodeDir(),'installer-failure-review-observed.json')))
@@ -127,7 +134,7 @@ function safeStatus(){
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:enrollmentState==='SUBMITTED',
     enrollmentState,enrollmentError,
-    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,postInstallObservation,failedInstallReview,startupSupported,startupEnabled,
+    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,postInstallObservation,failedInstallReview,failedRecoveryApproval,startupSupported,startupEnabled,
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent({manualOwnerRestart=false}={}){
@@ -412,7 +419,7 @@ app.whenReady().then(()=>{
     // callback. signalCode/kill() do not prove that the process has exited.
     if(agent)
       throw Error('RECOVERY_RELEASE_AGENT_EXIT_NOT_CONFIRMED');
-    if(postInstallBusy||failedInstallReviewBusy||installerExecutionBusy||installerPreparationBusy)
+    if(postInstallBusy||failedInstallReviewBusy||failedRecoveryApprovalBusy||installerExecutionBusy||installerPreparationBusy)
       throw Error('RECOVERY_RELEASE_INSTALL_OPERATION_IN_PROGRESS');
     const node=vault.read();
     if(!node||!requireSubmitted({dir:nodeDir(),node,centralUrl:current.centralUrl}))
@@ -521,6 +528,55 @@ app.whenReady().then(()=>{
       }
       throw e;
     }finally{maintenanceRestartBusy=false;}
+  });
+  ipcMain.handle('sutradhar:approveFailedInstallReview',async event=>{
+    verifySender(event);
+    if(failedRecoveryApprovalBusy||failedInstallReviewBusy||postInstallBusy||
+       installerExecutionBusy||installerPreparationBusy||maintenanceRestartBusy)
+      throw Error('FAILURE_EXCEPTION_OPERATION_IN_PROGRESS');
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('FAILURE_EXCEPTION_PACKAGED_WINDOWS_REQUIRED');
+    // A prior kill/signal alone is not proof the tracked agent exited.
+    if(agent||shuttingDown)
+      throw Error('FAILURE_EXCEPTION_AGENT_EXIT_UNCONFIRMED');
+    const node=vault.read();
+    if(!node||!requireSubmitted({dir:nodeDir(),node,
+      centralUrl:current.centralUrl}))
+      throw Error('FAILURE_EXCEPTION_ENROLLED_DEVICE_REQUIRED');
+    const trust=JSON.parse(fs.readFileSync(
+      path.join(__dirname,'failure-review-trust.json'),'utf8'));
+    const updates=JSON.parse(fs.readFileSync(
+      path.join(__dirname,'update-trust.json'),'utf8'));
+    if(trust.schema!==1||trust.status!=='OWNER_PROTECTED_RELEASE'||
+       typeof trust.public_key_pem!=='string'||
+       updates.schema!==1||updates.status!=='OWNER_PROTECTED_RELEASE'||
+       updates.channel!=='stable'||typeof updates.publisher_subject!=='string')
+      throw Error('FAILURE_EXCEPTION_OWNER_TRUST_NOT_PROVISIONED');
+    const confirm=await dialog.showMessageBox(setupWindow,{
+      type:'warning',
+      buttons:['Cancel','Record Owner review only (NO RELEASE)'],
+      defaultId:0,cancelId:0,noLink:true,
+      message:'Review cancelled Windows installation without unlocking this PC?',
+      detail:'Requires signed old-version diagnostic, a SECOND Owner-signed short-lived review grant, fresh Central cancellation and healthy idle cluster. It only writes a one-time review receipt. It cannot restart agents, roll back, retry installation, or release the local hold.'
+    });
+    if(confirm.response!==1)return {canceled:true};
+    const picked=await dialog.showOpenDialog(setupWindow,{
+      title:'Select Owner-signed failed-install REVIEW grant',
+      properties:['openFile'],
+      filters:[{name:'Owner incident review grant',extensions:['json']}]
+    });
+    if(picked.canceled||picked.filePaths.length!==1)return {canceled:true};
+    failedRecoveryApprovalBusy=true;
+    try{
+      return await prepareFailedInstallRecoveryReview({dir:nodeDir(),node,
+        agentIds:current.agentIds,observedVersion:app.getVersion(),
+        installedExecutable:app.getPath('exe'),
+        publisherSubject:updates.publisher_subject,
+        centralOrigin:current.centralUrl,signer,
+        grantEnvelope:boundedFile(picked.filePaths[0]),
+        pinnedOwnerPublicKeyPem:trust.public_key_pem,
+        platform:process.platform});
+    }finally{failedRecoveryApprovalBusy=false;}
   });
   ipcMain.handle('sutradhar:reviewFailedInstall',async event=>{
     verifySender(event);
