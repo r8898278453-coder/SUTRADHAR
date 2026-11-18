@@ -308,6 +308,22 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const claim=await b.signed('/v7/tasks/claim',{request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'});
     assert.equal(claim.code,200,JSON.stringify(claim.body));
+    // Restart preflight is read-only and cannot renew, steal or replace a lease.
+    const resumeProof=await b.signed('/v7/tasks/resume-check',{
+      agent_id:b.agent_id,ticket_id:'ticket_qa_test',
+      lease_id:claim.body.lease_id,expected_master_epoch:Number(status.epoch)});
+    assert.equal(resumeProof.code,200,JSON.stringify(resumeProof.body));
+    assert.equal(resumeProof.body.resume_allowed,true);
+    assert.equal(resumeProof.body.automatic_execution_allowed,false);
+    assert.equal(resumeProof.body.status,'CLAIMED');
+    const invalidResume=await b.signed('/v7/tasks/resume-check',{
+      agent_id:b.agent_id,ticket_id:'ticket_qa_test',
+      lease_id:'00000000-0000-4000-8000-000000000000',expected_master_epoch:Number(status.epoch)});
+    assert.equal(invalidResume.code,403,'Wrong local lease cannot restart a worker');
+    const otherAgentResume=await c.signed('/v7/tasks/resume-check',{
+      agent_id:c.agent_id,ticket_id:'ticket_qa_test',
+      lease_id:claim.body.lease_id,expected_master_epoch:Number(status.epoch)});
+    assert.notEqual(otherAgentResume.code,200,'Another PC cannot inherit a worker lease');
     const workingNode=await b.signed('/v7/nodes/me',undefined,'GET');
     assert.equal(workingNode.code,200,JSON.stringify(workingNode.body));
     assert.equal(Number(workingNode.body.agents[0].has_live_work_lease),1,
@@ -393,6 +409,10 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         title:'Stale epoch',description:'Should never be accepted',risk:'LOW',
         write_scopes:['src/stale.ts'],acceptance_criteria:['Never create ticket']});
       assert.notEqual(oldMaster.code,200,'Former master must be fenced after failover');
+      const staleResume=await b.signed('/v7/tasks/resume-check',{
+        agent_id:b.agent_id,ticket_id:'ticket_qa_test',
+        lease_id:claim.body.lease_id,expected_master_epoch:Number(status.epoch)});
+      assert.notEqual(staleResume.code,200,'Failover must fence old restart attempts');
       const oldClaim=await b.signed('/v7/tasks/checkpoint',{request_id:'oldlease_'+(++count),
         agent_id:b.agent_id,ticket_id:'ticket_qa_test',lease_id:claim.body.lease_id,
         expected_master_epoch:Number(status.epoch),summary:'illegal',next_action:'illegal'});
