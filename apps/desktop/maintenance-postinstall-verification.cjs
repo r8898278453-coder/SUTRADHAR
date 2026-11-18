@@ -93,7 +93,9 @@ function baseEvidence({dir,node,agentIds,observedVersion}){
     fail('POSTINSTALL_EXECUTION_EVIDENCE_MISMATCH');
   return {identity,ready,attempt,launch,held};
 }
-function verifyObservedReceipt({dir,node,agentIds,observedVersion}={}){
+function verifyObservedReceipt({dir,node,agentIds,observedVersion,
+  installedExecutable,publisherSubject,platform=process.platform,
+  verifyPublisher=verifyInstalledDesktopPublisher}={}){
   if(!node||!NODE.test(node.node_id||'')||
      typeof dir!=='string'||!path.isAbsolute(dir))
     fail('POSTINSTALL_OBSERVATION_ARGUMENTS_INVALID');
@@ -103,6 +105,20 @@ function verifyObservedReceipt({dir,node,agentIds,observedVersion}={}){
   if(receipt.observed_version!==observedVersion)
     fail('POSTINSTALL_CURRENT_APP_VERSION_CHANGED');
   const baseline=baseEvidence({dir,node,agentIds,observedVersion});
+  // A signed earlier observation does not prove the installed app has not
+  // been replaced. Recheck Authenticode + immutable observed EXE checksum
+  // at the moment Owner asks to release the maintenance hold.
+  if(platform!=='win32'||typeof installedExecutable!=='string'||
+     typeof publisherSubject!=='string'||!publisherSubject.trim())
+    fail('POSTINSTALL_RELEASE_INSTALLED_PUBLISHER_REQUIRED');
+  const installed=verifyPublisher({executablePath:installedExecutable,
+    publisherSubject,platform});
+  if(installed?.verified!==true||
+     installed.publisher_subject!==publisherSubject||
+     installed.exe_sha256!==receipt.installed_exe_sha256||
+     installed.installation_success_proven!==false||
+     receipt.publisher_subject!==publisherSubject)
+    fail('POSTINSTALL_RELEASE_INSTALLED_APP_CHANGED');
   const identity=baseline.identity;
   const held=baseline.held;
   if(baseline.attempt.grant_id!==receipt.execution_grant_id||
