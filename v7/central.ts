@@ -660,12 +660,21 @@ app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
 }));
 async function recoveryManifest(c:PoolConnection){
   const ld=await leader(c,false),epoch=Number(ld.epoch);
+  // Current work state is authoritative; finished-ticket history is retained
+  // in MySQL but is not part of every new Master startup snapshot.
   const tickets=await rows(c,'SELECT ticket_id,project_id,status,version,worker_agent_id FROM v7_tickets WHERE status NOT IN ("DONE","CANCELLED") ORDER BY updated_at,ticket_id LIMIT 301');
-  const checkpoints=await rows(c,'SELECT x.ticket_id,x.generation,x.summary,x.next_action,x.content_sha256 FROM v7_checkpoints x INNER JOIN (SELECT ticket_id,MAX(generation) gen FROM v7_checkpoints GROUP BY ticket_id) y ON y.ticket_id=x.ticket_id AND y.gen=x.generation ORDER BY x.ticket_id LIMIT 301');
-  const events=await rows(c,'SELECT event_id,event_type,actor,epoch,resource_id,created_at FROM v7_events ORDER BY event_id DESC LIMIT 301');
-  if(tickets.length>300||checkpoints.length>300||events.length>300)
+  const checkpoints=await rows(c,'SELECT x.ticket_id,x.generation,x.summary,x.next_action,x.content_sha256 FROM v7_checkpoints x INNER JOIN (SELECT ticket_id,MAX(generation) gen FROM v7_checkpoints GROUP BY ticket_id) y ON y.ticket_id=x.ticket_id AND y.gen=x.generation JOIN v7_tickets t ON t.ticket_id=x.ticket_id WHERE t.status NOT IN ("DONE","CANCELLED") ORDER BY x.ticket_id LIMIT 301');
+  // Events form an append-only audit ledger. Recovery needs a bounded recent
+  // window and high-water cursor, not every historical event ever recorded.
+  const events=await rows(c,'SELECT event_id,event_type,actor,epoch,resource_id,created_at FROM v7_events ORDER BY event_id DESC LIMIT 300');
+  const newest=await one(c,'SELECT COALESCE(MAX(event_id),0) AS event_id FROM v7_events');
+  // Unknown external Git side effects are a separate safety barrier, even
+  // when the related ticket has no live worker lease.
+  const unresolvedGitJobs=await rows(c,'SELECT ticket_id,agent_id,epoch,state FROM v7_git_jobs WHERE state IN ("RUNNING","NEEDS_RECONCILIATION") ORDER BY ticket_id LIMIT 301');
+  if(tickets.length>300||checkpoints.length>300||unresolvedGitJobs.length>300)
     fault('RECOVERY_PAGINATION_REQUIRED',409);
-  const result={epoch,phase:ld.phase,tickets,checkpoints,events};
+  const result={epoch,phase:ld.phase,tickets,checkpoints,events,
+    event_high_watermark:Number(newest.event_id),unresolved_git_jobs:unresolvedGitJobs};
   return {...result,manifest_sha256:digest(JSON.stringify(result))};
 }
 app.get('/v7/recovery',jsonRoute(async req=>{
@@ -694,6 +703,8 @@ app.post('/v7/leadership/reconcile',jsonRoute(async req=>{
     if(current.manifest_sha256!==req.body.manifest_sha256)fault('STALE_RECOVERY_MANIFEST',409);
     if(current.tickets.some(t=>t.status==='RECONCILIATION_REQUIRED'))
       fault('TASK_RECONCILIATION_REQUIRED',423);
+    if(current.unresolved_git_jobs.length)
+      fault('GIT_RECONCILIATION_REQUIRED',423);
     return idem(c,id,req.body.request_id,'RECOVERY',{epoch,hash:req.body.manifest_sha256},async()=>{
       await c.query('UPDATE v7_cluster SET phase="READY",version=version+1 WHERE singleton=1');
       await event(c,'MASTER_RECOVERY_ACK',id,epoch,null,{manifest_sha256:req.body.manifest_sha256});
