@@ -398,7 +398,22 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(ownerQueue.unresolved_jobs.length,1);
       assert.equal(ownerQueue.unresolved_jobs[0].ticket_id,'ticket_qa_test');
       assert.equal(ownerQueue.unresolved_jobs[0].preflight_eligible,true);
+      assert.deepEqual(ownerQueue.unresolved_jobs[0].blocking_reasons,[]);
       assert.equal(ownerQueue.unresolved_jobs[0].matching_qa_receipt,true);
+      // Even a still-present Central lease is not enough after revoked
+      // Master enrollment. Simulate revocation only in disposable CI MySQL.
+      await db.query('UPDATE v7_nodes SET state="REVOKED" WHERE node_id=?',[b.node_id]);
+      try{
+        const revokedQueue=await fetch(base+'/v7/owner/git-recovery',
+          {headers:{authorization:'Bearer '+admin}});
+        assert.equal(revokedQueue.status,200);
+        const revokedPreview=await revokedQueue.json() as any;
+        assert.equal(revokedPreview.master_live,false);
+        assert.ok(revokedPreview.unresolved_jobs[0].blocking_reasons.includes(
+          'MASTER_NOT_LIVE_OR_APPROVED'));
+      }finally{
+        await db.query('UPDATE v7_nodes SET state="APPROVED" WHERE node_id=?',[b.node_id]);
+      }
       assert.equal(ownerQueue.unresolved_jobs[0].candidate_head_sha,'b'.repeat(40));
       assert.equal(JSON.stringify(ownerQueue).includes('ci-only-admin-secret'),false,
         'Owner queue must never include secret values');
@@ -484,8 +499,11 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       const unsafeQueue=await fetch(base+'/v7/owner/git-recovery',
         {headers:{authorization:'Bearer '+admin}});
       assert.equal(unsafeQueue.status,200);
-      assert.equal((await unsafeQueue.json() as any).unresolved_jobs[0].preflight_eligible,false,
+      const unsafePreview=await unsafeQueue.json() as any;
+      assert.equal(unsafePreview.unresolved_jobs[0].preflight_eligible,false,
         'A self-QA publication may not be offered for Owner proof');
+      assert.ok(unsafePreview.unresolved_jobs[0].blocking_reasons.includes(
+        'QA_NOT_INDEPENDENT'));
       // A different agent cannot borrow the QA receipt signed by agent C.
       await db.query('UPDATE v7_git_jobs SET agent_id=? WHERE ticket_id=?',
         [d.agent_id,'ticket_qa_test']);
