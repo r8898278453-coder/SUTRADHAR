@@ -87,7 +87,9 @@ test('sidecar uses nonprivileged detached PowerShell, never launches EXE or rece
   assert.equal(result.started,true);
   assert.equal(result.witness_signed,false);
   assert.equal(calls.length,1);
-  assert.equal(calls[0].program,'powershell.exe');
+  assert.ok(calls[0].program.toLowerCase().endsWith('\\system32\\windowspowershell\\v1.0\\powershell.exe'));
+  assert.ok(!calls[0].options.env.PATH.includes('node_modules'));
+  assert.ok(calls[0].options.env.PSModulePath.includes('WindowsPowerShell'));
   assert.equal(calls[0].options.detached,true);
   assert.equal(calls[0].options.shell,false);
   assert.equal(calls[0].options.windowsHide,true);
