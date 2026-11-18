@@ -51,6 +51,8 @@
 <p class="hint">Real Windows software changes are possible only with a separate Owner-signed one-time execution grant and protected trust configuration. Windows installer prompts will appear; process launch is NOT proof of a successful install, and automatic retry is blocked.</p>
 <button id="inspectPostUpdateIdentity" class="secondary" type="button">Check identity after Owner installation (read-only)</button>
 <button id="observePostInstall" class="secondary" type="button">Verify installed Desktop and Central before hold release</button>
+<button id="reviewFailedInstall" class="secondary" type="button">Record canceled / uncertain installer (NO RECOVERY)</button>
+<p class="hint">If the old installed version still runs after a Windows setup attempt, record read-only diagnostic evidence. This never authorizes a hold release, retry or rollback, and does not prove NSIS exit status.</p>
 <p class="hint">After Windows setup, checks signed launch evidence, current installed-app Authenticode publisher, target version, preserved OS-vault identity and the unchanged Central DRAINED fence. Does not prove NSIS completion or automatically release this PC. A failed/canceled installation remains Owner-review blocked.</p>
 <p class="hint">Only after the exact PC is DRAINED in Central, its agent has stopped, and a local maintenance hold is active. The signed EXE is copied into an exclusive local escrow and identity fingerprints recorded. This never executes an installer or applies rollback.</p>
 <button id="updateReadiness" class="secondary" type="button">Check whether this PC is Master or backup</button>
