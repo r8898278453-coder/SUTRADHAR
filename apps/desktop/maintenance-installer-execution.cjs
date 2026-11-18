@@ -15,6 +15,7 @@ const {identityEvidence,inspectPreparedIdentity}=require('./maintenance-install-
 const {verifyExecutionGrant}=require('./maintenance-installer-execution-grant.cjs');
 const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
 const {createDirectExitTracker}=require('./maintenance-installer-direct-exit.cjs');
+const {launchPersistentObserver}=require('./maintenance-installer-persistent-observer.cjs');
 const {validOrigin}=require('./update-readiness.cjs');
 const {sha256File}=require('./update-policy.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
@@ -90,7 +91,9 @@ function safeCluster(d,expectedEpoch,agentIds){
 async function launchStagedInstaller({dir,node,agentIds,observedVersion,
   centralOrigin,signer,grantEnvelope,pinnedExecutionPublicKeyPem,
   publisherSubject,platform=process.platform,fetcher=fetch,
-  authenticode=verifyWindowsPublisher,runner=spawn,now=Date.now()}={}){
+  authenticode=verifyWindowsPublisher,runner=spawn,
+  observerLauncher=(runner===spawn&&process.platform==='win32'?launchPersistentObserver:null),
+  now=Date.now()}={}){
   if(platform!=='win32'||typeof dir!=='string'||!path.isAbsolute(dir)||
      !Array.isArray(agentIds)||agentIds.length<1||agentIds.length>4||
      agentIds.some(id=>!ID.test(id))||new Set(agentIds).size!==agentIds.length||
@@ -224,10 +227,28 @@ async function launchStagedInstaller({dir,node,agentIds,observedVersion,
     automatic_retry_allowed:false};
   persistNew(launchedPath,signedRecord(observed,node));
   exitTracker.arm();
+  // Diagnostic sidecar is best-effort only. It never gets OS-vault keys,
+  // starts an EXE, or authorizes release. A missing witness means UNKNOWN.
+  let observerStarted=false;
+  if(observerLauncher){
+    try{
+      const watcher=observerLauncher({dir,pid:child.pid,
+        installerPath:stagedPath,nodeId:node.node_id,
+        grantId:approved.grant_id,installerSha256:ready.installer_sha256,
+        platform:'win32',onError:error=>console.error(
+          'INSTALL_OBSERVER_ASYNC_ERROR_OWNER_REVIEW',String(error?.message||error))});
+      observerStarted=watcher?.started===true;
+    }catch(error){
+      console.error('INSTALL_OBSERVER_UNAVAILABLE_OUTCOME_UNKNOWN',
+        String(error?.message||error));
+    }
+  }
   child.unref?.();
   return Object.freeze({launched:true,installed:false,rollback_completed:false,
     node_id:node.node_id,target_version:ready.target_version,kind:ready.kind,
     grant_id:approved.grant_id,installation_result:'UNKNOWN_OWNER_REVIEW',
+    persistent_observer_started:observerStarted,
+    observer_witness_trusted:false,
     local_hold_retained:true,agent_restart_allowed:false,
     post_install_identity_check_required:true,
     central_reconciliation_required:true});
