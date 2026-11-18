@@ -32,6 +32,12 @@ async function releaseHold({dir,centralOrigin,nodeId,signer,grantEnvelope,
     fail('RECOVERY_RELEASE_IDENTITY_INVALID');
   const original=inspectHold({dir,nodeId});
   if(!original.active)fail('RECOVERY_RELEASE_NO_HOLD');
+  // A signed old-version failure diagnosis is a DIFFERENT recovery branch.
+  // Never treat its Owner review grant as post-install success evidence.
+  if(['installer-failure-review-observed.json',
+      'installer-failure-exception-reviewed.json']
+      .some(name=>fs.existsSync(path.join(dir,name))))
+    fail('RECOVERY_RELEASE_FAILED_INSTALL_REQUIRES_DISTINCT_OWNER_RESOLUTION');
   // If Windows install/rollback was ever ATTEMPTED, do not release the
   // maintenance hold until the same PC's signature, installed target version
   // and Central DRAINED state were explicitly observed after launch.
