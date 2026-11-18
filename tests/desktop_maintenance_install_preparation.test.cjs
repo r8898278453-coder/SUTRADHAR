@@ -5,6 +5,7 @@ const crypto=require('node:crypto');
 const {createHold,inspectHold}=require('../apps/desktop/maintenance-recovery-hold.cjs');
 const {prepareInstaller,identityEvidence,inspectPreparedIdentity}=require('../apps/desktop/maintenance-install-preparation.cjs');
 const {psLiteral,verifyWindowsPublisher}=require('../apps/desktop/windows-authenticode.cjs');
+const {digestOffer}=require('../scripts/release/print-maintenance-offer-digest.cjs');
 const nodeId='node_'+'a'.repeat(32),agentId='agent_noncritical_1';
 const keys=crypto.generateKeyPairSync('ed25519');
 const pub=keys.publicKey.export({type:'spki',format:'pem'}).toString();
@@ -188,4 +189,12 @@ test('post-install check denies corrupt or mismatched escrow evidence',()=>makeD
   fs.writeFileSync(file,JSON.stringify(receipt));
   assert.throws(()=>inspectPreparedIdentity({dir:nodeDir,node,agentIds:[agentId],
     observedVersion:'7.2.0'}),/MISMATCH_OWNER_REVIEW/);
+}));
+
+test('Owner maintenance offer digest matches exact local held envelope, never EXE SHA',()=>makeDir(async dir=>{
+  const {params,nodeDir}=setup(dir);
+  const hold=inspectHold({dir:nodeDir,nodeId});
+  assert.equal(digestOffer(params.envelope),hold.offer_sha256);
+  assert.notEqual(digestOffer(params.envelope),params.envelope.signed.installer_sha256);
+  assert.throws(()=>digestOffer({signed:{schema:1},signature_base64:'A'}));
 }));
