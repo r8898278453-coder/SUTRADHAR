@@ -39,6 +39,7 @@ const {summarizeCentralReceipt}=require('./status.cjs');
 const {createVault}=require('./os-vault.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
+const {claimApprovedTask,resumeApprovedTask}=require('./worker-claim.cjs');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 const {inspect:inspectEnrollment,prepare:prepareEnrollment,
   markSubmitted:markEnrollmentSubmitted,requireSubmitted,
@@ -49,6 +50,7 @@ let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
 let vault=null,vaultError=null,signer=null;
 let maintenanceRestartBusy=false;
+let workerClaimBusy=false;
 let installerPreparationBusy=false;
 let installerExecutionBusy=false;
 let postInstallBusy=false;
@@ -149,6 +151,7 @@ function safeStatus(){
     nodeId,enrollmentRequested:enrollmentState==='SUBMITTED',
     enrollmentState,enrollmentError,
     agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,directInstallerExit,persistentObserver,postInstallObservation,failedInstallReview,failedRecoveryApproval,startupSupported,startupEnabled,
+    workerClaimSupported:Boolean(process.platform==='win32'&&app.isPackaged),
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent({manualOwnerRestart=false}={}){
@@ -403,6 +406,77 @@ app.whenReady().then(()=>{
     return inspectWorkerTasks({origin:current.centralUrl,agentId,ticketId,signer});
   });
 
+  function approvedWorkerOperator(agentId,ticketId){
+    if(workerClaimBusy)throw Error('WORKER_OPERATION_ALREADY_IN_PROGRESS');
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('WORKER_OPERATION_REQUIRES_PACKAGED_WINDOWS_OS_VAULT');
+    if(typeof agentId!=='string'||!current.agentIds.includes(agentId)||
+      typeof ticketId!=='string'||
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(ticketId))
+      throw Error('WORKER_OPERATION_AGENT_OR_TICKET_INVALID');
+    if(shuttingDown||maintenanceRestartBusy||postInstallBusy||
+      failedInstallReviewBusy||failedRecoveryApprovalBusy||
+      installerExecutionBusy||installerPreparationBusy||
+      requiresReconciliation(nodeDir()))
+      throw Error('WORKER_OPERATION_LOCAL_FENCED');
+    requireNoInstallerIncident({dir:nodeDir(),manualOwnerRestart:false});
+    const node=vault.read();
+    if(!node||!requireSubmitted({dir:nodeDir(),node,
+      centralUrl:current.centralUrl}))
+      throw Error('WORKER_OPERATION_ENROLLMENT_NOT_CONFIRMED');
+    if(inspectHold({dir:nodeDir(),nodeId:node.node_id}).active)
+      throw Error('WORKER_OPERATION_MAINTENANCE_HOLD');
+    const status=safeStatus();
+    if(!status.agentProcessRunning||!status.centralReport?.acknowledgedNow)
+      throw Error('WORKER_OPERATION_CENTRAL_HEARTBEAT_REQUIRED');
+    return current.centralUrl;
+  }
+  ipcMain.handle('sutradhar:claimWorkerTask',async(event,agentId,ticketId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    // A direct user action chooses a trusted local checkout. Neither task
+    // descriptions nor the remote Central server can choose local file paths.
+    workerClaimBusy=true;
+    try{
+      const picked=await dialog.showOpenDialog(setupWindow,{
+        title:'Select your trusted local Git checkout for this task',
+        properties:['openDirectory']
+      });
+      if(picked.canceled||picked.filePaths.length!==1)return {canceled:true};
+      const confirmed=await dialog.showMessageBox(setupWindow,{
+        type:'warning',
+        buttons:['Cancel — no task claim','Create isolated worktree and claim task'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Claim this Owner-approved Central task on this PC?',
+        detail:'Agent: '+agentId+'\nTask: '+ticketId+
+          '\nTrusted local Git checkout: '+picked.filePaths[0]+
+          '\nGit for Windows must already be installed. Only the authorized baseline is checked out in a separate local worktree; no push, merge, AI provider, QA or installer execution occurs. Network uncertainty is journaled for safe retry.'
+      });
+      if(confirmed.response!==1)return {canceled:true};
+      // An Owner maintenance change while the dialog was open must veto work.
+      // Re-check the fences and agent liveness without releasing busy guard.
+      workerClaimBusy=false;
+      try{approvedWorkerOperator(agentId,ticketId);}
+      finally{workerClaimBusy=true;}
+      const workerDir=path.join(nodeDir(),'worker');
+      fs.mkdirSync(workerDir,{recursive:true,mode:0o700});
+      return await claimApprovedTask({
+        origin,agentId,ticketId,repoDir:picked.filePaths[0],
+        dir:workerDir,signer
+      });
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:resumeWorkerTask',async(event,agentId,ticketId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    workerClaimBusy=true;
+    try{
+      return await resumeApprovedTask({
+        origin,agentId,ticketId,
+        dir:path.join(nodeDir(),'worker'),signer
+      });
+    }finally{workerClaimBusy=false;}
+  });
   ipcMain.handle('sutradhar:checkUpdateReadiness',async event=>{
     verifySender(event);
     if(!app.isPackaged||!current||!vault||!signer)
