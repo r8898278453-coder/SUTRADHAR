@@ -450,6 +450,16 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         owner_confirmed_readonly_proof:true,
         reason:'Disposable integration: remotely observed exact QA candidate'
       };
+      // Even with Owner authorization, a job must be tied to the same
+      // independent QA agent that signed the accepted candidate.
+      await db.query('UPDATE v7_git_jobs SET agent_id=? WHERE ticket_id=?',
+        [b.agent_id,'ticket_qa_test']);
+      const mismatchedQA=await post('/v7/git/recover-remote-proof',{
+        ...recoveryRequest,request_id:'mismatched_qa_'+(++count)},admin);
+      assert.equal(mismatchedQA.code,409,JSON.stringify(mismatchedQA.body));
+      assert.equal(mismatchedQA.body.error_code,'GIT_RECOVERY_QA_PROOF_REQUIRED');
+      await db.query('UPDATE v7_git_jobs SET agent_id=? WHERE ticket_id=?',
+        [c.agent_id,'ticket_qa_test']);
       const unauthenticated=await post('/v7/git/recover-remote-proof',recoveryRequest,'wrong-token');
       assert.equal(unauthenticated.code,401);
       const missingOwnerConsent=await post('/v7/git/recover-remote-proof',{
