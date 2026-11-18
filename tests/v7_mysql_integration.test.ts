@@ -457,7 +457,14 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       const mismatchedQA=await post('/v7/git/recover-remote-proof',{
         ...recoveryRequest,request_id:'mismatched_qa_'+(++count)},admin);
       assert.equal(mismatchedQA.code,409,JSON.stringify(mismatchedQA.body));
-      assert.equal(mismatchedQA.body.error_code,'GIT_RECOVERY_QA_PROOF_REQUIRED');
+      assert.equal(mismatchedQA.body.error_code,'GIT_RECOVERY_QA_INDEPENDENCE_REQUIRED');
+      // A different agent cannot borrow the QA receipt signed by agent C.
+      await db.query('UPDATE v7_git_jobs SET agent_id=? WHERE ticket_id=?',
+        [d.agent_id,'ticket_qa_test']);
+      const mismatchedReceipt=await post('/v7/git/recover-remote-proof',{
+        ...recoveryRequest,request_id:'unrelated_qa_'+(++count)},admin);
+      assert.equal(mismatchedReceipt.code,409,JSON.stringify(mismatchedReceipt.body));
+      assert.equal(mismatchedReceipt.body.error_code,'GIT_RECOVERY_QA_PROOF_REQUIRED');
       await db.query('UPDATE v7_git_jobs SET agent_id=? WHERE ticket_id=?',
         [c.agent_id,'ticket_qa_test']);
       const unauthenticated=await post('/v7/git/recover-remote-proof',recoveryRequest,'wrong-token');
