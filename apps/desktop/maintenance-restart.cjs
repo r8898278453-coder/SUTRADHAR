@@ -155,4 +155,69 @@ async function prepareManualRestart({dir,nodeId,agentIds,centralOrigin,
     installer_execution_allowed:false,
     restart_receipt_persisted:true});
 }
-module.exports={readReleased,prepareManualRestart};
+/**
+ * Independent post-heartbeat Central confirmation. This does not remove the
+ * durable barrier and never authorizes automatic retry after a child exit.
+ */
+async function confirmLiveCentral({nodeId,agentIds,centralOrigin,signer,
+  epoch,fetcher=fetch}={}){
+  const origin=validOrigin(centralOrigin);
+  if(!NODE.test(nodeId||'')||!Array.isArray(agentIds)||
+     agentIds.length<1||agentIds.length>4||
+     agentIds.some(x=>!ID.test(x))||new Set(agentIds).size!==agentIds.length||
+     !Number.isSafeInteger(epoch)||epoch<1||
+     !signer||typeof signer.sign!=='function')
+    fail('MAINTENANCE_RESTART_POST_ACK_IDENTITY_INVALID');
+  async function read(uri){
+    const headers=signer.sign({kind:'node_api',method:'GET',uri,body:''});
+    if(!headers||headers['x-sutradhar-node']!==nodeId||
+       typeof headers['x-sutradhar-nonce']!=='string'||
+       typeof headers['x-sutradhar-signature']!=='string')
+      fail('MAINTENANCE_RESTART_POST_ACK_SIGNING_INVALID');
+    let response,data;
+    try{response=await fetcher(origin+uri,{method:'GET',
+      headers:{...headers,Accept:'application/json'},
+      redirect:'error',signal:AbortSignal.timeout(12000)});}
+    catch{fail('MAINTENANCE_RESTART_POST_ACK_CENTRAL_UNREACHABLE');}
+    if(!response?.ok)
+      fail('MAINTENANCE_RESTART_POST_ACK_CENTRAL_DENIED');
+    try{data=await response.json();}catch{
+      fail('MAINTENANCE_RESTART_POST_ACK_RESPONSE_INVALID');
+    }
+    if(!data||typeof data!=='object'||Array.isArray(data))
+      fail('MAINTENANCE_RESTART_POST_ACK_RESPONSE_INVALID');
+    return data;
+  }
+  const me=await read('/v7/nodes/me');
+  if(me.node_id!==nodeId||!Array.isArray(me.agents)||
+     me.agents.length!==agentIds.length)
+    fail('MAINTENANCE_RESTART_POST_ACK_NODE_MISMATCH');
+  const found=new Set();
+  for(const a of me.agents){
+    if(!a||!ID.test(a.agent_id||'')||!agentIds.includes(a.agent_id)||
+       found.has(a.agent_id)||a.state!=='APPROVED'||
+       (a.status!=='IDLE'&&a.status!=='ONLINE')||
+       a.active_ticket!==null||
+       ![0,false].includes(a.has_live_work_lease)||
+       ![0,false].includes(a.has_unreconciled_git_job)||
+       a.heartbeat_age_seconds===null||
+       !Number.isSafeInteger(Number(a.heartbeat_age_seconds))||
+       Number(a.heartbeat_age_seconds)<0||Number(a.heartbeat_age_seconds)>120)
+      fail('MAINTENANCE_RESTART_POST_ACK_AGENT_NOT_RECONCILED');
+    found.add(a.agent_id);
+  }
+  const cluster=await read('/v7/cluster/state');
+  validateCluster(cluster,agentIds);
+  if(cluster.epoch!==epoch)
+    fail('MAINTENANCE_RESTART_POST_ACK_EPOCH_CHANGED');
+  const maintenance=await read('/v7/nodes/maintenance');
+  if(maintenance.node_id!==nodeId||maintenance.intent!==null||
+     maintenance.installer_execution_allowed!==false||
+     maintenance.owner_maintenance_lease!==false)
+    fail('MAINTENANCE_RESTART_POST_ACK_MAINTENANCE_REAPPEARED');
+  return Object.freeze({reconciled:true,node_id:nodeId,epoch,
+    all_local_agents_acknowledged:true,installer_execution_allowed:false,
+    automatic_restart_allowed:false});
+}
+
+module.exports={readReleased,prepareManualRestart,confirmLiveCentral};
