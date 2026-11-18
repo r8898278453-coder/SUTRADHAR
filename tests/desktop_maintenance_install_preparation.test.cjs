@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const crypto=require('node:crypto');
 const {createHold,inspectHold}=require('../apps/desktop/maintenance-recovery-hold.cjs');
-const {prepareInstaller,identityEvidence}=require('../apps/desktop/maintenance-install-preparation.cjs');
+const {prepareInstaller,identityEvidence,inspectPreparedIdentity}=require('../apps/desktop/maintenance-install-preparation.cjs');
 const {psLiteral,verifyWindowsPublisher}=require('../apps/desktop/windows-authenticode.cjs');
 const nodeId='node_'+'a'.repeat(32),agentId='agent_noncritical_1';
 const keys=crypto.generateKeyPairSync('ed25519');
@@ -157,4 +157,35 @@ test('PowerShell input is literal and SHA is checked on BOTH sides of signature 
   assert.throws(()=>verifyWindowsPublisher({installerPath:file,
     publisherSubject:'CN=SUTRADHAR Verified',expectedSha256:digest,
     platform:'linux',runner:()=>({status:0})}),/WINDOWS_TRUST_REQUIRED/);
+}));
+
+test('post-install identity check validates unchanged OS-vault public key and agent set',()=>makeDir(async dir=>{
+  const {params,nodeDir}=setup(dir);
+  await prepareInstaller(params);
+  const result=inspectPreparedIdentity({dir:nodeDir,node,agentIds:[agentId],
+    observedVersion:'7.2.0'});
+  assert.equal(result.identity_preserved,true);
+  assert.equal(result.version_matches_target,true);
+  assert.equal(result.installer_executed_proven,false);
+  assert.equal(result.central_reconciliation_proven,false);
+  const oldVersion=inspectPreparedIdentity({dir:nodeDir,node,agentIds:[agentId],
+    observedVersion:'7.0.0'});
+  assert.equal(oldVersion.identity_preserved,true);
+  assert.equal(oldVersion.version_matches_target,false);
+  const {publicKey:unrelated}=crypto.generateKeyPairSync('ed25519');
+  assert.throws(()=>inspectPreparedIdentity({dir:nodeDir,
+    node:{...node,public_key_pem:unrelated.export({type:'spki',format:'pem'}).toString()},
+    agentIds:[agentId],observedVersion:'7.2.0'}),/MISMATCH_OWNER_REVIEW/);
+  assert.throws(()=>inspectPreparedIdentity({dir:nodeDir,node,
+    agentIds:['agent_wrong_1'],observedVersion:'7.2.0'}));
+}));
+test('post-install check denies corrupt or mismatched escrow evidence',()=>makeDir(async dir=>{
+  const {params,nodeDir}=setup(dir);
+  await prepareInstaller(params);
+  const file=path.join(nodeDir,'installer-preparation-ready.json');
+  const receipt=JSON.parse(fs.readFileSync(file,'utf8'));
+  receipt.offer_sha256='e'.repeat(64);
+  fs.writeFileSync(file,JSON.stringify(receipt));
+  assert.throws(()=>inspectPreparedIdentity({dir:nodeDir,node,agentIds:[agentId],
+    observedVersion:'7.2.0'}),/MISMATCH_OWNER_REVIEW/);
 }));
