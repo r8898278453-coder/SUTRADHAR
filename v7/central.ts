@@ -1019,6 +1019,24 @@ app.post('/v7/git/recover-remote-proof',jsonRoute(async req=>{
   const epoch=Number(d.expected_master_epoch),reason=requireStr(d.reason,500);
   if(d.owner_confirmed_readonly_proof!==true)
     fault('OWNER_EXPLICIT_GIT_RECOVERY_CONFIRMATION_REQUIRED',403);
+  // Lost HTTP replies must be safely replayable without re-reading GitHub or
+  // repeating DB mutations. Bind the receipt to exact Owner input and head.
+  const replay=await transaction(async c=>{
+    const prior=await one(c,
+      'SELECT operation,response_json FROM v7_commands WHERE actor=? AND request_id=?',
+      ['owner:web',requestId]);
+    if(!prior)return null;
+    const result=typeof prior.response_json==='string'
+      ?JSON.parse(prior.response_json):prior.response_json;
+    if(!result?.accepted||result.ticket_id!==ticketId||
+       !SHA_RE.test(String(result.remote_head_sha||'')))
+      fault('IDEMPOTENCY_KEY_REUSED',409);
+    const op='GIT_RECOVERY_REMOTE_PROOF:'+digest(JSON.stringify({
+      ticketId,epoch,head:result.remote_head_sha,reason}));
+    if(prior.operation!==op)fault('IDEMPOTENCY_KEY_REUSED',409);
+    return result;
+  });
+  if(replay)return replay;
   const info=await transaction(async c=>{
     const ld=await leader(c);
     if(ld.phase!=='RECOVERING'||!ld.master_agent_id||Number(ld.epoch)!==epoch||
