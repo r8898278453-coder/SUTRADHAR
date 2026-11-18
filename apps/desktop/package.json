@@ -39,6 +39,7 @@
       "update-policy.cjs",
       "update-trust.json",
       "vault-bridge.cjs",
+      "worker-inspection.cjs",
       "enrollment.cjs",
       "enrollment-receipt.cjs",
       "single-instance.cjs",
