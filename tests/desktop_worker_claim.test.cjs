@@ -199,6 +199,21 @@ test('wrong Central scope receipt is refused and uncertain claim journal retaine
   }finally{f.close();}
 });
 
+test('active smudge filter in immutable baseline must block Git checkout before a Central claim', {skip:!available},async()=>{
+  const f=fixture();
+  try{
+    fs.writeFileSync(path.join(f.repo,'.gitattributes'),'src/* filter=unsafe\n');
+    run(f.repo,'add','.gitattributes');
+    run(f.repo,'commit','-m','baseline containing active unsafe filter');
+    f.baseline=run(f.repo,'rev-parse','HEAD');
+    const r=remote(f);
+    await assert.rejects(claimApprovedTask(args(f,r.fetcher)),
+      /WORKER_ACTIVE_GIT_FILTER_REQUIRES_OWNER_REVIEW/);
+    assert.equal(r.claims(),0);
+    assert.equal(fs.existsSync(path.join(f.worker,'claim_ticket_abc.json')),false);
+  }finally{f.close();}
+});
+
 test('packaged UI exposes only operator-confirmed claim/resume, no generic signer IPC',()=>{
   const root=path.resolve(__dirname,'../apps/desktop');
   const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
