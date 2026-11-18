@@ -363,6 +363,10 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
       const id=requireId(payload.ticket_id),reason=requireStr(payload.reason,500);
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[id]);
       if(!t||t.status!=='RECONCILIATION_REQUIRED')fault('TICKET_NOT_RECONCILABLE',409);
+      // A ticket with any recorded Git publication has a separate recovery
+      // protocol; treating it as fresh READY work could duplicate remote effects.
+      if(await one(c,'SELECT ticket_id FROM v7_git_jobs WHERE ticket_id=?',[id]))
+        fault('GIT_PUBLICATION_REQUIRES_SEPARATE_RECOVERY',423);
       // A human must externally reconcile uncertain Git effects before authorizing retry.
       if(payload.remote_checked!==true)fault('REMOTE_RECONCILIATION_REQUIRED',409);
       await c.query('UPDATE v7_tickets SET status="READY",worker_agent_id=NULL,version=version+1 WHERE ticket_id=?',[id]);
@@ -1003,6 +1007,80 @@ app.post('/v7/git/confirm',jsonRoute(async req=>{
         head:verified.headSha,tree:verified.treeSha});
       return {accepted:true,ticket_id:ticketId,remote_head_sha:verified.headSha,
         tree_sha:verified.treeSha,status:'PUSH_CONFIRMED_NOT_MERGED'};
+    });
+  });
+}));
+// Explicit Owner-initiated READ-ONLY verification for an uncertain publication
+// left behind by a previous Master epoch. No retry, push, PR or merge occurs.
+// This is deliberately separate from the worker's live-epoch Git confirmation.
+app.post('/v7/git/recover-remote-proof',jsonRoute(async req=>{
+  admin(req);
+  const d=req.body||{},ticketId=requireId(d.ticket_id),requestId=requireId(d.request_id);
+  const epoch=Number(d.expected_master_epoch),reason=requireStr(d.reason,500);
+  if(d.owner_confirmed_readonly_proof!==true)
+    fault('OWNER_EXPLICIT_GIT_RECOVERY_CONFIRMATION_REQUIRED',403);
+  const info=await transaction(async c=>{
+    const ld=await leader(c);
+    if(ld.phase!=='RECOVERING'||!ld.master_agent_id||Number(ld.epoch)!==epoch||
+       !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
+      fault('RECOVERY_MASTER_EPOCH_NOT_LIVE',409);
+    const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=?',[ticketId]);
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
+    if(!job||!t||!['RUNNING','NEEDS_RECONCILIATION'].includes(job.state)||
+       Number(job.epoch)>=epoch||!['INTEGRATING','RECONCILIATION_REQUIRED'].includes(t.status)||
+       !SHA_RE.test(String(t.candidate_head_sha||''))||
+       !SHA_RE.test(String(t.candidate_tree_sha||'')))
+      fault('GIT_RECOVERY_NOT_ELIGIBLE',409);
+    const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? AND passed=1 AND head_sha=? AND tree_sha=? LIMIT 1',
+      [ticketId,t.candidate_head_sha,t.candidate_tree_sha]);
+    if(!qa)fault('GIT_RECOVERY_QA_PROOF_REQUIRED',409);
+    const p=await one(c,'SELECT repository FROM v7_projects WHERE project_id=?',[t.project_id]);
+    if(!p)fault('GIT_RECOVERY_PROJECT_MISSING',409);
+    return {job,t,p};
+  });
+  // Enforce EXACT accepted candidate SHA, not merely similar diff or tree.
+  const proof=await inspectGitRemote({
+    repo:info.p.repository,token:process.env.SUTRADHAR_GITHUB_TOKEN||'',
+    branch:info.t.branch_name,baseline:info.t.baseline_sha,
+    tree:info.t.candidate_tree_sha,
+    writeScopes:typeof info.t.scopes_json==='string'
+      ?JSON.parse(info.t.scopes_json):info.t.scopes_json,
+    expectedHead:info.t.candidate_head_sha
+  });
+  const verified=proof.verified?proof:fault('GIT_RECOVERY_REMOTE_UNCERTAIN_'+proof.error_code,409);
+  return transaction(async c=>{
+    const ld=await leader(c);
+    if(ld.phase!=='RECOVERING'||!ld.master_agent_id||Number(ld.epoch)!==epoch||
+       !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
+      fault('RECOVERY_MASTER_EPOCH_CHANGED',409);
+    return idem(c,'owner:web',requestId,'GIT_RECOVERY_REMOTE_PROOF',
+      {ticketId,epoch,head:verified.headSha,reason},async()=>{
+      const j=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',[ticketId]);
+      const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
+      if(!j||!t||!['RUNNING','NEEDS_RECONCILIATION'].includes(j.state)||
+         Number(j.epoch)!==Number(info.job.epoch)||j.agent_id!==info.job.agent_id||
+         Number(t.version)!==Number(info.t.version)||
+         !['INTEGRATING','RECONCILIATION_REQUIRED'].includes(t.status)||
+         t.project_id!==info.t.project_id||t.branch_name!==verified.branch||
+         t.baseline_sha!==verified.baseline||
+         t.candidate_head_sha!==verified.headSha||
+         t.candidate_tree_sha!==verified.treeSha||
+         JSON.stringify(t.scopes_json)!==JSON.stringify(info.t.scopes_json))
+        fault('GIT_RECOVERY_RECORD_CHANGED',409);
+      const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? AND passed=1 AND head_sha=? AND tree_sha=? LIMIT 1',
+        [ticketId,verified.headSha,verified.treeSha]);
+      if(!qa)fault('GIT_RECOVERY_QA_PROOF_CHANGED',409);
+      const liveLease=await one(c,'SELECT ticket_id FROM v7_leases WHERE ticket_id=? AND revoked=0 AND expires_at>UTC_TIMESTAMP(3)',[ticketId]);
+      if(liveLease)fault('GIT_RECOVERY_ACTIVE_WORKER_LEASE',423);
+      await c.query('UPDATE v7_git_jobs SET state="CONFIRMED",remote_head_sha=?,remote_tree_sha=?,changed_files_json=?,verified_at=UTC_TIMESTAMP(3),updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',
+        [verified.headSha,verified.treeSha,JSON.stringify(verified.changedFiles),ticketId]);
+      if(t.status==='RECONCILIATION_REQUIRED')
+        await c.query('UPDATE v7_tickets SET status="INTEGRATING",version=version+1,updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',[ticketId]);
+      await event(c,'OWNER_GIT_RECOVERY_REMOTE_VERIFIED','owner:web',epoch,ticketId,
+        {head:verified.headSha,tree:verified.treeSha,prior_epoch:Number(j.epoch),reason});
+      return {accepted:true,ticket_id:ticketId,remote_head_sha:verified.headSha,
+        status:'PUSH_CONFIRMED_NOT_MERGED',ticket_status:'INTEGRATING',
+        automatic_retry_allowed:false,merge_performed:false};
     });
   });
 }));
