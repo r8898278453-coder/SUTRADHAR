@@ -20,6 +20,8 @@ const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
 const {checkRecovery}=require('./maintenance-recovery-preflight.cjs');
 const {releaseHold,boundedFile}=require('./maintenance-release-executor.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
+const {prepareManualRestart,confirmLiveCentral}=require('./maintenance-restart.cjs');
+const {waitForFreshAck,recordFreshAck}=require('./maintenance-restart-ack.cjs');
 const {
   normalizeCentralUrl,cleanPcName,agentCount,agentIds,
   validateSettings,validateEnrollmentCode
@@ -36,6 +38,7 @@ const {installSingleInstanceGuard}=require('./single-instance.cjs');
 let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
 let vault=null,vaultError=null,signer=null;
+let maintenanceRestartBusy=false;
 const trustedProviders={
   chatgpt:'https://chatgpt.com/',
   ai_studio:'https://aistudio.google.com/'
@@ -95,9 +98,10 @@ function safeStatus(){
     agentProcessRunning,centralReport,maintenanceHold,startupSupported,startupEnabled,
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
-function startAgent(){
-  if(!current||shuttingDown||agent&&agent.exitCode===null)return;
-  if(requiresReconciliation(nodeDir()))throw Error('MAINTENANCE_POST_RELEASE_RECONCILIATION_REQUIRED');
+function startAgent({manualOwnerRestart=false}={}){
+  if(!current||shuttingDown||agent)return null;
+  if(requiresReconciliation(nodeDir())&&!manualOwnerRestart)
+    throw Error('MAINTENANCE_POST_RELEASE_RECONCILIATION_REQUIRED');
   // Persisted local hold overrides automatic restart even if Central currently
   // appears healthy; corrupted holds also fail closed for Owner review.
   if(fs.existsSync(nodeDir())){
@@ -192,6 +196,7 @@ function startAgent(){
       try{startAgent();}catch{ /* User may need to resupply enrollment code. */ }
     },15000);
   });
+  return spawnedAgent;
 }
 async function confirmQuit(){
   const {response}=await dialog.showMessageBox({
@@ -399,6 +404,85 @@ app.whenReady().then(()=>{
       nodeId:node.node_id,signer,agentStopped:true,
       pinnedPublicKeyPem:trust.public_key_pem,
       grantEnvelope:boundedFile(selected.filePaths[0])});
+  });
+  ipcMain.handle('sutradhar:restartAfterMaintenance',async event=>{
+    verifySender(event);
+    if(maintenanceRestartBusy)
+      throw Error('MAINTENANCE_RESTART_OPERATION_ALREADY_IN_PROGRESS');
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('MAINTENANCE_RESTART_REQUIRES_PACKAGED_WINDOWS_PC');
+    // Only the observed child exit callback clears the tracked child.
+    if(agent||shuttingDown)
+      throw Error('MAINTENANCE_RESTART_AGENT_EXIT_NOT_CONFIRMED');
+    const node=vault.read();
+    if(!node||!requireSubmitted({dir:nodeDir(),node,
+       centralUrl:current.centralUrl}))
+      throw Error('MAINTENANCE_RESTART_REQUIRES_ENROLLED_IDENTITY');
+    const trust=JSON.parse(fs.readFileSync(
+      path.join(__dirname,'maintenance-release-trust.json'),'utf8'));
+    if(trust.schema!==1||trust.status!=='OWNER_PROTECTED_RELEASE'||
+       typeof trust.public_key_pem!=='string')
+      throw Error('MAINTENANCE_RESTART_OWNER_TRUST_UNCONFIGURED');
+    const confirmed=await dialog.showMessageBox(setupWindow,{
+      type:'warning',
+      buttons:['Cancel','Verify one-time grant and manually restart agent'],
+      defaultId:0,cancelId:0,noLink:true,
+      message:'Owner-authorized maintenance recovery restart?',
+      detail:'The exact released PC, signed grant, live Central roles, and idle work are checked. An irreversible attempt is recorded before starting. A new Central heartbeat is mandatory. Automatic retries remain blocked.'
+    });
+    if(confirmed.response!==1)return {canceled:true};
+    const picked=await dialog.showOpenDialog(setupWindow,{
+      title:'Select separately signed Owner one-time restart grant JSON',
+      properties:['openFile'],
+      filters:[{name:'Maintenance restart grant',extensions:['json']}]
+    });
+    if(picked.canceled||picked.filePaths.length!==1)return {canceled:true};
+    maintenanceRestartBusy=true;
+    let startedChild=null;
+    try{
+      const prepared=await prepareManualRestart({
+        dir:nodeDir(),centralOrigin:current.centralUrl,
+        nodeId:node.node_id,agentIds:current.agentIds,signer,
+        pinnedPublicKeyPem:trust.public_key_pem,
+        grantEnvelope:boundedFile(picked.filePaths[0])
+      });
+      if(retryTimer){clearTimeout(retryTimer);retryTimer=null;}
+      const startedAtMs=Date.now();
+      startedChild=startAgent({manualOwnerRestart:true});
+      if(!startedChild)
+        throw Error('MAINTENANCE_RESTART_CHILD_START_UNCONFIRMED');
+      const ack=await waitForFreshAck({
+        dir:nodeDir(),nodeId:node.node_id,agentIds:current.agentIds,
+        epoch:prepared.epoch,startedAtMs,
+        isChildActive:()=>agent===startedChild&&
+          startedChild.exitCode===null&&startedChild.signalCode===null
+      });
+      if(!ack.confirmed)
+        throw Error('MAINTENANCE_RESTART_ACK_NOT_CONFIRMED_'+ack.reason);
+      await confirmLiveCentral({centralOrigin:current.centralUrl,
+        nodeId:node.node_id,agentIds:current.agentIds,signer,
+        epoch:prepared.epoch});
+      if(agent!==startedChild||startedChild.exitCode!==null||
+         startedChild.signalCode!==null)
+        throw Error('MAINTENANCE_RESTART_CHILD_EXITED_DURING_RECONCILIATION');
+      recordFreshAck({dir:nodeDir(),nodeId:node.node_id,
+        grantId:prepared.grant_id,ack});
+      return {reconciled:true,node_id:node.node_id,
+        epoch:prepared.epoch,restart_grant_id:prepared.grant_id,
+        central_heartbeat_observed:true,
+        independent_central_state_confirmed:true,
+        automatic_restart_allowed:false,
+        persistent_barrier_retained:true,installer_executed:false};
+    }catch(e){
+      // On uncertain recovery, try to stop the one child this operation
+      // launched. No receipt is deleted and no retry is scheduled.
+      if(startedChild&&agent===startedChild){
+        const stopped=await requestStopAndConfirm(startedChild,{timeoutMs:12000});
+        if(!stopped.agent_stopped)
+          throw Error('MAINTENANCE_RESTART_FAILED_AGENT_STOP_UNCONFIRMED_OWNER_REVIEW');
+      }
+      throw e;
+    }finally{maintenanceRestartBusy=false;}
   });
   ipcMain.handle('sutradhar:verifyLocalUpdate',async(event)=>{
     verifySender(event);
