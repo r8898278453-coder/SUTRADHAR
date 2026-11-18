@@ -46,3 +46,11 @@ test('invalid child and timeout bounds are rejected',async()=>{
   assert.throws(()=>requestStopAndConfirm({},{}),/CHILD_INVALID/);
   assert.throws(()=>requestStopAndConfirm(null,{timeoutMs:0}),/TIMEOUT_INVALID/);
 });
+
+test('a preexisting termination signal without observed exit is NOT confirmation',async()=>{
+  const c=child('hang');c.signalCode='SIGTERM';
+  const result=await requestStopAndConfirm(c,{timeoutMs:15});
+  assert.equal(result.agent_stopped,false);
+  assert.equal(result.exit_confirmed_by,'EXIT_TIMEOUT_OWNER_REVIEW');
+  assert.equal(c.calls,0,'do not send a second signal to a process already signaled');
+});
