@@ -174,7 +174,7 @@ async function prepareInstaller({dir,installerPath,envelope,node,agentIds,
     node_id:identity.node_id,plan_id:held.plan_id,wave_id:held.wave_id,
     offer_sha256:offered,installer_sha256:verified.file_sha256,
     kind,target_version:verified.version,previous_version:currentVersion,
-    expected_epoch:epoch,
+    expected_epoch:epoch,offer_expires_at_ms:envelope.signed.expires_ms,
     identity_public_key_sha256:identity.public_key_sha256,
     agent_ids:identity.agent_ids,
     installer_filename:envelope.signed.filename,
@@ -235,6 +235,8 @@ function inspectPreparedIdentity({dir,node,agentIds,observedVersion}={}){
      JSON.stringify(attempt.agent_ids)!==JSON.stringify(identity.agent_ids)||
      JSON.stringify(ready.agent_ids)!==JSON.stringify(identity.agent_ids)||
      attempt.offer_sha256!==ready.offer_sha256||
+     attempt.offer_expires_at_ms!==ready.offer_expires_at_ms||
+     !Number.isSafeInteger(ready.offer_expires_at_ms)||
      attempt.installer_sha256!==ready.installer_sha256||
      attempt.target_version!==ready.target_version||
      attempt.kind!==ready.kind||
