@@ -11,6 +11,7 @@ const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:pat
 const {inspectHold,location}=require('./maintenance-recovery-hold.cjs');
 const {checkRecovery}=require('./maintenance-recovery-preflight.cjs');
 const {verifyRecoveryGrant}=require('./maintenance-release-grant.cjs');
+const {verifyObservedReceipt}=require('./maintenance-postinstall-verification.cjs');
 function fail(code){throw Error(code);}
 function boundedFile(file){
   if(typeof file!=='string'||!path.isAbsolute(file))fail('RECOVERY_RELEASE_GRANT_FILE_INVALID');
@@ -23,12 +24,33 @@ function receiptLocation(dir,grantId){
   return path.join(dir,'maintenance-release-'+grantId+'.json');
 }
 async function releaseHold({dir,centralOrigin,nodeId,signer,grantEnvelope,
-  pinnedPublicKeyPem,agentStopped,fetcher,now=Date.now()}={}){
+  pinnedPublicKeyPem,agentStopped,node,agentIds,currentVersion,
+  fetcher,now=Date.now()}={}){
   if(agentStopped!==true)fail('RECOVERY_RELEASE_AGENT_STOP_NOT_CONFIRMED');
   if(typeof nodeId!=='string'||!Number.isSafeInteger(now))
     fail('RECOVERY_RELEASE_IDENTITY_INVALID');
   const original=inspectHold({dir,nodeId});
   if(!original.active)fail('RECOVERY_RELEASE_NO_HOLD');
+  // If Windows install/rollback was ever ATTEMPTED, do not release the
+  // maintenance hold until the same PC's signature, installed target version
+  // and Central DRAINED state were explicitly observed after launch.
+  const installJournals=[
+    'installer-execution-attempt.json',
+    'installer-execution-launch-observed.json',
+    'installer-postinstall-observed.json'];
+  if(installJournals.some(name=>fs.existsSync(path.join(dir,name)))){
+    if(!node||node.node_id!==nodeId||!Array.isArray(agentIds)||
+       typeof currentVersion!=='string')
+      fail('RECOVERY_RELEASE_POSTINSTALL_PROOF_REQUIRED');
+    const observed=verifyObservedReceipt({dir,node,agentIds,
+      observedVersion:currentVersion});
+    if(observed.observed!==true||
+       observed.node_id!==nodeId||
+       observed.plan_id!==original.plan_id||
+       observed.offer_sha256!==original.offer_sha256||
+       observed.target_version_observed!==true)
+      fail('RECOVERY_RELEASE_POSTINSTALL_VERIFICATION_REQUIRED');
+  }
   const grant=verifyRecoveryGrant({envelope:grantEnvelope,pinnedPublicKeyPem,
     held:original,now});
   const receipt=receiptLocation(dir,grant.grant_id);
