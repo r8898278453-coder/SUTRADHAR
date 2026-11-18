@@ -47,6 +47,11 @@
 <label for="workerTicket">Task ID to inspect</label>
 <input id="workerTicket" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="ticket_example_001">
 <button id="workerDetail" class="secondary" type="button" disabled>View task details (no claim)</button>
+<div class="actions">
+<button id="workerClaim" class="secondary" type="button" disabled>Choose trusted Git checkout and claim</button>
+<button id="workerResume" class="secondary" type="button" disabled>Verify my existing work lease</button>
+</div>
+<p class="hint">Claiming requires Owner-granted project access, a READY task, Git for Windows, a local checkout containing the exact approved baseline, and manual confirmation. This creates an isolated local worktree and starts a time-limited Central lease. It does not run AI or publish Git. If a claim response is lost, repeat the same action with the same Git folder; the pending journal preserves the request ID. Do not delete pending files.</p>
 <pre id="workerTasks" role="status" aria-live="polite">Central approval and recent signed heartbeat required.</pre>
 <p class="hint">Tasks depend on Central project grants. If access is denied, ask the Owner to check your agent's project permissions. No action on this screen creates, renews or submits work.</p>
 </section>
