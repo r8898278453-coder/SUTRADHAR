@@ -18,6 +18,7 @@ const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
 const {prepareInstaller,inspectPreparedIdentity}=require('./maintenance-install-preparation.cjs');
 const {launchStagedInstaller}=require('./maintenance-installer-execution.cjs');
 const {observePostInstall}=require('./maintenance-postinstall-verification.cjs');
+const {observeFailedAttempt}=require('./maintenance-failed-install-review.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {isolateDrainedPc}=require('./maintenance-local-isolation.cjs');
 const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
@@ -46,6 +47,7 @@ let maintenanceRestartBusy=false;
 let installerPreparationBusy=false;
 let installerExecutionBusy=false;
 let postInstallBusy=false;
+let failedInstallReviewBusy=false;
 const trustedProviders={
   chatgpt:'https://chatgpt.com/',
   ai_studio:'https://aistudio.google.com/'
@@ -81,6 +83,11 @@ function safeStatus(){
       if(enrollmentState==='SUBMITTED')pendingEnrollmentCode=null;
     }
   }catch(e){enrollmentState='OWNER_REVIEW_REQUIRED';enrollmentError=String(e.message||e).slice(0,100);}
+  let failedInstallReview='NOT_RECORDED';
+  try{
+    if(fs.existsSync(path.join(nodeDir(),'installer-failure-review-observed.json')))
+      failedInstallReview='OLD_VERSION_OBSERVED_OUTCOME_UNKNOWN';
+  }catch{failedInstallReview='OWNER_REVIEW_REQUIRED';}
   let postInstallObservation='NOT_RECORDED';
   try{
     if(fs.existsSync(path.join(nodeDir(),'installer-postinstall-observed.json')))
@@ -120,7 +127,7 @@ function safeStatus(){
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:enrollmentState==='SUBMITTED',
     enrollmentState,enrollmentError,
-    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,postInstallObservation,startupSupported,startupEnabled,
+    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,postInstallObservation,failedInstallReview,startupSupported,startupEnabled,
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent({manualOwnerRestart=false}={}){
@@ -405,7 +412,7 @@ app.whenReady().then(()=>{
     // callback. signalCode/kill() do not prove that the process has exited.
     if(agent)
       throw Error('RECOVERY_RELEASE_AGENT_EXIT_NOT_CONFIRMED');
-    if(postInstallBusy||installerExecutionBusy||installerPreparationBusy)
+    if(postInstallBusy||failedInstallReviewBusy||installerExecutionBusy||installerPreparationBusy)
       throw Error('RECOVERY_RELEASE_INSTALL_OPERATION_IN_PROGRESS');
     const node=vault.read();
     if(!node||!requireSubmitted({dir:nodeDir(),node,centralUrl:current.centralUrl}))
@@ -514,6 +521,41 @@ app.whenReady().then(()=>{
       }
       throw e;
     }finally{maintenanceRestartBusy=false;}
+  });
+  ipcMain.handle('sutradhar:reviewFailedInstall',async event=>{
+    verifySender(event);
+    if(failedInstallReviewBusy||postInstallBusy||installerExecutionBusy||
+       installerPreparationBusy||maintenanceRestartBusy)
+      throw Error('INSTALL_FAILURE_REVIEW_OPERATION_IN_PROGRESS');
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('INSTALL_FAILURE_REVIEW_PACKAGED_WINDOWS_REQUIRED');
+    if(agent||shuttingDown)
+      throw Error('INSTALL_FAILURE_REVIEW_AGENT_MUST_REMAIN_STOPPED');
+    const node=vault.read();
+    if(!node||!requireSubmitted({dir:nodeDir(),node,
+       centralUrl:current.centralUrl}))
+      throw Error('INSTALL_FAILURE_REVIEW_ORIGINAL_DEVICE_IDENTITY_REQUIRED');
+    const trust=JSON.parse(fs.readFileSync(
+      path.join(__dirname,'update-trust.json'),'utf8'));
+    if(trust.schema!==1||trust.status!=='OWNER_PROTECTED_RELEASE'||
+       trust.channel!=='stable'||typeof trust.publisher_subject!=='string')
+      throw Error('INSTALL_FAILURE_REVIEW_PINNED_PUBLISHER_REQUIRED');
+    const answer=await dialog.showMessageBox(setupWindow,{
+      type:'warning',buttons:['Cancel','Record diagnostic — NO RECOVERY'],
+      cancelId:0,defaultId:0,noLink:true,
+      message:'Record an uncertain or canceled Windows installer attempt?',
+      detail:'This checks the unchanged old installed version, device identity, local signed launch evidence and Central DRAINED state. It does NOT determine NSIS exit code, release the hold, launch rollback, or permit automatic retry.'
+    });
+    if(answer.response!==1)return {canceled:true};
+    failedInstallReviewBusy=true;
+    try{
+      return await observeFailedAttempt({dir:nodeDir(),node,
+        agentIds:current.agentIds,observedVersion:app.getVersion(),
+        installedExecutable:app.getPath('exe'),
+        publisherSubject:trust.publisher_subject,
+        centralOrigin:current.centralUrl,signer,
+        platform:process.platform});
+    }finally{failedInstallReviewBusy=false;}
   });
   ipcMain.handle('sutradhar:observePostInstall',async event=>{
     verifySender(event);
