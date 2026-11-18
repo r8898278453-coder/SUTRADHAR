@@ -1,0 +1,144 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
+const {createVault}=require('../apps/desktop/os-vault.cjs');
+const {createSignerBridge}=require('../apps/desktop/vault-bridge.cjs');
+const {inspectWorkerTasks}=require('../apps/desktop/worker-inspection.cjs');
+
+function safeStorage(){
+  const key=crypto.randomBytes(32);
+  return {isEncryptionAvailable:()=>true,
+    encryptString:s=>{
+      const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);
+      return Buffer.concat([iv,c.update(s,'utf8'),c.final(),c.getAuthTag()]);
+    },
+    decryptString:x=>{
+      const iv=x.subarray(0,12),tag=x.subarray(x.length-16),ct=x.subarray(12,-16);
+      const d=crypto.createDecipheriv('aes-256-gcm',key,iv);
+      d.setAuthTag(tag);
+      return Buffer.concat([d.update(ct),d.final()]).toString('utf8');
+    }};
+}
+function fixture(){
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-worker-inspect-'));
+  const vault=createVault({safeStorage:safeStorage(),dir,platform:'win32'});
+  const signer=createSignerBridge(vault),pub=signer.initialize({agent_ids:['agent_aaa','agent_bbb']});
+  return {dir,vault,signer,pub,close:()=>fs.rmSync(dir,{force:true,recursive:true})};
+}
+function verify(headers,uri,pub){
+  const key=crypto.createPublicKey(pub.public_key_pem);
+  const canonical=[headers['x-sutradhar-timestamp'],
+    headers['x-sutradhar-nonce'],'GET',uri,
+    crypto.createHash('sha256').update('').digest('hex')].join('\n');
+  return crypto.verify(null,Buffer.from(canonical),key,
+    Buffer.from(headers['x-sutradhar-signature'],'base64'));
+}
+test('read-only worker capability is separate from heartbeat child signer and cannot sign writes',()=>{
+  const f=fixture();
+  try{
+    const s=f.signer;
+    assert.throws(()=>s.sign({kind:'node_api',method:'GET',uri:'/v7/tasks/available',body:''}),/DENIED/);
+    const headers=s.signWorkerReadOnly({method:'GET',uri:'/v7/tasks/available',agent_id:'agent_aaa'});
+    assert.equal(headers['x-sutradhar-agent'],'agent_aaa');
+    assert.equal(verify(headers,'/v7/tasks/available',f.pub),true);
+    assert.equal(JSON.stringify(headers).includes('PRIVATE KEY'),false);
+    for(const bad of [
+      {method:'POST',uri:'/v7/tasks/claim',agent_id:'agent_aaa'},
+      {method:'POST',uri:'/v7/tasks/available',agent_id:'agent_aaa'},
+      {method:'GET',uri:'/v7/tasks/available',agent_id:'agent_wrong'},
+      {method:'GET',uri:'/v7/tasks/detail/../../owner',agent_id:'agent_aaa'},
+      {method:'GET',uri:'https://attacker.example/v7/tasks/available',agent_id:'agent_aaa'},
+      {method:'GET',uri:'/v7/tasks/detail/task_aaa?x=1',agent_id:'agent_aaa'},
+      {method:'GET',uri:'/v7/owner/git-recovery',agent_id:'agent_aaa'},
+      {method:'GET',uri:'/v7/tasks/detail/ab',agent_id:'agent_aaa'},
+      {method:'GET',uri:'/v7/tasks/detail/TICKET_AAA/',agent_id:'agent_aaa'}
+    ])assert.throws(()=>s.signWorkerReadOnly(bad),/DENIED/);
+    assert.equal(JSON.stringify(s.snapshot()).includes('PRIVATE KEY'),false);
+    assert.equal(fs.readFileSync(f.vault.file,'utf8').includes('PRIVATE KEY'),false);
+  }finally{f.close();}
+});
+test('OS-vault-signed list and detail use fixed HTTPS routes, strict response shapes and no request body',async()=>{
+  const f=fixture(),calls=[];
+  const list=[{ticket_id:'ticket_123',project_id:'project_aaa',
+    title:'Implement feature',risk:'LOW',version:3}];
+  const detail={...list[0],repository:'example/repo',description:'Authorized scope',
+    branch_name:'ai/ticket_123',baseline_sha:'a'.repeat(40),
+    write_scopes:['src/feature.ts'],acceptance_criteria:['verifiable test'],
+    status:'READY',worker_agent_id:null,latest_checkpoint:null};
+  async function fake(url,init){
+    calls.push({url,init});
+    assert.equal(init.method,'GET');
+    assert.equal(init.redirect,'error');
+    assert.equal(init.credentials,'omit');
+    assert.equal(init.cache,'no-store');
+    assert.equal(init.headers['x-sutradhar-agent'],'agent_aaa');
+    assert.equal(verify(init.headers,new URL(url).pathname,f.pub),true);
+    assert.equal(init.body,undefined);
+    return new Response(JSON.stringify(url.endsWith('/available')?list:detail),{
+      status:200,headers:{'content-type':'application/json'}});
+  }
+  try{
+    const tasks=await inspectWorkerTasks({origin:'https://central.example.com',
+      agentId:'agent_aaa',signer:f.signer,fetcher:fake});
+    assert.deepEqual(tasks,{mode:'AVAILABLE',agent_id:'agent_aaa',tasks:list});
+    const got=await inspectWorkerTasks({origin:'https://central.example.com',
+      agentId:'agent_aaa',ticketId:'ticket_123',signer:f.signer,fetcher:fake});
+    assert.equal(got.task.ticket_id,'ticket_123');
+    assert.deepEqual(got.task.write_scopes,['src/feature.ts']);
+    assert.equal(got.task.description,'Authorized scope');
+    assert.deepEqual(calls.map(x=>x.url),[
+      'https://central.example.com/v7/tasks/available',
+      'https://central.example.com/v7/tasks/detail/ticket_123'
+    ]);
+    assert.equal(JSON.stringify(tasks).includes('private_key_pem'),false);
+  }finally{f.close();}
+});
+test('invalid origin or agent never causes network request or arbitrary signing',async()=>{
+  const f=fixture();let requests=0;
+  const fake=async()=>{requests++;throw Error('NETWORK_SHOULD_NOT_RUN');};
+  try{
+    for(const x of [
+      {origin:'http://central.example.com',agentId:'agent_aaa'},
+      {origin:'https://central.example.com/owner',agentId:'agent_aaa'},
+      {origin:'https://central.example.com@evil.example',agentId:'agent_aaa'},
+      {origin:'https://central.example.com',agentId:'agent_unknown'},
+      {origin:'https://central.example.com',agentId:'agent_aaa',ticketId:'../owner'},
+      {origin:'https://central.example.com',agentId:'agent_aaa',ticketId:'ticket_id?x=1'}
+    ])await assert.rejects(inspectWorkerTasks({...x,signer:f.signer,fetcher:fake}),
+      /DENIED|INVALID/);
+    assert.equal(requests,0);
+  }finally{f.close();}
+});
+test('read-only inspection rejects unsafe Central data, unexpected ticket and oversized streams',async()=>{
+  const f=fixture();const run=async(ticketId,response)=>inspectWorkerTasks({
+    origin:'https://central.example.com',agentId:'agent_aaa',
+    ticketId,signer:f.signer,fetcher:async()=>response});
+  try{
+    await assert.rejects(run(null,new Response(JSON.stringify([{ticket_id:'ticket_123',
+      project_id:'project_aaa',risk:'LOW',version:1,title:'x'},
+      {ticket_id:'../private',project_id:'project_aaa',risk:'LOW',version:1,title:'x'}]))),
+      /INVALID/);
+    await assert.rejects(run('ticket_123',new Response(JSON.stringify({ticket_id:'ticket_other'}))),
+      /INVALID/);
+    await assert.rejects(run(null,new Response('x'.repeat(100000))),/TOO_LARGE/);
+    await assert.rejects(run(null,new Response(JSON.stringify({error_code:'PROJECT_ACCESS_DENIED'}),
+      {status:403})),/WORKER_INSPECTION_PROJECT_ACCESS_DENIED/);
+    await assert.rejects(run(null,new Response('not json')),/INVALID/);
+  }finally{f.close();}
+});
+test('packaged Electron worker inspection is scoped to local sandboxed setup and shipped with QA build',()=>{
+  const root=path.resolve(__dirname,'../apps/desktop');
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const cfg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+  const setup=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  assert.ok(cfg.build.files.includes('worker-inspection.cjs'));
+  assert.match(main,/verifySender\(event\)/);
+  assert.match(main,/ipcMain\.handle\('sutradhar:inspectWorkerTasks'/);
+  assert.match(main,/WORKER_INSPECTION_REQUIRES_RECENT_CENTRAL_ACK/);
+  assert.match(main,/WORKER_INSPECTION_REQUIRES_PACKAGED_WINDOWS_OS_VAULT/);
+  assert.match(main,/WORKER_INSPECTION_MAINTENANCE_HOLD/);
+  assert.match(preload,/inspectWorkerTasks:\(agentId,ticketId=null\)/);
+  assert.match(setup,/id="workerList"/);
+  assert.doesNotMatch(preload,/signWorkerReadOnly|private_key_pem/);
+});
