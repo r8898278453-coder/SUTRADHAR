@@ -12,6 +12,8 @@ The table shows exact ticket ID, Git job status (`RUNNING` / `NEEDS_RECONCILIATI
 
 If more than 300 uncertain jobs exist, Central returns `GIT_RECOVERY_PAGINATION_REQUIRED` and the UI fails closed rather than hiding older work.
 
+Blocked rows show human-readable reasons such as Master not live/recovering, Owner pause, previous-epoch mismatch, missing original independent QA proof, an active worker lease, or invalid candidate metadata. A revoked Master/PC is not counted as live merely because an unexpired lease still exists in MySQL. These diagnostics are **read-only explanations**, not override actions.
+
 ## Reviewing one job
 
 1. Confirm the Central dashboard says the live Master is `RECOVERING`; inspect task, current epoch and selected job. If Central is offline, do not use cached task lists as proof.
