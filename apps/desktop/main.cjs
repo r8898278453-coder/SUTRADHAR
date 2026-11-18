@@ -83,7 +83,7 @@ function safeStatus(){
   try{
     if(fs.existsSync(path.join(nodeDir(),'installer-execution-attempt.json')))
       installerExecution=fs.existsSync(path.join(nodeDir(),'installer-execution-launch-observed.json'))?
-        'PROCESS_STARTED_INSTALL_RESULT_UNKNOWN':'ATTEMPT_UNCERTAIN_OWNER_REVIEW';
+        'LAUNCH_RECEIPT_PRESENT_INSTALL_UNKNOWN':'ATTEMPT_UNCERTAIN_OWNER_REVIEW';
   }catch{installerExecution='UNKNOWN_OWNER_REVIEW';}
   let installerPreparation='NONE';
   try{
