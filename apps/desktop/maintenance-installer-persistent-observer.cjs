@@ -68,7 +68,7 @@ $data=[ordered]@{
   agent_restart_allowed=$false
 }
 try {
-  $bytes=(New-Object System.Text.UTF8Encoding($false)).GetBytes(
+  $bytes=([System.Text.UTF8Encoding]::new($false)).GetBytes(
     ($data|ConvertTo-Json -Compress))
   $s=[System.IO.File]::Open($witness,[System.IO.FileMode]::CreateNew,
     [System.IO.FileAccess]::Write,[System.IO.FileShare]::None)
