@@ -8,7 +8,7 @@ When an agent process, browser session or workstation tool restarts, do not call
 
 ## Manual restart procedure
 
-On the previously enrolled worker PC, with the same OS-protected identity and trusted Git repository configuration:
+On the previously enrolled worker PC, with the same existing node identity and trusted Git repository configuration. The **developer CLI** reads its owner-permission local identity file; it must not be mistaken for proof of the packaged Desktop's separately implemented OS-vault protection:
 
 ```sh
 npm run edge:worker -- resume AGENT_ID TICKET_ID
