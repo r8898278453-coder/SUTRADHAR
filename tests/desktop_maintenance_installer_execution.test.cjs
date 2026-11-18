@@ -248,3 +248,21 @@ test('read-only UI path refuses tampered execution launch receipt even if direct
     agentIds:[agentId],observedVersion:'7.0.0'}),/DEVICE_SIGNATURE_INVALID/);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
 }));
+
+test('even a correctly device-signed but different launch PID cannot match direct exit',()=>fixtures(async dir=>{
+  const f=initial(dir);await prepareInstaller(f.prep);
+  const {runner,launches}=launcherRecorder();
+  await launchStagedInstaller({...f.args,grantEnvelope:f.grant(),runner});
+  launches[0].child.emit('exit',0,null);
+  const file=path.join(f.nodeDir,'installer-execution-launch-observed.json');
+  const old=JSON.parse(fs.readFileSync(file,'utf8'));
+  const {signature_base64,...payload}=old;
+  payload.direct_process_pid+=1;
+  const changed={...payload,signature_base64:crypto.sign(null,
+    Buffer.from('SUTRADHAR_INSTALL_EXECUTION_V1\n'+JSON.stringify(payload)),
+    offerKey.privateKey).toString('base64')};
+  fs.writeFileSync(file,JSON.stringify(changed));
+  assert.throws(()=>inspectDirectExitFromJournals({dir:f.nodeDir,node,
+    agentIds:[agentId],observedVersion:'7.0.0'}),/SIGNED_LAUNCH_PID_MISMATCH/);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+}));
