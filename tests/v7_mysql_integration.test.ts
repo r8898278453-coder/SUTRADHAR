@@ -437,6 +437,73 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(fallback.code,200,JSON.stringify(fallback.body));
       assert.equal(fallback.body.master_agent_id,c.agent_id);
       assert.equal(Number(fallback.body.epoch),Number(promoted.body.epoch)+1);
+      // Ordinary Owner ticket reconciliation must NEVER silently requeue a
+      // job with uncertain external Git effects.
+      const unsafeReset=await post('/v7/owner/command',{
+        request_id:'reset_published_'+(++count),command:'RECONCILE_TICKET',
+        payload:{ticket_id:'ticket_qa_test',reason:'unsafe replay',remote_checked:true}},admin);
+      assert.equal(unsafeReset.code,423,JSON.stringify(unsafeReset.body));
+      assert.equal(unsafeReset.body.error_code,'GIT_PUBLICATION_REQUIRES_SEPARATE_RECOVERY');
+      const recoveryRequest={
+        request_id:'owner_remote_proof_'+(++count),
+        ticket_id:'ticket_qa_test',expected_master_epoch:Number(fallback.body.epoch),
+        owner_confirmed_readonly_proof:true,
+        reason:'Disposable integration: remotely observed exact QA candidate'
+      };
+      const unauthenticated=await post('/v7/git/recover-remote-proof',recoveryRequest,'wrong-token');
+      assert.equal(unauthenticated.code,401);
+      const missingOwnerConsent=await post('/v7/git/recover-remote-proof',{
+        ...recoveryRequest,owner_confirmed_readonly_proof:false},admin);
+      assert.equal(missingOwnerConsent.code,403);
+      const originalFetch=globalThis.fetch,originalToken=process.env.SUTRADHAR_GITHUB_TOKEN;
+      const expectedHead='b'.repeat(40),expectedTree='c'.repeat(40),
+        expectedBase='a'.repeat(40);
+      let readonlyGitRequests=0;
+      try{
+        process.env.SUTRADHAR_GITHUB_TOKEN='ci-only-remote-proof-token';
+        // Use a deterministic read-only GitHub response fixture. All other
+        // HTTP requests still go to the actual local Express/MySQL service.
+        globalThis.fetch=(async(input:any,init?:any)=>{
+          const url=typeof input==='string'?input:String(input?.url||input);
+          const prefix='https://api.github.com/repos/example/repo/';
+          if(!url.startsWith(prefix))return originalFetch(input,init);
+          readonlyGitRequests++;
+          assert.equal(init?.method,'GET','GitHub writes are forbidden during recovery');
+          const suffix=url.slice(prefix.length);
+          let result:any;
+          if(suffix==='branches/ai/ticket_qa_test')
+            result={commit:{sha:expectedHead}};
+          else if(suffix==='git/commits/'+expectedHead)
+            result={sha:expectedHead,tree:{sha:expectedTree},parents:[{sha:expectedBase}]};
+          else if(suffix==='compare/'+expectedBase+'...'+expectedHead)
+            result={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,
+              files:[{filename:'src/example.ts',status:'modified'}]};
+          else throw Error('Unexpected GitHub URL '+suffix);
+          return new Response(JSON.stringify(result),{status:200});
+        }) as typeof fetch;
+        const resolved=await post('/v7/git/recover-remote-proof',recoveryRequest,admin);
+        assert.equal(resolved.code,200,JSON.stringify(resolved.body));
+        assert.equal(resolved.body.status,'PUSH_CONFIRMED_NOT_MERGED');
+        assert.equal(resolved.body.merge_performed,false);
+        assert.equal(resolved.body.automatic_retry_allowed,false);
+        assert.equal(resolved.body.remote_head_sha,expectedHead);
+      }finally{
+        globalThis.fetch=originalFetch;
+        if(originalToken===undefined)delete process.env.SUTRADHAR_GITHUB_TOKEN;
+        else process.env.SUTRADHAR_GITHUB_TOKEN=originalToken;
+      }
+      assert.equal(readonlyGitRequests,3,'Exact branch/commit/compare proof is required');
+      const [recoveredRows]=await db.query(
+        'SELECT state,remote_head_sha FROM v7_git_jobs WHERE ticket_id=?',['ticket_qa_test']);
+      assert.equal((recoveredRows as any[])[0].state,'CONFIRMED');
+      assert.equal((recoveredRows as any[])[0].remote_head_sha,expectedHead);
+      const [ticketRows]=await db.query(
+        'SELECT status FROM v7_tickets WHERE ticket_id=?',['ticket_qa_test']);
+      assert.equal((ticketRows as any[])[0].status,'INTEGRATING',
+        'Exact remote proof may restore QA-integrating work, never requeue for new development');
+      const nowSafeGit=await c.signed('/v7/recovery',undefined,'GET');
+      assert.equal(nowSafeGit.code,200,JSON.stringify(nowSafeGit.body));
+      assert.equal(nowSafeGit.body.unresolved_git_jobs.length,0);
     }finally{await db.end();}
     // Same Owner command + request ID must be one durable effect across concurrent retries.
     const same={request_id:'concurrent_duplicate',command:'PAUSE',payload:{}};
