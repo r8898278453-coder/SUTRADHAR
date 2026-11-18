@@ -19,6 +19,7 @@ SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 | Approve a release, investigate failures or recover safely | [Release, update & rollback policy](docs/RELEASE_OPERATIONS.md) |
 | Run the existing **alpha** with developer assistance | [Current v7 implementation/runbook](v7/README.md) |
 | Review original technical requirements | [V7 architecture blueprint](docs/SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md) and [Agent/Task/QA contract](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md) |
+| Understand post-failover Master recovery safety | [Master recovery ledger & Git reconciliation](docs/MASTER_RECOVERY_LEDGER_V7.md) |
 | See what has actually passed and what remains | [Implementation tracker](docs/IMPLEMENTATION_TRACKER.md) and [71-case acceptance matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) |
 | Decide whether the real-world production gates have sufficient Owner evidence | [17 November release-gate handoff](docs/OWNER_RELEASE_GATE_HANDOFF_2026-11-17.md) |
 | Review Windows signing, OS-vault keys, Hostinger staging, encrypted backup and physical PC acceptance | [Production-readiness checklist](docs/PRODUCTION_READINESS_V7_2026-11-12.md) |
