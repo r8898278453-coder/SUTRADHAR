@@ -6,6 +6,7 @@ const {createHold,inspectHold}=require('../apps/desktop/maintenance-recovery-hol
 const {prepareInstaller}=require('../apps/desktop/maintenance-install-preparation.cjs');
 const {verifyExecutionGrant}=require('../apps/desktop/maintenance-installer-execution-grant.cjs');
 const {launchStagedInstaller}=require('../apps/desktop/maintenance-installer-execution.cjs');
+const {inspectDirectExit}=require('../apps/desktop/maintenance-installer-direct-exit.cjs');
 const nodeId='node_'+'a'.repeat(32),agentId='agent_noncritical_1';
 const offerKey=crypto.generateKeyPairSync('ed25519');
 const execKey=crypto.generateKeyPairSync('ed25519');
@@ -97,6 +98,8 @@ function launcherRecorder(){
   const runner=(file,args,options)=>{
     launches.push({file,args,options});
     const child=new EventEmitter();
+    child.pid=28050+launches.length;
+    launches[launches.length-1].child=child;
     child.unref=()=>{child.unrefCalled=true;};
     setImmediate(()=>child.emit('spawn'));
     return child;
@@ -111,6 +114,12 @@ test('distinct exact Owner grant launches ONLY a visible interactive staged EXE 
   assert.equal(result.rollback_completed,false);
   assert.equal(result.installation_result,'UNKNOWN_OWNER_REVIEW');
   assert.equal(launches.length,1);
+  assert.equal(inspectDirectExit({dir:f.nodeDir,node,scope:{
+    node_id:nodeId,plan_id:planId,wave_id:waveId,
+    offer_sha256:crypto.createHash('sha256').update(JSON.stringify(f.offer)).digest('hex'),
+    installer_sha256:f.offer.signed.installer_sha256,
+    grant_id:grantId,target_version:f.offer.signed.version,kind:f.offer.signed.type
+  }}).observed,false);
   assert.equal(launches[0].file,path.join(f.nodeDir,'installer-escrow','SUTRADHAR Desktop.exe'));
   assert.deepEqual(launches[0].args,[]);
   assert.equal(launches[0].options.shell,false);
@@ -205,4 +214,21 @@ test('expired original signed offer cannot be revived by a new execution grant',
     grantEnvelope:f.grant(),runner,now:afterOfferExpiry}),/PREPARATION_NOT_READY/);
   assert.equal(launches.length,0);
   assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-execution-attempt.json')),false);
+}));
+
+test('launcher signs DIRECT child exit after spawn without claiming NSIS installation success',()=>fixtures(async dir=>{
+  const f=initial(dir);await prepareInstaller(f.prep);
+  const {runner,launches}=launcherRecorder();
+  const launched=await launchStagedInstaller({...f.args,grantEnvelope:f.grant(),runner});
+  assert.equal(launched.installed,false);
+  launches[0].child.emit('exit',1603,null);
+  const scope={node_id:nodeId,plan_id:planId,wave_id:waveId,
+    offer_sha256:crypto.createHash('sha256').update(JSON.stringify(f.offer)).digest('hex'),
+    installer_sha256:f.offer.signed.installer_sha256,grant_id:grantId,
+    target_version:f.offer.signed.version,kind:f.offer.signed.type};
+  const observation=inspectDirectExit({dir:f.nodeDir,node,scope});
+  assert.equal(observation.direct_process_exit_code,1603);
+  assert.equal(observation.installer_completion_proven,false);
+  assert.equal(observation.local_hold_release_allowed,false);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
 }));
