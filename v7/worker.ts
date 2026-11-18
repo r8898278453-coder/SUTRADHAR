@@ -8,8 +8,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {spawnSync,execFileSync} from 'node:child_process';
-import {ID_RE,SHA_RE,safeScope} from './rules.ts';
+import {ID_RE,SHA_RE,safeScope,validTaskBranch} from './rules.ts';
 import {verifyWorkerResume} from './worker_resume_validation.ts';
+import {getOrCreateClaimIntent,hasPendingClaim,verifyClaimReceipt,closeClaimIntent} from './worker_claim_journal.ts';
 const home=process.env.SUTRADHAR_NODE_DIR||path.join(os.homedir(),'.sutradhar','v7');
 const identityFile=path.join(home,'identity.json');
 if(!fs.existsSync(identityFile))throw new Error('Run the node agent first; identity missing');
@@ -44,8 +45,14 @@ async function request(pathname:string,payload?:any,method='POST'){
 function fileFor(id:string){if(!ID_RE.test(id))throw new Error('Invalid ticket ID');
   return path.join(taskDir,id+'.json');}
 function save(id:string,record:any){
-  const file=fileFor(id),tmp=file+'.tmp-'+process.pid;
-  fs.writeFileSync(tmp,JSON.stringify(record,null,2),{mode:0o600});fs.renameSync(tmp,file);
+  const file=fileFor(id),tmp=file+'.tmp-'+process.pid+'-'+token();
+  let fd:number|undefined;
+  try{
+    fd=fs.openSync(tmp,'wx',0o600);
+    fs.writeSync(fd,JSON.stringify(record,null,2));
+    fs.fsyncSync(fd);
+  }finally{if(fd!==undefined)fs.closeSync(fd);}
+  fs.renameSync(tmp,file);
 }
 function read(id:string){return JSON.parse(fs.readFileSync(fileFor(id),'utf8'));}
 function array(v:any):string[]{const a=typeof v==='string'?JSON.parse(v):v;
@@ -83,7 +90,12 @@ function pathsAllowed(root:string,baseline:string,scope:string[]){
 }
 async function prepare(id:string){
   const t=await request('/v7/tasks/detail/'+id,undefined,'GET');
-  if(t.status!=='READY')throw new Error('Task is not READY');
+  if(!validTaskBranch(t.branch_name))throw Error('TASK_BRANCH_NOT_PUBLISHABLE');
+  // Only a known pending local claim may replay a CLAIMED ticket. Never
+  // manufacture a new request when Central may already own its lease.
+  if(t.status!=='READY'&&!(t.status==='CLAIMED'&&
+     t.worker_agent_id===agentId&&hasPendingClaim(taskDir,id)))
+    throw new Error('Task not READY; unknown prior claim requires Owner review');
   const repo=ensureRepository(t),scope=array(t.write_scopes),target=worktree(id);
   if(!fs.existsSync(target)){
     // A private local worktree only. Never pushes, merges or changes protected main.
@@ -99,12 +111,19 @@ async function prepare(id:string){
   const epoch=Number(state.epoch);
   if(!Number.isSafeInteger(epoch)||epoch<1||state.phase!=='READY'||state.paused)
     throw new Error('Central must have a current READY Master and be unpaused');
-  const claim=await request('/v7/tasks/claim',{request_id:'claim_'+token(),agent_id:agentId,
-    ticket_id:id,expected_version:Number(t.version),expected_master_epoch:epoch});
+  const pending=getOrCreateClaimIntent({
+    dir:taskDir,task:{...t,ticket_id:id},agentId,scope,epoch
+  });
+  // If the HTTP response is lost, this same durable request ID is replayed
+  // through Central's command idempotency ledger. Never start a second claim.
+  const claim=await request('/v7/tasks/claim',pending.body);
+  const leaseId=verifyClaimReceipt(pending.body,claim);
   const local={agent_id:agentId,ticket_id:id,project_id:t.project_id,epoch,
-    lease_id:claim.lease_id,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
-    repository:t.repository,scope,worktree:target};
+    lease_id:leaseId,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
+    repository:t.repository,scope,worktree:target,claim_request_id:pending.body.request_id};
   save(id,local);
+  // Only erase pending intent AFTER durable local lease receipt is persisted.
+  closeClaimIntent(pending.file,pending.body);
   const criteria=typeof t.acceptance_criteria==='string'?JSON.parse(t.acceptance_criteria):t.acceptance_criteria;
   const context=[
     '# SUTRADHAR scoped worker handoff',
