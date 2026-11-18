@@ -25,7 +25,7 @@
     "check:packages": "node scripts/check-packages.cjs",
     "test:packages": "npm run build:central && npm run build:desktop && npm run check:packages",
     "test:ops": "node --test tests/mysql_backup_crypto.test.cjs tests/pilot_policy.test.cjs tests/hostinger_staging_preflight.test.cjs tests/staging_schema_inspect.test.cjs tests/staging_bootstrap.test.cjs tests/versioned_migration_plan.test.cjs tests/schema_column_inventory.test.cjs tests/schema_structure_inventory.test.cjs tests/schema_foreign_key_inventory.test.cjs tests/staging_migration_rehearsal.test.cjs tests/staging_migration_execution.test.cjs",
-    "test:release-gates": "node --test tests/release_sign_gate.test.cjs tests/desktop_runtime_policy.test.cjs tests/dependency_locks.test.cjs tests/owner_acceptance_gate.test.cjs tests/post_update_health.test.cjs",
+    "test:release-gates": "node --test tests/release_sign_gate.test.cjs tests/desktop_runtime_policy.test.cjs tests/dependency_locks.test.cjs tests/owner_acceptance_gate.test.cjs tests/post_update_health.test.cjs tests/dependency_exposure.test.cjs",
     "ops:backup": "node scripts/ops/mysql-ops.cjs backup",
     "ops:verify-backup": "node scripts/ops/mysql-ops.cjs verify",
     "ops:restore-staging": "node scripts/ops/mysql-ops.cjs restore",
@@ -38,7 +38,9 @@
     "ops:bootstrap-empty-staging": "node scripts/ops/bootstrap-empty-staging.cjs",
     "ops:plan-versioned-migrations": "node scripts/ops/versioned-migration-plan.cjs",
     "ops:rehearse-staging-migration": "node scripts/ops/staging-migration-rehearsal.cjs",
-    "release:sign-maintenance-grant": "node scripts/release/sign-maintenance-release.cjs"
+    "release:sign-maintenance-grant": "node scripts/release/sign-maintenance-release.cjs",
+    "check:dependency-exposure": "node scripts/release/dependency-exposure.cjs",
+    "test:dependency-exposure": "node --test tests/dependency_exposure.test.cjs"
   },
   "dependencies": {
     "@google/genai": "3.3.0",
