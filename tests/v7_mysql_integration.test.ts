@@ -340,9 +340,15 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(completedDrain.state.installer_execution_allowed,false);
     const releaseAgain=await owner('CANCEL_PC_UPDATE',{plan_id:activePlanId});
     assert.equal(releaseAgain.state.previously_fenced,true);
-    const claim=await b.signed('/v7/tasks/claim',{request_id:'claim_'+(++count),agent_id:b.agent_id,
-      expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'});
+    const claimPayload={request_id:'claim_'+(++count),agent_id:b.agent_id,
+      expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'};
+    const claim=await b.signed('/v7/tasks/claim',claimPayload);
     assert.equal(claim.code,200,JSON.stringify(claim.body));
+    // Replaying the identical durable claim after a lost HTTP reply MUST
+    // return the original lease, never create another lease or worktree.
+    const recoveredClaim=await b.signed('/v7/tasks/claim',claimPayload);
+    assert.equal(recoveredClaim.code,200,JSON.stringify(recoveredClaim.body));
+    assert.deepEqual(recoveredClaim.body,claim.body);
     // Packaged heartbeats report ONLINE. Central must use authoritative
     // lease/ticket state, never allow ONLINE to erase an active assignment.
     const busyPulse=await b.heartbeat(Number(status.epoch));
