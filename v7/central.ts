@@ -803,7 +803,8 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
 async function workerLease(c:PoolConnection,nodeId:string,agentId:string,ticketId:string,leaseId:string,epoch:any){
   const ld=await leader(c);
   await signedAgent(c,nodeId,agentId);
-  if(ld.paused||Number(ld.epoch)!==Number(epoch)||!ld.master_agent_id||ld.phase!=='READY')
+  if(ld.paused||Number(ld.epoch)!==Number(epoch)||!ld.master_agent_id||ld.phase!=='READY'||
+     !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
     fault('STALE_MASTER_EPOCH',409);
   const lease=await one(c,'SELECT * FROM v7_leases WHERE ticket_id=? FOR UPDATE',[ticketId]);
   if(!lease||lease.revoked||lease.agent_id!==agentId||lease.lease_id!==leaseId||
@@ -811,6 +812,26 @@ async function workerLease(c:PoolConnection,nodeId:string,agentId:string,ticketI
   if(Date.parse(lease.expires_at+'Z')<=await dbNow(c))fault('WORKER_LEASE_EXPIRED',409);
   return await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
 }
+// Read-only restart preflight: verify the local record's existing live lease.
+// No extension, re-claim, new permission or Git side-effect is performed.
+app.post('/v7/tasks/resume-check',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body||{};
+  const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id);
+  return transaction(async c=>{
+    const t=await workerLease(c,node.node_id,agentId,ticketId,
+      requireId(d.lease_id),d.expected_master_epoch);
+    if(!t||!['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status))
+      fault('TASK_NOT_RESUMABLE',409);
+    const project=await one(c,'SELECT repository FROM v7_projects WHERE project_id=?',[t.project_id]);
+    if(!project)fault('PROJECT_NOT_FOUND',404);
+    const latest=await one(c,'SELECT generation,summary,next_action,content_sha256 FROM v7_checkpoints WHERE ticket_id=? ORDER BY generation DESC LIMIT 1',[ticketId]);
+    return {resume_allowed:true,automatic_execution_allowed:false,
+      ticket_id:ticketId,agent_id:agentId,epoch:Number(d.expected_master_epoch),
+      project_id:t.project_id,repository:project.repository,baseline_sha:t.baseline_sha,
+      branch_name:t.branch_name,write_scopes:t.scopes_json,status:t.status,
+      latest_checkpoint:latest};
+  });
+}));
 app.post('/v7/tasks/checkpoint',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{},id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
   const summary=requireStr(d.summary,8000),next=requireStr(d.next_action,500);
