@@ -47,6 +47,20 @@ async function loadStatus(){
       grid.append(k,v);
     }
     get('status').replaceChildren(grid);
+    const select=get('workerAgent'),before=select.value;
+    select.replaceChildren();
+    for(const id of (s.agentIds||[])){
+      const option=document.createElement('option');
+      option.value=id;option.textContent=id;select.append(option);
+    }
+    if((s.agentIds||[]).includes(before))select.value=before;
+    const approvedReadOnly=Boolean(s.agentProcessRunning&&
+      s.centralReport?.acknowledgedNow&&s.maintenanceHold==='NONE'&&
+      s.enrollmentState==='SUBMITTED');
+    select.disabled=!approvedReadOnly;
+    get('workerList').disabled=!approvedReadOnly;
+    get('workerDetail').disabled=!approvedReadOnly;
+
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
     get('autostart').checked=Boolean(s.startupEnabled);
@@ -300,3 +314,31 @@ get('studio').addEventListener('click',async()=>{try{await api.openProvider('ai_
 loadStatus();
 // The status panel observes local signed-ack receipts; it does not declare success from a running process.
 setInterval(loadStatus,15000);
+
+
+get('workerList').addEventListener('click',async()=>{
+  const button=get('workerList');button.disabled=true;
+  const output=get('workerTasks');
+  output.textContent='Requesting signed, read-only task list from Central…';
+  try{
+    const reply=await api.inspectWorkerTasks(get('workerAgent').value,null);
+    output.textContent=reply.tasks.length?
+      JSON.stringify(reply.tasks,null,2):
+      'No currently READY tasks are assigned to this agent. Ask the Owner to check project access.';
+  }catch(error){output.textContent='Read-only inspection blocked: '+String(error?.message||error);}
+  finally{await loadStatus();}
+});
+get('workerDetail').addEventListener('click',async()=>{
+  const button=get('workerDetail');button.disabled=true;
+  const output=get('workerTasks'),ticket=get('workerTicket').value.trim();
+  if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(ticket)){
+    output.textContent='Enter an exact Central task ID (letters, numbers, underscores or hyphens).';
+    await loadStatus();return;
+  }
+  output.textContent='Requesting signed, read-only ticket details…';
+  try{
+    const reply=await api.inspectWorkerTasks(get('workerAgent').value,ticket);
+    output.textContent=JSON.stringify(reply.task,null,2);
+  }catch(error){output.textContent='Read-only inspection blocked: '+String(error?.message||error);}
+  finally{await loadStatus();}
+});
