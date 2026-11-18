@@ -82,7 +82,22 @@ function renderGitRecoveryQueue(data){
     const tr=document.createElement('tr');
     cell(tr,job.ticket_id);cell(tr,job.git_state);cell(tr,job.task_status);
     cell(tr,job.publication_epoch);cell(tr,job.candidate_head_sha);
-    cell(tr,job.preflight_eligible?'Eligible for Owner review':'BLOCKED');
+    const reasons=Array.isArray(job.blocking_reasons)?job.blocking_reasons:[];
+    const reasonLabel={
+      MASTER_NOT_LIVE_OR_APPROVED:'Master lease expired, offline or revoked',
+      MASTER_NOT_RECOVERING:'Master is not recovering',
+      CLUSTER_PAUSED:'Cluster paused',
+      PUBLICATION_NOT_PRIOR_EPOCH:'Not an earlier Master epoch',
+      TICKET_NOT_IN_RECOVERY_STATE:'Ticket status not eligible',
+      QA_NOT_INDEPENDENT:'Developer cannot approve own work',
+      MATCHING_QA_RECEIPT_MISSING:'Original independent QA proof missing',
+      LIVE_WORKER_LEASE:'Active worker lease must be fenced',
+      INVALID_REMOTE_PROOF_METADATA:'Candidate repository, branch or SHA invalid'
+    };
+    cell(tr,job.preflight_eligible?'Ready for read-only review':
+      'BLOCKED: '+(reasons.length
+        ?reasons.map(x=>reasonLabel[x]||'Unknown safety check').join('; ')
+        :'Central did not authorize review'));
     const td=document.createElement('td'),b=document.createElement('button');
     b.type='button';b.textContent='Review';
     b.disabled=!job.preflight_eligible||!data.master_live||data.phase!=='RECOVERING'||
