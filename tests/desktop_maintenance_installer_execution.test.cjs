@@ -191,7 +191,7 @@ test('previous partial attempt prevents any retry, including rollback attempt',(
 }));
 test('spawn failure persists signed attempt; no launch or install success inferred',()=>fixtures(async dir=>{
   const f=initial(dir);await prepareInstaller(f.prep);
-  const runner=()=>{const c=new EventEmitter();setImmediate(()=>c.emit('error',Error('denied')));return c;};
+  const runner=()=>{const c=new EventEmitter();c.pid=31801;setImmediate(()=>c.emit('error',Error('denied')));return c;};
   await assert.rejects(launchStagedInstaller({...f.args,
     grantEnvelope:f.grant(),runner}),/SPAWN_FAILED_OWNER_REVIEW/);
   assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-execution-attempt.json')),true);
