@@ -20,5 +20,6 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   releaseMaintenanceHold:()=>ipcRenderer.invoke('sutradhar:releaseMaintenanceHold'),
   restartAfterMaintenance:()=>ipcRenderer.invoke('sutradhar:restartAfterMaintenance'),
   openDashboard:()=>ipcRenderer.invoke('sutradhar:openDashboard'),
+  inspectWorkerTasks:(agentId,ticketId=null)=>ipcRenderer.invoke('sutradhar:inspectWorkerTasks',agentId,ticketId),
   openProvider:name=>ipcRenderer.invoke('sutradhar:openProvider',name)
 }));
