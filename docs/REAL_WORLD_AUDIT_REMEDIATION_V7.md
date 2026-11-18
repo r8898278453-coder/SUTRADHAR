@@ -35,6 +35,14 @@ This is a traceable engineering response to the 19 November real-world audit. It
 - Tests cover stable replay, rejected stale epoch/stolen identity/tampered record, and the real disposable-MySQL idempotent claim receipt.
 - **Limit:** This is not the OS-vault worker bridge. Checkpoint/submit operation journals, automatic worker operation, and crash/failover reassignment are still incomplete. A local journal is not a substitute for a Central signed receipt.
 
+## RWA-003 — OS-vault packaged worker bridge, first read-only phase
+
+- Windows Electron Main can now use an independent `signWorkerReadOnly` vault capability to query signed HTTPS `GET /v7/tasks/available` and `GET /v7/tasks/detail/:ticketId` on behalf of one of its own approved local agents. A sandboxed Setup UI chooses the agent and displays text-only results.
+- This signing method is **not reachable by the supervised heartbeat child IPC**. It requires a packaged Windows PC, locally submitted enrollment, recent Central heartbeat acknowledgement and no active maintenance/recovery/installer hold. Central verifies agent approval and project ACL independently.
+- Untrusted response size and shape are bounded, redirects are denied and arbitrary schemes/hosts/paths/payloads are impossible. Unit regression tests verify the Ed25519 signature over the exact GET path, reject write endpoints and wrong-agent requests and verify release packaging includes the inspection module.
+- **Not yet worker execution:** This intentionally grants no task claims, worktree/Git writes, renewals, QA, push, model provider automation or browser session access. A separate Owner-reviewed worker-execution contract and real Windows target-host tests remain required.
+- **On failure:** Keep task execution disabled. Check Owner grants/project ACL, Central connection and maintenance holds. Do not copy private keys into plaintext identity files or enable the older developer CLI to bypass the OS vault.
+
 ## RWA-004 — Signed bounded active-task lease renewal (manual alpha)
 
 - Central has a signed `POST /v7/tasks/renew-lease` endpoint for the **same approved agent, same ticket/lease ID, current Master epoch and READY unpaused cluster**. Expired leases and stale/Owner-revoked Master authority cannot be renewed.
