@@ -47,6 +47,7 @@
 <p class="hint">Select an Owner-signed offer JSON next to its downloaded Windows installer. The app checks the pinned release key, SHA-256, release version and Windows publisher without executing the installer. This is locked until the first approved production-signed release.</p>
 <button id="verifyUpdate" class="secondary" type="button">Verify a signed update file</button>
 <button id="prepareInstaller" class="secondary" type="button">Stage Owner-signed update / rollback (NO INSTALL)</button>
+<button id="inspectPostUpdateIdentity" class="secondary" type="button">Check identity after Owner installation (read-only)</button>
 <p class="hint">Only after the exact PC is DRAINED in Central, its agent has stopped, and a local maintenance hold is active. The signed EXE is copied into an exclusive local escrow and identity fingerprints recorded. This never executes an installer or applies rollback.</p>
 <button id="updateReadiness" class="secondary" type="button">Check whether this PC is Master or backup</button>
 <button id="isolatePc" class="secondary" type="button">Owner maintenance: isolate this drained PC</button>
