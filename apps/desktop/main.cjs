@@ -38,6 +38,7 @@ const {
 const {summarizeCentralReceipt}=require('./status.cjs');
 const {createVault}=require('./os-vault.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
+const {inspectWorkerTasks}=require('./worker-inspection.cjs');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 const {inspect:inspectEnrollment,prepare:prepareEnrollment,
   markSubmitted:markEnrollmentSubmitted,requireSubmitted,
@@ -377,6 +378,31 @@ app.whenReady().then(()=>{
   ipcMain.handle('sutradhar:openDashboard',event=>{
     verifySender(event);showDashboard();return {opened:true};
   });
+  ipcMain.handle('sutradhar:inspectWorkerTasks',async(event,agentId,ticketId=null)=>{
+    verifySender(event);
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('WORKER_INSPECTION_REQUIRES_PACKAGED_WINDOWS_OS_VAULT');
+    // Do not use the local vault while the PC has an uncertain maintenance
+    // stop, installer attempt or partial recovery state.
+    if(shuttingDown||maintenanceRestartBusy||postInstallBusy||
+      failedInstallReviewBusy||failedRecoveryApprovalBusy||
+      installerExecutionBusy||installerPreparationBusy||
+      requiresReconciliation(nodeDir()))
+      throw Error('WORKER_INSPECTION_LOCAL_OPERATION_FENCED');
+    requireNoInstallerIncident({dir:nodeDir(),manualOwnerRestart:false});
+    const node=vault.read();
+    if(!node||!requireSubmitted({dir:nodeDir(),node,centralUrl:current.centralUrl}))
+      throw Error('WORKER_INSPECTION_ENROLLMENT_NOT_CONFIRMED');
+    if(inspectHold({dir:nodeDir(),nodeId:node.node_id}).active)
+      throw Error('WORKER_INSPECTION_MAINTENANCE_HOLD');
+    // An OS process existing is not proof of an approved Central agent.
+    // Central also enforces signed node/agent approval and project ACL.
+    const status=safeStatus();
+    if(!status.agentProcessRunning||!status.centralReport?.acknowledgedNow)
+      throw Error('WORKER_INSPECTION_REQUIRES_RECENT_CENTRAL_ACK');
+    return inspectWorkerTasks({origin:current.centralUrl,agentId,ticketId,signer});
+  });
+
   ipcMain.handle('sutradhar:checkUpdateReadiness',async event=>{
     verifySender(event);
     if(!app.isPackaged||!current||!vault||!signer)
