@@ -14,6 +14,8 @@ const {spawn,spawnSync}=require('node:child_process');
 const {verifyOffer,sha256File}=require('./update-policy.cjs');
 const {checkReadiness}=require('./update-readiness.cjs');
 const {recordInspection}=require('./update-inspection-journal.cjs');
+const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
+const {prepareInstaller}=require('./maintenance-install-preparation.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {isolateDrainedPc}=require('./maintenance-local-isolation.cjs');
 const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
@@ -39,6 +41,7 @@ let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
 let vault=null,vaultError=null,signer=null;
 let maintenanceRestartBusy=false;
+let installerPreparationBusy=false;
 const trustedProviders={
   chatgpt:'https://chatgpt.com/',
   ai_studio:'https://aistudio.google.com/'
@@ -74,6 +77,13 @@ function safeStatus(){
       if(enrollmentState==='SUBMITTED')pendingEnrollmentCode=null;
     }
   }catch(e){enrollmentState='OWNER_REVIEW_REQUIRED';enrollmentError=String(e.message||e).slice(0,100);}
+  let installerPreparation='NONE';
+  try{
+    const attempt=path.join(nodeDir(),'installer-preparation-attempt.json');
+    const ready=path.join(nodeDir(),'installer-preparation-ready.json');
+    if(fs.existsSync(attempt)||fs.existsSync(ready))
+      installerPreparation=fs.existsSync(ready)?'STAGED_NOT_INSTALLED':'INTERRUPTED_OWNER_REVIEW';
+  }catch{installerPreparation='ERROR_OWNER_REVIEW';}
   let maintenanceHold='NONE';
   try{if(requiresReconciliation(nodeDir()))maintenanceHold='RELEASE_RECONCILIATION_REQUIRED';}
   catch{maintenanceHold='CORRUPT_OWNER_REVIEW_REQUIRED';}
@@ -95,7 +105,7 @@ function safeStatus(){
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:enrollmentState==='SUBMITTED',
     enrollmentState,enrollmentError,
-    agentProcessRunning,centralReport,maintenanceHold,startupSupported,startupEnabled,
+    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,startupSupported,startupEnabled,
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent({manualOwnerRestart=false}={}){
@@ -484,6 +494,53 @@ app.whenReady().then(()=>{
       throw e;
     }finally{maintenanceRestartBusy=false;}
   });
+  ipcMain.handle('sutradhar:prepareInstaller',async event=>{
+    verifySender(event);
+    if(installerPreparationBusy)
+      throw Error('UPDATE_PREPARE_ALREADY_IN_PROGRESS');
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
+      throw Error('UPDATE_PREPARE_REQUIRES_PACKAGED_WINDOWS_PC');
+    // Child reference is only cleared in the observed child exit callback.
+    if(agent||shuttingDown||maintenanceRestartBusy)
+      throw Error('UPDATE_PREPARE_AGENT_EXIT_NOT_CONFIRMED');
+    const device=vault.read();
+    if(!device||!requireSubmitted({dir:nodeDir(),node:device,
+      centralUrl:current.centralUrl}))
+      throw Error('UPDATE_PREPARE_ENROLLED_IDENTITY_REQUIRED');
+    const trust=JSON.parse(fs.readFileSync(
+      path.join(__dirname,'update-trust.json'),'utf8'));
+    if(trust.schema!==1||trust.status!=='OWNER_PROTECTED_RELEASE'||
+       trust.channel!=='stable'||typeof trust.public_key_pem!=='string'||
+       typeof trust.publisher_subject!=='string')
+      throw Error('UPDATE_PREPARE_OWNER_TRUST_UNCONFIGURED');
+    const response=await dialog.showMessageBox(setupWindow,{
+      type:'warning',buttons:['Cancel','Verify and stage only — NO INSTALL'],
+      defaultId:0,cancelId:0,noLink:true,
+      message:'Stage a signed Windows installer for Owner review?',
+      detail:'Requires the exact Owner DRAINED Central fence, a persistent local hold, an exited agent, an approved signed update/rollback offer and Authenticode publisher. Creates a one-shot local escrow; never runs the installer. An interrupted attempt requires Owner intervention.'
+    });
+    if(response.response!==1)return {canceled:true};
+    const selected=await dialog.showOpenDialog(setupWindow,{
+      title:'Select exact Owner-signed update or emergency rollback offer JSON',
+      properties:['openFile'],filters:[{name:'Owner signed offer',extensions:['json']}]
+    });
+    if(selected.canceled||selected.filePaths.length!==1)return {canceled:true};
+    installerPreparationBusy=true;
+    try{
+      const offerFile=selected.filePaths[0];
+      const st=fs.lstatSync(offerFile);
+      if(!st.isFile()||st.isSymbolicLink()||st.size<100||st.size>32768)
+        throw Error('UPDATE_PREPARE_OFFER_FILE_INVALID');
+      const envelope=JSON.parse(fs.readFileSync(offerFile,'utf8'));
+      const installer=path.join(path.dirname(offerFile),
+        String(envelope?.signed?.filename||'INVALID'));
+      return await prepareInstaller({dir:nodeDir(),installerPath:installer,
+        envelope,node:device,agentIds:current.agentIds,
+        centralOrigin:current.centralUrl,signer,
+        currentVersion:app.getVersion(),pinnedPublicKeyPem:trust.public_key_pem,
+        publisherSubject:trust.publisher_subject,platform:process.platform});
+    }finally{installerPreparationBusy=false;}
+  });
   ipcMain.handle('sutradhar:verifyLocalUpdate',async(event)=>{
     verifySender(event);
     if(process.platform!=='win32'||!app.isPackaged)
@@ -513,16 +570,9 @@ app.whenReady().then(()=>{
       installerPath:installer,currentVersion:app.getVersion(),nodeId:device.node_id,
       protocol:7,publisherSubject:trust.publisher_subject,rolloutApproved:true,kind});
     if(!verified.accepted)throw Error(String(verified.error_code));
-    const script='$s=Get-AuthenticodeSignature -LiteralPath '+JSON.stringify(installer)+
-      '; if($s.Status -ne "Valid" -or $null -eq $s.SignerCertificate){exit 42};'+
-      ' if($s.SignerCertificate.Subject -cne '+JSON.stringify(trust.publisher_subject)+'){exit 43}';
-    const check=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],
-      {timeout:30000,windowsHide:true,encoding:'utf8'});
-    if(check.error||check.status!==0)throw Error('UPDATE_WINDOWS_SIGNER_VERIFICATION_FAILED');
-    // The file can change while Authenticode runs. Fail if bytes differ
-    // from the signed Owner manifest after Windows signature verification.
-    if(sha256File(installer)!==verified.file_sha256)
-      throw Error('UPDATE_INSTALLER_CHANGED_DURING_VERIFICATION');
+    verifyWindowsPublisher({installerPath:installer,
+      publisherSubject:trust.publisher_subject,
+      expectedSha256:verified.file_sha256});
     // A signed LOCAL INSPECTION receipt is not an installation/release approval.
     // Record once; an interrupted/corrupted journal must never be overwritten.
     const record=recordInspection({dir:nodeDir(),node:device,
