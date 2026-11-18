@@ -61,7 +61,11 @@
       "maintenance-installer-execution.cjs",
       "installer-execution-trust.json",
       "maintenance-postinstall-verification.cjs",
-      "maintenance-failed-install-review.cjs"
+      "maintenance-failed-install-review.cjs",
+      "maintenance-failure-review-verifier.cjs",
+      "maintenance-failure-owner-grant.cjs",
+      "maintenance-failure-owner-review.cjs",
+      "failure-review-trust.json"
     ],
     "extraResources": [
       {
