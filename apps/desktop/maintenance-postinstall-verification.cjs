@@ -277,4 +277,4 @@ async function observePostInstall({dir,node,agentIds,observedVersion,
     owner_cancellation_required:true,
     next_action:'Owner reviews Windows setup outcome and version/identity, then separately cancels Central maintenance and signs hold release.'});
 }
-module.exports={observePostInstall,verifyObservedReceipt};
+module.exports={observePostInstall,verifyObservedReceipt,verifySigned,jsonFile};
