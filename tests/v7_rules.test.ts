@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chooseLeader,chooseBackups,firstElectionOpen,scopesOverlap,safeScope,LEASE_SECONDS,HEARTBEAT_SECONDS} from '../v7/rules.ts';
+import {chooseLeader,chooseBackups,firstElectionOpen,scopesOverlap,safeScope,LEASE_SECONDS,HEARTBEAT_SECONDS,validTaskBranch,isProtectedScope} from '../v7/rules.ts';
 const day=Date.parse('2026-11-11T00:00:00Z');
 const ts=(hour:number,minute=0)=>day+hour*3600000+minute*60000;
 const candidate=(id:string,node:string,arrival:number,seen:number)=>({
@@ -76,4 +76,25 @@ test('v7 scope validation excludes traversal, secrets, root and backslash',()=>{
 });
 test('v7 liveness cadence remains 60s / suspicion threshold 180s',()=>{
   assert.equal(HEARTBEAT_SECONDS,60);assert.equal(LEASE_SECONDS,180);
+});
+
+test('v7 planned Git branches are publishable by the same read-only Git verifier',()=>{
+  for(const valid of ['ai/ticket_alpha','ai/A-1_foo','ai/a.b-c_7'])
+    assert.equal(validTaskBranch(valid),true,valid);
+  for(const invalid of ['ai/a/b','ai/..','ai/.secret','ai/a..b','ai/a.lock',
+    'ai/a.','ai/','main','release/x','worker-x/ticket-y',
+    'ai/'+'x'.repeat(102),null,undefined])
+    assert.equal(validTaskBranch(invalid),false,String(invalid));
+});
+test('task creator cannot downgrade protected Central, Desktop, signing or repo control paths',()=>{
+  for(const scope of ['v7','v7/central.ts','core','migrations','apps',
+    'apps/central/src','apps/desktop/main.cjs','sandbox/run_sandbox.sh',
+    'scripts/release','scripts/ops/mysql-ops.cjs','packages/shared/contract.json',
+    '.github/workflows/ci.yml','package.json','package-lock.json','server.ts',
+    'github_merge_verifier.ts','.env.example','tsconfig.json'])
+    assert.equal(isProtectedScope(scope),true,scope);
+  for(const ordinary of ['src/feature.ts','tests/test_feature.ts',
+    'docs/feature.md','app/desktopish.ts','packages-other/api.ts'])
+    assert.equal(isProtectedScope(ordinary),false,ordinary);
+  assert.equal(isProtectedScope('../escape'),true);
 });
