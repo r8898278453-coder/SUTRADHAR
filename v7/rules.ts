@@ -39,6 +39,30 @@ export function safeScope(s:string) {
   if(/^(?:\.git|\.env|node_modules)(?:\/|$)/i.test(s))return false;
   return /^[a-zA-Z0-9._/-]+$/.test(s);
 }
+// Central, read-only Git verifier and the PC publisher must agree on
+// publishable branch syntax. Be stricter than GitHub's general ref grammar.
+export function validTaskBranch(branch:unknown):boolean{
+  return typeof branch==='string'&&
+    /^ai\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(branch)&&
+    !branch.includes('..')&&!branch.endsWith('.')&&!branch.endsWith('.lock');
+}
+
+// Protected control-plane, signing and release sources may never become
+// ordinary LOW-risk work solely because the task creator declared them LOW.
+// Prefix matching includes child directories but not unrelated lookalikes.
+export function isProtectedScope(scope:unknown):boolean{
+  if(typeof scope!=='string'||!safeScope(scope))return true;
+  const p=scope.toLowerCase();
+  const roots=['v7','core','contracts','migrations','.github','hooks','apps',
+    'sandbox','scripts','packages'];
+  if(roots.some(root=>p===root||p.startsWith(root+'/')))return true;
+  const top=['server.ts','server_db.ts','package.json','package-lock.json',
+    'tsconfig.json','github_merge_verifier.ts','github_pr_creator.ts',
+    'github_rollback_reconciler.ts','sequential_runner.py','.env.example',
+    'dockerfile','docker-compose.yml','docker-compose.yaml',
+    'project blue print.txt'];
+  return top.includes(p);
+}
 export function scopesOverlap(a:string,b:string) {
   return a===b||a.startsWith(b+'/')||b.startsWith(a+'/');
 }
