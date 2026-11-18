@@ -182,7 +182,7 @@ async function prepareInstaller({dir,installerPath,envelope,node,agentIds,
 function inspectPreparedIdentity({dir,node,agentIds,observedVersion}={}){
   if(typeof dir!=='string'||!path.isAbsolute(dir)||
      !Array.isArray(agentIds)||agentIds.length<1||
-     !/^\\d+\\.\\d+\\.\\d+$/.test(observedVersion||''))
+     !/^[0-9]+[.][0-9]+[.][0-9]+$/.test(observedVersion||''))
     fail('UPDATE_IDENTITY_POSTCHECK_ARGUMENTS_INVALID');
   const identity=identityEvidence(node,agentIds);
   function read(file){
