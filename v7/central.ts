@@ -15,6 +15,7 @@ import {createVerifiedDraftPr} from '../github_pr_creator.ts';
 import {inspectGitRemote} from './git_remote.ts';
 import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest,validTaskBranch,isProtectedScope} from './rules.ts';
 import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
+import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
 import sharedContract from '../packages/shared/contract.json';
 
 const app=express();
@@ -842,7 +843,8 @@ async function workerLease(c:PoolConnection,nodeId:string,agentId:string,ticketI
   const ld=await leader(c);
   await signedAgent(c,nodeId,agentId);
   if(ld.paused||Number(ld.epoch)!==Number(epoch)||!ld.master_agent_id||ld.phase!=='READY'||
-     !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
+     !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c)||
+     !await approvedMasterLease(c,ld))
     fault('STALE_MASTER_EPOCH',409);
   const lease=await one(c,'SELECT * FROM v7_leases WHERE ticket_id=? FOR UPDATE',[ticketId]);
   if(!lease||lease.revoked||lease.agent_id!==agentId||lease.lease_id!==leaseId||
@@ -850,6 +852,54 @@ async function workerLease(c:PoolConnection,nodeId:string,agentId:string,ticketI
   if(Date.parse(lease.expires_at+'Z')<=await dbNow(c))fault('WORKER_LEASE_EXPIRED',409);
   return await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
 }
+// The existing v7_tickets.updated_at column is reset only upon a successful
+// task claim, not by checkpoints. It is the Central DB claim-time anchor for a
+// bounded work session. No new schema column or Hostinger migration is needed.
+async function extendWorkerLease(c:PoolConnection,ticketId:string,t:any,
+    kind:'renew'|'checkpoint'){
+  const lease=await one(c,'SELECT expires_at FROM v7_leases WHERE ticket_id=?',[ticketId]);
+  if(!lease)fault('WORKER_LEASE_INVALID',403);
+  const parseDb=(date:any)=>typeof date==='string'?
+    Date.parse(date.replace(' ','T')+'Z'):NaN;
+  const now=await dbNow(c);
+  let extension;
+  try{
+    extension=planWorkerLeaseExtension(parseDb(t.updated_at),
+      parseDb(lease.expires_at),now,kind);
+  }catch(e:any){
+    const code=String(e?.message||'WORKER_RENEWAL_UNAVAILABLE');
+    if(!['WORKER_LEASE_CLOCK_INVALID','WORKER_LEASE_EXPIRED',
+      'WORKER_RENEWAL_NOT_DUE','WORKER_RENEWAL_BUDGET_EXHAUSTED'].includes(code))
+      fault('WORKER_RENEWAL_UNAVAILABLE',409);
+    fault(code,409);
+  }
+  const expiresAt=new Date(extension!.expires_at_ms).toISOString();
+  await c.query('UPDATE v7_leases SET expires_at=? WHERE ticket_id=?',
+    [expiresAt.replace('T',' ').replace('Z',''),ticketId]);
+  return {lease_expires_at:expiresAt,
+    lease_seconds_remaining:extension!.seconds_remaining,
+    absolute_claim_deadline:new Date(extension!.absolute_deadline_ms).toISOString()};
+}
+// An explicit, audited, signed renewal is allowed ONLY while the original
+// worker lease and current approved Master are still live. A 4-hour cap from
+// the original claim prevents unattended indefinite lease retention.
+app.post('/v7/tasks/renew-lease',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body||{};
+  const id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
+  const leaseId=requireId(d.lease_id),reason=requireStr(d.reason,300);
+  if(reason.length<12)fault('WORKER_RENEW_REASON_REQUIRED',400);
+  return transaction(c=>idem(c,id,d.request_id,'WORKER_RENEW_LEASE',d,async()=>{
+    const t=await workerLease(c,node.node_id,id,ticket,leaseId,d.expected_master_epoch);
+    if(!t||!['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status))
+      fault('WORKER_RENEW_STATE_INVALID',409);
+    const expiry=await extendWorkerLease(c,ticket,t,'renew');
+    await event(c,'WORKER_LEASE_RENEWED',id,Number(d.expected_master_epoch),
+      ticket,{reason:reason.slice(0,300),expires_at:expiry.lease_expires_at});
+    return {accepted:true,ticket_id:ticket,agent_id:id,
+      lease_id:leaseId,epoch:Number(d.expected_master_epoch),
+      ...expiry,automatic_execution_allowed:false};
+  }));
+}));
 // Read-only restart preflight: verify the local record's existing live lease.
 // No extension, re-claim, new permission or Git side-effect is performed.
 app.post('/v7/tasks/resume-check',jsonRoute(async req=>{
@@ -881,9 +931,12 @@ app.post('/v7/tasks/checkpoint',jsonRoute(async req=>{
     await c.query('INSERT INTO v7_checkpoints(ticket_id,generation,agent_id,epoch,summary,next_action,content_sha256) VALUES(?,?,?,?,?,?,?)',
       [ticket,generation,id,d.expected_master_epoch,summary,next,hash]);
     await c.query('UPDATE v7_tickets SET status="CHECKPOINTED",version=version+1 WHERE ticket_id=?',[ticket]);
-    await c.query('UPDATE v7_leases SET expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 600 SECOND) WHERE ticket_id=?',[ticket]);
+    // Checkpoints also respect the absolute claim lifetime. They may extend
+    // active work, but never bypass the same bounded renewal safety budget.
+    const expiry=await extendWorkerLease(c,ticket,t,'checkpoint');
     await event(c,'TASK_CHECKPOINTED',id,Number(d.expected_master_epoch),ticket,{generation,sha256:hash});
-    return {accepted:true,ticket_id:ticket,generation,content_sha256:hash,version:Number(t.version)+1};
+    return {accepted:true,ticket_id:ticket,generation,content_sha256:hash,
+      version:Number(t.version)+1,...expiry};
   }));
 }));
 app.post('/v7/tasks/submit',jsonRoute(async req=>{
