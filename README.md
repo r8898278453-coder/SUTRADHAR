@@ -21,6 +21,7 @@ SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 | Review original technical requirements | [V7 architecture blueprint](docs/SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md) and [Agent/Task/QA contract](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md) |
 | Understand post-failover Master recovery safety | [Master recovery ledger & Git reconciliation](docs/MASTER_RECOVERY_LEDGER_V7.md) |
 | Review uncertain Git publications from Central safely | [Owner Git recovery review and exact SHA confirmation](docs/OWNER_GIT_RECOVERY_REVIEW_V7.md) |
+| Audit real-world failure fixes and remaining automation gates | [Real-world audit remediation tracker](docs/REAL_WORLD_AUDIT_REMEDIATION_V7.md) |
 | Verify a worker restart without stealing a lease | [Worker restart and checkpoint preflight](docs/WORKER_RESTART_PREFLIGHT_V7.md) |
 | See what has actually passed and what remains | [Implementation tracker](docs/IMPLEMENTATION_TRACKER.md) and [71-case acceptance matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) |
 | Decide whether the real-world production gates have sufficient Owner evidence | [17 November release-gate handoff](docs/OWNER_RELEASE_GATE_HANDOFF_2026-11-17.md) |
