@@ -6,7 +6,7 @@ const {createHold,inspectHold}=require('../apps/desktop/maintenance-recovery-hol
 const {prepareInstaller}=require('../apps/desktop/maintenance-install-preparation.cjs');
 const {verifyExecutionGrant}=require('../apps/desktop/maintenance-installer-execution-grant.cjs');
 const {launchStagedInstaller}=require('../apps/desktop/maintenance-installer-execution.cjs');
-const {inspectDirectExit}=require('../apps/desktop/maintenance-installer-direct-exit.cjs');
+const {inspectDirectExit,inspectDirectExitFromJournals}=require('../apps/desktop/maintenance-installer-direct-exit.cjs');
 const nodeId='node_'+'a'.repeat(32),agentId='agent_noncritical_1';
 const offerKey=crypto.generateKeyPairSync('ed25519');
 const execKey=crypto.generateKeyPairSync('ed25519');
@@ -230,5 +230,21 @@ test('launcher signs DIRECT child exit after spawn without claiming NSIS install
   assert.equal(observation.direct_process_exit_code,1603);
   assert.equal(observation.installer_completion_proven,false);
   assert.equal(observation.local_hold_release_allowed,false);
+  assert.equal(inspectDirectExitFromJournals({dir:f.nodeDir,node,
+    agentIds:[agentId],observedVersion:'7.0.0'}).observed,true);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+}));
+
+test('read-only UI path refuses tampered execution launch receipt even if direct exit exists',()=>fixtures(async dir=>{
+  const f=initial(dir);await prepareInstaller(f.prep);
+  const {runner,launches}=launcherRecorder();
+  await launchStagedInstaller({...f.args,grantEnvelope:f.grant(),runner});
+  launches[0].child.emit('exit',0,null);
+  const receipt=path.join(f.nodeDir,'installer-execution-launch-observed.json');
+  const forged=JSON.parse(fs.readFileSync(receipt,'utf8'));
+  forged.target_version='9.9.9';
+  fs.writeFileSync(receipt,JSON.stringify(forged));
+  assert.throws(()=>inspectDirectExitFromJournals({dir:f.nodeDir,node,
+    agentIds:[agentId],observedVersion:'7.0.0'}),/DEVICE_SIGNATURE_INVALID/);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
 }));
