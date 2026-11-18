@@ -28,6 +28,7 @@ async function loadStatus(){
       ['Installer preparation',s.installerPreparation||'NONE'],
       ['Installer execution',s.installerExecution||'NOT_ATTEMPTED'],
       ['Direct installer exit',s.directInstallerExit||'NOT_OBSERVED'],
+      ['Persistent process observer',s.persistentObserver||'NO_WITNESS_OUTCOME_UNKNOWN'],
       ['Post-install observation',s.postInstallObservation||'NOT_RECORDED'],
       ['Failed install review',s.failedInstallReview||'NOT_RECORDED'],
       ['Owner recovery investigation',s.failedRecoveryApproval||'NOT_RECORDED'],
@@ -130,6 +131,20 @@ get('inspectPostUpdateIdentity').addEventListener('click',async()=>{
   }catch(e){get('updateFeedback').textContent='Identity continuity BLOCKED: '+
     String(e.message||e)+'. Preserve local identity and call Owner.';}
   finally{button.disabled=false;}
+});
+get('inspectPersistentInstallerObserver').addEventListener('click',async()=>{
+  const button=get('inspectPersistentInstallerObserver');button.disabled=true;
+  get('updateFeedback').textContent='Checking enrolled identity, signed launch and unsigned process-liveness witness…';
+  try{
+    const r=await api.inspectPersistentInstallerObserver();
+    get('updateFeedback').textContent=r.available?
+      'Persistent observer reports '+r.state+
+      '. UNSIGNED / UNTRUSTED diagnostic only; exit code UNKNOWN and Windows setup completion UNPROVEN. Maintenance hold and manual Owner checks remain required.':
+      'No persistent observer witness. Outcome UNKNOWN. Preserve maintenance hold and signed installer receipts.';
+  }catch(e){
+    get('updateFeedback').textContent='OBSERVER INSPECTION BLOCKED: '+
+      String(e.message||e)+'. Do not delete any maintenance journal.';
+  }finally{button.disabled=false;}
 });
 get('inspectDirectInstallerExit').addEventListener('click',async()=>{
   const button=get('inspectDirectInstallerExit');button.disabled=true;
