@@ -116,6 +116,51 @@ function createSignerBridge(vault){
       'x-sutradhar-signature':crypto.sign(null,Buffer.from(canonical),key).toString('base64'),
       'x-sutradhar-agent':agent_id};
   }
-  return Object.freeze({initialize,saveCounters,sign,signWorkerReadOnly,snapshot:()=>publicSnapshot(vault.read())});
+  // Electron MAIN only. The existing supervised heartbeat child IPC exposes
+  // sign({kind:'node_api'}) but NEVER signWorkerAction. Each operation has a
+  // fixed path and exact JSON shape; there is no generic POST signing oracle.
+  function signWorkerAction({operation,agent_id,payload}={}){
+    const v=identity();
+    if(!AGENT_ID.test(agent_id||'')||!v.agents.some(a=>a.id===agent_id)||
+       !payload||typeof payload!=='object'||Array.isArray(payload)||
+       payload.agent_id!==agent_id)
+      fail('VAULT_WORKER_ACTION_DENIED');
+    const id=x=>typeof x==='string'&&AGENT_ID.test(x);
+    const epoch=Number.isSafeInteger(payload.expected_master_epoch)&&
+      payload.expected_master_epoch>0;
+    let uri,expected;
+    if(operation==='claim'){
+      uri='/v7/tasks/claim';
+      expected=['request_id','agent_id','ticket_id','expected_version',
+        'expected_master_epoch'];
+      if(!id(payload.ticket_id)||!id(payload.request_id)||
+        !payload.request_id.startsWith('claim_')||
+        !Number.isSafeInteger(payload.expected_version)||
+        payload.expected_version<1||!epoch)fail('VAULT_WORKER_ACTION_DENIED');
+    }else if(operation==='resume-check'){
+      uri='/v7/tasks/resume-check';
+      expected=['agent_id','ticket_id','lease_id','expected_master_epoch'];
+      if(!id(payload.ticket_id)||typeof payload.lease_id!=='string'||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(payload.lease_id)||
+        !epoch)fail('VAULT_WORKER_ACTION_DENIED');
+    }else fail('VAULT_WORKER_ACTION_DENIED');
+    if(Object.keys(payload).length!==expected.length||
+      Object.keys(payload).some(k=>!expected.includes(k)))
+      fail('VAULT_WORKER_ACTION_DENIED');
+    const body=JSON.stringify(payload);
+    if(Buffer.byteLength(body,'utf8')>2048)fail('VAULT_WORKER_ACTION_DENIED');
+    const key=crypto.createPrivateKey(v.private_key_pem);
+    const ts=Date.now(),nonce='nonce_'+crypto.randomUUID().replace(/-/g,'');
+    const canonical=[String(ts),nonce,'POST',uri,
+      crypto.createHash('sha256').update(body).digest('hex')].join('\n');
+    return {uri,body,headers:{
+      'x-sutradhar-node':v.node_id,
+      'x-sutradhar-timestamp':String(ts),
+      'x-sutradhar-nonce':nonce,
+      'x-sutradhar-signature':crypto.sign(null,Buffer.from(canonical),key).toString('base64'),
+      'x-sutradhar-agent':agent_id
+    }};
+  }
+  return Object.freeze({initialize,saveCounters,sign,signWorkerReadOnly,signWorkerAction,snapshot:()=>publicSnapshot(vault.read())});
 }
 module.exports={createSignerBridge,publicSnapshot,validateAgentIds};
