@@ -39,12 +39,12 @@ test('nested packages and optional/peer edges are included in runtime reachabili
   assert.ok(reachable(lock.packages,['safe']).has('node_modules/picomatch'));
   assert.equal(assess(root,lock).accepted,false);
 });
-test('unknown matching package version is blocked; a hypothetical later release is not marked vulnerable',()=>{
+test('no patched upstream is established, so even a hypothetical future version stays blocked',()=>{
   assert.equal(isKnownAffected('4.0.7'),true);
   assert.equal(isKnownAffected('2.3.2'),true);
   assert.equal(isKnownAffected('broken'),true);
-  assert.equal(isKnownAffected('4.0.8'),false);
-  assert.equal(isKnownAffected('5.0.0'),false);
+  assert.equal(isKnownAffected('4.0.8'),true);
+  assert.equal(isKnownAffected('5.0.0'),true);
 });
 test('lock/manifest mismatch or missing direct dependency cannot be accepted',()=>{
   const {root,lock}=fixture();
