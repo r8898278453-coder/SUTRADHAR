@@ -12,6 +12,8 @@ on:
       - "apps/desktop/package-lock.json"
       - "apps/desktop/runtime-policy.cjs"
       - "scripts/release/verify-dependency-locks.cjs"
+      - "scripts/release/dependency-exposure.cjs"
+      - "tests/dependency_exposure.test.cjs"
       - ".github/workflows/dependency-lock-proposal.yml"
   workflow_dispatch:
 
@@ -68,6 +70,8 @@ jobs:
           node-version: "22"
       - name: Require committed lockfile integrity
         run: node scripts/release/verify-dependency-locks.cjs
+      - name: Require known-vulnerable picomatch not enter production dependency graph
+        run: node scripts/release/dependency-exposure.cjs
       - name: Audit root dependencies (including build-time supply chain)
         run: npm audit --audit-level=high --no-fund
       - name: Audit Desktop Electron/installer dependencies
