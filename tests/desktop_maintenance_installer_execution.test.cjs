@@ -266,3 +266,41 @@ test('even a correctly device-signed but different launch PID cannot match direc
     agentIds:[agentId],observedVersion:'7.0.0'}),/SIGNED_LAUNCH_PID_MISMATCH/);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
 }));
+
+test('persisted launch journal precedes detached observer; helper never receives OS-vault key',()=>fixtures(async dir=>{
+  const f=initial(dir);await prepareInstaller(f.prep);
+  const {runner,launches}=launcherRecorder();
+  const handoffs=[];
+  const observerLauncher=(payload)=>{
+    const launchFile=path.join(f.nodeDir,'installer-execution-launch-observed.json');
+    const signedLaunch=JSON.parse(fs.readFileSync(launchFile,'utf8'));
+    assert.equal(signedLaunch.direct_process_pid,payload.pid);
+    assert.equal(signedLaunch.grant_id,payload.grantId);
+    assert.equal(signedLaunch.installer_sha256,payload.installerSha256);
+    assert.equal(payload.installerPath,
+      path.join(f.nodeDir,'installer-escrow','SUTRADHAR Desktop.exe'));
+    assert.ok(!JSON.stringify(payload).includes('PRIVATE KEY'));
+    handoffs.push(payload);
+    return {started:true,witness_signed:false};
+  };
+  const result=await launchStagedInstaller({...f.args,
+    grantEnvelope:f.grant(),runner,observerLauncher});
+  assert.equal(result.launched,true);
+  assert.equal(result.persistent_observer_started,true);
+  assert.equal(result.observer_witness_trusted,false);
+  assert.equal(handoffs.length,1);
+  assert.equal(handoffs[0].pid,launches[0].child.pid);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+}));
+test('unavailable detached observer never converts an already launched EXE to success or retry',()=>fixtures(async dir=>{
+  const f=initial(dir);await prepareInstaller(f.prep);
+  const {runner}=launcherRecorder();
+  const result=await launchStagedInstaller({...f.args,
+    grantEnvelope:f.grant(),runner,
+    observerLauncher:()=>{throw Error('PowerShell denied');}});
+  assert.equal(result.launched,true);
+  assert.equal(result.persistent_observer_started,false);
+  assert.equal(result.installed,false);
+  assert.equal(result.agent_restart_allowed,false);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+}));
