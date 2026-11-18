@@ -532,8 +532,30 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
       seen.add(id);
       const a=await signedAgent(c,node.node_id,id);
       if(seq<=Number(a.last_sequence))fault('REPLAY_AGENT_SEQUENCE',409);
-      await c.query('UPDATE v7_agents SET last_sequence=?,last_seen=UTC_TIMESTAMP(3),status=? WHERE agent_id=?',
-        [seq,['IDLE','BUSY','BLOCKED','ONLINE'].includes(entry.status)?entry.status:'ONLINE',id]);
+      // Heartbeat is reachability, not a declaration of work completion.
+      // The packaged edge reports ONLINE even when no ticket is assigned.
+      // Derive maintenance-facing work state from authoritative MySQL ticket,
+      // lease and Git ledgers. An explicit BUSY/BLOCKED report only tightens
+      // the gate; an IDLE/ONLINE report cannot override Central evidence.
+      if(!['IDLE','BUSY','BLOCKED','ONLINE'].includes(entry.status))
+        fault('INVALID_AGENT_ACTIVITY',400);
+      const activity=await one(c,
+        'SELECT (SELECT t.ticket_id FROM v7_tickets t WHERE t.worker_agent_id=? '+
+        'AND t.status IN ("CLAIMED","RUNNING","CHECKPOINTED","TEST_FAILED",'+
+        '"SUBMITTED_FOR_REVIEW","INTEGRATING","RECONCILIATION_REQUIRED") '+
+        'ORDER BY t.updated_at DESC,t.ticket_id LIMIT 1) AS active_ticket,'+
+        'EXISTS(SELECT 1 FROM v7_leases l WHERE l.agent_id=? AND l.revoked=0 '+
+        'AND l.expires_at>UTC_TIMESTAMP(3)) AS has_work_lease,'+
+        'EXISTS(SELECT 1 FROM v7_git_jobs j WHERE j.agent_id=? '+
+        'AND j.state IN ("RUNNING","NEEDS_RECONCILIATION")) AS has_git_job',
+        [id,id,id]);
+      const centralBusy=Boolean(activity.active_ticket||
+        Number(activity.has_work_lease)===1||Number(activity.has_git_job)===1);
+      const status=entry.status==='BLOCKED'?'BLOCKED':
+        (centralBusy||entry.status==='BUSY'?'BUSY':'IDLE');
+      await c.query('UPDATE v7_agents SET last_sequence=?,last_seen=UTC_TIMESTAMP(3),'+
+        'status=?,active_ticket=? WHERE agent_id=?',
+        [seq,status,activity.active_ticket||null,id]);
       if(a.master_eligible&&(firstElectionOpen(clock)||Boolean(ld.bootstrapped_at))){
         await c.query('INSERT IGNORE INTO v7_arrivals(agent_id) VALUES(?)',[id]);
       }
