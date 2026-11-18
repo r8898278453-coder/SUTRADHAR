@@ -136,7 +136,7 @@ test('target version, same enrolled key, signed launch receipts and fresh Centra
   assert.equal(record.state,'TARGET_VERSION_IDENTITY_CENTRAL_OBSERVED');
   assert.equal(record.installer_completion_proven,false);
   assert.ok(record.signature_base64.length>=80);
-  const proof=verifyObservedReceipt({dir:f.nodeDir,node,agentIds:[agentId]});
+  const proof=verifyObservedReceipt({dir:f.nodeDir,node,agentIds:[agentId],observedVersion:'7.1.0'});
   assert.equal(proof.target_version_observed,true);
   assert.equal(proof.auto_release_allowed,false);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
@@ -196,7 +196,7 @@ test('tampering OS-vault signed postinstall observation fails signature check',(
   const corrupted=JSON.parse(fs.readFileSync(file));
   corrupted.observed_version='9.9.9';fs.writeFileSync(file,JSON.stringify(corrupted));
   assert.throws(()=>verifyObservedReceipt({dir:f.nodeDir,node,
-    agentIds:[agentId]}),/DEVICE_SIGNATURE_INVALID/);
+    agentIds:[agentId],observedVersion:'7.1.0'}),/DEVICE_SIGNATURE_INVALID/);
 }));
 test('installed-app Authenticode verifier checks real file SHA before/after and publisher via encoded PowerShell',()=>fixtures(dir=>{
   const executablePath=path.join(dir,"SUTRADHAR O'Brien.exe");
