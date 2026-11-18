@@ -1031,8 +1031,9 @@ app.post('/v7/git/recover-remote-proof',jsonRoute(async req=>{
        !SHA_RE.test(String(t.candidate_head_sha||''))||
        !SHA_RE.test(String(t.candidate_tree_sha||'')))
       fault('GIT_RECOVERY_NOT_ELIGIBLE',409);
-    const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? AND passed=1 AND head_sha=? AND tree_sha=? LIMIT 1',
-      [ticketId,t.candidate_head_sha,t.candidate_tree_sha]);
+    if(job.agent_id===t.worker_agent_id)fault('GIT_RECOVERY_QA_INDEPENDENCE_REQUIRED',409);
+    const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? AND agent_id=? AND passed=1 AND head_sha=? AND tree_sha=? LIMIT 1',
+      [ticketId,job.agent_id,t.candidate_head_sha,t.candidate_tree_sha]);
     if(!qa)fault('GIT_RECOVERY_QA_PROOF_REQUIRED',409);
     const p=await one(c,'SELECT repository FROM v7_projects WHERE project_id=?',[t.project_id]);
     if(!p)fault('GIT_RECOVERY_PROJECT_MISSING',409);
@@ -1067,8 +1068,9 @@ app.post('/v7/git/recover-remote-proof',jsonRoute(async req=>{
          t.candidate_tree_sha!==verified.treeSha||
          JSON.stringify(t.scopes_json)!==JSON.stringify(info.t.scopes_json))
         fault('GIT_RECOVERY_RECORD_CHANGED',409);
-      const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? AND passed=1 AND head_sha=? AND tree_sha=? LIMIT 1',
-        [ticketId,verified.headSha,verified.treeSha]);
+      if(j.agent_id===t.worker_agent_id)fault('GIT_RECOVERY_QA_INDEPENDENCE_CHANGED',409);
+      const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? AND agent_id=? AND passed=1 AND head_sha=? AND tree_sha=? LIMIT 1',
+        [ticketId,j.agent_id,verified.headSha,verified.treeSha]);
       if(!qa)fault('GIT_RECOVERY_QA_PROOF_CHANGED',409);
       const liveLease=await one(c,'SELECT ticket_id FROM v7_leases WHERE ticket_id=? AND revoked=0 AND expires_at>UTC_TIMESTAMP(3)',[ticketId]);
       if(liveLease)fault('GIT_RECOVERY_ACTIVE_WORKER_LEASE',423);
