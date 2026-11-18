@@ -385,49 +385,49 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       ticket_id:'ticket_qa_test',lease_id:claim.body.lease_id,
       expected_master_epoch:Number(status.epoch),
       reason:'Manual progress check after approved task claim'};
-    const premature=await b.signed('/v7/tasks/renew-lease',renewBody);
-    assert.equal(premature.code,409,JSON.stringify(premature.body));
-    assert.equal(premature.body.error_code,'WORKER_RENEWAL_NOT_DUE');
+    const leaseEarlyResponse=await b.signed('/v7/tasks/renew-lease',renewBody);
+    assert.equal(leaseEarlyResponse.code,409,JSON.stringify(leaseEarlyResponse.body));
+    assert.equal(leaseEarlyResponse.body.error_code,'WORKER_RENEWAL_NOT_DUE');
     const leaseTestDb=await mysql.createConnection({host:'127.0.0.1',
       port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,
       password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
     try{
       await leaseTestDb.query('UPDATE v7_leases SET expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 120 SECOND) WHERE ticket_id=?',
         ['ticket_qa_test']);
-      const renewed=await b.signed('/v7/tasks/renew-lease',renewBody);
-      assert.equal(renewed.code,200,JSON.stringify(renewed.body));
-      assert.equal(renewed.body.accepted,true);
-      assert.equal(renewed.body.automatic_execution_allowed,false);
-      assert.equal(renewed.body.lease_id,claim.body.lease_id);
-      assert.ok(renewed.body.lease_seconds_remaining<=600);
-      assert.ok(renewed.body.lease_seconds_remaining>400);
-      const retry=await b.signed('/v7/tasks/renew-lease',renewBody);
-      assert.equal(retry.code,200,JSON.stringify(retry.body));
-      assert.deepEqual(retry.body,renewed.body,
+      const leaseAcceptedResponse=await b.signed('/v7/tasks/renew-lease',renewBody);
+      assert.equal(leaseAcceptedResponse.code,200,JSON.stringify(leaseAcceptedResponse.body));
+      assert.equal(leaseAcceptedResponse.body.accepted,true);
+      assert.equal(leaseAcceptedResponse.body.automatic_execution_allowed,false);
+      assert.equal(leaseAcceptedResponse.body.lease_id,claim.body.lease_id);
+      assert.ok(leaseAcceptedResponse.body.lease_seconds_remaining<=600);
+      assert.ok(leaseAcceptedResponse.body.lease_seconds_remaining>400);
+      const leaseReplayResponse=await b.signed('/v7/tasks/renew-lease',renewBody);
+      assert.equal(leaseReplayResponse.code,200,JSON.stringify(leaseReplayResponse.body));
+      assert.deepEqual(leaseReplayResponse.body,leaseAcceptedResponse.body,
         'Lost renewal reply reuses exact Central idempotent receipt');
-      const second=await b.signed('/v7/tasks/renew-lease',{
+      const leaseSecondResponse=await b.signed('/v7/tasks/renew-lease',{
         ...renewBody,request_id:'renew_too_early_'+(++count)});
-      assert.equal(second.code,409,JSON.stringify(second.body));
-      assert.equal(second.body.error_code,'WORKER_RENEWAL_NOT_DUE');
-      const otherPc=await c.signed('/v7/tasks/renew-lease',{
+      assert.equal(leaseSecondResponse.code,409,JSON.stringify(leaseSecondResponse.body));
+      assert.equal(leaseSecondResponse.body.error_code,'WORKER_RENEWAL_NOT_DUE');
+      const leaseOtherPcResponse=await c.signed('/v7/tasks/renew-lease',{
         ...renewBody,agent_id:c.agent_id,request_id:'renew_other_pc_'+(++count)});
-      assert.notEqual(otherPc.code,200,'QA PC may not renew somebody else\'s task');
+      assert.notEqual(leaseOtherPcResponse.code,200,'QA PC may not renew somebody else\'s task');
       await leaseTestDb.query('UPDATE v7_tickets SET updated_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 4 HOUR) WHERE ticket_id=?',
         ['ticket_qa_test']);
       await leaseTestDb.query('UPDATE v7_leases SET expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 120 SECOND) WHERE ticket_id=?',
         ['ticket_qa_test']);
-      const exhausted=await b.signed('/v7/tasks/renew-lease',{
+      const leaseBudgetResponse=await b.signed('/v7/tasks/renew-lease',{
         ...renewBody,request_id:'renew_exhausted_'+(++count)});
-      assert.equal(exhausted.code,409,JSON.stringify(exhausted.body));
-      assert.equal(exhausted.body.error_code,'WORKER_RENEWAL_BUDGET_EXHAUSTED');
-      const exhaustedCheckpoint=await b.signed('/v7/tasks/checkpoint',{
+      assert.equal(leaseBudgetResponse.code,409,JSON.stringify(leaseBudgetResponse.body));
+      assert.equal(leaseBudgetResponse.body.error_code,'WORKER_RENEWAL_BUDGET_EXHAUSTED');
+      const leaseBudgetCheckpointResponse=await b.signed('/v7/tasks/checkpoint',{
         request_id:'checkpoint_exhausted_'+(++count),agent_id:b.agent_id,
         ticket_id:'ticket_qa_test',lease_id:claim.body.lease_id,
         expected_master_epoch:Number(status.epoch),
         summary:'Attempted checkpoint after expired claim work budget',
         next_action:'Stop and request Owner reconciliation'});
-      assert.equal(exhaustedCheckpoint.code,409,JSON.stringify(exhaustedCheckpoint.body));
-      assert.equal(exhaustedCheckpoint.body.error_code,'WORKER_RENEWAL_BUDGET_EXHAUSTED');
+      assert.equal(leaseBudgetCheckpointResponse.code,409,JSON.stringify(leaseBudgetCheckpointResponse.body));
+      assert.equal(leaseBudgetCheckpointResponse.body.error_code,'WORKER_RENEWAL_BUDGET_EXHAUSTED');
     }finally{
       await leaseTestDb.query('UPDATE v7_tickets SET updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',
         ['ticket_qa_test']);
