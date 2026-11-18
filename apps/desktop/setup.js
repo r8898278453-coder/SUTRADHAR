@@ -28,6 +28,7 @@ async function loadStatus(){
       ['Installer preparation',s.installerPreparation||'NONE'],
       ['Installer execution',s.installerExecution||'NOT_ATTEMPTED'],
       ['Post-install observation',s.postInstallObservation||'NOT_RECORDED'],
+      ['Failed install review',s.failedInstallReview||'NOT_RECORDED'],
       ['Central acknowledgment',s.centralReport?.acknowledgedNow?
         'Agent reports heartbeat accepted by Central (verify in Owner dashboard)' :
         'Not currently acknowledged — pending approval / offline / error'],
@@ -70,6 +71,21 @@ get('autostart').addEventListener('change',async e=>{
     showFeedback('Login auto-start preference updated locally. Physical installer/startup acceptance is still pending.');
   }catch(error){showFeedback(String(error.message||error));}
   await loadStatus();
+});
+get('reviewFailedInstall').addEventListener('click',async()=>{
+  const button=get('reviewFailedInstall');button.disabled=true;
+  get('updateFeedback').textContent='Checking old installed version, protected device identity and Central maintenance…';
+  try{
+    const r=await api.reviewFailedInstall();
+    get('updateFeedback').textContent=r.canceled?
+      'Diagnostic canceled. No files changed.':
+      'Owner diagnostic recorded for '+r.node_id+': '+r.state+
+      '. Installer result remains UNKNOWN. Original hold ACTIVE. No automatic rollback, release or retry allowed.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='DIAGNOSTIC BLOCKED: '+
+      String(e.message||e)+'. Preserve all journals and contact Owner.';
+  }finally{button.disabled=false;}
 });
 get('observePostInstall').addEventListener('click',async()=>{
   const button=get('observePostInstall');button.disabled=true;
