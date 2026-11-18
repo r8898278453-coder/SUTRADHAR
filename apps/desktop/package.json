@@ -54,7 +54,9 @@
       "maintenance-release-trust.json",
       "maintenance-restart-grant.cjs",
       "maintenance-restart.cjs",
-      "maintenance-restart-ack.cjs"
+      "maintenance-restart-ack.cjs",
+      "windows-authenticode.cjs",
+      "maintenance-install-preparation.cjs"
     ],
     "extraResources": [
       {
