@@ -9,7 +9,9 @@ const {digestOffer}=require('../scripts/release/print-maintenance-offer-digest.c
 const nodeId='node_'+'a'.repeat(32),agentId='agent_noncritical_1';
 const keys=crypto.generateKeyPairSync('ed25519');
 const pub=keys.publicKey.export({type:'spki',format:'pem'}).toString();
-const node={node_id:nodeId,public_key_pem:pub,agents:[{id:agentId}]};
+const node={node_id:nodeId,public_key_pem:pub,
+  private_key_pem:keys.privateKey.export({type:'pkcs8',format:'pem'}).toString(),
+  agents:[{id:agentId}]};
 const makeDir=async(fn)=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-escrow-'));
   try{return await fn(dir);}finally{fs.rmSync(dir,{recursive:true,force:true});}
@@ -86,6 +88,8 @@ test('exact drained Owner offer and Authenticode proof stage without executing u
   assert.equal(attempt.identity_public_key_sha256,ready.identity_public_key_sha256);
   assert.equal(attempt.node_id,nodeId);
   assert.equal(attempt.installer_executed,false);
+  assert.ok(attempt.signature_base64.length>64);
+  assert.ok(ready.signature_base64.length>64);
   assert.equal(inspectHold({dir:nodeDir,nodeId}).active,true);
   await assert.rejects(prepareInstaller(params),/PREVIOUS_ATTEMPT/);
 }));
@@ -197,4 +201,19 @@ test('Owner maintenance offer digest matches exact local held envelope, never EX
   assert.equal(digestOffer(params.envelope),hold.offer_sha256);
   assert.notEqual(digestOffer(params.envelope),params.envelope.signed.installer_sha256);
   assert.throws(()=>digestOffer({signed:{schema:1},signature_base64:'A'}));
+}));
+
+test('escrow receipts must have valid OS-vault signatures; tamper is refused',()=>makeDir(async dir=>{
+  const {params,nodeDir}=setup(dir);
+  await prepareInstaller(params);
+  const file=path.join(nodeDir,'installer-preparation-ready.json');
+  const ready=JSON.parse(fs.readFileSync(file,'utf8'));
+  ready.target_version='7.9.0';
+  fs.writeFileSync(file,JSON.stringify(ready));
+  assert.throws(()=>inspectPreparedIdentity({dir:nodeDir,node,agentIds:[agentId],
+    observedVersion:'7.9.0'}),/RECORD_SIGNATURE_INVALID/);
+  const wrongKey=crypto.generateKeyPairSync('ed25519');
+  assert.throws(()=>identityEvidence({...node,
+    private_key_pem:wrongKey.privateKey.export({type:'pkcs8',format:'pem'}).toString()},
+    [agentId]),/KEYPAIR_MISMATCH/);
 }));
