@@ -22,6 +22,17 @@ function assertDirectory(dir){
   if(!st.isDirectory()||st.isSymbolicLink())fail('WORKER_LOCAL_PATH_UNTRUSTED');
   return fs.realpathSync(dir);
 }
+// Windows Git reports canonical paths with different separators and casing.
+// Both values MUST resolve to the same real on-disk directory; never compare
+// merely normalized user input or accept paths that do not exist.
+function sameRealDirectory(a,b){
+  try{
+    const x=fs.realpathSync.native(a),y=fs.realpathSync.native(b);
+    const norm=p=>process.platform==='win32'?
+      path.normalize(p).toLocaleLowerCase('en-US'):path.normalize(p);
+    return norm(x)===norm(y);
+  }catch{return false;}
+}
 function atomic(file,data,{exclusive=false}={}){
   const target=path.dirname(file);
   assertDirectory(target);
@@ -79,7 +90,7 @@ function localWorktree({repoDir,t,workerDir}){
   if(!fs.existsSync(workRoot))fs.mkdirSync(workRoot,{recursive:true,mode:0o700});
   if(!fs.existsSync(hookRoot))fs.mkdirSync(hookRoot,{recursive:true,mode:0o700});
   assertDirectory(workRoot);assertDirectory(hookRoot);
-  if(fs.realpathSync(git(repo,hookRoot,'rev-parse','--show-toplevel'))!==repo)
+  if(!sameRealDirectory(git(repo,hookRoot,'rev-parse','--show-toplevel'),repo))
     fail('WORKER_REPOSITORY_ROOT_MISMATCH');
   let remote=git(repo,hookRoot,'remote','get-url','origin');
   // No embedded credentials, HTTP, non-GitHub remotes or URL redirects.
@@ -106,8 +117,8 @@ function localWorktree({repoDir,t,workerDir}){
   const target=path.join(workRoot,t.ticket_id);
   if(fs.existsSync(target)){
     const actual=assertDirectory(target);
-    if(actual!==path.resolve(target)||
-      fs.realpathSync(git(target,hookRoot,'rev-parse','--show-toplevel'))!==actual||
+    if(!sameRealDirectory(actual,target)||
+      !sameRealDirectory(git(target,hookRoot,'rev-parse','--show-toplevel'),actual)||
       git(target,hookRoot,'branch','--show-current')!==t.branch_name||
       git(target,hookRoot,'merge-base','HEAD',t.baseline_sha)!==t.baseline_sha)
       fail('WORKER_EXISTING_WORKTREE_MISMATCH');
@@ -123,7 +134,7 @@ function localWorktree({repoDir,t,workerDir}){
       {encoding:'utf8',timeout:30000,maxBuffer:128*1024,windowsHide:true});
     if(added.error||added.status!==0)
       fail('WORKER_GIT_WORKTREE_CREATION_UNCERTAIN');
-    if(assertDirectory(target)!==path.resolve(target)||
+    if(!sameRealDirectory(assertDirectory(target),target)||
       git(target,hookRoot,'branch','--show-current')!==t.branch_name||
       git(target,hookRoot,'rev-parse','HEAD')!==t.baseline_sha)
       fail('WORKER_CREATED_WORKTREE_UNVERIFIED');
