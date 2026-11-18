@@ -102,6 +102,7 @@ function launcherRecorder(){
   const runner=(file,args,options)=>{
     launches.push({file,args,options});
     const child=new EventEmitter();
+    child.pid=31000+launches.length;
     child.unref=()=>{child.unrefCalled=true;};
     setImmediate(()=>child.emit('spawn'));
     return child;
