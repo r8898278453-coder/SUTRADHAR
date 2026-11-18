@@ -48,6 +48,8 @@
 <button id="verifyUpdate" class="secondary" type="button">Verify a signed update file</button>
 <button id="prepareInstaller" class="secondary" type="button">Stage Owner-signed update / rollback (NO INSTALL)</button>
 <button id="launchStagedInstaller" class="secondary" type="button">Owner-authorized Windows installer launch (one time)</button>
+<button id="inspectDirectInstallerExit" class="secondary" type="button">Inspect direct installer process exit (read-only)</button>
+<p class="hint">An optional device-signed exit code can be captured only before Desktop quits. Exit code 0 is NOT proof of NSIS/UAC completion. A missing exit record means UNKNOWN, not failure or success.</p>
 <p class="hint">Real Windows software changes are possible only with a separate Owner-signed one-time execution grant and protected trust configuration. Windows installer prompts will appear; process launch is NOT proof of a successful install, and automatic retry is blocked.</p>
 <button id="inspectPostUpdateIdentity" class="secondary" type="button">Check identity after Owner installation (read-only)</button>
 <button id="observePostInstall" class="secondary" type="button">Verify installed Desktop and Central before hold release</button>
