@@ -18,6 +18,7 @@ const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
 const {prepareInstaller,inspectPreparedIdentity}=require('./maintenance-install-preparation.cjs');
 const {launchStagedInstaller}=require('./maintenance-installer-execution.cjs');
 const {inspectDirectExitFromJournals}=require('./maintenance-installer-direct-exit.cjs');
+const {inspectObserverWitness}=require('./maintenance-installer-persistent-observer.cjs');
 const {observePostInstall}=require('./maintenance-postinstall-verification.cjs');
 const {observeFailedAttempt}=require('./maintenance-failed-install-review.cjs');
 const {prepareFailedInstallRecoveryReview}=require('./maintenance-failure-owner-review.cjs');
@@ -102,6 +103,11 @@ function safeStatus(){
     if(fs.existsSync(path.join(nodeDir(),'installer-postinstall-observed.json')))
       postInstallObservation='OBSERVATION_RECORDED_NOT_INSTALL_PROVEN';
   }catch{postInstallObservation='OWNER_REVIEW_REQUIRED';}
+  let persistentObserver='NO_WITNESS_OUTCOME_UNKNOWN';
+  try{
+    if(fs.existsSync(path.join(nodeDir(),'installer-process-observer-unsigned.json')))
+      persistentObserver='UNTRUSTED_PROCESS_LIVENESS_WITNESS_PRESENT';
+  }catch{persistentObserver='OWNER_REVIEW_REQUIRED';}
   let directInstallerExit='NOT_OBSERVED';
   try{
     if(fs.existsSync(path.join(nodeDir(),'installer-direct-exit-observed.json')))
@@ -141,7 +147,7 @@ function safeStatus(){
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:enrollmentState==='SUBMITTED',
     enrollmentState,enrollmentError,
-    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,directInstallerExit,postInstallObservation,failedInstallReview,failedRecoveryApproval,startupSupported,startupEnabled,
+    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,directInstallerExit,persistentObserver,postInstallObservation,failedInstallReview,failedRecoveryApproval,startupSupported,startupEnabled,
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent({manualOwnerRestart=false}={}){
@@ -648,6 +654,17 @@ app.whenReady().then(()=>{
         centralOrigin:current.centralUrl,signer,
         platform:process.platform});
     }finally{postInstallBusy=false;}
+  });
+  ipcMain.handle('sutradhar:inspectPersistentInstallerObserver',event=>{
+    verifySender(event);
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault)
+      throw Error('INSTALL_OBSERVER_PACKAGED_WINDOWS_REQUIRED');
+    const node=vault.read();
+    if(!node||!requireSubmitted({dir:nodeDir(),node,
+      centralUrl:current.centralUrl}))
+      throw Error('INSTALL_OBSERVER_ENROLLED_DEVICE_REQUIRED');
+    return inspectObserverWitness({dir:nodeDir(),node,
+      agentIds:current.agentIds});
   });
   ipcMain.handle('sutradhar:inspectDirectInstallerExit',event=>{
     verifySender(event);
