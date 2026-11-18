@@ -123,6 +123,18 @@ async function nodeAuth(req:Request){
   return node;
 }
 
+// Read-only proof of a still-approved, current Master. A nonexpired DB lease
+// alone is insufficient after an Owner node/agent revocation.
+async function approvedMasterLease(c:PoolConnection,ld:any):Promise<boolean>{
+  if(!ld.master_agent_id||!ld.lease_until||
+     Date.parse(ld.lease_until+'Z')<=await dbNow(c))return false;
+  const master=await one(c,'SELECT a.agent_id FROM v7_agents a '+
+    'JOIN v7_nodes n ON n.node_id=a.node_id '+
+    'WHERE a.agent_id=? AND a.state="APPROVED" AND n.state="APPROVED"',
+    [ld.master_agent_id]);
+  return Boolean(master);
+}
+
 // Claim/election and Owner fence transitions serialize on v7_cluster row.
 // This DB fence persists until an explicit Owner cancellation, NEVER expires
 // implicitly like an advisory five-minute intent.
@@ -1016,9 +1028,7 @@ app.get('/v7/owner/git-recovery',jsonRoute(async req=>{
   admin(req);
   return transaction(async c=>{
     const ld=await leader(c,false);
-    const now=await dbNow(c);
-    const masterLive=Boolean(ld.master_agent_id&&ld.lease_until&&
-      Date.parse(ld.lease_until+'Z')>now);
+    const masterLive=await approvedMasterLease(c,ld);
     const jobs=await rows(c,
       'SELECT j.ticket_id,j.state AS git_state,j.epoch AS publication_epoch,'+
       'j.agent_id AS qa_agent_id,t.status AS task_status,t.worker_agent_id,'+
@@ -1041,19 +1051,31 @@ app.get('/v7/owner/git-recovery',jsonRoute(async req=>{
         const publicationEpoch=Number(j.publication_epoch);
         const qaValid=Number(j.matching_qa_receipt)===1;
         const liveLease=Number(j.has_live_worker_lease)===1;
-        const recoverable=masterLive&&ld.phase==='RECOVERING'&&
-          Number.isSafeInteger(publicationEpoch)&&publicationEpoch<epoch&&
-          ['INTEGRATING','RECONCILIATION_REQUIRED'].includes(j.task_status)&&
-          j.qa_agent_id!==j.worker_agent_id&&qaValid&&!liveLease&&
-          SHA_RE.test(String(j.candidate_head_sha||''))&&
-          SHA_RE.test(String(j.candidate_tree_sha||''));
+        const problems:string[]=[];
+        if(!masterLive)problems.push('MASTER_NOT_LIVE_OR_APPROVED');
+        if(ld.phase!=='RECOVERING')problems.push('MASTER_NOT_RECOVERING');
+        if(Number(ld.paused))problems.push('CLUSTER_PAUSED');
+        if(!Number.isSafeInteger(publicationEpoch)||publicationEpoch>=epoch)
+          problems.push('PUBLICATION_NOT_PRIOR_EPOCH');
+        if(!['INTEGRATING','RECONCILIATION_REQUIRED'].includes(j.task_status))
+          problems.push('TICKET_NOT_IN_RECOVERY_STATE');
+        if(j.qa_agent_id===j.worker_agent_id)problems.push('QA_NOT_INDEPENDENT');
+        if(!qaValid)problems.push('MATCHING_QA_RECEIPT_MISSING');
+        if(liveLease)problems.push('LIVE_WORKER_LEASE');
+        if(!SHA_RE.test(String(j.baseline_sha||''))||
+          !SHA_RE.test(String(j.candidate_head_sha||''))||
+          !SHA_RE.test(String(j.candidate_tree_sha||''))||
+          !/^ai\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}$/.test(String(j.branch_name||''))||
+          !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(j.repository||'')))
+          problems.push('INVALID_REMOTE_PROOF_METADATA');
+        const recoverable=problems.length===0;
         return {ticket_id:j.ticket_id,git_state:j.git_state,
           publication_epoch:publicationEpoch,qa_agent_id:j.qa_agent_id,
           task_status:j.task_status,repository:j.repository,
           branch_name:j.branch_name,candidate_head_sha:j.candidate_head_sha,
           candidate_tree_sha:j.candidate_tree_sha,baseline_sha:j.baseline_sha,
           matching_qa_receipt:qaValid,has_live_worker_lease:liveLease,
-          preflight_eligible:recoverable};
+          preflight_eligible:recoverable,blocking_reasons:problems};
       })};
   });
 }));
@@ -1086,8 +1108,8 @@ app.post('/v7/git/recover-remote-proof',jsonRoute(async req=>{
   if(replay)return replay;
   const info=await transaction(async c=>{
     const ld=await leader(c);
-    if(ld.phase!=='RECOVERING'||!ld.master_agent_id||Number(ld.epoch)!==epoch||
-       !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
+    if(Number(ld.paused)||ld.phase!=='RECOVERING'||Number(ld.epoch)!==epoch||
+       !(await approvedMasterLease(c,ld)))
       fault('RECOVERY_MASTER_EPOCH_NOT_LIVE',409);
     const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=?',[ticketId]);
     const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
@@ -1116,8 +1138,8 @@ app.post('/v7/git/recover-remote-proof',jsonRoute(async req=>{
   const verified=proof.verified?proof:fault('GIT_RECOVERY_REMOTE_UNCERTAIN_'+proof.error_code,409);
   return transaction(async c=>{
     const ld=await leader(c);
-    if(ld.phase!=='RECOVERING'||!ld.master_agent_id||Number(ld.epoch)!==epoch||
-       !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
+    if(Number(ld.paused)||ld.phase!=='RECOVERING'||Number(ld.epoch)!==epoch||
+       !(await approvedMasterLease(c,ld)))
       fault('RECOVERY_MASTER_EPOCH_CHANGED',409);
     return idem(c,'owner:web',requestId,'GIT_RECOVERY_REMOTE_PROOF',
       {ticketId,epoch,head:verified.headSha,reason},async()=>{
