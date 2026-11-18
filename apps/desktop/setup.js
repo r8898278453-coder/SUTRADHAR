@@ -27,6 +27,7 @@ async function loadStatus(){
       ['Maintenance recovery hold',s.maintenanceHold||'NONE'],
       ['Installer preparation',s.installerPreparation||'NONE'],
       ['Installer execution',s.installerExecution||'NOT_ATTEMPTED'],
+      ['Post-install observation',s.postInstallObservation||'NOT_RECORDED'],
       ['Central acknowledgment',s.centralReport?.acknowledgedNow?
         'Agent reports heartbeat accepted by Central (verify in Owner dashboard)' :
         'Not currently acknowledged — pending approval / offline / error'],
@@ -69,6 +70,20 @@ get('autostart').addEventListener('change',async e=>{
     showFeedback('Login auto-start preference updated locally. Physical installer/startup acceptance is still pending.');
   }catch(error){showFeedback(String(error.message||error));}
   await loadStatus();
+});
+get('observePostInstall').addEventListener('click',async()=>{
+  const button=get('observePostInstall');button.disabled=true;
+  get('updateFeedback').textContent='Verifying signed installer launch, current Desktop signature/version, OS-vault identity and Central maintenance…';
+  try{
+    const r=await api.observePostInstall();
+    get('updateFeedback').textContent='Target '+r.observed_version+
+      ', same device identity and Central DRAINED fence OBSERVED for '+r.node_id+
+      '. Windows installer completion is NOT proven. The local hold remains active; Owner cancellation and separately signed hold release are still required.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='POST-INSTALL VERIFICATION BLOCKED: '+
+      String(e.message||e)+'. Keep the hold and all execution receipts. Owner recovery review required.';
+  }finally{button.disabled=false;}
 });
 get('inspectPostUpdateIdentity').addEventListener('click',async()=>{
   const button=get('inspectPostUpdateIdentity');button.disabled=true;
