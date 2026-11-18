@@ -33,12 +33,23 @@ This is a traceable engineering response to the 19 November real-world audit. It
 - After an ambiguous or lost response, `worker prepare` reuses the exact request ID, agent, ticket, original expected ticket version and Master epoch. Central returns the original idempotent lease receipt; never create a second claim.
 - If the ticket, branch, repo, scope, agent, epoch, local journal or remote claim status differs, the CLI fails closed. It saves a local lease receipt before removing the pending intent.
 - Tests cover stable replay, rejected stale epoch/stolen identity/tampered record, and the real disposable-MySQL idempotent claim receipt.
-- **Limit:** This is not the OS-vault worker bridge. Checkpoint/submit operation journals, long-running worker lease renewal, and crash/failover reassignment are still incomplete. A local journal is not a substitute for a Central signed receipt.
+- **Limit:** This is not the OS-vault worker bridge. Checkpoint/submit operation journals, automatic worker operation, and crash/failover reassignment are still incomplete. A local journal is not a substitute for a Central signed receipt.
+
+## RWA-004 — Signed bounded active-task lease renewal (manual alpha)
+
+- Central has a signed `POST /v7/tasks/renew-lease` endpoint for the **same approved agent, same ticket/lease ID, current Master epoch and READY unpaused cluster**. Expired leases and stale/Owner-revoked Master authority cannot be renewed.
+- The initial claim sets the ticket's `updated_at` in MySQL; current schema does not automatically rewrite that column on checkpoint. It is the server-side anchor for an **absolute four-hour claim lifetime**. Each accepted renewal grants at most 600 more seconds, never past the deadline. Requests made with more than seven minutes left are rejected.
+- The existing `/v7/tasks/checkpoint` renewal is now bounded by the **same absolute deadline**. A checkpoint cannot silently bypass the manual renewal budget.
+- CLI operator workflow: build worker source, then `npm run edge:worker -- renew AGENT_ID TICKET_ID "Reviewed changes and continuing scoped task"`. The PC must already be enrolled in the **developer-only alpha identity mode**, have a trusted worktree, and have an unexpired claim from that same Master epoch.
+- The CLI performs an existing signed read-only resume preflight, writes an exclusive local `renew_<ticket>.json` intent **before HTTP**, replays the same request ID after ambiguous results, verifies the response, and checks the **live lease again** before clearing the intent. It does not auto-run provider/Git commands.
+- Checkpoint and renewal updates use the Central DB clock; operator wall-clock claims are not trusted. Tests cover in-memory policy budgets plus real disposable MySQL (due/early requests, idempotent lost-reply replay, different agent, cap refusal on both renewal and checkpoint).
+- **Failure action:** On expired lease, spent four-hour budget, changed Master epoch, corrupt local journal or unclear Central reply, stop coding/pushing. Preserve local evidence for Owner reconciliation. Never delete a pending journal just to fabricate a fresh renewal.
+- **Remaining limitations:** No packaged OS-vault worker bridge yet; no autonomous progress monitor, automatic safe reassignment, per-project quota scheduler, or independently verified QA artifact chain. Four hours is an initial conservative contract and must be reviewed with real worker workloads before release.
 
 ## Next prioritized work
 
 1. **RWA-003** — Complete actual work execution using a strictly allowlisted Electron OS-vault signer, per-agent scopes and project/worktree permissions; no plaintext key in packaged worker.
-2. **RWA-004 + RWA-008 remainder** — Signed progress lease renewals with bounded budgets, expiration scanner and safe reassign/reconcile, plus durable checkpoint/submit receipts.
+2. **RWA-004 + RWA-008 remainder** — Finish packaged OS-vault signing integration, progress-aware monitoring, lease expiry scanner and authorized reassignment/reconcile; add durable checkpoint/submit receipts. Manual bounded renewal alone is insufficient.
 3. **RWA-007** — Independently verified QA artifacts and physical QA host separation for high-risk work. A QA agent's `passed:true` is only an attestation today.
 4. **RWA-005 + RWA-011** — Versioned Master knowledge, natural-language Task Creator, dependency DAG, semantic locks, provider registry, quotas and deterministic recovery controller.
 5. **External gates** — Hostinger real staging/MySQL restore, full supply-chain clearance, production signing, Windows physical pilot, live protected GitHub PR/merge and Owner acceptance.
