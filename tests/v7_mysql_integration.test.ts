@@ -5,6 +5,7 @@ import http from 'node:http';
 import mysql from 'mysql2/promise';
 import {once} from 'node:events';
 import {app,shutdownV7ForTests} from '../v7/central.ts';
+import {verifyRecoverySnapshot} from '../v7/recovery_validation.ts';
 // Run only against disposable MySQL database. No mocking SQL, no production credentials.
 const enabled=process.env.SUTRADHAR_RUN_V7_MYSQL_TEST==='1';
 test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover and QA gates',{skip:!enabled},async()=>{
@@ -52,7 +53,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const client={node_id,agent_id,signed,async heartbeat(epoch:number|null=0){
       sequence++;agentSeq++;
       return signed('/v7/nodes/heartbeat',{sequence,boot_id:'boot_test_'+i,expected_master_epoch:epoch,
-        agents:[{agent_id,sequence:agentSeq,status:'IDLE'}]});}};
+        agents:[{agent_id,sequence:agentSeq,status:'ONLINE'}]});}};
     nodes.push(client);return client;
   }
   try{
@@ -132,6 +133,10 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(recovered.body.events.length,300,'Historical events are a bounded window');
     assert.ok(recovered.body.event_high_watermark>=320);
     assert.deepEqual(recovered.body.unresolved_git_jobs,[]);
+    // Exact same shared validator is bundled in the packaged Windows agent:
+    // full 300 recent events are legal even with long-lived history.
+    assert.equal(verifyRecoverySnapshot(recovered.body,Number(status.epoch)),
+      recovered.body.manifest_sha256);
     const pre=await a.signed('/v7/leadership/reconcile',{agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
       request_id:'rec_'+(++count),manifest_sha256:recovered.body.manifest_sha256});
     assert.equal(pre.code,200,JSON.stringify(pre.body));
@@ -228,6 +233,27 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       title:'Implement scoped change',description:'Change a file',risk:'LOW',
       write_scopes:['src/example.ts'],acceptance_criteria:['observable behavior']});
     assert.equal(plan.code,200,JSON.stringify(plan.body));
+    const invalidBranch=await a.signed('/v7/tasks/plan',{
+      request_id:'invalid_branch_'+(++count),agent_id:a.agent_id,
+      expected_master_epoch:Number(status.epoch),ticket_id:'ticket_unpublishable',
+      project_id:'project_integration',baseline_sha:'a'.repeat(40),
+      branch_name:'ai/not/publishable',title:'Invalid work branch',
+      description:'Never create a ticket that the Git publisher cannot publish',
+      risk:'LOW',write_scopes:['src/alternate.ts'],
+      acceptance_criteria:['must not become claimable']});
+    assert.equal(invalidBranch.code,400,JSON.stringify(invalidBranch.body));
+    assert.equal(invalidBranch.body.error_code,'INVALID_BRANCH');
+    const protectedPlan=await a.signed('/v7/tasks/plan',{
+      request_id:'protected_plan_'+(++count),agent_id:a.agent_id,
+      expected_master_epoch:Number(status.epoch),ticket_id:'ticket_protected_work',
+      project_id:'project_integration',baseline_sha:'a'.repeat(40),
+      branch_name:'ai/protected_work',title:'Sensitive desktop signer review',
+      description:'Requested by task creator as LOW, Owner approval must be required',
+      risk:'LOW',write_scopes:['apps/desktop/main.cjs'],
+      acceptance_criteria:['must require Owner authorization']});
+    assert.equal(protectedPlan.code,200,JSON.stringify(protectedPlan.body));
+    assert.equal(protectedPlan.body.status,'WAITING_AUTHORIZATION');
+    assert.equal(protectedPlan.body.owner_approval_required,true);
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:b.agent_id,can_develop:true});
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:c.agent_id,can_qa:true});
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:d.agent_id,can_develop:true});
@@ -317,6 +343,15 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const claim=await b.signed('/v7/tasks/claim',{request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'});
     assert.equal(claim.code,200,JSON.stringify(claim.body));
+    // Packaged heartbeats report ONLINE. Central must use authoritative
+    // lease/ticket state, never allow ONLINE to erase an active assignment.
+    const busyPulse=await b.heartbeat(Number(status.epoch));
+    assert.equal(busyPulse.code,200,JSON.stringify(busyPulse.body));
+    const busyNode=await b.signed('/v7/nodes/me',undefined,'GET');
+    assert.equal(busyNode.code,200,JSON.stringify(busyNode.body));
+    assert.equal(busyNode.body.agents[0].status,'BUSY');
+    assert.equal(busyNode.body.agents[0].active_ticket,'ticket_qa_test');
+    assert.equal(Number(busyNode.body.agents[0].has_live_work_lease),1);
     // Restart preflight is read-only and cannot renew, steal or replace a lease.
     const resumeProof=await b.signed('/v7/tasks/resume-check',{
       agent_id:b.agent_id,ticket_id:'ticket_qa_test',
