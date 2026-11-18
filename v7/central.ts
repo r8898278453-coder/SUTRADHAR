@@ -13,7 +13,7 @@ import type {PoolConnection} from 'mysql2/promise';
 import {verifyGitHubMergeEvidence} from '../github_merge_verifier.ts';
 import {createVerifiedDraftPr} from '../github_pr_creator.ts';
 import {inspectGitRemote} from './git_remote.ts';
-import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest} from './rules.ts';
+import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest,validTaskBranch,isProtectedScope} from './rules.ts';
 import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import sharedContract from '../packages/shared/contract.json';
 
@@ -765,13 +765,13 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
   const fingerprint=digest(JSON.stringify([projectId,title.trim().toLowerCase(),
     description.trim().toLowerCase(),[...scope].sort(),[...deps].sort()]));
   const branch=requireStr(d.branch_name,120);
-  if(!/^ai\/[A-Za-z0-9._/-]+$/.test(branch)||branch.includes('..'))fault('INVALID_BRANCH',400);
+  if(!validTaskBranch(branch))fault('INVALID_BRANCH',400);
   return transaction(async c=>{
     const ld=await readyMaster(c,node.node_id,agentId,d.expected_master_epoch);
     return idem(c,agentId,d.request_id,'TASK_PLAN',d,async()=>{
       const project=await one(c,'SELECT * FROM v7_projects WHERE project_id=? AND status="ACTIVE" FOR UPDATE',[projectId]);
       if(!project)fault('PROJECT_NOT_FOUND',404);
-      const sensitive=scope.some((s:string)=>/^(v7|core|contracts|migrations|\.github|server\.ts|server_db\.ts|hooks)(\/|$)/i.test(s));
+      const sensitive=scope.some(isProtectedScope);
       const approvalNeeded=risk==='CORE'||risk==='HIGH'||sensitive;
       let approved=false;
       if(d.proposal_id){
