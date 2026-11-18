@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   launchStagedInstaller:()=>ipcRenderer.invoke('sutradhar:launchStagedInstaller'),
   inspectPostUpdateIdentity:()=>ipcRenderer.invoke('sutradhar:inspectPostUpdateIdentity'),
   observePostInstall:()=>ipcRenderer.invoke('sutradhar:observePostInstall'),
+  reviewFailedInstall:()=>ipcRenderer.invoke('sutradhar:reviewFailedInstall'),
   checkUpdateReadiness:()=>ipcRenderer.invoke('sutradhar:checkUpdateReadiness'),
   isolateDrainedPc:()=>ipcRenderer.invoke('sutradhar:isolateDrainedPc'),
   checkMaintenanceRecovery:()=>ipcRenderer.invoke('sutradhar:checkMaintenanceRecovery'),
