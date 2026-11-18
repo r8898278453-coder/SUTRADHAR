@@ -180,7 +180,7 @@ test('post-install identity check validates unchanged OS-vault public key and ag
   const {publicKey:unrelated}=crypto.generateKeyPairSync('ed25519');
   assert.throws(()=>inspectPreparedIdentity({dir:nodeDir,
     node:{...node,public_key_pem:unrelated.export({type:'spki',format:'pem'}).toString()},
-    agentIds:[agentId],observedVersion:'7.2.0'}),/MISMATCH_OWNER_REVIEW/);
+    agentIds:[agentId],observedVersion:'7.2.0'}),/KEYPAIR_MISMATCH/);
   assert.throws(()=>inspectPreparedIdentity({dir:nodeDir,node,
     agentIds:['agent_wrong_1'],observedVersion:'7.2.0'}));
 }));
@@ -192,7 +192,7 @@ test('post-install check denies corrupt or mismatched escrow evidence',()=>makeD
   receipt.offer_sha256='e'.repeat(64);
   fs.writeFileSync(file,JSON.stringify(receipt));
   assert.throws(()=>inspectPreparedIdentity({dir:nodeDir,node,agentIds:[agentId],
-    observedVersion:'7.2.0'}),/MISMATCH_OWNER_REVIEW/);
+    observedVersion:'7.2.0'}),/RECORD_SIGNATURE_INVALID/);
 }));
 
 test('Owner maintenance offer digest matches exact local held envelope, never EXE SHA',()=>makeDir(async dir=>{
