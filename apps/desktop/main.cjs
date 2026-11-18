@@ -26,6 +26,7 @@ const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
 const {checkRecovery}=require('./maintenance-recovery-preflight.cjs');
 const {releaseHold,boundedFile}=require('./maintenance-release-executor.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
+const {requireNoInstallerIncident}=require('./maintenance-install-incident-barrier.cjs');
 const {prepareManualRestart,confirmLiveCentral}=require('./maintenance-restart.cjs');
 const {waitForFreshAck,recordFreshAck}=require('./maintenance-restart-ack.cjs');
 const {
@@ -141,6 +142,7 @@ function startAgent({manualOwnerRestart=false}={}){
   if(!current||shuttingDown||agent)return null;
   if(requiresReconciliation(nodeDir())&&!manualOwnerRestart)
     throw Error('MAINTENANCE_POST_RELEASE_RECONCILIATION_REQUIRED');
+  requireNoInstallerIncident({dir:nodeDir(),manualOwnerRestart});
   // Persisted local hold overrides automatic restart even if Central currently
   // appears healthy; corrupted holds also fail closed for Owner review.
   if(fs.existsSync(nodeDir())){
