@@ -14,6 +14,7 @@ const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs
 const {identityEvidence,inspectPreparedIdentity}=require('./maintenance-install-preparation.cjs');
 const {verifyExecutionGrant}=require('./maintenance-installer-execution-grant.cjs');
 const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
+const {createDirectExitTracker}=require('./maintenance-installer-direct-exit.cjs');
 const {validOrigin}=require('./update-readiness.cjs');
 const {sha256File}=require('./update-policy.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
@@ -188,8 +189,18 @@ async function launchStagedInstaller({dir,node,agentIds,observedVersion,
     child=runner(stagedPath,[],{cwd:path.dirname(stagedPath),
       shell:false,detached:true,windowsHide:false,stdio:'ignore'});
   }catch{fail('UPDATE_EXECUTION_SPAWN_UNCERTAIN_OWNER_REVIEW');}
-  if(!child||typeof child.once!=='function'||typeof child.removeListener!=='function')
+  if(!child||typeof child.once!=='function'||typeof child.removeListener!=='function'||
+     !Number.isSafeInteger(child.pid)||child.pid<=0)
     fail('UPDATE_EXECUTION_SPAWN_UNCERTAIN_OWNER_REVIEW');
+  // Capture an early direct-child exit even if it fires before we finish
+  // fsyncing the launch receipt. Only arm persistence AFTER launch is recorded.
+  const exitTracker=createDirectExitTracker({child,dir,node,
+    scope:{node_id:node.node_id,plan_id:ready.plan_id,
+      wave_id:ready.wave_id,offer_sha256:ready.offer_sha256,
+      installer_sha256:ready.installer_sha256,grant_id:approved.grant_id,
+      target_version:ready.target_version,kind:ready.kind},
+    onRecordingError:error=>console.error('INSTALL_DIRECT_EXIT_RECORD_OWNER_REVIEW',
+      String(error?.message||error))});
   await new Promise((resolve,reject)=>{
     let finished=false,timer;
     const cleanup=()=>{clearTimeout(timer);child.removeListener('spawn',onSpawn);
@@ -211,6 +222,7 @@ async function launchStagedInstaller({dir,node,agentIds,observedVersion,
     identity_preservation_verified:false,central_reconciliation_verified:false,
     automatic_retry_allowed:false};
   persistNew(launchedPath,signedRecord(observed,node));
+  exitTracker.arm();
   child.unref?.();
   return Object.freeze({launched:true,installed:false,rollback_completed:false,
     node_id:node.node_id,target_version:ready.target_version,kind:ready.kind,
