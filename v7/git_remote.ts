@@ -10,11 +10,11 @@ export type GitRemoteInput = {
 export type GitRemoteProof =
   | {verified:true;headSha:string;treeSha:string;baseline:string;branch:string;changedFiles:string[]}
   | {verified:false;error_code:string};
-const sha=/^[0-9a-f]{40}$/,repoRe=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/,
-  branchRe=/^ai\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}$/;
+import {validTaskBranch} from './rules.ts';
+const sha=/^[0-9a-f]{40}$/,repoRe=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export async function inspectGitRemote(x:GitRemoteInput):Promise<GitRemoteProof>{
   const denied=(error_code:string):GitRemoteProof=>({verified:false,error_code});
-  if(!repoRe.test(x.repo)||!branchRe.test(x.branch)||!sha.test(x.baseline)||
+  if(!repoRe.test(x.repo)||!validTaskBranch(x.branch)||!sha.test(x.baseline)||
     !sha.test(x.tree)||!x.token?.trim()||!x.writeScopes?.length||
     (x.expectedHead!==undefined&&!sha.test(x.expectedHead)))return denied('REMOTE_PROOF_NOT_CONFIGURED');
   const allowed=(file:string)=>x.writeScopes.some(s=>file===s||file.startsWith(s+'/'));
