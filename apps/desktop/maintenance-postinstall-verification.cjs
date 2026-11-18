@@ -93,15 +93,22 @@ function baseEvidence({dir,node,agentIds,observedVersion}){
     fail('POSTINSTALL_EXECUTION_EVIDENCE_MISMATCH');
   return {identity,ready,attempt,launch,held};
 }
-function verifyObservedReceipt({dir,node,agentIds}={}){
+function verifyObservedReceipt({dir,node,agentIds,observedVersion}={}){
   if(!node||!NODE.test(node.node_id||'')||
      typeof dir!=='string'||!path.isAbsolute(dir))
     fail('POSTINSTALL_OBSERVATION_ARGUMENTS_INVALID');
   const receipt=verifySigned(
     jsonFile(path.join(dir,'installer-postinstall-observed.json')),
     node,OBS_PREFIX);
-  const identity=identityEvidence(node,agentIds);
-  const held=inspectHold({dir,nodeId:node.node_id});
+  if(receipt.observed_version!==observedVersion)
+    fail('POSTINSTALL_CURRENT_APP_VERSION_CHANGED');
+  const baseline=baseEvidence({dir,node,agentIds,observedVersion});
+  const identity=baseline.identity;
+  const held=baseline.held;
+  if(baseline.attempt.grant_id!==receipt.execution_grant_id||
+     baseline.attempt.installer_sha256!==receipt.installer_sha256||
+     baseline.ready.target_version!==receipt.observed_version)
+    fail('POSTINSTALL_OBSERVATION_EVIDENCE_CHANGED');
   if(!held.active||receipt.schema!==1||
      receipt.state!=='TARGET_VERSION_IDENTITY_CENTRAL_OBSERVED'||
      receipt.node_id!==node.node_id||
