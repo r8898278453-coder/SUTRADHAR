@@ -375,7 +375,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       // Uncertain external Git publication is NOT a work lease: it must still
       // block recovery. Simulated SQL effects are confined to this disposable DB.
       await db.query('INSERT INTO v7_git_jobs(ticket_id,agent_id,epoch,request_id,state) VALUES(?,?,?,?,"RUNNING")',
-        ['ticket_qa_test',b.agent_id,Number(status.epoch),'test_uncertain_git']);
+        ['ticket_qa_test',c.agent_id,Number(status.epoch),'test_uncertain_git']);
       const uncertain=await b.signed('/v7/recovery',undefined,'GET');
       assert.equal(uncertain.code,200,JSON.stringify(uncertain.body));
       assert.equal(uncertain.body.unresolved_git_jobs.length,1);
