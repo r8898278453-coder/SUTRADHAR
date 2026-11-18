@@ -51,6 +51,8 @@ function checkPrepared({dir,node,agentIds,observedVersion}){
   if(ready.status!=='OFFLINE_STAGED_NOT_INSTALLED'||
      !HEX.test(ready.installer_sha256||'')||
      ready.installer_sha256!==ready.staged_sha256||
+     !Number.isSafeInteger(ready.offer_expires_at_ms)||
+     ready.offer_expires_at_ms<=Date.now()||
      !/^SUTRADHAR[-_ A-Za-z0-9.()]+\.exe$/.test(ready.installer_filename||'')||
      ready.installer_filename.includes('..')||
      !Number.isSafeInteger(ready.expected_epoch)||ready.expected_epoch<1||
