@@ -99,20 +99,32 @@ function localWorktree({repoDir,t,workerDir}){
     fail('WORKER_REPOSITORY_ORIGIN_MISMATCH');
   if(git(repo,hookRoot,'cat-file','-t',t.baseline_sha)!=='commit')
     fail('WORKER_BASELINE_NOT_LOCAL_COMMIT');
-  // Avoid checkout-time repository code execution via custom Git smudge /
-  // process filters. Hook execution is disabled with a private empty hooksPath.
-  const filters=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-C',repo,
-    'config','--get-regexp','^filter\\..*\\.(smudge|process)$'],
-    {encoding:'utf8',timeout:10000,maxBuffer:128*1024,windowsHide:true});
-  if(filters.error||![0,1].includes(filters.status)||filters.status===0)
-    fail('WORKER_CUSTOM_GIT_FILTER_UNTRUSTED');
-  for(const attr of ['.gitattributes']){
-    const out=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-C',repo,
-      'show',t.baseline_sha+':'+attr],
-      {encoding:'utf8',timeout:10000,maxBuffer:128*1024,windowsHide:true});
-    if(out.status===0&&/\bfilter=|\bworking-tree-encoding=/i.test(out.stdout))
-      fail('WORKER_GIT_ATTRIBUTES_REQUIRE_OWNER_REVIEW');
-    if(out.error)fail('WORKER_GIT_ATTRIBUTES_UNREADABLE');
+  // Git LFS commonly installs global filter definitions even when no file
+  // uses them; blanket rejection breaks every stock Git for Windows install.
+  // Instead inspect effective attributes for *every tracked file* at the
+  // exact immutable approved baseline, including nested .gitattributes and
+  // local/global attributes. Git check-attr does not run smudge programs.
+  const tree=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-C',repo,
+    'ls-tree','-r','--name-only','-z',t.baseline_sha],
+    {encoding:null,timeout:15000,maxBuffer:2*1024*1024,windowsHide:true});
+  if(tree.error||tree.status!==0||!Buffer.isBuffer(tree.stdout)||
+     tree.stdout.length===0||tree.stdout.length>2*1024*1024)
+    fail('WORKER_GIT_FILE_INVENTORY_UNTRUSTED');
+  const paths=tree.stdout;
+  const attr=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-C',repo,
+    'check-attr','--source='+t.baseline_sha,'--all','-z','--stdin'],
+    {input:paths,encoding:null,timeout:20000,maxBuffer:4*1024*1024,windowsHide:true});
+  if(attr.error||attr.status!==0||!Buffer.isBuffer(attr.stdout)||
+     attr.stdout.length>4*1024*1024)
+    fail('WORKER_GIT_ATTRIBUTES_UNREADABLE');
+  const fields=attr.stdout.toString('utf8').split('\0');
+  if(fields[fields.length-1]!=='')fail('WORKER_GIT_ATTRIBUTES_UNREADABLE');
+  for(let n=0;n<fields.length-1;n+=3){
+    if(n+2>=fields.length-1)fail('WORKER_GIT_ATTRIBUTES_UNREADABLE');
+    const name=fields[n+1],value=fields[n+2];
+    if((name==='filter'||name==='working-tree-encoding')&&
+      value!=='unset'&&value!=='unspecified')
+      fail('WORKER_ACTIVE_GIT_FILTER_REQUIRES_OWNER_REVIEW');
   }
   const target=path.join(workRoot,t.ticket_id);
   if(fs.existsSync(target)){
