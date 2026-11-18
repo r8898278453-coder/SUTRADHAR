@@ -12,12 +12,12 @@ function requestStopAndConfirm(child,{timeoutMs=12000}={}){
   if(typeof child.once!=='function'||typeof child.removeListener!=='function'||
      typeof child.kill!=='function')
     throw Error('MAINTENANCE_STOP_CHILD_INVALID');
-  // exitCode===null is NOT reliable after signal termination; signalCode
-  // may be present. A pre-existing exit must be independently observed.
-  if(child.exitCode!==null&&child.exitCode!==undefined||
-     child.signalCode!==null&&child.signalCode!==undefined)
+  // A signal request alone does NOT prove process exit. Only a populated
+  // exitCode or a subsequently observed 'exit' event counts as stopped.
+  if(child.exitCode!==null&&child.exitCode!==undefined)
     return Promise.resolve(Object.freeze({agent_stopped:true,
       agent_stop_requested:false,exit_confirmed_by:'CHILD_EXIT_STATE'}));
+  const alreadySignaled=child.signalCode!==null&&child.signalCode!==undefined;
   return new Promise(resolve=>{
     let finished=false,requested=false,timer=null;
     const clean=()=>{clearTimeout(timer);
@@ -33,10 +33,12 @@ function requestStopAndConfirm(child,{timeoutMs=12000}={}){
     child.once('exit',onExit);
     child.once('error',onError);
     timer=setTimeout(()=>finish(false,'EXIT_TIMEOUT_OWNER_REVIEW'),timeoutMs);
-    try{
-      requested=child.kill();
-      if(requested!==true)finish(false,'STOP_REQUEST_REJECTED_OWNER_REVIEW');
-    }catch{finish(false,'STOP_REQUEST_FAILED_OWNER_REVIEW');}
+    if(!alreadySignaled){
+      try{
+        requested=child.kill();
+        if(requested!==true)finish(false,'STOP_REQUEST_REJECTED_OWNER_REVIEW');
+      }catch{finish(false,'STOP_REQUEST_FAILED_OWNER_REVIEW');}
+    }
   });
 }
 module.exports={requestStopAndConfirm};
