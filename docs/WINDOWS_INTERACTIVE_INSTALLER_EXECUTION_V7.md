@@ -74,3 +74,27 @@ The diagnostic repeats OS-vault keypair/agent checks and validates the currently
 If Windows setup was cancelled, no verified target version is running, or a signed receipt is corrupt, current policy intentionally **does not provide an automatic or self-service hold release path**. Owner must investigate Windows setup logs, installed files, OS-vault integrity and Central state, and authorize a future distinct failure-recovery procedure. Never remove the hold/journals manually to evade this guard. The desktop's installer subprocess is detached and the app exits after process spawn; therefore this release does **not** capture trusted NSIS completion or exit codes. Do not infer such evidence from the diagnostic labels.
 
 This remains alpha: live Windows process-exit tracking, protected durable Windows receipts, code-signing, Hostinger staging, physical multi-PC tests and the full npm supply-chain audit remain production NO-GO gates.
+
+## Owner-signed failed-install investigation after Central cancellation — alpha
+
+The PC's **Record canceled / uncertain installer (NO RECOVERY)** diagnostic must be made **while the exact Central maintenance plan is still DRAINED**, with its persistent local maintenance hold present. This records `installer-failure-review-observed.json` from the device's OS-vault Ed25519 key and confirms only that the **old version remains installed** with the Owner-pinned Windows Authenticode signer. It does not establish installer exit status or authorize release.
+
+After reviewing that diagnostic, the Owner may cancel that exact Central plan using the existing protected administrative `CANCEL_PC_UPDATE` action. Only then can an independent Owner issue a short-lived `review_failed_install_recovery` grant, using the offline command `npm run release:sign-failed-install-review` on a trusted signing machine. The signer **verifies three OS-vault-signed device receipts** first; it does not accept an unverified typed-only incident declaration. It requires these environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `SUTRADHAR_OWNER_FAILURE_RECOVERY_REVIEW_APPROVED=yes` | Explicit manual Owner approval |
+| `SUTRADHAR_FAILURE_DIAGNOSTIC_JSON` | Absolute path to copied device-signed `installer-failure-review-observed.json` |
+| `SUTRADHAR_FAILURE_PREPARED_JSON` | Absolute path to device-signed `installer-preparation-ready.json` |
+| `SUTRADHAR_FAILURE_EXECUTION_ATTEMPT_JSON` | Absolute path to device-signed `installer-execution-attempt.json` |
+| `SUTRADHAR_FAILURE_DEVICE_PUBLIC_KEY_FILE` | Absolute path to trusted enrolled device **public** key PEM |
+| `SUTRADHAR_FAILURE_OWNER_SIGNING_KEY_FILE` | Protected Owner Ed25519 **private** signing key path, outside repository |
+| `SUTRADHAR_FAILURE_OWNER_GRANT_OUTPUT` | A **new** absolute JSON grant file, outside repository (exclusive-create; never overwrite) |
+
+Never copy the device private key or Owner signing private key to another PC or the repository. The Owner must separately check the device public key's enrollment fingerprint from original Central records, the physical PC identity, and the Windows setup logs; merely possessing a copied public key file is not independent identity validation.
+
+The Owner transfers the signed grant to the same enrolled Windows PC. In a separately protected signed release, the **Owner-signed failed-install investigation (NO RELEASE)** Desktop action requires the separate `failure-review-trust.json` Ed25519 public key (`UNCONFIGURED_BLOCKED` in alpha) plus an unchanged OS-vault keypair, the old app version and its fresh Authenticode publisher/hash, the exact diagnostic/attempt/plan/offer/grant IDs, and **two fresh node-signed Central CANCELLED checks** separated by a healthy, stable READY Master/Backup cluster and approved idle agent check. It writes one immutable, OS-vault-signed `installer-failure-exception-reviewed.json` receipt.
+
+**The result is NOT an exception to release the hold.** Neither the signing command nor the Desktop action removes the hold, restarts a worker, runs an EXE, grants an automatic retry, grants rollback, claims NSIS exit success, or unlocks the existing post-install release requirement. This preserves the original isolated PC for human investigation. The original plan's cancellation and the new grant are **necessary evidence for review only**.
+
+Production signed packaging now requires a separate validated `SUTRADHAR_FAILURE_REVIEW_PUBLIC_KEY_PEM_B64` public trust root. The release packager restores the source trust JSON afterward; default unsigned QA cannot activate it. A future **distinct** Owner-assisted failed-install *resolution* requires physical Windows installer/NSIS outcome evidence, process inventory/elevation checks, protected durable journals and an atomic Central authorization. Until those real-environment gates exist, do not delete the local hold or grant a recovery restart based on this review receipt.
