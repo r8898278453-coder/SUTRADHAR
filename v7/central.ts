@@ -1010,6 +1010,53 @@ app.post('/v7/git/confirm',jsonRoute(async req=>{
     });
   });
 }));
+// Owner-only read-only recovery queue. Never infer that an unmatched remote
+// branch is safe to re-publish. These are preflight hints, NOT permission to push.
+app.get('/v7/owner/git-recovery',jsonRoute(async req=>{
+  admin(req);
+  return transaction(async c=>{
+    const ld=await leader(c,false);
+    const now=await dbNow(c);
+    const masterLive=Boolean(ld.master_agent_id&&ld.lease_until&&
+      Date.parse(ld.lease_until+'Z')>now);
+    const jobs=await rows(c,
+      'SELECT j.ticket_id,j.state AS git_state,j.epoch AS publication_epoch,'+
+      'j.agent_id AS qa_agent_id,t.status AS task_status,t.worker_agent_id,'+
+      't.branch_name,t.baseline_sha,t.candidate_head_sha,t.candidate_tree_sha,'+
+      'p.repository,'+
+      'EXISTS(SELECT 1 FROM v7_qa_receipts q WHERE q.ticket_id=j.ticket_id '+
+      'AND q.agent_id=j.agent_id AND q.passed=1 AND q.head_sha=t.candidate_head_sha '+
+      'AND q.tree_sha=t.candidate_tree_sha) AS matching_qa_receipt,'+
+      'EXISTS(SELECT 1 FROM v7_leases l WHERE l.ticket_id=j.ticket_id '+
+      'AND l.revoked=0 AND l.expires_at>UTC_TIMESTAMP(3)) AS has_live_worker_lease '+
+      'FROM v7_git_jobs j JOIN v7_tickets t ON t.ticket_id=j.ticket_id '+
+      'JOIN v7_projects p ON p.project_id=t.project_id '+
+      'WHERE j.state IN ("RUNNING","NEEDS_RECONCILIATION") '+
+      'ORDER BY j.updated_at DESC,j.ticket_id LIMIT 301');
+    if(jobs.length>300)fault('GIT_RECOVERY_PAGINATION_REQUIRED',409);
+    const epoch=Number(ld.epoch);
+    return {epoch,phase:ld.phase,master_agent_id:ld.master_agent_id||null,
+      master_live:masterLive,
+      unresolved_jobs:jobs.map(j=>{
+        const publicationEpoch=Number(j.publication_epoch);
+        const qaValid=Number(j.matching_qa_receipt)===1;
+        const liveLease=Number(j.has_live_worker_lease)===1;
+        const recoverable=masterLive&&ld.phase==='RECOVERING'&&
+          Number.isSafeInteger(publicationEpoch)&&publicationEpoch<epoch&&
+          ['INTEGRATING','RECONCILIATION_REQUIRED'].includes(j.task_status)&&
+          j.qa_agent_id!==j.worker_agent_id&&qaValid&&!liveLease&&
+          SHA_RE.test(String(j.candidate_head_sha||''))&&
+          SHA_RE.test(String(j.candidate_tree_sha||''));
+        return {ticket_id:j.ticket_id,git_state:j.git_state,
+          publication_epoch:publicationEpoch,qa_agent_id:j.qa_agent_id,
+          task_status:j.task_status,repository:j.repository,
+          branch_name:j.branch_name,candidate_head_sha:j.candidate_head_sha,
+          candidate_tree_sha:j.candidate_tree_sha,baseline_sha:j.baseline_sha,
+          matching_qa_receipt:qaValid,has_live_worker_lease:liveLease,
+          preflight_eligible:recoverable};
+      })};
+  });
+}));
 // Explicit Owner-initiated READ-ONLY verification for an uncertain publication
 // left behind by a previous Master epoch. No retry, push, PR or merge occurs.
 // This is deliberately separate from the worker's live-epoch Git confirmation.
