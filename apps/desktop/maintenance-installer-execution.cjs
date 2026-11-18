@@ -42,7 +42,7 @@ function persistNew(file,data){
   try{fs.writeFileSync(fd,JSON.stringify(data,null,2)+'\n');fs.fsyncSync(fd);}
   finally{fs.closeSync(fd);}
 }
-function checkPrepared({dir,node,agentIds,observedVersion}){
+function checkPrepared({dir,node,agentIds,observedVersion,now=Date.now()}){
   const proof=inspectPreparedIdentity({dir,node,agentIds,observedVersion});
   if(!proof.identity_preserved||!proof.agent_id_set_matched||
      !proof.public_key_fingerprint_matched)
@@ -52,7 +52,7 @@ function checkPrepared({dir,node,agentIds,observedVersion}){
      !HEX.test(ready.installer_sha256||'')||
      ready.installer_sha256!==ready.staged_sha256||
      !Number.isSafeInteger(ready.offer_expires_at_ms)||
-     ready.offer_expires_at_ms<=Date.now()||
+     ready.offer_expires_at_ms<=now||
      !/^SUTRADHAR[-_ A-Za-z0-9.()]+\.exe$/.test(ready.installer_filename||'')||
      ready.installer_filename.includes('..')||
      !Number.isSafeInteger(ready.expected_epoch)||ready.expected_epoch<1||
@@ -98,7 +98,7 @@ async function launchStagedInstaller({dir,node,agentIds,observedVersion,
     fail('UPDATE_EXECUTION_PACKAGED_WINDOWS_DEVICE_REQUIRED');
   const origin=validOrigin(centralOrigin);
   const identity=identityEvidence(node,agentIds);
-  const {ready,stagedPath}=checkPrepared({dir,node,agentIds,observedVersion});
+  const {ready,stagedPath}=checkPrepared({dir,node,agentIds,observedVersion,now});
   if(identity.node_id!==ready.node_id||
      identity.public_key_sha256!==ready.identity_public_key_sha256)
     fail('UPDATE_EXECUTION_VAULT_IDENTITY_CHANGED');
