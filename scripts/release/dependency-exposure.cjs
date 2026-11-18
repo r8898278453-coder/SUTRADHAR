@@ -68,8 +68,11 @@ function reachable(packages,rootNames){
 function assess(root,lock){
   if(!root||!lock||!lock.packages||lock.lockfileVersion!==3)
     fail('DEPENDENCY_EXPOSURE_LOCK_V3_REQUIRED');
-  if(JSON.stringify(root.dependencies||{})!==JSON.stringify(lock.packages['']?.dependencies||{})||
-    JSON.stringify(root.devDependencies||{})!==JSON.stringify(lock.packages['']?.devDependencies||{}))
+  const equal=(a,b)=>{const x=Object.entries(a||{}).sort(([a],[b])=>a.localeCompare(b));
+    const y=Object.entries(b||{}).sort(([a],[b])=>a.localeCompare(b));
+    return JSON.stringify(x)===JSON.stringify(y);};
+  if(!equal(root.dependencies,lock.packages['']?.dependencies)||
+     !equal(root.devDependencies,lock.packages['']?.devDependencies))
     fail('DEPENDENCY_EXPOSURE_MANIFEST_MISMATCH');
   const packages=lock.packages;
   const prodRoots=Object.keys(root.dependencies||{});
