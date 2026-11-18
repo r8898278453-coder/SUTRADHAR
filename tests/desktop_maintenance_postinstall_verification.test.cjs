@@ -137,7 +137,9 @@ test('target version, same enrolled key, signed launch receipts and fresh Centra
   assert.equal(record.state,'TARGET_VERSION_IDENTITY_CENTRAL_OBSERVED');
   assert.equal(record.installer_completion_proven,false);
   assert.ok(record.signature_base64.length>=80);
-  const proof=verifyObservedReceipt({dir:f.nodeDir,node,agentIds:[agentId],observedVersion:'7.1.0'});
+  const proof=verifyObservedReceipt({dir:f.nodeDir,node,agentIds:[agentId],observedVersion:'7.1.0',
+    installedExecutable:check.installedExecutable,publisherSubject:check.publisherSubject,
+    platform:'win32',verifyPublisher:installedPublisher});
   assert.equal(proof.target_version_observed,true);
   assert.equal(proof.auto_release_allowed,false);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
@@ -197,7 +199,9 @@ test('tampering OS-vault signed postinstall observation fails signature check',(
   const corrupted=JSON.parse(fs.readFileSync(file));
   corrupted.observed_version='9.9.9';fs.writeFileSync(file,JSON.stringify(corrupted));
   assert.throws(()=>verifyObservedReceipt({dir:f.nodeDir,node,
-    agentIds:[agentId],observedVersion:'7.1.0'}),/DEVICE_SIGNATURE_INVALID/);
+    agentIds:[agentId],observedVersion:'7.1.0',
+    installedExecutable:check.installedExecutable,publisherSubject:check.publisherSubject,
+    platform:'win32',verifyPublisher:installedPublisher}),/DEVICE_SIGNATURE_INVALID/);
 }));
 test('installed-app Authenticode verifier checks real file SHA before/after and publisher via encoded PowerShell',()=>fixtures(dir=>{
   const executablePath=path.join(dir,"SUTRADHAR O'Brien.exe");
@@ -244,7 +248,9 @@ test('after installer attempt Owner cannot release hold before postinstall obser
   const releaseArgs={dir:f.nodeDir,centralOrigin:check.centralOrigin,
     nodeId,signer:check.signer,grantEnvelope:releaseEnvelope,
     pinnedPublicKeyPem:pub,agentStopped:true,node,
-    agentIds:[agentId],currentVersion:'7.1.0',fetcher:cancelFetcher};
+    agentIds:[agentId],currentVersion:'7.1.0',fetcher:cancelFetcher,
+    installedExecutable:check.installedExecutable,publisherSubject:check.publisherSubject,
+    platform:'win32',verifyPublisher:installedPublisher};
   await assert.rejects(releaseHold(releaseArgs),/POSTINSTALL_RECEIPT_MISSING_OR_CORRUPT/);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
   await observePostInstall(check);
@@ -253,4 +259,22 @@ test('after installer attempt Owner cannot release hold before postinstall obser
   assert.equal(released.agent_started,false);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,false);
   assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-postinstall-observed.json')),true);
+}));
+
+test('Owner release rejects replaced EXE or changed signing publisher after a valid earlier observation',()=>fixtures(async dir=>{
+  const {f,check}=await launched(dir);
+  await observePostInstall(check);
+  const verified={dir:f.nodeDir,node,agentIds:[agentId],observedVersion:'7.1.0',
+    installedExecutable:check.installedExecutable,
+    publisherSubject:check.publisherSubject,platform:'win32',
+    verifyPublisher:installedPublisher};
+  assert.equal(verifyObservedReceipt(verified).observed,true);
+  assert.throws(()=>verifyObservedReceipt({...verified,
+    verifyPublisher:()=>({...installedPublisher({publisherSubject:check.publisherSubject}),
+      exe_sha256:'b'.repeat(64)})}),/INSTALLED_APP_CHANGED/);
+  assert.throws(()=>verifyObservedReceipt({...verified,
+    verifyPublisher:()=>({...installedPublisher({publisherSubject:check.publisherSubject}),
+      publisher_subject:'CN=Untrusted Developer'})}),/INSTALLED_APP_CHANGED/);
+  assert.throws(()=>verifyObservedReceipt({...verified,platform:'linux'}),
+    /INSTALLED_PUBLISHER_REQUIRED/);
 }));
