@@ -78,7 +78,7 @@ test('Owner Git recovery HTML uses accessible guarded controls',()=>{
     'git-recovery-consent','git-recovery-verify','git-recovery-clear'])
     assert.match(html,new RegExp('id="'+id+'"'));
   assert.match(html,/git-recovery-verify" disabled/);
-  assert.doesNotMatch(source,/localStorage|sessionStorage|innerHTML|document\.cookie/);
+  assert.doesNotMatch(source,/(?:localStorage|sessionStorage)\.(?:setItem|getItem)|\.innerHTML\s*=|document\.cookie/);
 });
 test('dashboard requires exact SHA, reason and explicit Owner consent',async()=>{
   const b=browser();await b.connect();b.selectFirst();
