@@ -15,7 +15,7 @@ const {verifyOffer,sha256File}=require('./update-policy.cjs');
 const {checkReadiness}=require('./update-readiness.cjs');
 const {recordInspection}=require('./update-inspection-journal.cjs');
 const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
-const {prepareInstaller}=require('./maintenance-install-preparation.cjs');
+const {prepareInstaller,inspectPreparedIdentity}=require('./maintenance-install-preparation.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {isolateDrainedPc}=require('./maintenance-local-isolation.cjs');
 const {requestStopAndConfirm}=require('./maintenance-stop-confirm.cjs');
@@ -493,6 +493,17 @@ app.whenReady().then(()=>{
       }
       throw e;
     }finally{maintenanceRestartBusy=false;}
+  });
+  ipcMain.handle('sutradhar:inspectPostUpdateIdentity',event=>{
+    verifySender(event);
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault)
+      throw Error('UPDATE_IDENTITY_POSTCHECK_PACKAGED_WINDOWS_REQUIRED');
+    const device=vault.read();
+    if(!device||!requireSubmitted({dir:nodeDir(),node:device,
+      centralUrl:current.centralUrl}))
+      throw Error('UPDATE_IDENTITY_POSTCHECK_ENROLLED_DEVICE_REQUIRED');
+    return inspectPreparedIdentity({dir:nodeDir(),node:device,
+      agentIds:current.agentIds,observedVersion:app.getVersion()});
   });
   ipcMain.handle('sutradhar:prepareInstaller',async event=>{
     verifySender(event);
