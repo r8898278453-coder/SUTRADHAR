@@ -144,6 +144,21 @@ get('releaseHold').addEventListener('click',async()=>{
       '. Keep existing recovery records for Owner review.';
   }finally{button.disabled=false;}
 });
+get('restartAfterMaintenance').addEventListener('click',async()=>{
+  const button=get('restartAfterMaintenance');button.disabled=true;
+  get('updateFeedback').textContent='Verifying one-time Owner grant, fresh Central state and new agent heartbeat…';
+  try{
+    const result=await api.restartAfterMaintenance();
+    get('updateFeedback').textContent=result.canceled?'Manual restart canceled.':
+      'Central recovery reconciliation observed for '+result.node_id+
+      ' (epoch '+result.epoch+'). Auto-restart is STILL blocked. No installer executed.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='Manual recovery BLOCKED: '+
+      String(e.message||e)+
+      '. Do not delete restart attempt or maintenance audit files. Owner review required.';
+  }finally{button.disabled=false;}
+});
 get('reconcileEnrollment').addEventListener('click',async()=>{
   const button=get('reconcileEnrollment');button.disabled=true;
   showFeedback('Checking this same OS-vault identity against Owner-approved Central (read-only)…');
