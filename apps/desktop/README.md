@@ -51,6 +51,22 @@ Do not move/copy device identity to a different PC. Do not delete identity for a
 
 **Advanced code/QA worker:** apps/desktop/dist/edge-worker.cjs is an independently compiled CLI, not automatically run by the setup UI. It still requires trusted Git, Docker/Python and approved source checkout; consult [v7 technical runbook](../../v7/README.md). It is intentionally not included in the first-run installer.
 
+## Windows OS-vault manual claim + Git worktree (alpha only, 19 November 2026)
+
+This next phase adds **Choose trusted Git checkout and claim** plus **Verify my existing work lease** to the local packaged Windows Setup screen. It is **not autonomous worker execution** and has not been physically accepted.
+
+**Prerequisites:** The Owner has approved the PC and agent, granted that agent development access to the project, and (when required) approved protected-path work. Central is READY and unpaused. The PC has a recent signed heartbeat, no maintenance/recovery/installer hold, Git for Windows installed and a locally trusted checkout of the exact project repository containing the immutable approved baseline commit.
+
+**Manual workflow:** In the local Setup screen, select your agent, inspect a ticket, enter its exact ID, click **Choose trusted Git checkout and claim**, select your previously trusted local repository folder, and explicitly confirm. Electron Main rechecks all safety fences. It validates the remote URL and local baseline, blocks configured Git smudge/process filters and unsafe root attributes, disables Git hooks, and creates a per-ticket isolated local Git worktree *before* any Central claim request. It persists a checksummed, exclusive private claim intent before sending the signed claim. The OS vault signs **only** the exact ticket claim contract (no arbitrary URL/body). Central still checks current Master lease, project grants, task READY state, dependencies, capacity and overlapping scopes.
+
+If Central accepted the claim but the HTTP response was lost, **repeat the claim for the same ticket, agent and selected checkout**. The pending file replays the original request ID. On success, a local lease receipt is saved before a signed **read-only** `resume-check` verifies the still-live Master epoch and ticket/lease identity. Worktree remains local; no Git push, merge, model API, QA or checkpoint automatically runs.
+
+**Recovery:** If epoch, Git checkout, branch, scope, journal, receipt or server state does not match, stop; do not delete local worker files or create a fresh claim. Ask the Owner to inspect Central's task/lease and audit state. The **Verify my existing work lease** button performs a signed continuity check only and never renews an expired lease. Claim leases remain bounded; the current packaged UI does not yet expose the developer-only renewal/submit/QA capability. This phase is for operator-supervised early pilot tests only.
+
+**Operational limitations:** Git for Windows and an existing trusted project checkout are external prerequisites; the app does not clone external repositories or configure provider accounts. Local worktree creation invokes the trusted installed Git tool after explicit operator confirmation. No remote push or merge is possible from this feature. The desktop packaging still requires code signing, physical Windows/Hostinger multi-PC acceptance and independently verified QA.
+
+Tests: `tests/desktop_worker_claim.test.cjs`, `tests/desktop_worker_inspection.test.cjs`, disposable MySQL `tests/v7_mysql_integration.test.ts`. The Git and network tests use disposable local repositories and simulated Central replies; they are **not a real Windows Hostinger end-to-end acceptance test**.
+
 ## Windows OS-vault task discovery (read-only alpha, 19 November 2026)
 
 The packaged Windows Setup screen now includes **My assigned development tasks (read-only)**. After an approved PC/agent has a recent signed Central heartbeat, choose an approved local agent to list READY, dependency-unblocked tasks in projects for which Central grants `can_develop`. Enter an exact ticket ID to inspect its description, allowed scopes and acceptance criteria. Results use text-only rendering; nothing is converted to HTML or executed.
