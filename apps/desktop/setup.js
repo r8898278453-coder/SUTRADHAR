@@ -29,6 +29,7 @@ async function loadStatus(){
       ['Installer execution',s.installerExecution||'NOT_ATTEMPTED'],
       ['Post-install observation',s.postInstallObservation||'NOT_RECORDED'],
       ['Failed install review',s.failedInstallReview||'NOT_RECORDED'],
+      ['Owner recovery investigation',s.failedRecoveryApproval||'NOT_RECORDED'],
       ['Central acknowledgment',s.centralReport?.acknowledgedNow?
         'Agent reports heartbeat accepted by Central (verify in Owner dashboard)' :
         'Not currently acknowledged — pending approval / offline / error'],
@@ -71,6 +72,20 @@ get('autostart').addEventListener('change',async e=>{
     showFeedback('Login auto-start preference updated locally. Physical installer/startup acceptance is still pending.');
   }catch(error){showFeedback(String(error.message||error));}
   await loadStatus();
+});
+get('approveFailedInstallReview').addEventListener('click',async()=>{
+  const button=get('approveFailedInstallReview');button.disabled=true;
+  get('updateFeedback').textContent='Verifying independent Owner review grant, device-signed failed-install evidence, Central cancellation and cluster readiness…';
+  try{
+    const result=await api.approveFailedInstallReview();
+    get('updateFeedback').textContent=result.canceled?'Owner investigation canceled.':
+      'Signed incident review recorded for '+result.node_id+
+      '. PC STILL ISOLATED. No hold release, installer retry, rollback or agent restart authorized.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='OWNER REVIEW BLOCKED: '+String(e.message||e)+
+      '. Keep all diagnostic records and the local hold for manual investigation.';
+  }finally{button.disabled=false;}
 });
 get('reviewFailedInstall').addEventListener('click',async()=>{
   const button=get('reviewFailedInstall');button.disabled=true;
