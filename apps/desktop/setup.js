@@ -25,6 +25,7 @@ async function loadStatus(){
       ['Enrollment recovery issue',s.enrollmentError||'None reported'],
       ['Local process',s.agentProcessRunning?'Running':'Not running'],
       ['Maintenance recovery hold',s.maintenanceHold||'NONE'],
+      ['Installer preparation',s.installerPreparation||'NONE'],
       ['Central acknowledgment',s.centralReport?.acknowledgedNow?
         'Agent reports heartbeat accepted by Central (verify in Owner dashboard)' :
         'Not currently acknowledged — pending approval / offline / error'],
@@ -67,6 +68,20 @@ get('autostart').addEventListener('change',async e=>{
     showFeedback('Login auto-start preference updated locally. Physical installer/startup acceptance is still pending.');
   }catch(error){showFeedback(String(error.message||error));}
   await loadStatus();
+});
+get('prepareInstaller').addEventListener('click',async()=>{
+  const button=get('prepareInstaller');button.disabled=true;
+  get('updateFeedback').textContent='Verifying Owner DRAINED fence, signed offer, Windows publisher and identity…';
+  try{
+    const result=await api.prepareInstaller();
+    get('updateFeedback').textContent=result.canceled?'Preparation canceled. No files staged.':
+      'Signed '+result.kind+' installer staged for '+result.node_id+
+      ' ('+result.target_version+'). Local identity fingerprint recorded; installer NOT executed. Owner-assisted next step only.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='Staging BLOCKED: '+String(e.message||e)+
+      '. Do not delete recovery hold or preparation receipts.';
+  }finally{button.disabled=false;}
 });
 get('verifyUpdate').addEventListener('click',async()=>{
   const button=get('verifyUpdate');
