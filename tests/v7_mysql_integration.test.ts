@@ -504,6 +504,14 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         assert.equal(resolved.body.merge_performed,false);
         assert.equal(resolved.body.automatic_retry_allowed,false);
         assert.equal(resolved.body.remote_head_sha,expectedHead);
+        const sameReceipt=await post('/v7/git/recover-remote-proof',recoveryRequest,admin);
+        assert.equal(sameReceipt.code,200,JSON.stringify(sameReceipt.body));
+        assert.deepEqual(sameReceipt.body,resolved.body,
+          'Retry after lost response must return the durable receipt');
+        const wrongReuse=await post('/v7/git/recover-remote-proof',{
+          ...recoveryRequest,reason:'different Owner intent'},admin);
+        assert.equal(wrongReuse.code,409,JSON.stringify(wrongReuse.body));
+        assert.equal(wrongReuse.body.error_code,'IDEMPOTENCY_KEY_REUSED');
       }finally{
         globalThis.fetch=originalFetch;
         if(originalToken===undefined)delete process.env.SUTRADHAR_GITHUB_TOKEN;
