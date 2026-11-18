@@ -136,6 +136,7 @@ function inspectDirectExit({dir,node,scope}={}){
      held.offer_sha256!==scope.offer_sha256)
     fail('INSTALL_DIRECT_EXIT_LOCAL_HOLD_CHANGED');
   return Object.freeze({observed:true,
+    direct_process_pid:payload.direct_process_pid,
     direct_process_exit_code:payload.direct_process_exit_code,
     direct_process_exit_signal:payload.direct_process_exit_signal,
     installer_completion_proven:false,
