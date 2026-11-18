@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   verifyLocalUpdate:()=>ipcRenderer.invoke('sutradhar:verifyLocalUpdate'),
   prepareInstaller:()=>ipcRenderer.invoke('sutradhar:prepareInstaller'),
   launchStagedInstaller:()=>ipcRenderer.invoke('sutradhar:launchStagedInstaller'),
+  inspectDirectInstallerExit:()=>ipcRenderer.invoke('sutradhar:inspectDirectInstallerExit'),
   inspectPostUpdateIdentity:()=>ipcRenderer.invoke('sutradhar:inspectPostUpdateIdentity'),
   observePostInstall:()=>ipcRenderer.invoke('sutradhar:observePostInstall'),
   reviewFailedInstall:()=>ipcRenderer.invoke('sutradhar:reviewFailedInstall'),
