@@ -108,8 +108,21 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const status=(await cluster.json() as any).cluster;
     assert.equal(status.master_agent_id,a.agent_id);assert.equal(status.backup1,b.agent_id);
     assert.equal(status.backup2,c.agent_id);
+    // A legitimate long-running cluster has >300 historical audit events.
+    // Their existence must not permanently prevent a healthy Master recovery.
+    const auditDb=await mysql.createConnection({host:'127.0.0.1',
+      port:Number(process.env.DB_PORT||3306),
+      user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+    try{
+      const batch=Array.from({length:320},()=>['TEST_AUDIT_HISTORY','integration_test',Number(status.epoch)]);
+      await auditDb.query('INSERT INTO v7_events(event_type,actor,epoch) VALUES '+
+        batch.map(()=>'(?,?,?)').join(','),batch.flat());
+    }finally{await auditDb.end();}
     const recovered=await a.signed('/v7/recovery',undefined,'GET');
     assert.equal(recovered.code,200,JSON.stringify(recovered.body));
+    assert.equal(recovered.body.events.length,300,'Historical events are a bounded window');
+    assert.ok(recovered.body.event_high_watermark>=320);
+    assert.deepEqual(recovered.body.unresolved_git_jobs,[]);
     const pre=await a.signed('/v7/leadership/reconcile',{agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
       request_id:'rec_'+(++count),manifest_sha256:recovered.body.manifest_sha256});
     assert.equal(pre.code,200,JSON.stringify(pre.body));
@@ -343,6 +356,21 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(promoted.body.master_agent_id,b.agent_id);
       assert.equal(promoted.body.phase,'RECOVERING');
       assert.equal(Number(promoted.body.epoch),Number(status.epoch)+1);
+      // Uncertain external Git publication is NOT a work lease: it must still
+      // block recovery. Simulated SQL effects are confined to this disposable DB.
+      await db.query('INSERT INTO v7_git_jobs(ticket_id,agent_id,epoch,request_id,state) VALUES(?,?,?,?,"RUNNING")',
+        ['ticket_qa_test',b.agent_id,Number(status.epoch),'test_uncertain_git']);
+      const uncertain=await b.signed('/v7/recovery',undefined,'GET');
+      assert.equal(uncertain.code,200,JSON.stringify(uncertain.body));
+      assert.equal(uncertain.body.unresolved_git_jobs.length,1);
+      const rejectGit=await b.signed('/v7/leadership/reconcile',{
+        agent_id:b.agent_id,expected_master_epoch:Number(promoted.body.epoch),
+        request_id:'reject_uncertain_git_'+(++count),
+        manifest_sha256:uncertain.body.manifest_sha256});
+      assert.equal(rejectGit.code,423,JSON.stringify(rejectGit.body));
+      // A new Master may never infer that a remote Git write was safe to retry.
+      assert.ok(['TASK_RECONCILIATION_REQUIRED','GIT_RECONCILIATION_REQUIRED'].includes(
+        rejectGit.body.error_code));
       const oldMaster=await a.signed('/v7/tasks/plan',{request_id:'oldmaster_'+(++count),
         agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
         ticket_id:'ticket_stale_master',project_id:'project_integration',
