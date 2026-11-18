@@ -11,6 +11,7 @@ import {spawnSync,execFileSync} from 'node:child_process';
 import {ID_RE,SHA_RE,safeScope,validTaskBranch} from './rules.ts';
 import {verifyWorkerResume} from './worker_resume_validation.ts';
 import {getOrCreateClaimIntent,hasPendingClaim,verifyClaimReceipt,closeClaimIntent} from './worker_claim_journal.ts';
+import {getOrCreateRenewIntent,verifyRenewReceipt,closeRenewIntent} from './worker_lease_journal.ts';
 const home=process.env.SUTRADHAR_NODE_DIR||path.join(os.homedir(),'.sutradhar','v7');
 const identityFile=path.join(home,'identity.json');
 if(!fs.existsSync(identityFile))throw new Error('Run the node agent first; identity missing');
@@ -122,7 +123,15 @@ async function prepare(id:string){
     lease_id:leaseId,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
     repository:t.repository,scope,worktree:target,claim_request_id:pending.body.request_id};
   save(id,local);
-  // Only erase pending intent AFTER durable local lease receipt is persisted.
+  // A replayed idempotent claim receipt may belong to an EXPIRED lease.
+  // Do not tell the operator that work may start until Central verifies its
+  // live epoch, original lease ID and task state, read only.
+  const verified=await request('/v7/tasks/resume-check',{
+    agent_id:agentId,ticket_id:id,lease_id:leaseId,
+    expected_master_epoch:epoch
+  });
+  verifyWorkerResume(local,verified,agentId,id);
+  // Only erase pending intent AFTER durable local lease AND live Central proof.
   closeClaimIntent(pending.file,pending.body);
   const criteria=typeof t.acceptance_criteria==='string'?JSON.parse(t.acceptance_criteria):t.acceptance_criteria;
   const context=[
@@ -144,7 +153,7 @@ async function prepare(id:string){
   console.log(JSON.stringify({ticket:id,worktree:target,lease_seconds:claim.lease_seconds,
     handoff:path.join(taskDir,'handoff_'+id+'.md')},null,2));
 }
-async function resume(id:string){
+async function resume(id:string,quiet=false){
   const local=read(id);
   const proof=await request('/v7/tasks/resume-check',{
     agent_id:agentId,ticket_id:id,lease_id:local.lease_id,
@@ -162,8 +171,30 @@ async function resume(id:string){
   if(git(expected,'branch','--show-current')!==proof.branch_name||
     git(expected,'merge-base','HEAD',proof.baseline_sha)!==proof.baseline_sha)
     throw Error('GIT_BRANCH_OR_BASELINE_MISMATCH');
-  console.log(JSON.stringify({...safe,worktree:expected,
+  if(!quiet)console.log(JSON.stringify({...safe,worktree:expected,
     note:'Existing lease and Git checkout verified. Manual continuation only; no automatic provider/Git actions.'},null,2));
+  return safe;
+}
+async function renew(id:string){
+  const local=read(id);
+  const reason=process.argv[5];
+  if(!reason||reason.trim()!==reason||reason.length<12||reason.length>300)
+    throw Error('renew requires one 12-300 character progress/recovery reason');
+  // Both preflight checks are read-only and do not automatically execute code.
+  await resume(id,true);
+  const pending=getOrCreateRenewIntent({
+    dir:taskDir,agent_id:agentId,ticket_id:id,lease_id:local.lease_id,
+    epoch:local.epoch,reason
+  });
+  // Ambiguous HTTP result is NOT failure. Next manually initiated renewal
+  // replays the identical command and retains the local intent.
+  const accepted=await request('/v7/tasks/renew-lease',pending.body);
+  verifyRenewReceipt(pending.body,accepted);
+  await resume(id,true); // Confirm replayed receipt still has a LIVE lease.
+  closeRenewIntent(pending.file,pending.body);
+  console.log(JSON.stringify({...accepted,
+    manual_only:true,
+    note:'Signed worker lease is live; only authorized manual coding/checkpoint is permitted.'},null,2));
 }
 async function checkpoint(id:string){
   const local=read(id);
@@ -306,11 +337,12 @@ async function main(){
   else if(action==='detail')console.log(JSON.stringify(await request('/v7/tasks/detail/'+ticketId,undefined,'GET'),null,2));
   else if(action==='prepare')await prepare(ticketId);
   else if(action==='resume')await resume(ticketId);
+  else if(action==='renew')await renew(ticketId);
   else if(action==='checkpoint')await checkpoint(ticketId);
   else if(action==='submit')await submit(ticketId);
   else if(action==='qa')await qa(ticketId);
   else if(action==='publish')await publish(ticketId,false);
   else if(action==='reconcile-push')await publish(ticketId,true);
-  else throw new Error('Usage: worker {list|detail|prepare|resume|checkpoint|submit|qa|publish|reconcile-push} AGENT_ID [TICKET_ID] [summary_file] [next_action]');
+  else throw new Error('Usage: worker {list|detail|prepare|resume|renew|checkpoint|submit|qa|publish|reconcile-push} AGENT_ID [TICKET_ID] [reason|summary_file] [next_action]');
 }
 main().catch(e=>{console.error('Worker failed closed:',e.message);process.exitCode=1;});
