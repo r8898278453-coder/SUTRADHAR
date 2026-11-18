@@ -387,21 +387,29 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       // A new Master may never infer that a remote Git write was safe to retry.
       assert.ok(['TASK_RECONCILIATION_REQUIRED','GIT_RECONCILIATION_REQUIRED'].includes(
         rejectGit.body.error_code));
-      // Isolate uncertain Git effects from task status: even a terminal ticket
-      // does not permit READY if an external write remains unverified.
-      await db.query('UPDATE v7_tickets SET status="DONE" WHERE ticket_id=?',['ticket_qa_test']);
-      const gitOnly=await b.signed('/v7/recovery',undefined,'GET');
-      assert.equal(gitOnly.code,200,JSON.stringify(gitOnly.body));
-      assert.equal(gitOnly.body.tickets.some((t:any)=>t.ticket_id==='ticket_qa_test'),false);
-      assert.equal(gitOnly.body.unresolved_git_jobs.length,1);
-      const blocked=await b.signed('/v7/leadership/reconcile',{
-        agent_id:b.agent_id,expected_master_epoch:Number(promoted.body.epoch),
-        request_id:'only_uncertain_git_'+(++count),
-        manifest_sha256:gitOnly.body.manifest_sha256});
-      assert.equal(blocked.code,423,JSON.stringify(blocked.body));
-      assert.equal(blocked.body.error_code,'GIT_RECONCILIATION_REQUIRED');
-      await db.query('UPDATE v7_tickets SET status="RECONCILIATION_REQUIRED" WHERE ticket_id=?',
-        ['ticket_qa_test']);
+      // Prove the Git barrier independently: temporarily mark ALL unresolved
+      // tickets terminal in this disposable database, then restore each one.
+      // Another drained task may also require reconciliation after promotion.
+      const [unresolvedRows]=await db.query(
+        'SELECT ticket_id FROM v7_tickets WHERE status="RECONCILIATION_REQUIRED"');
+      const unresolvedIds=(unresolvedRows as any[]).map(x=>String(x.ticket_id));
+      assert.ok(unresolvedIds.includes('ticket_qa_test'));
+      try {
+        await db.query('UPDATE v7_tickets SET status="DONE" WHERE status="RECONCILIATION_REQUIRED"');
+        const gitOnly=await b.signed('/v7/recovery',undefined,'GET');
+        assert.equal(gitOnly.code,200,JSON.stringify(gitOnly.body));
+        assert.equal(gitOnly.body.tickets.some((t:any)=>t.status==='RECONCILIATION_REQUIRED'),false);
+        assert.equal(gitOnly.body.unresolved_git_jobs.length,1);
+        const blocked=await b.signed('/v7/leadership/reconcile',{
+          agent_id:b.agent_id,expected_master_epoch:Number(promoted.body.epoch),
+          request_id:'only_uncertain_git_'+(++count),
+          manifest_sha256:gitOnly.body.manifest_sha256});
+        assert.equal(blocked.code,423,JSON.stringify(blocked.body));
+        assert.equal(blocked.body.error_code,'GIT_RECONCILIATION_REQUIRED');
+      }finally{
+        for(const id of unresolvedIds)
+          await db.query('UPDATE v7_tickets SET status="RECONCILIATION_REQUIRED" WHERE ticket_id=?',[id]);
+      }
       const oldMaster=await a.signed('/v7/tasks/plan',{request_id:'oldmaster_'+(++count),
         agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
         ticket_id:'ticket_stale_master',project_id:'project_integration',
