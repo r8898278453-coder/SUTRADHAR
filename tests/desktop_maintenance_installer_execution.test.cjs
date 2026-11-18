@@ -196,3 +196,13 @@ test('emergency rollback launch also requires separate original signed rollback 
   assert.equal(result.rollback_completed,false);
   assert.equal(launches.length,1);
 }));
+
+test('expired original signed offer cannot be revived by a new execution grant',()=>fixtures(async dir=>{
+  const f=initial(dir);await prepareInstaller(f.prep);
+  const {runner,launches}=launcherRecorder();
+  const afterOfferExpiry=f.offer.signed.expires_ms+1;
+  await assert.rejects(launchStagedInstaller({...f.args,
+    grantEnvelope:f.grant(),runner,now:afterOfferExpiry}),/PREPARATION_NOT_READY/);
+  assert.equal(launches.length,0);
+  assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-execution-attempt.json')),false);
+}));
