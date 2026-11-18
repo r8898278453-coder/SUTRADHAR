@@ -15,6 +15,30 @@ const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const HEX=/^[0-9a-f]{64}$/;
 function fail(code){throw Error(code);}
 function hash(x){return crypto.createHash('sha256').update(x).digest('hex');}
+const SIGNING_PREFIX='SUTRADHAR_INSTALLER_ESCROW_V1';
+function signLocalRecord(record,node){
+  const key=crypto.createPrivateKey(node.private_key_pem);
+  const signature_base64=crypto.sign(null,
+    Buffer.from(SIGNING_PREFIX+'\\n'+JSON.stringify(record)),key).toString('base64');
+  return {...record,signature_base64};
+}
+function verifyLocalRecord(record,node){
+  if(!record||typeof record!=='object'||Array.isArray(record)||
+     typeof record.signature_base64!=='string'||
+     record.signature_base64.length>256)
+    fail('UPDATE_PREPARE_RECORD_SIGNATURE_REQUIRED');
+  const {signature_base64,...payload}=record;
+  let verified=false;
+  try{
+    verified=crypto.verify(null,
+      Buffer.from(SIGNING_PREFIX+'\\n'+JSON.stringify(payload)),
+      crypto.createPublicKey(node.public_key_pem),
+      Buffer.from(signature_base64,'base64'));
+  }catch{}
+  if(!verified)fail('UPDATE_PREPARE_RECORD_SIGNATURE_INVALID');
+  return payload;
+}
+
 function identityEvidence(node,agentIds){
   if(!node||!NODE.test(node.node_id||'')||
      typeof node.public_key_pem!=='string'||!Array.isArray(node.agents)||
@@ -22,11 +46,15 @@ function identityEvidence(node,agentIds){
      new Set(node.agents.map(a=>a.id)).size!==agentIds.length||
      agentIds.some(id=>!node.agents.some(a=>a.id===id)))
     fail('UPDATE_PREPARE_IDENTITY_MISMATCH');
-  let key;
-  try{key=crypto.createPublicKey(node.public_key_pem);}catch{
-    fail('UPDATE_PREPARE_PUBLIC_KEY_INVALID');
-  }
-  if(key.asymmetricKeyType!=='ed25519')fail('UPDATE_PREPARE_PUBLIC_KEY_INVALID');
+  let key,privateKey;
+  try{
+    key=crypto.createPublicKey(node.public_key_pem);
+    privateKey=crypto.createPrivateKey(node.private_key_pem);
+  }catch{fail('UPDATE_PREPARE_OS_VAULT_KEY_INVALID');}
+  if(key.asymmetricKeyType!=='ed25519'||privateKey.asymmetricKeyType!=='ed25519'||
+     !key.export({type:'spki',format:'der'}).equals(
+       crypto.createPublicKey(privateKey).export({type:'spki',format:'der'})))
+    fail('UPDATE_PREPARE_OS_VAULT_KEYPAIR_MISMATCH');
   return {node_id:node.node_id,
     public_key_sha256:hash(key.export({type:'spki',format:'der'})),
     agent_ids:[...agentIds].sort()};
@@ -155,7 +183,7 @@ async function prepareInstaller({dir,installerPath,envelope,node,agentIds,
   // Commit a one-shot attempt before copying any EXE. Interrupted attempts
   // are never deleted/retried automatically.
   const fd=fs.openSync(attemptFile,'wx',0o600);
-  try{fs.writeFileSync(fd,JSON.stringify(receipt,null,2)+'\n');fs.fsyncSync(fd);}
+  try{fs.writeFileSync(fd,JSON.stringify(signLocalRecord(receipt,node),null,2)+'\n');fs.fsyncSync(fd);}
   finally{fs.closeSync(fd);}
   fs.copyFileSync(installerPath,stagedPath,fs.constants.COPYFILE_EXCL);
   if(sha256File(stagedPath)!==verified.file_sha256||
@@ -164,7 +192,7 @@ async function prepareInstaller({dir,installerPath,envelope,node,agentIds,
   const ready={...receipt,status:'OFFLINE_STAGED_NOT_INSTALLED',
     staged_at_ms:Date.now(),staged_sha256:verified.file_sha256};
   const readyFd=fs.openSync(readyFile,'wx',0o600);
-  try{fs.writeFileSync(readyFd,JSON.stringify(ready,null,2)+'\n');
+  try{fs.writeFileSync(readyFd,JSON.stringify(signLocalRecord(ready,node),null,2)+'\n');
     fs.fsyncSync(readyFd);}finally{fs.closeSync(readyFd);}
   return Object.freeze({prepared:true,node_id:identity.node_id,
     plan_id:held.plan_id,wave_id:held.wave_id,kind,
@@ -195,8 +223,8 @@ function inspectPreparedIdentity({dir,node,agentIds,observedVersion}={}){
     }catch{fail('UPDATE_IDENTITY_POSTCHECK_RECEIPT_CORRUPT');}
     return p;
   }
-  const attempt=read('installer-preparation-attempt.json');
-  const ready=read('installer-preparation-ready.json');
+  const attempt=verifyLocalRecord(read('installer-preparation-attempt.json'),node);
+  const ready=verifyLocalRecord(read('installer-preparation-ready.json'),node);
   if(attempt.schema!==1||ready.schema!==1||
      attempt.status!=='PREPARATION_ATTEMPT_OWNER_REVIEW'||
      ready.status!=='OFFLINE_STAGED_NOT_INSTALLED'||
