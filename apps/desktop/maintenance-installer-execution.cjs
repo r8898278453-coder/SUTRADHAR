@@ -216,6 +216,7 @@ async function launchStagedInstaller({dir,node,agentIds,observedVersion,
   // completion, successful version change, nor preserved device identity.
   const observed={schema:1,state:'WINDOWS_INSTALLER_PROCESS_STARTED_UNVERIFIED',
     node_id:node.node_id,grant_id:approved.grant_id,
+    direct_process_pid:child.pid,
     installer_sha256:ready.installer_sha256,kind:ready.kind,
     target_version:ready.target_version,observed_at_ms:Date.now(),
     installer_installation_verified:false,
