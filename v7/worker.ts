@@ -9,6 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {spawnSync,execFileSync} from 'node:child_process';
 import {ID_RE,SHA_RE,safeScope} from './rules.ts';
+import {verifyWorkerResume} from './worker_resume_validation.ts';
 const home=process.env.SUTRADHAR_NODE_DIR||path.join(os.homedir(),'.sutradhar','v7');
 const identityFile=path.join(home,'identity.json');
 if(!fs.existsSync(identityFile))throw new Error('Run the node agent first; identity missing');
@@ -123,6 +124,27 @@ async function prepare(id:string){
   fs.writeFileSync(path.join(taskDir,'handoff_'+id+'.md'),context,{mode:0o600});
   console.log(JSON.stringify({ticket:id,worktree:target,lease_seconds:claim.lease_seconds,
     handoff:path.join(taskDir,'handoff_'+id+'.md')},null,2));
+}
+async function resume(id:string){
+  const local=read(id);
+  const proof=await request('/v7/tasks/resume-check',{
+    agent_id:agentId,ticket_id:id,lease_id:local.lease_id,
+    expected_master_epoch:local.epoch});
+  const safe=verifyWorkerResume(local,proof,agentId,id);
+  // Only inspect trusted local Git; no fetch, push, rebase or lease renewal.
+  ensureRepository(proof);
+  const root=process.env.SUTRADHAR_WORKTREES_ROOT;
+  if(!root||!path.isAbsolute(root))throw Error('Absolute worktree root required');
+  const expected=path.join(root,id);
+  if(local.worktree!==expected||!fs.existsSync(expected)||
+    fs.lstatSync(expected).isSymbolicLink())throw Error('LOCAL_WORKTREE_MISMATCH');
+  if(fs.realpathSync(git(expected,'rev-parse','--show-toplevel'))!==fs.realpathSync(expected))
+    throw Error('GIT_WORKTREE_ROOT_MISMATCH');
+  if(git(expected,'branch','--show-current')!==proof.branch_name||
+    git(expected,'merge-base','HEAD',proof.baseline_sha)!==proof.baseline_sha)
+    throw Error('GIT_BRANCH_OR_BASELINE_MISMATCH');
+  console.log(JSON.stringify({...safe,worktree:expected,
+    note:'Existing lease and Git checkout verified. Manual continuation only; no automatic provider/Git actions.'},null,2));
 }
 async function checkpoint(id:string){
   const local=read(id);
@@ -264,11 +286,12 @@ async function main(){
   if(action==='list')console.log(JSON.stringify(await request('/v7/tasks/available',undefined,'GET'),null,2));
   else if(action==='detail')console.log(JSON.stringify(await request('/v7/tasks/detail/'+ticketId,undefined,'GET'),null,2));
   else if(action==='prepare')await prepare(ticketId);
+  else if(action==='resume')await resume(ticketId);
   else if(action==='checkpoint')await checkpoint(ticketId);
   else if(action==='submit')await submit(ticketId);
   else if(action==='qa')await qa(ticketId);
   else if(action==='publish')await publish(ticketId,false);
   else if(action==='reconcile-push')await publish(ticketId,true);
-  else throw new Error('Usage: worker {list|detail|prepare|checkpoint|submit|qa|publish|reconcile-push} AGENT_ID [TICKET_ID] [summary_file] [next_action]');
+  else throw new Error('Usage: worker {list|detail|prepare|resume|checkpoint|submit|qa|publish|reconcile-push} AGENT_ID [TICKET_ID] [summary_file] [next_action]');
 }
 main().catch(e=>{console.error('Worker failed closed:',e.message);process.exitCode=1;});
