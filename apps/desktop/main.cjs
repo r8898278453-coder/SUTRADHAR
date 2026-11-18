@@ -430,6 +430,9 @@ app.whenReady().then(()=>{
     return releaseHold({dir:nodeDir(),centralOrigin:current.centralUrl,
       nodeId:node.node_id,signer,agentStopped:true,
       node,agentIds:current.agentIds,currentVersion:app.getVersion(),
+      installedExecutable:app.getPath('exe'),platform:process.platform,
+      publisherSubject:JSON.parse(fs.readFileSync(
+        path.join(__dirname,'update-trust.json'),'utf8')).publisher_subject,
       pinnedPublicKeyPem:trust.public_key_pem,
       grantEnvelope:boundedFile(selected.filePaths[0])});
   });
