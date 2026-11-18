@@ -207,7 +207,7 @@ test('grant cross-scope, expiry, spoofed owner signature and wrong trust fail wi
     {installer_sha256:'a'.repeat(64)},
     {offer_sha256:'a'.repeat(64)},
     {review_sha256:'c'.repeat(64)},
-    {execution_grant_id:'f'.repeat(64)},
+    {execution_grant_id:'e'.repeat(64)},
     {kind:'rollback'}, {previous_version:'6.0.0'},
     {target_version:'8.0.0'}, {expected_epoch:21},
     {expires_ms:Date.now()-1}
