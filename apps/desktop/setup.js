@@ -26,6 +26,7 @@ async function loadStatus(){
       ['Local process',s.agentProcessRunning?'Running':'Not running'],
       ['Maintenance recovery hold',s.maintenanceHold||'NONE'],
       ['Installer preparation',s.installerPreparation||'NONE'],
+      ['Installer execution',s.installerExecution||'NOT_ATTEMPTED'],
       ['Central acknowledgment',s.centralReport?.acknowledgedNow?
         'Agent reports heartbeat accepted by Central (verify in Owner dashboard)' :
         'Not currently acknowledged — pending approval / offline / error'],
@@ -82,6 +83,20 @@ get('inspectPostUpdateIdentity').addEventListener('click',async()=>{
   }catch(e){get('updateFeedback').textContent='Identity continuity BLOCKED: '+
     String(e.message||e)+'. Preserve local identity and call Owner.';}
   finally{button.disabled=false;}
+});
+get('launchStagedInstaller').addEventListener('click',async()=>{
+  const button=get('launchStagedInstaller');button.disabled=true;
+  get('updateFeedback').textContent='Checking separate Owner execution grant, staged Authenticode, Central DRAINED state and local identity…';
+  try{
+    const r=await api.launchStagedInstaller();
+    get('updateFeedback').textContent=r.canceled?'Installer launch canceled.':
+      'Windows '+r.kind+' installer process launched for '+r.node_id+
+      '. INSTALL RESULT UNKNOWN. SUTRADHAR will exit. Finish Windows prompts, then check identity, version and Central recovery. No automatic retry.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='Execution BLOCKED: '+String(e.message||e)+
+      '. Preserve all journals and the maintenance hold; Owner review required.';
+  }finally{button.disabled=false;}
 });
 get('prepareInstaller').addEventListener('click',async()=>{
   const button=get('prepareInstaller');button.disabled=true;
