@@ -102,12 +102,20 @@ function launchPersistentObserver({dir,pid,installerPath,nodeId,grantId,
     fail('INSTALL_OBSERVER_PREVIOUS_WITNESS_OWNER_REVIEW');
   const script=buildObserverCommand({dir,pid,installerPath,nodeId,grantId,
     installerSha256});
-  const child=runner('powershell.exe',['-NoProfile','-NonInteractive',
+  const windowsRoot=process.env.SystemRoot||'C:\\Windows';
+  if(!/^[A-Za-z]:\\[^<>:"|?*]+$/.test(windowsRoot)||
+     windowsRoot.split('\\').some(part=>part==='..'||part==='.'))
+    fail('INSTALL_OBSERVER_WINDOWS_ROOT_INVALID');
+  const system32=path.win32.join(windowsRoot,'System32');
+  const powershell=path.win32.join(system32,
+    'WindowsPowerShell','v1.0','powershell.exe');
+  const child=runner(powershell,['-NoProfile','-NonInteractive',
     '-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],
     {detached:true,stdio:'ignore',windowsHide:true,shell:false,env:{
-      SystemRoot:process.env.SystemRoot||'C:\\Windows',
-      WINDIR:process.env.WINDIR||'C:\\Windows',
-      PATH:process.env.PATH||process.env.Path||''
+      SystemRoot:windowsRoot,WINDIR:windowsRoot,
+      PATH:system32,
+      PSModulePath:path.win32.join(system32,
+        'WindowsPowerShell','v1.0','Modules')
     }});
   if(!child||typeof child.once!=='function'||typeof child.unref!=='function')
     fail('INSTALL_OBSERVER_SPAWN_UNCERTAIN');
