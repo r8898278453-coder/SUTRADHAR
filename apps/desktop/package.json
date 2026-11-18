@@ -66,7 +66,8 @@
       "maintenance-failure-owner-grant.cjs",
       "maintenance-failure-owner-review.cjs",
       "failure-review-trust.json",
-      "maintenance-install-incident-barrier.cjs"
+      "maintenance-install-incident-barrier.cjs",
+      "maintenance-installer-direct-exit.cjs"
     ],
     "extraResources": [
       {
