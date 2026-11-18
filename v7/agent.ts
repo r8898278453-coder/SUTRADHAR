@@ -6,6 +6,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import {verifyRecoverySnapshot} from './recovery_validation.ts';
 type Saved = {node_id:string;private_key_pem:string;public_key_pem:string;
   node_sequence:number;boot_id:string;agents:{id:string;sequence:number}[]};
 const home=process.env.SUTRADHAR_NODE_DIR||path.join(os.homedir(),'.sutradhar','v7');
@@ -92,23 +93,7 @@ async function signedGet(pathname:string,agentId?:string){
 }
 async function reconcileNewMaster(agentId:string,epoch:number){
   const snapshot=await signedGet('/v7/recovery',agentId);
-  if(snapshot.epoch!==epoch||snapshot.phase!=='RECOVERING')throw new Error('Recovery epoch changed');
-  if(snapshot.tickets.length>=300||snapshot.checkpoints.length>=300||snapshot.events.length>=300)
-    throw new Error('Recovery manifest pagination required; block READY');
-  if(snapshot.tickets.some((t:any)=>t.status==='RECONCILIATION_REQUIRED'))
-    throw new Error('Task reconciliation required before READY; owner must verify remote Git effects');
-  const cursors=new Set<number>();
-  for(const e of snapshot.events){
-    if(cursors.has(Number(e.event_id)))throw new Error('Duplicate event cursor');
-    cursors.add(Number(e.event_id));
-  }
-  for(const cp of snapshot.checkpoints){
-    const expected=crypto.createHash('sha256').update(cp.summary+'\n'+cp.next_action).digest('hex');
-    if(expected!==cp.content_sha256)throw new Error('Checkpoint digest mismatch');
-  }
-  const {manifest_sha256,...payload}=snapshot;
-  const manifest=crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-  if(manifest!==manifest_sha256)throw new Error('Central recovery manifest hash mismatch');
+  const manifest=verifyRecoverySnapshot(snapshot,epoch);
   const ack=await api('/v7/leadership/reconcile',{
     request_id:'recovery_'+epoch+'_'+agentId,agent_id:agentId,
     expected_master_epoch:epoch,manifest_sha256:manifest});
