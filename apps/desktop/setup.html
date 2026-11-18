@@ -38,6 +38,18 @@
 <div class="actions"><button id="dashboard" type="button" class="secondary">Open Central dashboard</button><button id="refresh" type="button" class="secondary">Refresh status</button><button id="reconcileEnrollment" type="button" class="secondary">Recheck uncertain enrollment</button></div>
 <p class="hint">If enrollment was interrupted, this only checks the original PC's signed identity with Central. It does not send another grant, create another identity or approve itself. The Owner must approve the PC first.</p>
 </section>
+<section class="panel" aria-labelledby="workerReadTitle">
+<h2 id="workerReadTitle">My assigned development tasks (read-only)</h2>
+<p class="hint">After the Owner approves this PC and agent, inspect Central's available tasks and exact ticket details. The device key remains protected in Windows OS vault. This does NOT claim a task, create a worktree, run AI, or approve QA.</p>
+<label for="workerAgent">This PC's approved agent</label>
+<select id="workerAgent" aria-label="Select local agent"><option value="">Configure this PC first</option></select>
+<div class="actions"><button id="workerList" class="secondary" type="button" disabled>List available tasks</button></div>
+<label for="workerTicket">Task ID to inspect</label>
+<input id="workerTicket" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="ticket_example_001">
+<button id="workerDetail" class="secondary" type="button" disabled>View task details (no claim)</button>
+<pre id="workerTasks" role="status" aria-live="polite">Central approval and recent signed heartbeat required.</pre>
+<p class="hint">Tasks depend on Central project grants. If access is denied, ask the Owner to check your agent's project permissions. No action on this screen creates, renews or submits work.</p>
+</section>
 <section class="panel">
 <h2>AI provider tools (manual)</h2>
 <p class="hint">Opens your normal browser. You remain responsible for account authorization and provider usage terms.</p>
