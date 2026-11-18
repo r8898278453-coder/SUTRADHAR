@@ -8,7 +8,8 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {HEARTBEAT_SECONDS,ID_RE,digest} from '../../v7/rules.ts';
+import {HEARTBEAT_SECONDS,ID_RE} from '../../v7/rules.ts';
+import {verifyRecoverySnapshot} from '../../v7/recovery_validation.ts';
 type Agent={id:string;sequence:number};
 type Saved={node_id:string;public_key_pem:string;node_sequence:number;boot_id:string;agents:Agent[]};
 type Message={type:string;id:number;op?:string;payload?:unknown;result?:any;error?:string};
@@ -89,17 +90,11 @@ async function main(){
   }
   async function recovery(masterId:string,epoch:number){
     const data=await send('GET','/v7/recovery',undefined,undefined,masterId);
-    if(data.epoch!==epoch||data.phase!=='RECOVERING'||data.tickets.length>=300||
-      data.events.length>=300||data.checkpoints.length>=300||
-      data.tickets.some((t:any)=>t.status==='RECONCILIATION_REQUIRED'))
-      throw Error('RECOVERY_RECONCILIATION_REQUIRED');
-    for(const cp of data.checkpoints){
-      if(digest(cp.summary+'\n'+cp.next_action)!==cp.content_sha256)
-        throw Error('RECOVERY_CHECKPOINT_HASH_MISMATCH');
-    }
-    const {manifest_sha256,...payload}=data;
-    if(digest(JSON.stringify(payload))!==manifest_sha256)
-      throw Error('RECOVERY_MANIFEST_HASH_MISMATCH');
+    // The developer daemon and packaged Windows agent MUST share exactly
+    // the same fail-closed snapshot contract. In particular, a full 300-event
+    // recent-history window is valid; old history does not block takeover.
+    // Unresolved remote Git effects and checkpoint/epoch tampering still block.
+    const manifest_sha256=verifyRecoverySnapshot(data,epoch);
     await send('POST','/v7/leadership/reconcile',{
       request_id:'recovery_'+epoch+'_'+masterId,agent_id:masterId,
       expected_master_epoch:epoch,manifest_sha256
