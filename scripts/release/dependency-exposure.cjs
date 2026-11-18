@@ -16,13 +16,10 @@ function packageName(installedPath){
   const index=installedPath.lastIndexOf('node_modules/');
   return index>=0?installedPath.slice(index+'node_modules/'.length):'';
 }
-function validVersion(version){
-  return typeof version==='string'&&/^\d+\.\d+\.\d+$/.test(version);
-}
-function isKnownAffected(version){
-  if(!validVersion(version))return true; // Unknown versions fail closed.
-  const n=version.split('.').map(Number);
-  return n[0]<4||n[0]===4&&(n[1]===0&&n[2]<=7||n[1]<0);
+function isKnownAffected(_version){
+  // GitHub currently reports NO PATCHED VERSION. Do not silently trust a
+  // new semver value until a reviewed fix and updated advisory are verified.
+  return true;
 }
 function resolveInstalled(packages,from,name){
   // npm's resolution walks upwards to the nearest node_modules directory.
