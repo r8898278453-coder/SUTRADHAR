@@ -96,6 +96,26 @@ function createSignerBridge(vault){
     return {'x-sutradhar-node':v.node_id,'x-sutradhar-timestamp':String(ts),
       'x-sutradhar-nonce':nonce,'x-sutradhar-signature':signature};
   }
-  return Object.freeze({initialize,saveCounters,sign,snapshot:()=>publicSnapshot(vault.read())});
+  // NOT exposed to the supervised agent's 'sign' IPC operation. Electron
+  // main invokes this narrower capability only for an interactive user
+  // request from the sandboxed local setup window. Read-only task discovery
+  // cannot sign a claim, checkpoint, QA, Git, Owner or installer operation.
+  function signWorkerReadOnly({method,uri,agent_id}={}){
+    const v=identity();
+    if(method!=='GET'||typeof uri!=='string'||!AGENT_ID.test(agent_id||'')||
+      !v.agents.some(a=>a.id===agent_id)||
+      !(uri==='/v7/tasks/available'||
+        /^\/v7\/tasks\/detail\/[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(uri)))
+      fail('VAULT_WORKER_READONLY_REQUEST_DENIED');
+    const key=crypto.createPrivateKey(v.private_key_pem);
+    const ts=Date.now(),nonce='nonce_'+crypto.randomUUID().replace(/-/g,'');
+    const hash=crypto.createHash('sha256').update('').digest('hex');
+    const canonical=[String(ts),nonce,'GET',uri,hash].join('\n');
+    return {'x-sutradhar-node':v.node_id,'x-sutradhar-timestamp':String(ts),
+      'x-sutradhar-nonce':nonce,
+      'x-sutradhar-signature':crypto.sign(null,Buffer.from(canonical),key).toString('base64'),
+      'x-sutradhar-agent':agent_id};
+  }
+  return Object.freeze({initialize,saveCounters,sign,signWorkerReadOnly,snapshot:()=>publicSnapshot(vault.read())});
 }
 module.exports={createSignerBridge,publicSnapshot,validateAgentIds};
