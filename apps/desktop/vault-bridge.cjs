@@ -143,12 +143,31 @@ function createSignerBridge(vault){
       if(!id(payload.ticket_id)||typeof payload.lease_id!=='string'||
         !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(payload.lease_id)||
         !epoch)fail('VAULT_WORKER_ACTION_DENIED');
+    }else if(operation==='renew-lease'||operation==='checkpoint'){
+      uri=operation==='renew-lease'?'/v7/tasks/renew-lease':'/v7/tasks/checkpoint';
+      expected=operation==='renew-lease'?
+        ['request_id','agent_id','ticket_id','lease_id','expected_master_epoch','reason']:
+        ['request_id','agent_id','ticket_id','lease_id','expected_master_epoch','summary','next_action'];
+      if(!id(payload.ticket_id)||!id(payload.request_id)||
+        !payload.request_id.startsWith(operation==='renew-lease'?'renew_':'checkpoint_')||
+        typeof payload.lease_id!=='string'||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(payload.lease_id)||
+        !epoch)fail('VAULT_WORKER_ACTION_DENIED');
+      if(operation==='renew-lease'){
+        if(typeof payload.reason!=='string'||payload.reason.trim()!==payload.reason||
+          payload.reason.length<12||payload.reason.length>300)
+          fail('VAULT_WORKER_ACTION_DENIED');
+      }else if(typeof payload.summary!=='string'||!payload.summary.trim()||
+        payload.summary.length>8000||typeof payload.next_action!=='string'||
+        !payload.next_action.trim()||payload.next_action.length>500)
+        fail('VAULT_WORKER_ACTION_DENIED');
     }else fail('VAULT_WORKER_ACTION_DENIED');
     if(Object.keys(payload).length!==expected.length||
       Object.keys(payload).some(k=>!expected.includes(k)))
       fail('VAULT_WORKER_ACTION_DENIED');
     const body=JSON.stringify(payload);
-    if(Buffer.byteLength(body,'utf8')>2048)fail('VAULT_WORKER_ACTION_DENIED');
+    if(Buffer.byteLength(body,'utf8')>(operation==='checkpoint'?16*1024:2048))
+      fail('VAULT_WORKER_ACTION_DENIED');
     const key=crypto.createPrivateKey(v.private_key_pem);
     const ts=Date.now(),nonce='nonce_'+crypto.randomUUID().replace(/-/g,'');
     const canonical=[String(ts),nonce,'POST',uri,
