@@ -39,8 +39,8 @@
 <p class="hint">If enrollment was interrupted, this only checks the original PC's signed identity with Central. It does not send another grant, create another identity or approve itself. The Owner must approve the PC first.</p>
 </section>
 <section class="panel" aria-labelledby="workerReadTitle">
-<h2 id="workerReadTitle">My assigned development tasks (read-only)</h2>
-<p class="hint">After the Owner approves this PC and agent, inspect Central's available tasks and exact ticket details. The device key remains protected in Windows OS vault. This does NOT claim a task, create a worktree, run AI, or approve QA.</p>
+<h2 id="workerReadTitle">My development tasks (manual alpha)</h2>
+<p class="hint">After the Owner approves this PC and agent, inspect Central's available tasks and exact ticket details. The device key remains protected in Windows OS vault. Read-only inspection does not change Central. Separate confirmation is required to claim or save progress; this interface never runs AI, publishes Git or approves QA.</p>
 <label for="workerAgent">This PC's approved agent</label>
 <select id="workerAgent" aria-label="Select local agent"><option value="">Configure this PC first</option></select>
 <div class="actions"><button id="workerList" class="secondary" type="button" disabled>List available tasks</button></div>
@@ -60,11 +60,9 @@
 <input id="workerRenewReason" type="text" maxlength="300" autocomplete="off" placeholder="Progress since last check and why another lease period is needed">
 <button id="workerRenew" class="secondary" type="button" disabled>Request bounded lease renewal</button>
 <p class="hint">Checkpoint and renewal require an existing live lease, a current approved Master, the exact local Git worktree and explicit confirmation. A checkpoint is a progress summary, not proof that QA passed. Renewal is only allowed near expiry and never after four hours from the original claim. An ambiguous response keeps the pending operation journal for exact-ID recovery. No automatic work or Git push starts.</p>
-<div class="actions">
-</div>
 <p class="hint">Claiming requires Owner-granted project access, a READY task, Git for Windows, a local checkout containing the exact approved baseline, and manual confirmation. This creates an isolated local worktree and starts a time-limited Central lease. It does not run AI or publish Git. If a claim response is lost, repeat the same action with the same Git folder; the pending journal preserves the request ID. Do not delete pending files.</p>
 <pre id="workerTasks" role="status" aria-live="polite">Central approval and recent signed heartbeat required.</pre>
-<p class="hint">Tasks depend on Central project grants. If access is denied, ask the Owner to check your agent's project permissions. No action on this screen creates, renews or submits work.</p>
+<p class="hint">Tasks depend on Central project grants. If access is denied, ask the Owner to check your agent's project permissions. Only explicit, confirmed claim/checkpoint/renew buttons can change task state; no action submits or publishes code.</p>
 </section>
 <section class="panel">
 <h2>AI provider tools (manual)</h2>
