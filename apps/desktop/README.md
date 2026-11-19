@@ -51,6 +51,20 @@ Do not move/copy device identity to a different PC. Do not delete identity for a
 
 **Advanced code/QA worker:** apps/desktop/dist/edge-worker.cjs is an independently compiled CLI, not automatically run by the setup UI. It still requires trusted Git, Docker/Python and approved source checkout; consult [v7 technical runbook](../../v7/README.md). It is intentionally not included in the first-run installer.
 
+## Windows OS-vault manual checkpoint and bounded renewal (alpha, 19 November 2026)
+
+After the exact local worktree has been claimed and the signed lease remains live, the packaged Windows Setup screen offers **Save signed checkpoint (manual)** and **Request bounded lease renewal**. These are additional *human-confirmed* operations, not an autonomous AI coding service.
+
+**Checkpoint:** Choose the same approved agent and exact ticket. Write a meaningful *summary* of completed work (up to 8,000 characters) and a *next action* (up to 500 characters), avoiding credentials or secrets. Confirm. Electron Main rechecks recent Central heartbeat, Owner enrollment, maintenance/installer holds, local trusted Git worktree and signed current lease. The OS vault only signs `POST /v7/tasks/checkpoint` for this specific agent/ticket/lease/epoch. Central persists an audit/checkpoint record, calculates its SHA-256 digest and extends the live lease within the absolute four-hour claim limit. The app then separately obtains a signed Central `resume-check` and requires its latest checkpoint to match **generation, exact summary, next action and digest** before showing success. Saving a checkpoint is **not** independent QA.
+
+**Renewal:** Record a 12–300-character reason and explicitly confirm **Request bounded lease renewal**. Electron Main sends an OS-vault-signed, exact `POST /v7/tasks/renew-lease`. Central requires the original approved worker, current Master and lease, and a due renewal window. Each renewal grants up to 600 seconds, never past four hours from the initial claim. An expired or stale lease cannot be revived. The app rechecks a signed live `resume-check` before acknowledging the renewal. No timed auto-renewal runs.
+
+**Ambiguous network failure:** Before either request, Electron Main fsyncs an exclusive checksum-verified `node/worker/progress_<ticket>.json` containing the exact operation, immutable identity and request body. Retrying with the same agent, ticket and *identical* summary/next action or reason replays the original request ID. Changing those inputs, switching operation types, modifying local evidence or changing Master epoch **fails closed**. On confirmed success, a separate local verified progress receipt is recorded before the pending intent is removed. Even a crash between receipt persistence and journal cleanup reconciles only identical evidence.
+
+**Operator response:** If anything is ambiguous, preserve both journal and local Git worktree. Do not delete files, change inputs to force a fresh operation, claim another ticket, push Git or declare the task DONE. Consult Central task/lease and Owner audit. GUI still cannot submit a candidate, publish Git, create a QA receipt or control AI provider workflows.
+
+Tests: `tests/desktop_worker_claim.test.cjs` exercises cryptographic signing, real local Git preflight, crash/replay and mismatched checkpoint proof. `tests/v7_mysql_integration.test.ts` exercises real disposable-MySQL checkpoint/renewal budget and idempotency. **Physical packaged Windows / live Hostinger verification remains pending.**
+
 ## Windows OS-vault manual claim + Git worktree (alpha only, 19 November 2026)
 
 This next phase adds **Choose trusted Git checkout and claim** plus **Verify my existing work lease** to the local packaged Windows Setup screen. It is **not autonomous worker execution** and has not been physically accepted.
@@ -61,7 +75,7 @@ This next phase adds **Choose trusted Git checkout and claim** plus **Verify my 
 
 If Central accepted the claim but the HTTP response was lost, **repeat the claim for the same ticket, agent and selected checkout**. The pending file replays the original request ID. On success, a local lease receipt is saved before a signed **read-only** `resume-check` verifies the still-live Master epoch and ticket/lease identity. Worktree remains local; no Git push, merge, model API, QA or checkpoint automatically runs.
 
-**Recovery:** If epoch, Git checkout, branch, scope, journal, receipt or server state does not match, stop; do not delete local worker files or create a fresh claim. Ask the Owner to inspect Central's task/lease and audit state. The **Verify my existing work lease** button performs a signed continuity check only and never renews an expired lease. Claim leases remain bounded; the current packaged UI does not yet expose the developer-only renewal/submit/QA capability. This phase is for operator-supervised early pilot tests only.
+**Recovery:** If epoch, Git checkout, branch, scope, journal, receipt or server state does not match, stop; do not delete local worker files or create a fresh claim. Ask the Owner to inspect Central's task/lease and audit state. The **Verify my existing work lease** button performs a signed continuity check only and never renews an expired lease. Claim leases remain bounded; the packaged UI supports manual checkpoint and renewal, **not** submission/QA or automatic execution. This phase is for operator-supervised early pilot tests only.
 
 **Operational limitations:** Git for Windows and an existing trusted project checkout are external prerequisites; the app does not clone external repositories or configure provider accounts. Local worktree creation invokes the trusted installed Git tool after explicit operator confirmation. No remote push or merge is possible from this feature. The desktop packaging still requires code signing, physical Windows/Hostinger multi-PC acceptance and independently verified QA.
 
