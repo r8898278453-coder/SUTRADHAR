@@ -175,7 +175,7 @@ async function signedRequest({origin,signer,method,uri,agentId,payload,fetcher})
   let headers,body;
   if(method==='GET'&&uri==='/v7/cluster/state'){
     headers=signer.sign({kind:'node_api',method:'GET',uri,body:''});body=undefined;
-  }else if(method==='POST'&&['claim','resume-check'].includes(uri)){
+  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint'].includes(uri)){
     const prepared=signer.signWorkerAction({operation:uri,agent_id:agentId,payload});
     headers=prepared.headers;body=prepared.body;uri=prepared.uri;
   }else fail('WORKER_REQUEST_NOT_ALLOWLISTED');
@@ -271,18 +271,32 @@ async function claimApprovedTask({origin,agentId,ticketId,repoDir,dir,signer,fet
     epoch:ctx.epoch,lease_seconds:600,resume_allowed:true,
     automatic_execution_allowed:false,git_push_allowed:false};
 }
+// Only Electron MAIN can use this internal contract. The local claim receipt
+// is sealed against accidental mutations; Central still independently decides
+// whether the original lease is live and authoritative.
+function loadWorkerReceipt(dir,agentId,ticketId){
+  if(typeof dir!=='string'||!path.isAbsolute(dir)||!ID.test(agentId||'')||
+     !ID.test(ticketId||''))fail('WORKER_LOCAL_RECEIPT_INPUT_INVALID');
+  assertDirectory(dir);
+  const record=readRecord(recordFile(dir,ticketId,'receipt'));
+  const local=record.body,c=record.context;
+  if(local.agent_id!==agentId||local.ticket_id!==ticketId||
+     local.epoch!==c.epoch||!Number.isSafeInteger(local.epoch)||local.epoch<1||
+     local.project_id!==c.project_id||local.repository!==c.repository||
+     local.branch_name!==c.branch_name||local.baseline_sha!==c.baseline_sha||
+     local.worktree!==c.worktree||local.repository_dir!==c.repository_dir||
+     JSON.stringify(local.scopes)!==JSON.stringify(c.scopes)||
+     !Array.isArray(local.scopes)||local.scopes.length===0||
+     !local.scopes.every(safeScope)||!LEASE.test(local.lease_id||'')||
+     !ID.test(local.claim_request_id||'')||
+     !local.claim_request_id.startsWith('claim_'))
+    fail('WORKER_LOCAL_RECEIPT_MISMATCH');
+  return local;
+}
 async function resumeApprovedTask({origin,agentId,ticketId,dir,signer,fetcher=fetch}){
   if(!ORIGIN.test(origin||'')||!ID.test(agentId||'')||!ID.test(ticketId||'')||
      !path.isAbsolute(dir||''))fail('WORKER_RESUME_INPUT_DENIED');
-  const file=recordFile(dir,ticketId,'receipt');
-  const record=readRecord(file),local=record.body;
-  if(local.agent_id!==agentId||local.ticket_id!==ticketId||
-     local.epoch!==record.context.epoch||
-     local.branch_name!==record.context.branch_name||
-     local.baseline_sha!==record.context.baseline_sha||
-     local.worktree!==record.context.worktree||
-     local.repository_dir!==record.context.repository_dir||
-     !LEASE.test(local.lease_id||''))fail('WORKER_LOCAL_RECEIPT_MISMATCH');
+  const local=loadWorkerReceipt(dir,agentId,ticketId);
   const proof=await signedRequest({origin,signer,method:'POST',uri:'resume-check',
     agentId,payload:{agent_id:agentId,ticket_id:ticketId,
       lease_id:local.lease_id,expected_master_epoch:local.epoch},fetcher});
@@ -294,4 +308,4 @@ async function resumeApprovedTask({origin,agentId,ticketId,dir,signer,fetcher=fe
     epoch:local.epoch,status:proof.status,resume_allowed:true,
     automatic_execution_allowed:false,git_push_allowed:false};
 }
-module.exports={claimApprovedTask,resumeApprovedTask,localWorktree};
+module.exports={claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume};
