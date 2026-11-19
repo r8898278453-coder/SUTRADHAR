@@ -123,7 +123,23 @@ function saveReceipt(dir,body,operation,response){
   const file=path.join(dir,'progress_receipt_'+body.request_id+'.json');
   const core={schema:1,operation,request_id:body.request_id,
     ticket_id:body.ticket_id,response};
-  if(fs.existsSync(file))fail('WORKER_PROGRESS_RECEIPT_ALREADY_EXISTS');
+  if(fs.existsSync(file)){
+    // The prior attempt may have stored a verified receipt and crashed
+    // before removing the pending journal. Accept only byte-equivalent
+    // verified contents and finish the original exact-ID replay.
+    const st=fs.lstatSync(file);
+    if(!st.isFile()||st.isSymbolicLink()||st.size===0||st.size>8192)
+      fail('WORKER_PROGRESS_RECEIPT_UNTRUSTED');
+    let saved;
+    try{saved=JSON.parse(fs.readFileSync(file,'utf8'));}
+    catch{fail('WORKER_PROGRESS_RECEIPT_CORRUPT');}
+    if(!saved||saved.digest!==stamp(core)||
+      JSON.stringify({schema:saved.schema,operation:saved.operation,
+        request_id:saved.request_id,ticket_id:saved.ticket_id,
+        response:saved.response})!==JSON.stringify(core))
+      fail('WORKER_PROGRESS_RECEIPT_CONFLICT');
+    return;
+  }
   saveExclusive(file,{...core,digest:stamp(core)});
 }
 async function progressWorkerTask({
