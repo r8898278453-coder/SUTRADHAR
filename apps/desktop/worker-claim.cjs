@@ -175,7 +175,7 @@ async function signedRequest({origin,signer,method,uri,agentId,payload,fetcher})
   let headers,body;
   if(method==='GET'&&uri==='/v7/cluster/state'){
     headers=signer.sign({kind:'node_api',method:'GET',uri,body:''});body=undefined;
-  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint'].includes(uri)){
+  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint','submit'].includes(uri)){
     const prepared=signer.signWorkerAction({operation:uri,agent_id:agentId,payload});
     headers=prepared.headers;body=prepared.body;uri=prepared.uri;
   }else fail('WORKER_REQUEST_NOT_ALLOWLISTED');
