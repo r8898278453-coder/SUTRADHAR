@@ -64,6 +64,7 @@ async function loadStatus(){
     get('workerResume').disabled=!approvedReadOnly;
     get('workerCheckpoint').disabled=!approvedReadOnly;
     get('workerRenew').disabled=!approvedReadOnly;
+    get('workerSubmit').disabled=!approvedReadOnly;
 
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
@@ -421,5 +422,30 @@ get('workerRenew').addEventListener('click',async()=>{
   }catch(error){
     output.textContent='Renewal blocked: '+String(error?.message||error)+
       '. Early renewal, expired lease, stale Master or spent four-hour budget cannot be bypassed. Preserve pending journal for Owner review.';
+  }finally{await loadStatus();}
+});
+
+get('workerSubmit').addEventListener('click',async()=>{
+  const button=get('workerSubmit'),output=get('workerTasks');
+  button.disabled=true;
+  try{
+    const agent=get('workerAgent').value,ticket=exactWorkerTicket();
+    output.textContent='Validating committed Git candidate and signed Central checkpoint…';
+    const r=await api.submitWorkerCandidate(agent,ticket);
+    if(r.canceled){
+      output.textContent='Canceled. No submission was sent.';
+    }else{
+      output.textContent='Central candidate record verified for '+ticket+
+        '. Git HEAD: '+r.candidate_head_sha+
+        '. Git tree: '+r.candidate_tree_sha+
+        '. Changed paths: '+r.changed_paths.join(', ')+
+        '. Status: SUBMITTED_FOR_REVIEW. No Git push, QA pass, merge or deployment performed.'+
+        (r.already_submitted?' Existing Central submission reconciled.':
+          (r.replayed?' Original pending request replayed.':''));
+    }
+  }catch(error){
+    output.textContent='Submission blocked: '+String(error?.message||error)+
+      '. Preserve the local Git worktree and pending submission journal. '+
+      'Do not change commits or send a new claim while Central status is uncertain; ask Owner to reconcile.';
   }finally{await loadStatus();}
 });
