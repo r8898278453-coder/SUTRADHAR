@@ -35,6 +35,15 @@ This is a traceable engineering response to the 19 November real-world audit. It
 - Tests cover stable replay, rejected stale epoch/stolen identity/tampered record, and the real disposable-MySQL idempotent claim receipt.
 - **Limit:** This is not the OS-vault worker bridge. Checkpoint/submit operation journals, automatic worker operation, and crash/failover reassignment are still incomplete. A local journal is not a substitute for a Central signed receipt.
 
+## RWA-003 + RWA-004 — OS-vault checkpoint and bounded renewal (third alpha phase)
+
+- The Windows packaged Setup window now allows an *explicitly confirmed*, human-written checkpoint summary/next action and a separate, reasoned bounded renewal. Electron Main adds only the exact signed `POST /v7/tasks/checkpoint` and `POST /v7/tasks/renew-lease` contracts. The existing private heartbeat child cannot invoke either signing capability.
+- **Before every operation:** verify exact original claim identity, user-owned Git checkout and current Central signed resume; reject unapproved PC, missing heartbeat, installer/maintenance hold and stale Master. Central separately checks task ownership, live original lease and four-hour absolute claim budget. No autonomous execution is authorized.
+- Persist an exclusive, flushed per-ticket progress intent **before HTTP**; retry only the original signed request ID and identical payload after an ambiguous response. A different operation, changed summary, tampered journal or changed Master fails closed.
+- After Central acknowledgment, separately confirm the original lease is still live. For checkpoints additionally compare exact remote generation, summary, next action and content SHA-256; only then durably write a verified receipt and remove the pending intent.
+- Tests verify the same OS-vault signing boundary using real local Git, artificial lost HTTP response, stale state, corrupted journal, changed progress payload and mismatched checkpoint evidence. This is source/CI testing, **not** independent QA or real installed-PC acceptance.
+- **Still missing:** OS-vault candidate submission and protected Git publication, QA artifact independence, automatic lease expiry reconciliation and Master task intelligence. Do not interpret checkpoint acknowledgments as proof of passed tests.
+
 ## RWA-003 — OS-vault manual claim and signed continuity proof (second alpha phase)
 
 - The packaged Windows Setup window may now initiate an **explicitly confirmed** single-ticket claim after the human selects an existing trusted local Git checkout. No code execution / Git push / AI automation is delegated to the renderer or heartbeat child.
@@ -42,7 +51,7 @@ This is a traceable engineering response to the 19 November real-world audit. It
 - Before claim, app checks GitHub repository origin, immutable local baseline, Git filters/hooks, project worktree, current Master phase and a fresh approved signed heartbeat/maintenance state. Central independently enforces Owner-approved node/agent/project grants, scopes, deps, capacity and Master epoch.
 - A private, checksum-protected local **claim intent is flushed before HTTP**; lost replies replay the same request ID without creating a second claim. A durable local lease receipt and signed current Central resume proof are required before acknowledging a successful claim. Stale epoch, changed scope, invalid journal and existing receipt fail closed.
 - New CI tests exercise real local Git worktrees, Ed25519 canonical signatures, ambiguous reply replay, stale Master epochs and rejection of mismatched repository/receipt. This is **source and QA CI** verification, not a physical installed PC test.
-- **Still missing:** Packaged OS-vault checkpoint/renewal/submit and trusted independently verified QA; an autonomous AI worker/provider orchestrator; Windows Git installer/prerequisite wizard; automated lease expiry/reassignment; end-to-end physical Windows and Hostinger acceptance. The local Git checkout must already be trusted by the Owner.
+- **Still missing:** Packaged OS-vault candidate submission and trusted independently verified QA; an autonomous AI worker/provider orchestrator; Windows Git installer/prerequisite wizard; automated lease expiry/reassignment; end-to-end physical Windows and Hostinger acceptance. The local Git checkout must already be trusted by the Owner.
 
 ## RWA-003 — OS-vault packaged worker bridge, first read-only phase
 
