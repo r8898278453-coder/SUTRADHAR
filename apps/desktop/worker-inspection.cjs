@@ -40,8 +40,15 @@ function detailItem(x,expectedId){
   const checkpoint=x.latest_checkpoint;
   if(checkpoint!==null&&checkpoint!==undefined&&
      (!checkpoint||typeof checkpoint!=='object'||
+      !Number.isSafeInteger(Number(checkpoint.generation))||
+      Number(checkpoint.generation)<1||
+      !/^[a-f0-9]{64}$/.test(checkpoint.content_sha256||'')||
       typeof checkpoint.summary!=='string'||checkpoint.summary.length>8000||
       typeof checkpoint.next_action!=='string'||checkpoint.next_action.length>500))
+    fail('WORKER_INSPECTION_RESPONSE_INVALID');
+  const head=x.candidate_head_sha??null,tree=x.candidate_tree_sha??null;
+  if((head===null)!==(tree===null)||
+    (head!==null&&(!SHA.test(head)||!SHA.test(tree))))
     fail('WORKER_INSPECTION_RESPONSE_INVALID');
   return {
     ticket_id:x.ticket_id,project_id:x.project_id,
@@ -52,8 +59,11 @@ function detailItem(x,expectedId){
     version:Number(x.version),write_scopes:scopes,
     acceptance_criteria:criteria,
     worker_agent_id:x.worker_agent_id||null,
+    candidate_head_sha:head,candidate_tree_sha:tree,
     latest_checkpoint:checkpoint?{
-      summary:checkpoint.summary,next_action:checkpoint.next_action
+      generation:Number(checkpoint.generation),
+      summary:checkpoint.summary,next_action:checkpoint.next_action,
+      content_sha256:checkpoint.content_sha256
     }:null
   };
 }
