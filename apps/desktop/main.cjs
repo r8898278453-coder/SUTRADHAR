@@ -40,6 +40,7 @@ const {createVault}=require('./os-vault.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
 const {claimApprovedTask,resumeApprovedTask}=require('./worker-claim.cjs');
+const {progressWorkerTask}=require('./worker-progress.cjs');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 const {inspect:inspectEnrollment,prepare:prepareEnrollment,
   markSubmitted:markEnrollmentSubmitted,requireSubmitted,
@@ -406,8 +407,8 @@ app.whenReady().then(()=>{
     return inspectWorkerTasks({origin:current.centralUrl,agentId,ticketId,signer});
   });
 
-  function approvedWorkerOperator(agentId,ticketId){
-    if(workerClaimBusy)throw Error('WORKER_OPERATION_ALREADY_IN_PROGRESS');
+  function approvedWorkerOperator(agentId,ticketId,alreadyLocked=false){
+    if(workerClaimBusy&&!alreadyLocked)throw Error('WORKER_OPERATION_ALREADY_IN_PROGRESS');
     if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
       throw Error('WORKER_OPERATION_REQUIRES_PACKAGED_WINDOWS_OS_VAULT');
     if(typeof agentId!=='string'||!current.agentIds.includes(agentId)||
@@ -455,9 +456,7 @@ app.whenReady().then(()=>{
       if(confirmed.response!==1)return {canceled:true};
       // An Owner maintenance change while the dialog was open must veto work.
       // Re-check the fences and agent liveness without releasing busy guard.
-      workerClaimBusy=false;
-      try{approvedWorkerOperator(agentId,ticketId);}
-      finally{workerClaimBusy=true;}
+      approvedWorkerOperator(agentId,ticketId,true);
       const workerDir=path.join(nodeDir(),'worker');
       fs.mkdirSync(workerDir,{recursive:true,mode:0o700});
       return await claimApprovedTask({
@@ -475,6 +474,52 @@ app.whenReady().then(()=>{
         origin,agentId,ticketId,
         dir:path.join(nodeDir(),'worker'),signer
       });
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:checkpointWorkerTask',async(event,agentId,ticketId,summary,nextAction)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    if(typeof summary!=='string'||!summary.trim()||summary.length>8000||
+      typeof nextAction!=='string'||!nextAction.trim()||nextAction.length>500)
+      throw Error('WORKER_CHECKPOINT_INPUT_INVALID');
+    workerClaimBusy=true;
+    try{
+      const ok=await dialog.showMessageBox(setupWindow,{
+        type:'question',
+        buttons:['Cancel — preserve local task','Save signed checkpoint to Central'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Record this task checkpoint in Central?',
+        detail:'Agent: '+agentId+'\nTask: '+ticketId+
+          '\nSummary length: '+summary.length+' characters'+
+          '\nThis creates an auditable time-limited checkpoint. No code, AI, Git publish or QA runs.'
+      });
+      if(ok.response!==1)return {canceled:true};
+      approvedWorkerOperator(agentId,ticketId,true);
+      return progressWorkerTask({origin,agentId,ticketId,
+        dir:path.join(nodeDir(),'worker'),signer,operation:'checkpoint',
+        summary,next_action:nextAction});
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:renewWorkerLease',async(event,agentId,ticketId,reason)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    if(typeof reason!=='string'||reason.trim()!==reason||
+      reason.length<12||reason.length>300)
+      throw Error('WORKER_RENEW_REASON_INVALID');
+    workerClaimBusy=true;
+    try{
+      const ok=await dialog.showMessageBox(setupWindow,{
+        type:'question',
+        buttons:['Cancel — do not renew','Request bounded lease extension'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Request a signed lease extension from Central?',
+        detail:'Agent: '+agentId+'\nTask: '+ticketId+
+          '\nCentral permits at most 600 seconds per extension and four hours from original claim. Expired/stale leases cannot be restarted. Nothing runs automatically.'
+      });
+      if(ok.response!==1)return {canceled:true};
+      approvedWorkerOperator(agentId,ticketId,true);
+      return progressWorkerTask({origin,agentId,ticketId,
+        dir:path.join(nodeDir(),'worker'),signer,operation:'renew-lease',reason});
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:checkUpdateReadiness',async event=>{
