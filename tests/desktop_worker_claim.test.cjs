@@ -6,6 +6,7 @@ const {createVault}=require('../apps/desktop/os-vault.cjs');
 const {createSignerBridge}=require('../apps/desktop/vault-bridge.cjs');
 const {claimApprovedTask,resumeApprovedTask}=require('../apps/desktop/worker-claim.cjs');
 const {progressWorkerTask}=require('../apps/desktop/worker-progress.cjs');
+const {submitWorkerCandidate}=require('../apps/desktop/worker-submit.cjs');
 const available=cp.spawnSync('git',['--version'],{encoding:'utf8'}).status===0;
 const run=(dir,...args)=>cp.execFileSync('git',['-C',dir,...args],
   {encoding:'utf8',timeout:15000,maxBuffer:100000}).trim();
@@ -425,4 +426,206 @@ test('packaged Main and setup expose only explicit progress operations with no g
   assert.doesNotMatch(preload,/signWorkerAction|private_key_pem/);
   assert.match(setup,/id="workerCheckpoint"/);
   assert.match(setup,/id="workerRenew"/);
+});
+
+
+function candidateHarness(f,{loseReply=false,wrongRemoteSha=false,invalidAck=false}={}){
+  const base=remote(f);
+  const cpSummary='Implemented authorized source change and reviewed result';
+  const cpNext='Independent QA must fetch exact candidate head';
+  const cpHash=crypto.createHash('sha256').update(cpSummary+'\n'+cpNext).digest('hex');
+  const cpData={generation:1,summary:cpSummary,next_action:cpNext,content_sha256:cpHash};
+  let ready=false,submitted=false,firstBody=null,submitCount=0;
+  const all=[];
+  async function fetcher(url,init){
+    const uri=new URL(url).pathname;all.push({uri,body:init.body,method:init.method});
+    if(uri==='/v7/tasks/detail/ticket_abc'){
+      const baseReply=await base.fetcher(url,init);
+      const t=await baseReply.json();
+      if(ready){
+        t.status=submitted?'SUBMITTED_FOR_REVIEW':'CHECKPOINTED';
+        t.latest_checkpoint=cpData;
+      }
+      t.candidate_head_sha=submitted?
+        (wrongRemoteSha?'f'.repeat(40):firstBody.candidate_head_sha):null;
+      t.candidate_tree_sha=submitted?firstBody.candidate_tree_sha:null;
+      return new Response(JSON.stringify(t),{status:200});
+    }
+    if(uri==='/v7/tasks/resume-check'&&ready){
+      const r=await base.fetcher(url,init),data=await r.json();
+      return new Response(JSON.stringify({...data,status:'CHECKPOINTED',
+        latest_checkpoint:cpData}),{status:200});
+    }
+    if(uri==='/v7/tasks/submit'){
+      assert.equal(init.method,'POST');
+      const headers=init.headers;
+      const proof=[headers['x-sutradhar-timestamp'],
+        headers['x-sutradhar-nonce'],'POST',uri,
+        crypto.createHash('sha256').update(init.body).digest('hex')].join('\n');
+      assert.equal(crypto.verify(null,Buffer.from(proof),
+        crypto.createPublicKey(f.pub.public_key_pem),
+        Buffer.from(headers['x-sutradhar-signature'],'base64')),true);
+      const body=JSON.parse(init.body);
+      assert.equal(body.agent_id,'agent_aaa');
+      assert.equal(body.ticket_id,'ticket_abc');
+      assert.equal(body.expected_master_epoch,7);
+      if(!firstBody)firstBody=body;
+      assert.deepEqual(body,firstBody);
+      submitCount++;submitted=true;
+      if(loseReply&&submitCount===1)
+        throw Error('SIMULATED_SUBMIT_ACK_LOST_AFTER_CENTRAL_COMMIT');
+      return new Response(JSON.stringify({accepted:!invalidAck,
+        ticket_id:'ticket_abc',status:'SUBMITTED_FOR_REVIEW'}),{status:200});
+    }
+    return base.fetcher(url,init);
+  }
+  return {fetcher,all,ready:()=>{ready=true;},count:()=>submitCount,
+    current:()=>firstBody,submitted:()=>submitted};
+}
+const candidateArgs=(f,h)=>({origin:'https://central.example.com',
+  agentId:'agent_aaa',ticketId:'ticket_abc',
+  dir:f.worker,signer:f.signer,fetcher:h.fetcher});
+function commitAuthorizedChange(f){
+  const work=path.join(f.worker,'worktrees','ticket_abc');
+  fs.writeFileSync(path.join(work,'src','feature.ts'),'export const feature=2;\n');
+  run(work,'add','src/feature.ts');
+  run(work,'-c','user.name=SUTRADHAR CI','-c','user.email=test@example.invalid',
+    'commit','-m','scoped authorized change');
+  return run(work,'rev-parse','HEAD');
+}
+test('OS-vault candidate signer accepts only fixed committed head/tree and cannot sign QA/push',
+  ()=>{
+    const f=fixture();
+    try{
+      const data={request_id:'submit_example123',agent_id:'agent_aaa',
+        ticket_id:'ticket_abc',lease_id:'11111111-1111-4111-8111-111111111111',
+        expected_master_epoch:7,
+        candidate_head_sha:'a'.repeat(40),candidate_tree_sha:'b'.repeat(40)};
+      const signed=f.signer.signWorkerAction({operation:'submit',
+        agent_id:'agent_aaa',payload:data});
+      assert.equal(signed.uri,'/v7/tasks/submit');
+      assert.deepEqual(JSON.parse(signed.body),data);
+      assert.doesNotMatch(JSON.stringify(signed),/PRIVATE KEY/);
+      assert.throws(()=>f.signer.sign({kind:'node_api',method:'POST',
+        uri:'/v7/tasks/submit',body:signed.body}),/DENIED/);
+      for(const p of [{...data,candidate_head_sha:'invalid'},
+        {...data,expected_master_epoch:0},{...data,extra_owner:true}]){
+        assert.throws(()=>f.signer.signWorkerAction({operation:'submit',
+          agent_id:'agent_aaa',payload:p}),/DENIED/);
+      }
+      assert.throws(()=>f.signer.signWorkerAction({operation:'qa-receipt',
+        agent_id:'agent_aaa',payload:data}),/DENIED/);
+    }finally{f.close();}
+  });
+test('verified local scoped commit is recorded in Central without Git push or QA approval',
+  {skip:!available},async()=>{
+    const f=fixture(),h=candidateHarness(f);
+    try{
+      await claimApprovedTask(args(f,h.fetcher));h.ready();
+      const head=commitAuthorizedChange(f);
+      const result=await submitWorkerCandidate(candidateArgs(f,h));
+      assert.equal(result.accepted,true);
+      assert.equal(result.status,'SUBMITTED_FOR_REVIEW');
+      assert.equal(result.candidate_head_sha,head);
+      assert.deepEqual(result.changed_paths,['src/feature.ts']);
+      assert.equal(result.git_push_allowed,false);
+      assert.equal(result.qa_passed,false);
+      assert.equal(h.count(),1);
+      assert.equal(fs.existsSync(path.join(f.worker,'submission_pending_ticket_abc.json')),false);
+      assert.equal(fs.existsSync(path.join(f.worker,'submission_receipt_ticket_abc.json')),true);
+      assert.ok(!h.all.some(x=>/push|merge|qa-receipt/.test(x.uri)));
+      const again=await submitWorkerCandidate(candidateArgs(f,h));
+      assert.equal(again.already_submitted,true);
+      assert.equal(h.count(),1);
+    }finally{f.close();}
+  });
+test('lost response after Central commit is reconciled with signed read-only SHA proof',
+  {skip:!available},async()=>{
+    const f=fixture(),h=candidateHarness(f,{loseReply:true});
+    try{
+      await claimApprovedTask(args(f,h.fetcher));h.ready();commitAuthorizedChange(f);
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SIMULATED_SUBMIT_ACK_LOST/);
+      assert.equal(fs.existsSync(path.join(f.worker,'submission_pending_ticket_abc.json')),true);
+      const replay=await submitWorkerCandidate(candidateArgs(f,h));
+      assert.equal(replay.already_submitted,true);
+      assert.equal(h.count(),1,'No second POST when remote already records exact hashes');
+      assert.equal(fs.existsSync(path.join(f.worker,'submission_receipt_ticket_abc.json')),true);
+    }finally{f.close();}
+  });
+test('uncommitted, untracked or unapproved files never reach Central submit API',
+  {skip:!available},async()=>{
+    const f=fixture(),h=candidateHarness(f);
+    try{
+      await claimApprovedTask(args(f,h.fetcher));h.ready();
+      const work=path.join(f.worker,'worktrees','ticket_abc');
+      fs.writeFileSync(path.join(work,'untracked.tmp'),'unfinished');
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_UNCOMMITTED_OR_UNTRACKED_CHANGES/);
+      fs.unlinkSync(path.join(work,'untracked.tmp'));
+      fs.mkdirSync(path.join(work,'private'));
+      fs.writeFileSync(path.join(work,'private','unapproved.txt'),'not allowed');
+      run(work,'add','private/unapproved.txt');
+      run(work,'-c','user.name=SUTRADHAR CI','-c','user.email=test@example.invalid',
+        'commit','-m','unauthorized path');
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_CHANGED_PATH_OR_MODE_NOT_AUTHORIZED/);
+      assert.equal(h.count(),0);
+      assert.equal(fs.existsSync(path.join(f.worker,'submission_pending_ticket_abc.json')),false);
+    }finally{f.close();}
+  });
+test('Central checkpoint must be verified before a signed candidate submit',
+  {skip:!available},async()=>{
+    const f=fixture(),h=candidateHarness(f);
+    try{
+      await claimApprovedTask(args(f,h.fetcher));commitAuthorizedChange(f);
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_CHECKPOINT_REQUIRED/);
+      assert.equal(h.count(),0);
+    }finally{f.close();}
+  });
+test('changed Git head after lost submission response requires Owner reconciliation',
+  {skip:!available},async()=>{
+    const f=fixture(),h=candidateHarness(f,{loseReply:true});
+    try{
+      await claimApprovedTask(args(f,h.fetcher));h.ready();
+      commitAuthorizedChange(f);
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SIMULATED_SUBMIT_ACK_LOST/);
+      const work=path.join(f.worker,'worktrees','ticket_abc');
+      fs.writeFileSync(path.join(work,'src','feature.ts'),'export const feature=3;\n');
+      run(work,'add','src/feature.ts');
+      run(work,'-c','user.name=SUTRADHAR CI','-c','user.email=test@example.invalid',
+        'commit','-m','unexpected new commit');
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_REMOTE_PROOF_NOT_CONFIRMED/);
+      assert.equal(h.count(),1);
+      assert.equal(fs.existsSync(path.join(f.worker,'submission_pending_ticket_abc.json')),true);
+    }finally{f.close();}
+  });
+test('mismatched remote SHA after accepted POST does not mark submission verified',
+  {skip:!available},async()=>{
+    const f=fixture(),h=candidateHarness(f,{wrongRemoteSha:true});
+    try{
+      await claimApprovedTask(args(f,h.fetcher));h.ready();commitAuthorizedChange(f);
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_REMOTE_PROOF_NOT_CONFIRMED/);
+      assert.equal(h.count(),1);
+      assert.equal(fs.existsSync(path.join(f.worker,'submission_pending_ticket_abc.json')),true);
+      assert.equal(fs.existsSync(path.join(f.worker,'submission_receipt_ticket_abc.json')),false);
+    }finally{f.close();}
+  });
+test('packaged candidate UI and bundle retain Owner-confirmed bounded submission boundary',()=>{
+  const root=path.resolve(__dirname,'../apps/desktop');
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const setup=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+  assert.ok(pkg.build.files.includes('worker-submit.cjs'));
+  assert.match(main,/ipcMain\.handle\('sutradhar:submitWorkerCandidate'/);
+  assert.match(main,/approvedWorkerOperator\(agentId,ticketId,true\)/);
+  assert.match(main,/Submit exact committed candidate for independent review/);
+  assert.match(preload,/submitWorkerCandidate:\(agentId,ticketId\)/);
+  assert.doesNotMatch(preload,/signWorkerAction|private_key_pem/);
+  assert.match(setup,/id="workerSubmit"/);
 });
