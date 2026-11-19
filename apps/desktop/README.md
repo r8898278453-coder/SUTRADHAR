@@ -51,6 +51,20 @@ Do not move/copy device identity to a different PC. Do not delete identity for a
 
 **Advanced code/QA worker:** apps/desktop/dist/edge-worker.cjs is an independently compiled CLI, not automatically run by the setup UI. It still requires trusted Git, Docker/Python and approved source checkout; consult [v7 technical runbook](../../v7/README.md). It is intentionally not included in the first-run installer.
 
+## Windows OS-vault verified candidate submission (alpha, 20 November 2026)
+
+After a checkpoint has been confirmed and your approved task's **original Central lease remains live**, the packaged Windows Setup screen offers **Submit committed candidate for review**. This is an explicitly confirmed request. It **does not** clone/push code, create a PR, merge or approve QA.
+
+Before Central is contacted for a write, Electron Main checks the original private claim receipt and Git checkout, verifies that the HEAD commit descends from the exact authorized baseline, requires a completely clean index/worktree (including no untracked files), and inspects the Git binary diff of baseline to HEAD in NUL-safe format. Only added or modified regular files (`100644`) fully inside approved scopes are accepted. Deletions, renames, executable-mode changes, symlinks, submodules, path traversal and changes to `.gitattributes`, `.gitmodules` or `.lfsconfig` are refused. A previous unresolved progress journal blocks submission.
+
+The OS vault signs the **exact** `POST /v7/tasks/submit` contract containing the agent, ticket, original lease, Master epoch and local Git HEAD/tree SHA-1. It never exposes a generic signer to renderer or heartbeat child. Central independently checks the live approved agent/lease, a checkpoint, and current Master before recording `SUBMITTED_FOR_REVIEW`. The app then fetches Central's signed read-only task detail and requires **exact matching commit/tree hashes, scopes, branch, baseline and worker agent ID** before reporting success.
+
+**Ambiguous HTTP response:** An exclusive, fsynced `submission_pending_<ticket>.json` records the exact immutable candidate and original request ID before sending. On retry, if Central already shows matching `SUBMITTED_FOR_REVIEW`, the app verifies that record without a second POST. Otherwise it retries only the exact original request after a live signed resume-check. If HEAD changes, Central hashes differ, the Master epoch is uncertain or a local journal is altered, it refuses and requires Owner-assisted reconciliation. It never silently deletes the pending evidence to issue a fresh request.
+
+**Important:** A Central candidate SHA is a *claim about a commit*, not proof that a separate QA PC can fetch it. No Git push is performed by this feature, and **QA remains pending** until the candidate is independently obtained and verified by the QA workflow. Production releases remain held for a signed installer, real Hostinger staging, physical Windows fleet testing and independent QA evidence.
+
+Source regression tests: `tests/desktop_worker_claim.test.cjs` (real local Git repositories, Ed25519 signatures, unauthorized paths, dirty worktree, response loss and conflicting remote proof). Real disposable-MySQL task submission/QA gates remain in `tests/v7_mysql_integration.test.ts`; these are not equivalent to a physical installed-PC acceptance.
+
 ## Windows OS-vault manual checkpoint and bounded renewal (alpha, 19 November 2026)
 
 After the exact local worktree has been claimed and the signed lease remains live, the packaged Windows Setup screen offers **Save signed checkpoint (manual)** and **Request bounded lease renewal**. These are additional *human-confirmed* operations, not an autonomous AI coding service.
