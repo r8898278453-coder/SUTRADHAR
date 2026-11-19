@@ -143,6 +143,17 @@ function createSignerBridge(vault){
       if(!id(payload.ticket_id)||typeof payload.lease_id!=='string'||
         !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(payload.lease_id)||
         !epoch)fail('VAULT_WORKER_ACTION_DENIED');
+    }else if(operation==='submit'){
+      uri='/v7/tasks/submit';
+      expected=['request_id','agent_id','ticket_id','lease_id',
+        'expected_master_epoch','candidate_head_sha','candidate_tree_sha'];
+      if(!id(payload.ticket_id)||!id(payload.request_id)||
+        !payload.request_id.startsWith('submit_')||
+        typeof payload.lease_id!=='string'||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(payload.lease_id)||
+        !/^[a-f0-9]{40}$/.test(payload.candidate_head_sha||'')||
+        !/^[a-f0-9]{40}$/.test(payload.candidate_tree_sha||'')||
+        !epoch)fail('VAULT_WORKER_ACTION_DENIED');
     }else if(operation==='renew-lease'||operation==='checkpoint'){
       uri=operation==='renew-lease'?'/v7/tasks/renew-lease':'/v7/tasks/checkpoint';
       expected=operation==='renew-lease'?
