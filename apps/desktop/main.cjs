@@ -41,6 +41,7 @@ const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
 const {claimApprovedTask,resumeApprovedTask}=require('./worker-claim.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
+const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 const {inspect:inspectEnrollment,prepare:prepareEnrollment,
   markSubmitted:markEnrollmentSubmitted,requireSubmitted,
@@ -520,6 +521,26 @@ app.whenReady().then(()=>{
       approvedWorkerOperator(agentId,ticketId,true);
       return progressWorkerTask({origin,agentId,ticketId,
         dir:path.join(nodeDir(),'worker'),signer,operation:'renew-lease',reason});
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:submitWorkerCandidate',async(event,agentId,ticketId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    workerClaimBusy=true;
+    try{
+      const ok=await dialog.showMessageBox(setupWindow,{
+        type:'warning',
+        buttons:['Cancel — keep local work','Submit exact committed candidate for independent review'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Submit this committed Git candidate to Central?',
+        detail:'Agent: '+agentId+'\nTask: '+ticketId+
+          '\nThis checks the original Master lease, verified checkpoint, clean Git worktree, immutable baseline and all changed paths. Central records the exact HEAD/tree SHA for independent QA. Nothing is pushed to GitHub; no model command, QA receipt, merge or production deployment is triggered.'
+      });
+      if(ok.response!==1)return {canceled:true};
+      approvedWorkerOperator(agentId,ticketId,true);
+      return submitWorkerCandidate({
+        origin,agentId,ticketId,dir:path.join(nodeDir(),'worker'),signer
+      });
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:checkUpdateReadiness',async event=>{
