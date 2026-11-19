@@ -41,6 +41,7 @@
       "vault-bridge.cjs",
       "worker-inspection.cjs",
       "worker-claim.cjs",
+      "worker-progress.cjs",
       "enrollment.cjs",
       "enrollment-receipt.cjs",
       "single-instance.cjs",
