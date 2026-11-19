@@ -624,7 +624,7 @@ test('new scoped candidate file matching a dormant baseline Git filter is reject
       // Baseline has no matching tracked file; claim-time checks cannot see
       // this dormant wildcard. The candidate introduces the first match.
       fs.writeFileSync(path.join(f.repo,'.gitattributes'),
-        'src/*.special filter=untrusted\\n');
+        'src/*.special filter=untrusted\n');
       run(f.repo,'add','.gitattributes');
       run(f.repo,'commit','-m','baseline with dormant wildcard filter');
       f.baseline=run(f.repo,'rev-parse','HEAD');
@@ -632,7 +632,7 @@ test('new scoped candidate file matching a dormant baseline Git filter is reject
       await claimApprovedTask(args(f,h.fetcher));h.ready();
       const work=path.join(f.worker,'worktrees','ticket_abc');
       fs.writeFileSync(path.join(work,'src','new.special'),
-        'new authorized file\\n');
+        'new authorized file\n');
       run(work,'add','src/new.special');
       run(work,'-c','user.name=SUTRADHAR CI',
         '-c','user.email=test@example.invalid','commit','-m','new scoped file');
@@ -650,7 +650,7 @@ test('new scoped candidate file with no active Git attributes can be submitted',
     try{
       await claimApprovedTask(args(f,h.fetcher));h.ready();
       const work=path.join(f.worker,'worktrees','ticket_abc');
-      fs.writeFileSync(path.join(work,'src','new.special'),'clean new file\\n');
+      fs.writeFileSync(path.join(work,'src','new.special'),'clean new file\n');
       run(work,'add','src/new.special');
       run(work,'-c','user.name=SUTRADHAR CI',
         '-c','user.email=test@example.invalid','commit','-m','new safe file');
