@@ -36,7 +36,8 @@ function fixture(){
   return {root,repo,worker,signer,pub,baseline,
     close:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
-function remote(f,{lostOnce=false,masterEpoch=7,invalidScope=false}={}){
+function remote(f,{lostOnce=false,masterEpoch=7,invalidScope=false,
+  writeScopes=['src/feature.ts']}={}){
   let claimed=false,claimCount=0,firstBody=null,all=[];
   const task=()=>({ticket_id:'ticket_abc',project_id:'project_aaa',
     repository:'example/repo',base_branch:'main',title:'Build one feature',
@@ -44,7 +45,7 @@ function remote(f,{lostOnce=false,masterEpoch=7,invalidScope=false}={}){
     branch_name:'ai/ticket_abc',baseline_sha:f.baseline,
     version:claimed?2:1,status:claimed?'CLAIMED':'READY',
     worker_agent_id:claimed?'agent_aaa':null,
-    write_scopes:['src/feature.ts'],
+    write_scopes:writeScopes,
     acceptance_criteria:['Test passes'],latest_checkpoint:null});
   function verified(init,uri){
     const h=init.headers,key=crypto.createPublicKey(f.pub.public_key_pem);
@@ -82,7 +83,7 @@ function remote(f,{lostOnce=false,masterEpoch=7,invalidScope=false}={}){
       return new Response(JSON.stringify({accepted:true,ticket_id:'ticket_abc',
         lease_id:'11111111-1111-4111-8111-111111111111',
         epoch:masterEpoch,version:2,lease_seconds:600,
-        write_scopes:invalidScope?['secrets/private.ts']:['src/feature.ts']}),{status:200});
+        write_scopes:invalidScope?['secrets/private.ts']:writeScopes}),{status:200});
     }
     if(uri==='/v7/tasks/resume-check'&&init.method==='POST'){
       const b=JSON.parse(init.body);
@@ -92,7 +93,7 @@ function remote(f,{lostOnce=false,masterEpoch=7,invalidScope=false}={}){
         ticket_id:'ticket_abc',epoch:masterEpoch,project_id:'project_aaa',
         repository:'example/repo',branch_name:'ai/ticket_abc',
         baseline_sha:f.baseline,status:'CLAIMED',
-        write_scopes:['src/feature.ts'],latest_checkpoint:null}),{status:200});
+        write_scopes:writeScopes,latest_checkpoint:null}),{status:200});
     }
     throw Error('UNEXPECTED_REMOTE_ENDPOINT_'+uri);
   };
@@ -429,8 +430,9 @@ test('packaged Main and setup expose only explicit progress operations with no g
 });
 
 
-function candidateHarness(f,{loseReply=false,wrongRemoteSha=false,invalidAck=false}={}){
-  const base=remote(f);
+function candidateHarness(f,{loseReply=false,wrongRemoteSha=false,
+  invalidAck=false,writeScopes}={}){
+  const base=remote(f,{writeScopes});
   const cpSummary='Implemented authorized source change and reviewed result';
   const cpNext='Independent QA must fetch exact candidate head';
   const cpHash=crypto.createHash('sha256').update(cpSummary+'\n'+cpNext).digest('hex');
@@ -615,6 +617,50 @@ test('mismatched remote SHA after accepted POST does not mark submission verifie
       assert.equal(fs.existsSync(path.join(f.worker,'submission_receipt_ticket_abc.json')),false);
     }finally{f.close();}
   });
+test('new scoped candidate file matching a dormant baseline Git filter is rejected',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      // Baseline has no matching tracked file; claim-time checks cannot see
+      // this dormant wildcard. The candidate introduces the first match.
+      fs.writeFileSync(path.join(f.repo,'.gitattributes'),
+        'src/*.special filter=untrusted\\n');
+      run(f.repo,'add','.gitattributes');
+      run(f.repo,'commit','-m','baseline with dormant wildcard filter');
+      f.baseline=run(f.repo,'rev-parse','HEAD');
+      const h=candidateHarness(f,{writeScopes:['src/new.special']});
+      await claimApprovedTask(args(f,h.fetcher));h.ready();
+      const work=path.join(f.worker,'worktrees','ticket_abc');
+      fs.writeFileSync(path.join(work,'src','new.special'),
+        'new authorized file\\n');
+      run(work,'add','src/new.special');
+      run(work,'-c','user.name=SUTRADHAR CI',
+        '-c','user.email=test@example.invalid','commit','-m','new scoped file');
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_CANDIDATE_ACTIVE_GIT_FILTER_REQUIRES_OWNER_REVIEW/);
+      assert.equal(h.count(),0,'No Central submit POST for unsafe Git attributes');
+      assert.equal(fs.existsSync(path.join(f.worker,
+        'submission_pending_ticket_abc.json')),false);
+    }finally{f.close();}
+  });
+
+test('new scoped candidate file with no active Git attributes can be submitted',
+  {skip:!available},async()=>{
+    const f=fixture(),h=candidateHarness(f,{writeScopes:['src/new.special']});
+    try{
+      await claimApprovedTask(args(f,h.fetcher));h.ready();
+      const work=path.join(f.worker,'worktrees','ticket_abc');
+      fs.writeFileSync(path.join(work,'src','new.special'),'clean new file\\n');
+      run(work,'add','src/new.special');
+      run(work,'-c','user.name=SUTRADHAR CI',
+        '-c','user.email=test@example.invalid','commit','-m','new safe file');
+      const result=await submitWorkerCandidate(candidateArgs(f,h));
+      assert.equal(result.status,'SUBMITTED_FOR_REVIEW');
+      assert.deepEqual(result.changed_paths,['src/new.special']);
+      assert.equal(h.count(),1);
+    }finally{f.close();}
+  });
+
 test('packaged candidate UI and bundle retain Owner-confirmed bounded submission boundary',()=>{
   const root=path.resolve(__dirname,'../apps/desktop');
   const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');

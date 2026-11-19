@@ -105,6 +105,29 @@ function inspectCommittedCandidate(local,dir){
   }
   if(changed.length===0||new Set(changed).size!==changed.length)
     fail('SUBMIT_DIFF_FORMAT_INVALID');
+  // Claim-time attribute checks only covered paths already tracked at the
+  // baseline. New scoped files may match dormant wildcard filters from a
+  // previously committed .gitattributes, so inspect the candidate's own tree.
+  const attr=spawnSync('git',['-c','core.hooksPath='+hooks,
+    '-c','core.fsmonitor=false','-C',local.worktree,
+    'check-attr','--source='+head,'--all','-z','--stdin'],
+    {input:Buffer.from(changed.join('\0')+'\0','utf8'),encoding:null,
+      timeout:20000,maxBuffer:2*1024*1024,windowsHide:true});
+  if(attr.error||attr.status!==0||!Buffer.isBuffer(attr.stdout)||
+     attr.stdout.length>2*1024*1024)
+    fail('SUBMIT_CANDIDATE_ATTRIBUTES_UNREADABLE');
+  const attrs=attr.stdout.toString('utf8').split('\0');
+  if(attrs.at(-1)!==''||(attrs.length-1)%3!==0)
+    fail('SUBMIT_CANDIDATE_ATTRIBUTES_UNREADABLE');
+  const allowed=new Set(changed);
+  for(let i=0;i<attrs.length-1;i+=3){
+    const file=attrs[i],name=attrs[i+1],value=attrs[i+2];
+    if(!allowed.has(file)||!name||!value)
+      fail('SUBMIT_CANDIDATE_ATTRIBUTES_UNREADABLE');
+    if((name==='filter'||name==='working-tree-encoding')&&
+       value!=='unset'&&value!=='unspecified')
+      fail('SUBMIT_CANDIDATE_ACTIVE_GIT_FILTER_REQUIRES_OWNER_REVIEW');
+  }
   return {head,tree,changed_paths:changed.sort()};
 }
 function files(dir,ticket){

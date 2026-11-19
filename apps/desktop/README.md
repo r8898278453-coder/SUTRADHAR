@@ -187,3 +187,9 @@ Central's Owner dashboard has a 5-minute maintenance-intent form with cancellati
 An Owner may use the Central dashboard to START_PC_DRAIN for a current five-minute maintenance intent, preserving existing worker leases while preventing new work, and FINALIZE_PC_DRAIN only after Central sees no outstanding work. The durable fence persists across the intent deadline until explicit Owner cancellation. The Desktop's signed readiness check blocks on a DRAINING/DRAINED record; it must not treat the task fence as a Windows installer execution capability.
 
 [Owner drain-fence runbook](../../docs/PC_DRAIN_FENCE_V7.md). Code is not deployed to physical PCs and real signing/rollback is still pending.
+
+## New-file Git attributes at candidate submission (20 November 2026)
+
+The explicit Windows Desktop **Submit candidate** action verifies Git attributes for every changed path against the candidate **HEAD**, not just files tracked in the original baseline. An existing wildcard `.gitattributes` rule can become active when a worker adds a new scoped file. Active `filter` or `working-tree-encoding` on such a file blocks submission for independent Owner review. Missing Git attribute evidence also fails closed. The rule neither fetches nor pushes Git, starts a filter or QA process, or approves a release.
+
+Regression tests cover both a dormant wildcard filter that must be blocked and a safe new file that can be submitted. This is **draft branch code only**; physical Windows, QA and production evidence remain outstanding.
