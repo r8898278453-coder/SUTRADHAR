@@ -35,6 +35,14 @@ This is a traceable engineering response to the 19 November real-world audit. It
 - Tests cover stable replay, rejected stale epoch/stolen identity/tampered record, and the real disposable-MySQL idempotent claim receipt.
 - **Limit:** This is not the OS-vault worker bridge. Checkpoint/submit operation journals, automatic worker operation, and crash/failover reassignment are still incomplete. A local journal is not a substitute for a Central signed receipt.
 
+## RWA-003 + RWA-008 — Packaged Windows verified candidate submission (fourth alpha phase)
+
+- Added an **explicitly confirmed** OS-vault-signed exact candidate submission from packaged Windows Setup: `POST /v7/tasks/submit`. The existing supervised heartbeat child still cannot sign worker mutations, while renderer cannot submit a raw body or choose arbitrary endpoints.
+- Before submission: verify original worker claim identity, approved Master/current live lease, a real Central checkpoint, a trusted Git worktree, a clean committed HEAD and tree, and the exact baseline ancestry. Inspect NUL-safe raw diff and allow only regular, added/modified files within approved scopes. Forbid deletions, renames, symlinks, submodules, mode changes and Git metadata affecting future checkouts.
+- Durable per-ticket submission intent is created before HTTP; after a timeout the exact original request ID and immutable SHA are replayed only if Central is still in pre-submit state. If Central already holds matching `SUBMITTED_FOR_REVIEW` hashes, a new signed read-only task detail confirms this without another POST. Mismatched local/remote commit requires Owner review.
+- A distinct local verified submission receipt is created before removal of the pending intent. No provider command, Git push, PR/merge, QA approval or release can be triggered through the new interface.
+- **Known gap:** Central records a candidate hash but does **not** automatically receive its Git object, so it cannot yet prove that a different QA PC can retrieve exactly that candidate. Independent trusted publication, QA artifact verification and real multi-PC acceptance remain production gates.
+
 ## RWA-003 + RWA-004 — OS-vault checkpoint and bounded renewal (third alpha phase)
 
 - The Windows packaged Setup window now allows an *explicitly confirmed*, human-written checkpoint summary/next action and a separate, reasoned bounded renewal. Electron Main adds only the exact signed `POST /v7/tasks/checkpoint` and `POST /v7/tasks/renew-lease` contracts. The existing private heartbeat child cannot invoke either signing capability.
