@@ -70,13 +70,15 @@ function inspectCommittedCandidate(local,dir){
   const hooks=path.join(dir,'disabled-git-hooks');
   const head=gitText(local.worktree,hooks,'rev-parse','--verify','HEAD');
   const tree=gitText(local.worktree,hooks,'rev-parse','--verify','HEAD^{tree}');
-  if(!SHA.test(head)||!SHA.test(tree)||head===local.baseline_sha)
+  if(!SHA.test(head)||!SHA.test(tree))
     fail('SUBMIT_NO_COMMITTED_CHANGE_OR_INVALID_SHA');
-  // Clean means no staged, unstaged, untracked or staged intent-to-add work.
-  // Ignored files cannot be submitted in a Git commit.
+  // Prioritize a dirty/untracked worktree diagnosis even when there is no
+  // committed candidate yet; both conditions remain hard stop gates.
   const status=git(local.worktree,hooks,'status','--porcelain=v1',
     '-z','--untracked-files=all');
   if(status.length)fail('SUBMIT_UNCOMMITTED_OR_UNTRACKED_CHANGES');
+  if(head===local.baseline_sha)
+    fail('SUBMIT_NO_COMMITTED_CHANGE_OR_INVALID_SHA');
   const ancestor=spawnSync('git',['-c','core.hooksPath='+hooks,
     '-c','core.fsmonitor=false','-C',local.worktree,
     'merge-base','--is-ancestor',local.baseline_sha,head],
