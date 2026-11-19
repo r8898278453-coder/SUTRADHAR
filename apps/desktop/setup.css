@@ -16,3 +16,6 @@ button:hover{filter:brightness(1.1)}button:disabled{opacity:.55;cursor:wait}.sec
 .toggle{display:flex;align-items:center;gap:10px;font-size:13px;color:#d3e4f5;margin:14px 0 0}.toggle input{width:18px;height:18px;display:inline-block;flex:none}
 
 #workerTasks{background:#081626;border:1px solid #39536c;border-radius:9px;padding:12px;max-height:310px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.55;color:#d7e8fa}
+
+textarea{display:block;width:100%;min-height:110px;resize:vertical;padding:12px;border-radius:8px;border:1px solid #526a83;background:#081626;color:#fff;font:inherit}
+textarea:focus{outline:2px solid #83b4ee;outline-offset:2px}
