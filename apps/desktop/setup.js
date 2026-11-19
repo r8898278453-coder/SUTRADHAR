@@ -62,6 +62,8 @@ async function loadStatus(){
     get('workerDetail').disabled=!approvedReadOnly;
     get('workerClaim').disabled=!approvedReadOnly;
     get('workerResume').disabled=!approvedReadOnly;
+    get('workerCheckpoint').disabled=!approvedReadOnly;
+    get('workerRenew').disabled=!approvedReadOnly;
 
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
@@ -379,5 +381,45 @@ get('workerResume').addEventListener('click',async()=>{
   }catch(error){
     output.textContent='Signed lease verification blocked: '+String(error?.message||error)+
       '. Do not use an expired/unknown task lease; contact Owner if recovery is uncertain.';
+  }finally{await loadStatus();}
+});
+
+get('workerCheckpoint').addEventListener('click',async()=>{
+  const button=get('workerCheckpoint'),output=get('workerTasks');
+  button.disabled=true;
+  try{
+    const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+    const summary=get('workerSummary').value,next=get('workerNextAction').value;
+    if(!summary.trim()||summary.length>8000||!next.trim()||next.length>500)
+      throw Error('Describe completed work and next action; do not include secrets.');
+    output.textContent='Checking current Master, original lease and local Git checkout…';
+    const r=await api.checkpointWorkerTask(agent,ticket,summary,next);
+    output.textContent=r.canceled?'Canceled; no new checkpoint sent.':
+      'Checkpoint generation '+r.checkpoint_generation+' verified by Central for '+
+      ticket+'. Lease remains bounded. No QA, Git push or automatic coding was started.'+
+      (r.replayed?' Original pending request replayed.':'');
+  }catch(error){
+    output.textContent='Checkpoint blocked: '+String(error?.message||error)+
+      '. Preserve any pending progress journal; repeat identical summary and next action only if the original lease is still valid. Otherwise ask Owner to reconcile.';
+  }finally{await loadStatus();}
+});
+get('workerRenew').addEventListener('click',async()=>{
+  const button=get('workerRenew'),output=get('workerTasks');
+  button.disabled=true;
+  try{
+    const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+    const reason=get('workerRenewReason').value;
+    if(reason.trim()!==reason||reason.length<12||reason.length>300)
+      throw Error('Enter a 12–300 character progress/recovery reason.');
+    output.textContent='Checking approved Master and the current worker lease…';
+    const r=await api.renewWorkerLease(agent,ticket,reason);
+    output.textContent=r.canceled?'Canceled; no renewal requested.':
+      'Central verified bounded lease extension for '+ticket+
+      '. Remaining lease: '+r.lease_seconds_remaining+
+      ' seconds at Central acknowledgment. No automatic work was started.'+
+      (r.replayed?' Original pending request replayed.':'');
+  }catch(error){
+    output.textContent='Renewal blocked: '+String(error?.message||error)+
+      '. Early renewal, expired lease, stale Master or spent four-hour budget cannot be bypassed. Preserve pending journal for Owner review.';
   }finally{await loadStatus();}
 });
