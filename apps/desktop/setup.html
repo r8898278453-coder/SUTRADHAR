@@ -51,6 +51,17 @@
 <button id="workerClaim" class="secondary" type="button" disabled>Choose trusted Git checkout and claim</button>
 <button id="workerResume" class="secondary" type="button" disabled>Verify my existing work lease</button>
 </div>
+<label for="workerSummary">Manual checkpoint summary</label>
+<textarea id="workerSummary" maxlength="8000" rows="4" spellcheck="true" placeholder="Describe completed work and verifiable evidence; avoid credentials or secrets."></textarea>
+<label for="workerNextAction">Next action (up to 500 characters)</label>
+<input id="workerNextAction" type="text" maxlength="500" autocomplete="off" placeholder="Next authorized step for this task">
+<button id="workerCheckpoint" class="secondary" type="button" disabled>Save signed checkpoint (manual)</button>
+<label for="workerRenewReason">Reason to renew (12–300 characters)</label>
+<input id="workerRenewReason" type="text" maxlength="300" autocomplete="off" placeholder="Progress since last check and why another lease period is needed">
+<button id="workerRenew" class="secondary" type="button" disabled>Request bounded lease renewal</button>
+<p class="hint">Checkpoint and renewal require an existing live lease, a current approved Master, the exact local Git worktree and explicit confirmation. A checkpoint is a progress summary, not proof that QA passed. Renewal is only allowed near expiry and never after four hours from the original claim. An ambiguous response keeps the pending operation journal for exact-ID recovery. No automatic work or Git push starts.</p>
+<div class="actions">
+</div>
 <p class="hint">Claiming requires Owner-granted project access, a READY task, Git for Windows, a local checkout containing the exact approved baseline, and manual confirmation. This creates an isolated local worktree and starts a time-limited Central lease. It does not run AI or publish Git. If a claim response is lost, repeat the same action with the same Git folder; the pending journal preserves the request ID. Do not delete pending files.</p>
 <pre id="workerTasks" role="status" aria-live="polite">Central approval and recent signed heartbeat required.</pre>
 <p class="hint">Tasks depend on Central project grants. If access is denied, ask the Owner to check your agent's project permissions. No action on this screen creates, renews or submits work.</p>
