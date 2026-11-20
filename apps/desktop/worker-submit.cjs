@@ -141,12 +141,18 @@ function verifyCandidateHistory(local,dir,head){
     '--reverse','--max-count=41',local.baseline_sha+'..'+head).split('\n');
   if(lines.length===0||lines.length>40)
     fail('SUBMIT_HISTORY_TOO_COMPLEX_OR_MISSING');
-  let parent=local.baseline_sha,totalChanges=0;
+  let parent=local.baseline_sha;
+  const commits=[];
   for(const line of lines){
     const m=/^([a-f0-9]{40}) ([a-f0-9]{40})$/.exec(line);
     if(!m||m[2]!==parent)
       fail('SUBMIT_HISTORY_NON_LINEAR_OR_SHALLOW');
-    const commit=m[1];
+    commits.push({parent,commit:m[1]});
+    parent=m[1];
+  }
+  if(parent!==head)fail('SUBMIT_HISTORY_NON_LINEAR_OR_SHALLOW');
+  let totalChanges=0;
+  for(const {parent,commit} of commits){
     const raw=git(local.worktree,hooks,'diff','--raw','-r',
       '--no-renames','-z',parent,commit);
     if(raw.length===0||raw.length>1024*1024)
@@ -164,9 +170,7 @@ function verifyCandidateHistory(local,dir,head){
       if(++totalChanges>1200)
         fail('SUBMIT_HISTORY_TOO_COMPLEX_OR_MISSING');
     }
-    parent=commit;
   }
-  if(parent!==head)fail('SUBMIT_HISTORY_NON_LINEAR_OR_SHALLOW');
 }
 function files(dir,ticket){
   if(!path.isAbsolute(dir)||!ID.test(ticket))
