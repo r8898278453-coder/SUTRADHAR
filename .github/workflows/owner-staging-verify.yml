@@ -1,6 +1,8 @@
 name: Hostinger Staging - Verify Only (Owner Manual)
 
 # Does not deploy, migrate, modify hosting, upload artifacts or use secrets.
+# Must set repo variable SUTRADHAR_STAGING_ALLOWED_HOSTNAME independently
+# before the workflow runs; user-supplied staging_url alone grants no access.
 # Workflow becomes manually runnable only after reviewed merge to default branch.
 on:
   workflow_dispatch:
@@ -45,6 +47,9 @@ jobs:
         env:
           SUTRADHAR_STAGING_URL: ${{ inputs.staging_url }}
           SUTRADHAR_EXPECTED_COMMIT_SHA: ${{ inputs.expected_sha }}
+          # Protected Owner-maintained repository variable; NEVER workflow input.
+          # Without this EXACT hostname, the probe will refuse every request.
+          SUTRADHAR_STAGING_ALLOWED_HOSTNAME: ${{ vars.SUTRADHAR_STAGING_ALLOWED_HOSTNAME }}
         run: node scripts/ops/hostinger-staging-preflight.cjs
       - name: Explain limited proof
         run: |
