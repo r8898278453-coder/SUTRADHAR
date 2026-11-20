@@ -197,7 +197,18 @@ async function main(){
     }
   }
 }
-if(require.main===module)main().catch(()=>{
+if(require.main===module)main().catch(error=>{
+  // Only the dedicated disposable loopback CI database may reveal a small
+  // allowlisted error CODE for diagnosing regression tests. No SQL, secrets,
+  // raw rows, stack traces, paths or remote database responses are logged.
+  if(process.env.NODE_ENV==='test'&&process.env.DB_HOST==='127.0.0.1'&&
+     process.env.DB_NAME==='sutradhar_backup_ci_source'&&
+     process.env.SUTRADHAR_MYSQL_RECOVERY_TEST_SENTINEL==='disposable-only'){
+    const raw=String(error?.code||error?.message||'');
+    const sanitized=/^(?:RESTORE_VERIFY_[A-Z_]+|ER_[A-Z_]+)$/.test(raw)?
+      raw:String(error?.name||'UNKNOWN').replace(/[^A-Z_a-z]/g,'').slice(0,40);
+    console.error('DISPOSABLE_CI_RESTORE_DIAGNOSTIC:'+sanitized);
+  }
   console.error('STAGING_RESTORE_READ_ONLY_VERIFICATION_FAILED');
   process.exitCode=1;
 });
