@@ -45,10 +45,10 @@ function pack(row,columns){
   return bytes;
 }
 const META={
-  tables:'SELECT table_name,engine,table_type FROM information_schema.tables WHERE table_schema=? ORDER BY table_name',
-  columns:'SELECT table_name,column_name,ordinal_position,column_type,is_nullable,column_default,extra,character_set_name,collation_name FROM information_schema.columns WHERE table_schema=? ORDER BY table_name,ordinal_position',
-  indexes:'SELECT table_name,index_name,seq_in_index,column_name,non_unique,index_type,sub_part FROM information_schema.statistics WHERE table_schema=? ORDER BY table_name,index_name,seq_in_index',
-  fks:'SELECT k.table_name,k.constraint_name,k.column_name,k.ordinal_position,k.referenced_table_schema,k.referenced_table_name,k.referenced_column_name,r.delete_rule,r.update_rule FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints r ON r.constraint_schema=k.constraint_schema AND r.constraint_name=k.constraint_name AND r.table_name=k.table_name WHERE k.table_schema=? AND k.referenced_table_name IS NOT NULL ORDER BY k.table_name,k.constraint_name,k.ordinal_position'
+  tables:'SELECT table_name AS table_name,engine AS engine,table_type AS table_type FROM information_schema.tables WHERE table_schema=? ORDER BY table_name',
+  columns:'SELECT table_name AS table_name,column_name AS column_name,ordinal_position AS ordinal_position,column_type AS column_type,is_nullable AS is_nullable,column_default AS column_default,extra AS extra,character_set_name AS character_set_name,collation_name AS collation_name FROM information_schema.columns WHERE table_schema=? ORDER BY table_name,ordinal_position',
+  indexes:'SELECT table_name AS table_name,index_name AS index_name,seq_in_index AS seq_in_index,column_name AS column_name,non_unique AS non_unique,index_type AS index_type,sub_part AS sub_part FROM information_schema.statistics WHERE table_schema=? ORDER BY table_name,index_name,seq_in_index',
+  fks:'SELECT k.table_name AS table_name,k.constraint_name AS constraint_name,k.column_name AS column_name,k.ordinal_position AS ordinal_position,k.referenced_table_schema AS referenced_table_schema,k.referenced_table_name AS referenced_table_name,k.referenced_column_name AS referenced_column_name,r.delete_rule AS delete_rule,r.update_rule AS update_rule FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints r ON r.constraint_schema=k.constraint_schema AND r.constraint_name=k.constraint_name AND r.table_name=k.table_name WHERE k.table_schema=? AND k.referenced_table_name IS NOT NULL ORDER BY k.table_name,k.constraint_name,k.ordinal_position'
 };
 async function inventory(query,db){
   const meta={};
