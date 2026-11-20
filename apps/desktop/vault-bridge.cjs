@@ -191,6 +191,33 @@ function createSignerBridge(vault){
       'x-sutradhar-agent':agent_id
     }};
   }
-  return Object.freeze({initialize,saveCounters,sign,signWorkerReadOnly,signWorkerAction,snapshot:()=>publicSnapshot(vault.read())});
+  // Local QA evidence is NOT an API signature: this narrower capability
+  // signs only one immutable hash-bound report statement under a distinct
+  // domain. The child sign() bridge and renderer never expose it.
+  function signQaEvidence(payload={}){
+    const v=identity(),agent=payload.agent_id;
+    const keys=['agent_id','ticket_id','candidate_head_sha',
+      'candidate_tree_sha','evidence_sha256','passed'];
+    if(!payload||typeof payload!=='object'||Array.isArray(payload)||
+       Object.keys(payload).length!==keys.length||
+       Object.keys(payload).some(k=>!keys.includes(k))||
+       !AGENT_ID.test(agent||'')||!v.agents.some(a=>a.id===agent)||
+       !AGENT_ID.test(payload.ticket_id||'')||
+       !/^[a-f0-9]{40}$/.test(payload.candidate_head_sha||'')||
+       !/^[a-f0-9]{40}$/.test(payload.candidate_tree_sha||'')||
+       !/^[a-f0-9]{64}$/.test(payload.evidence_sha256||'')||
+       typeof payload.passed!=='boolean')
+      fail('VAULT_QA_EVIDENCE_SIGN_DENIED');
+    const message={schema:1,kind:'SUTRADHAR_INDEPENDENT_QA_EVIDENCE',
+      node_id:v.node_id,agent_id:agent,ticket_id:payload.ticket_id,
+      candidate_head_sha:payload.candidate_head_sha,
+      candidate_tree_sha:payload.candidate_tree_sha,
+      evidence_sha256:payload.evidence_sha256,passed:payload.passed};
+    const bytes=Buffer.from('SUTRADHAR_QA_EVIDENCE_V1\n'+JSON.stringify(message));
+    const signature=crypto.sign(null,bytes,
+      crypto.createPrivateKey(v.private_key_pem)).toString('base64');
+    return {message,signature,public_key_pem:v.public_key_pem};
+  }
+  return Object.freeze({initialize,saveCounters,sign,signWorkerReadOnly,signWorkerAction,signQaEvidence,snapshot:()=>publicSnapshot(vault.read())});
 }
 module.exports={createSignerBridge,publicSnapshot,validateAgentIds};

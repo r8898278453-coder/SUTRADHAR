@@ -45,6 +45,7 @@
       "worker-submit.cjs",
       "qa-handoff.cjs",
       "qa-execution.cjs",
+      "qa-evidence.cjs",
       "qa-runner-policy.json",
       "enrollment.cjs",
       "enrollment-receipt.cjs",

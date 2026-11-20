@@ -68,6 +68,7 @@ async function loadStatus(){
     get('workerExport').disabled=!approvedReadOnly;
     get('workerQAInspect').disabled=!approvedReadOnly;
     get('workerQARun').disabled=!approvedReadOnly||!s.qaRunnerConfigured;
+    get('workerQAAttest').disabled=!approvedReadOnly;
 
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
@@ -497,5 +498,22 @@ get('workerQARun').addEventListener('click',async()=>{
     output.textContent='QA sandbox execution blocked or uncertain: '+
       String(error?.message||error)+
       '. Do not repeat this ticket automatically. Preserve the local qa_started journal and ask the Owner to inspect Docker cleanup and exact hashes.';
+  }finally{await loadStatus();}
+});
+get('workerQAAttest').addEventListener('click',async()=>{
+  const output=get('workerTasks'),button=get('workerQAAttest');
+  button.disabled=true;
+  try{
+    const r=await api.attestQaEvidence(get('workerAgent').value,exactWorkerTicket());
+    output.textContent=r.canceled?'QA evidence signing canceled; no signature created.':
+      'Device-signed LOCAL evidence for '+r.ticket_id+'. Exact Git SHA '+
+      r.candidate_head_sha+'; report SHA-256 '+r.evidence_sha256+
+      '. Signed file: '+r.local_attestation_path+
+      '. Give the Owner BOTH qa_result and qa_attested files, and independently verify '+
+      'the approved Central node public key fingerprint '+r.public_key_fingerprint_sha256+
+      '. This is not Central QA approval or Git publication.';
+  }catch(error){
+    output.textContent='QA evidence signing blocked: '+String(error?.message||error)+
+      '. Preserve local report and attempt journal; ask Owner to investigate tampering or changed Central candidate.';
   }finally{await loadStatus();}
 });

@@ -44,6 +44,7 @@ const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
 const {runIndependentQa,validPolicy}=require('./qa-execution.cjs');
+const {attestIndependentQa}=require('./qa-evidence.cjs');
 const qaRunnerPolicy=require('./qa-runner-policy.json');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 const {inspect:inspectEnrollment,prepare:prepareEnrollment,
@@ -639,6 +640,29 @@ app.whenReady().then(()=>{
       approvedWorkerOperator(agentId,ticketId,true);
       return runIndependentQa({origin,agentId,ticketId,signer,
         bundlePath:bundle.filePaths[0],repoDir:repo.filePaths[0],
+        evidenceDir:path.join(nodeDir(),'qa')});
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:attestQaEvidence',async(event,agentId,ticketId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    workerClaimBusy=true;
+    try{
+      const ok=await dialog.showMessageBox(setupWindow,{
+        type:'warning',
+        buttons:['Cancel — do not sign','Sign exact local QA report for Owner review'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Use this PC OS vault to sign the exact QA test report?',
+        detail:'An existing, completed one-time Docker QA result and its matching '+
+          'execution intent must already exist. Central ticket, QA-agent independence '+
+          'and candidate head/tree are rechecked. The signed report is for offline '+
+          'Owner validation against the independently approved device public key. '+
+          'Signing is NOT a QA pass or Central QA receipt. No Git publish or '+
+          'deployment happens; unsigned/tampered evidence is rejected.'
+      });
+      if(ok.response!==1)return {canceled:true};
+      approvedWorkerOperator(agentId,ticketId,true);
+      return attestIndependentQa({origin,agentId,ticketId,signer,
         evidenceDir:path.join(nodeDir(),'qa')});
     }finally{workerClaimBusy=false;}
   });

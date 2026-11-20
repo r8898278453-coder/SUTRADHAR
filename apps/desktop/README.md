@@ -219,3 +219,22 @@ On the *independent* QA PC, first inspect the transferred `.bundle` plus its `.b
 A private, exclusive `qa_started_<ticket>.json` intent is fsynced **before** container creation; a crash, timeout, cleanup uncertainty or other ambiguous result blocks automatic retry. A successful or failed Docker test produces private `qa_result_<ticket>.json` with candidate/tree/bundle/image hashes, output digests, bounded logs, exit status, and `evidence_level:LOCAL_UNATTESTED`. Repeated attempts are rejected. A Central task change after execution blocks any success claim. The app does **not** sign/send `/v7/tasks/qa-receipt` and cannot advance the ticket to INTEGRATING; final QA attestation and independent Owner authorization remain separate.
 
 Known limitations: this is a **fixed Python pytest profile**; Node/TypeScript and other project QA profiles require separately reviewed sandbox images and command contracts. Docker Desktop installation, verified image supply chain, robust host isolation and physical Windows tests are not established by GitHub CI. The QA evidence is intentionally not a device-signed, Central-accepted QA receipt. An explicit Owner-reviewed reconciliation procedure is still needed for one-attempt journals.
+
+## OS-vault-signed independent QA report — 20 November 2026
+
+An existing completed `qa_result_<ticket>.json` and the original, exclusive `qa_started_<ticket>.json` attempt journal are mandatory. The Windows Desktop **On QA PC: sign local test evidence for Owner** button requires a fresh acknowledged heartbeat, enrolled OS-backed identity, no maintenance/installer fence and explicit user confirmation. Electron MAIN loads the bounded, regular local report, checks **all expected fields**, hashes its exact bytes, and matches the complete one-attempt journal, original QA agent, code hashes and latest Central-signed ticket. A missing, stale, mismatched, symlinked or already signed report fails closed.
+
+The OS-vault signer can sign ONLY a fixed, schema-limited, Ed25519 domain-separated `SUTRADHAR_QA_EVIDENCE_V1` statement. The report SHA-256, test pass boolean, exact ticket, QA agent, device node ID, candidate head and tree are cryptographically bound. It writes `qa_attested_<ticket>.json` once. Neither renderer nor heartbeat child receives private keys, general signing rights or the QA receipt API. A failed test can be signed as FAILED evidence; it never becomes approval.
+
+**Independent Owner verification:** Transfer the original `qa_result_<ticket>.json` and `qa_attested_<ticket>.json` without editing them. Obtain the QA PC's approved **Ed25519 public key from the Central enrollment record by a separately authenticated Owner process**, never by trusting the attestation itself. On a trusted Owner machine run:
+
+```bash
+node scripts/qa/verify-device-evidence.cjs \
+  /absolute/qa_result_ticket_abc.json \
+  /absolute/qa_attested_ticket_abc.json \
+  /absolute/approved_qa_pc_public_key.pem \
+  node_<32_lowercase_hex> agent_qa ticket_abc \
+  <exact_40_hex_candidate_head> <exact_40_hex_candidate_tree>
+```
+
+The verifier checks file bounds, strict report schema, externally supplied public-key fingerprint, Ed25519 signature, exact node/agent/ticket/head/tree and report-byte hash. It returns `DEVICE_SIGNED_LOCAL_ONLY` and explicit `qa_approved:false`. This proves **the approved key signed the local report**, not that Docker ran securely, the test was genuinely independent, or Central approved QA. The current Central `/v7/tasks/qa-receipt` only accepts an evidence hash/reference and could otherwise advance a ticket; **this app does not call it** until genuine server-side evidence verification and Owner policy are implemented. Independent review of Docker image provenance and actual physical multi-PC evidence remains mandatory.

@@ -346,3 +346,173 @@ test('QA Windows GUI wiring never exposes arbitrary docker command or QA approva
   assert.match(js,/get\('workerQARun'\)\.addEventListener/);
   assert.doesNotMatch(preload,/dockerRunner|test_profile|signWorkerQaReceipt|private_key_pem/);
 });
+
+const {createVault}=require('../apps/desktop/os-vault.cjs');
+const {createSignerBridge}=require('../apps/desktop/vault-bridge.cjs');
+const {attestIndependentQa,verifyQaEvidence}=require('../apps/desktop/qa-evidence.cjs');
+function qaSigningFixture(f){
+  const dir=path.join(f.temp,'qa-vault');fs.mkdirSync(dir);
+  // Fake OS encryption for tests only; production requires Electron safeStorage.
+  const key=crypto.randomBytes(32);
+  const safeStorage={isEncryptionAvailable:()=>true,
+    encryptString:s=>{
+      const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);
+      return Buffer.concat([iv,c.update(s,'utf8'),c.final(),c.getAuthTag()]);
+    },
+    decryptString:b=>{
+      const iv=b.subarray(0,12),tag=b.subarray(b.length-16),
+        body=b.subarray(12,-16),d=crypto.createDecipheriv('aes-256-gcm',key,iv);
+      d.setAuthTag(tag);return Buffer.concat([d.update(body),d.final()]).toString('utf8');
+    }};
+  const signer=createSignerBridge(createVault({safeStorage,dir,platform:'win32'}));
+  const pub=signer.initialize({agent_ids:['agent_qa']});
+  return {signer,pub};
+}
+test('actual OS-vault Ed25519 QA statement binds exact Docker report without Central QA POST',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f),evidenceDir=path.join(f.temp,'qa-records');
+      await runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner});
+      const {signer,pub}=qaSigningFixture(f);
+      const out=await attestIndependentQa({...f.opts,agentId:'agent_qa',
+        signer,evidenceDir});
+      assert.equal(out.signed,true);
+      assert.equal(out.qa_approved,false);
+      assert.equal(out.central_qa_receipt_submitted,false);
+      assert.equal(out.evidence_level,'DEVICE_SIGNED_LOCAL_ONLY');
+      const evidenceRaw=fs.readFileSync(path.join(evidenceDir,'qa_result_ticket_abc.json'));
+      const attestation=JSON.parse(fs.readFileSync(out.local_attestation_path,'utf8'));
+      const verified=verifyQaEvidence({attestation,evidenceRaw,
+        expectedPublicKeyPem:pub.public_key_pem,
+        expectedNodeId:pub.node_id,expectedAgentId:'agent_qa',
+        expectedTicketId:'ticket_abc',expectedHead:f.head,expectedTree:f.tree});
+      assert.equal(verified.signature_verified,true);
+      assert.equal(verified.test_passed,true);
+      assert.equal(verified.qa_approved,false);
+      assert.equal(verified.central_qa_receipt_submitted,false);
+      assert.equal(f.reads(),5);
+      await assert.rejects(attestIndependentQa({...f.opts,
+        agentId:'agent_qa',signer,evidenceDir}),
+        /QA_EVIDENCE_ALREADY_SIGNED_OWNER_REVIEW/);
+      assert.throws(()=>signer.sign({kind:'node_api',method:'POST',
+        uri:'/v7/tasks/qa-receipt',body:'{}'}),/DENIED/);
+      assert.throws(()=>signer.signQaEvidence({
+        agent_id:'agent_qa',ticket_id:'ticket_abc',
+        candidate_head_sha:f.head,candidate_tree_sha:f.tree,
+        evidence_sha256:'0'.repeat(64),passed:true,extra:'oracle'}),
+        /VAULT_QA_EVIDENCE_SIGN_DENIED/);
+    }finally{f.close();}
+  });
+test('independent verifier rejects tampered report, wrong approved key and expected SHA',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f),evidenceDir=path.join(f.temp,'qa-evidence');
+      await runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner});
+      const {signer,pub}=qaSigningFixture(f);
+      const out=await attestIndependentQa({...f.opts,agentId:'agent_qa',
+        signer,evidenceDir});
+      const attestation=JSON.parse(fs.readFileSync(out.local_attestation_path,'utf8'));
+      const raw=fs.readFileSync(path.join(evidenceDir,'qa_result_ticket_abc.json'));
+      const opts={attestation,evidenceRaw:raw,
+        expectedPublicKeyPem:pub.public_key_pem,
+        expectedNodeId:pub.node_id,expectedAgentId:'agent_qa',
+        expectedTicketId:'ticket_abc',expectedHead:f.head,expectedTree:f.tree};
+      const other=crypto.generateKeyPairSync('ed25519');
+      assert.throws(()=>verifyQaEvidence({...opts,
+        expectedPublicKeyPem:other.publicKey.export({format:'pem',type:'spki'}).toString()}),
+        /QA_EVIDENCE_ATTESTATION_MISMATCH/);
+      assert.throws(()=>verifyQaEvidence({...opts,expectedHead:'f'.repeat(40)}),
+        /QA_EVIDENCE_ATTESTATION_MISMATCH/);
+      assert.throws(()=>verifyQaEvidence({...opts,
+        evidenceRaw:Buffer.from(raw.toString('utf8')+' ')}),
+        /QA_EVIDENCE_ATTESTATION_MISMATCH/);
+      const forged=structuredClone(attestation);
+      forged.message.passed=false;
+      assert.throws(()=>verifyQaEvidence({...opts,attestation:forged}),
+        /QA_EVIDENCE_ATTESTATION_MISMATCH/);
+      const tampered=structuredClone(attestation);
+      tampered.signature=Buffer.alloc(64,0).toString('base64');
+      assert.throws(()=>verifyQaEvidence({...opts,attestation:tampered}),
+        /QA_EVIDENCE_SIGNATURE_INVALID/);
+    }finally{f.close();}
+  });
+test('QA signing refuses edited attempt journal, false pass and changed Central candidate',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f,{pass:false}),evidenceDir=path.join(f.temp,'qa-evidence');
+      await runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner});
+      const {signer}=qaSigningFixture(f);
+      const rfile=path.join(evidenceDir,'qa_result_ticket_abc.json');
+      const intent=path.join(evidenceDir,'qa_started_ticket_abc.json');
+      const original=fs.readFileSync(rfile,'utf8');
+      const fake={...JSON.parse(original),test_passed:true};
+      fs.writeFileSync(rfile,JSON.stringify(fake));
+      await assert.rejects(attestIndependentQa({...f.opts,
+        agentId:'agent_qa',signer,evidenceDir}),/QA_EVIDENCE_REPORT_INVALID/);
+      fs.writeFileSync(rfile,original);
+      const originalIntent=fs.readFileSync(intent,'utf8');
+      fs.writeFileSync(intent,JSON.stringify({...JSON.parse(originalIntent),
+        image_sha256:'f'.repeat(64)}));
+      await assert.rejects(attestIndependentQa({...f.opts,
+        agentId:'agent_qa',signer,evidenceDir}),/QA_EVIDENCE_INTENT_MISMATCH/);
+      fs.writeFileSync(intent,originalIntent);
+      f.updateTask({...f.task(),candidate_tree_sha:'f'.repeat(40)});
+      await assert.rejects(attestIndependentQa({...f.opts,
+        agentId:'agent_qa',signer,evidenceDir}),/QA_EVIDENCE_CENTRAL_CHANGED_OWNER_REVIEW/);
+      f.updateTask(f.task());
+      const result=await attestIndependentQa({...f.opts,
+        agentId:'agent_qa',signer,evidenceDir});
+      assert.equal(result.test_passed,false);
+      assert.equal(result.qa_approved,false);
+    }finally{f.close();}
+  });
+test('trusted Owner CLI verifies approved device key offline but never authorizes QA',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f),evidenceDir=path.join(f.temp,'qa-evidence');
+      await runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner});
+      const {signer,pub}=qaSigningFixture(f);
+      const out=await attestIndependentQa({...f.opts,agentId:'agent_qa',signer,evidenceDir});
+      const trustedKey=path.join(f.temp,'trusted-node-key.pem');
+      fs.writeFileSync(trustedKey,pub.public_key_pem);
+      const cli=path.resolve(__dirname,'../scripts/qa/verify-device-evidence.cjs');
+      const args=[cli,path.join(evidenceDir,'qa_result_ticket_abc.json'),
+        out.local_attestation_path,trustedKey,pub.node_id,'agent_qa',
+        'ticket_abc',f.head,f.tree];
+      const verified=cp.spawnSync(process.execPath,args,{encoding:'utf8'});
+      assert.equal(verified.status,0,verified.stderr);
+      const report=JSON.parse(verified.stdout);
+      assert.equal(report.signature_verified,true);
+      assert.equal(report.owner_central_approval_required,true);
+      assert.equal(report.qa_approved,false);
+      assert.equal(report.production_approved,false);
+      const denied=cp.spawnSync(process.execPath,[...args.slice(0,-2),
+        'f'.repeat(40),f.tree],{encoding:'utf8'});
+      assert.equal(denied.status,1);
+      assert.match(denied.stderr,/QA verification blocked:/);
+    }finally{f.close();}
+  });
+test('Desktop QA attestation only in Electron MAIN, no generic signer in renderer',()=>{
+  const root=path.resolve(__dirname,'../apps/desktop');
+  const cfg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const setup=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  assert.ok(cfg.build.files.includes('qa-evidence.cjs'));
+  assert.match(main,/ipcMain\.handle\('sutradhar:attestQaEvidence'/);
+  assert.match(preload,/attestQaEvidence:\(agentId,ticketId\)/);
+  assert.match(setup,/id="workerQAAttest"/);
+  assert.doesNotMatch(preload,/signQaEvidence|signWorkerAction|private_key_pem/);
+});
