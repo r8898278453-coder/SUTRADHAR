@@ -35,6 +35,9 @@ function setup(){
 test('exact eight local evidence file hashes match signed Owner index but never approve production',()=>{
   const c=setup();
   try{
+    // Direct hash reader check isolates Windows filesystem API/alias failures.
+    const fileProof=hashFile(c.artifacts[0].path);
+    assert.equal(fileProof.sha256,c.payload.gates[0].evidence_sha256);
     const result=evaluateEvidence({envelope:c.sign(),
       ownerPublicKeyPem:c.pub,expectedSha:sha,
       artifacts:c.artifacts,now});
