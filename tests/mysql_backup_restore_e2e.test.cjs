@@ -75,9 +75,46 @@ test('Encrypted MySQL dump restores real rows only to an explicitly empty stagin
       });
       assert.equal(restored.status,0,'Real staging restore failed: '+restored.stderr?.slice(0,300));
       assert.equal(JSON.parse(restored.stdout.trim()).operation,'STAGING_RESTORE_COMPLETED');
+      const verifyRestored=(more={})=>cp.spawnSync(process.execPath,
+        [path.join(base,'scripts','ops','staging-restore-verify.cjs')],
+        {cwd:base,encoding:'utf8',timeout:180000,
+          env:{...process.env,DB_NAME:sourceDb,
+            SUTRADHAR_TARGET_DB_NAME:targetDb,
+            SUTRADHAR_EXPECTED_TARGET_DB_NAME:targetDb,
+            SUTRADHAR_RESTORE_VERIFY_SOURCE_DB_NAME:sourceDb,
+            SUTRADHAR_RESTORE_VERIFY_BACKUP_SHA256:backupReceipt.backup_sha256,
+            SUTRADHAR_RESTORE_VERIFY_APPROVED:'yes',
+            SUTRADHAR_BACKUP_KEY_BASE64:encryptionKey,
+            SUTRADHAR_ENCRYPTED_BACKUP_PATH:encryptedPath,...more}});
+      const verifiedRestore=verifyRestored();
+      assert.equal(verifiedRestore.status,0,
+        'Real independent read-only content comparison failed: '+
+        verifiedRestore.stderr?.slice(0,300));
+      const independent=JSON.parse(verifiedRestore.stdout.trim());
+      assert.equal(independent.accepted,true);
+      assert.equal(independent.status,'STAGING_RESTORE_CURRENT_SNAPSHOTS_MATCH');
+      assert.equal(independent.verified_row_count,10);
+      assert.equal(independent.table_count,1);
+      assert.equal(independent.encrypted_backup_sha256,backupReceipt.backup_sha256);
+      assert.equal(independent.production_release_authorized,false);
+      assert.equal(independent.exact_backup_snapshot_proven,false);
+      const noApproval=verifyRestored({SUTRADHAR_RESTORE_VERIFY_APPROVED:'no'});
+      assert.notEqual(noApproval.status,0,
+        'Read-only verifier must refuse a missing exact Owner approval');
+      const wrongBackupHash=verifyRestored({
+        SUTRADHAR_RESTORE_VERIFY_BACKUP_SHA256:'f'.repeat(64)});
+      assert.notEqual(wrongBackupHash.status,0,
+        'Verifier must refuse an altered expected encrypted archive SHA');
       const [actual]=await admin.query('SELECT id,marker FROM '+
         targetDb+'.backup_probe ORDER BY id');
       assert.deepEqual(actual.map(r=>[r.id,r.marker]),rows,'Restored rows differ from source');
+      await admin.query('UPDATE '+targetDb+
+        '.backup_probe SET marker=? WHERE id=?',['tampered-after-restore',2]);
+      const altered=verifyRestored();
+      assert.notEqual(altered.status,0,
+        'Same-count tampered staging row must invalidate independent verification');
+      assert.equal(altered.stdout.trim(),'',
+        'Failed independent verification must not leak row contents');
       const second=run('restore',{
         SUTRADHAR_RESTORE_STAGING_APPROVED:'yes',
         SUTRADHAR_TARGET_DB_NAME:targetDb,
