@@ -1306,7 +1306,8 @@ app.post('/v7/git/confirm',jsonRoute(async req=>{
   }
   const proof=await inspectGitRemote({
     repo:info.p.repository,token:process.env.SUTRADHAR_GITHUB_TOKEN||'',
-    branch:info.t.branch_name,baseline:info.t.baseline_sha,tree:info.t.candidate_tree_sha,
+    branch:info.t.branch_name,baseBranch:info.p.base_branch,
+    baseline:info.t.baseline_sha,tree:info.t.candidate_tree_sha,
     writeScopes:typeof info.t.scopes_json==='string'?JSON.parse(info.t.scopes_json):info.t.scopes_json,
     expectedHead:info.t.candidate_head_sha
   });
@@ -1434,15 +1435,15 @@ app.post('/v7/git/recover-remote-proof',jsonRoute(async req=>{
     const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? AND agent_id=? AND passed=1 AND head_sha=? AND tree_sha=? LIMIT 1',
       [ticketId,job.agent_id,t.candidate_head_sha,t.candidate_tree_sha]);
     if(!qa)fault('GIT_RECOVERY_QA_PROOF_REQUIRED',409);
-    const p=await one(c,'SELECT repository FROM v7_projects WHERE project_id=?',[t.project_id]);
+    const p=await one(c,'SELECT repository,base_branch FROM v7_projects WHERE project_id=?',[t.project_id]);
     if(!p)fault('GIT_RECOVERY_PROJECT_MISSING',409);
     return {job,t,p};
   });
   // Enforce EXACT accepted candidate SHA, not merely similar diff or tree.
   const proof=await inspectGitRemote({
     repo:info.p.repository,token:process.env.SUTRADHAR_GITHUB_TOKEN||'',
-    branch:info.t.branch_name,baseline:info.t.baseline_sha,
-    tree:info.t.candidate_tree_sha,
+    branch:info.t.branch_name,baseBranch:info.p.base_branch,
+    baseline:info.t.baseline_sha,tree:info.t.candidate_tree_sha,
     writeScopes:typeof info.t.scopes_json==='string'
       ?JSON.parse(info.t.scopes_json):info.t.scopes_json,
     expectedHead:info.t.candidate_head_sha

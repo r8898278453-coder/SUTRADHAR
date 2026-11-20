@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {inspectGitRemote} from '../v7/git_remote.ts';
 const baseline='a'.repeat(40),head='b'.repeat(40),tree='c'.repeat(40);
-const input={repo:'example/repository',token:'test-only-token',branch:'ai/ticket-secure',
+const input={repo:'example/repository',token:'test-only-token',branch:'ai/ticket-secure',baseBranch:'main',
   baseline,tree,writeScopes:['src/components']};
 type Fixture={status?:number;data:any};
 const make=(changes:any[],overrides:any={})=>{
@@ -10,6 +10,7 @@ const make=(changes:any[],overrides:any={})=>{
   const comparison={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,files:changes};
   const pages:{[key:string]:Fixture}={
     ['branches/ai/ticket-secure']:{data:branch},
+    ['branches/main']:{data:{commit:{sha:baseline}}},
     ['git/commits/'+head]:{data:commit},
     ['compare/'+baseline+'...'+head]:{data:comparison}
   };
@@ -62,3 +63,17 @@ test('unsafe branch rejected before outbound fetch',async()=>{
     fetcher:async()=>{calls++;throw Error('unexpected');}});
   assert.equal(result.verified,false);assert.equal(calls,0);
 });
+test('remote baseline branch moving after QA PC preflight is independently denied by Central',async()=>{
+  const result=await inspectGitRemote({...input,fetcher:make(
+    [{filename:'src/components/a.ts',status:'modified'}],
+    {'branches/main':{commit:{sha:'f'.repeat(40)}}})});
+  assert.deepEqual(result,{verified:false,error_code:'REMOTE_BASELINE_REF_MOVED'});
+});
+test('remote reference name is validated before any GitHub call',async()=>{
+  let calls=0;
+  const result=await inspectGitRemote({...input,baseBranch:'../../main',
+    fetcher:async()=>{calls++;throw Error('unexpected');}});
+  assert.equal(result.verified,false);
+  assert.equal(calls,0);
+});
+

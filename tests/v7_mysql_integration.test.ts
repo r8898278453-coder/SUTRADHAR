@@ -800,6 +800,8 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
           let result:any;
           if(suffix==='branches/ai/ticket_qa_test')
             result={commit:{sha:expectedHead}};
+          else if(suffix==='branches/main')
+            result={commit:{sha:expectedBase}};
           else if(suffix==='git/commits/'+expectedHead)
             result={sha:expectedHead,tree:{sha:expectedTree},parents:[{sha:expectedBase}]};
           else if(suffix==='compare/'+expectedBase+'...'+expectedHead)
@@ -827,7 +829,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         if(originalToken===undefined)delete process.env.SUTRADHAR_GITHUB_TOKEN;
         else process.env.SUTRADHAR_GITHUB_TOKEN=originalToken;
       }
-      assert.equal(readonlyGitRequests,3,'Exact branch/commit/compare proof is required');
+      assert.equal(readonlyGitRequests,4,'Exact base branch plus candidate branch/commit/compare proof required');
       const [recoveredRows]=await db.query(
         'SELECT state,remote_head_sha FROM v7_git_jobs WHERE ticket_id=?',['ticket_qa_test']);
       assert.equal((recoveredRows as any[])[0].state,'CONFIRMED');
