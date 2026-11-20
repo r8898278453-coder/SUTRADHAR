@@ -2,6 +2,8 @@
  * GitHub read-only merge gatekeeper. No auto-merge, push, revert or repository
  * mutation. Every decision is based on authenticated live GitHub REST responses.
  */
+import {evaluateGithubReviewPolicy} from './v7/github_review_policy.ts';
+
 export type VerifiedMerge = {
   verified: true;
   repo: string;
@@ -118,28 +120,13 @@ export async function verifyGitHubMergeEvidence(input: MergeVerificationInput):
           !allowed.has(f.filename) || f.status === 'renamed' || !['added', 'modified', 'removed'].includes(f.status))) {
       return deny('GITHUB_PR_FILE_SCOPE_MISMATCH');
     }
-    if (!checks || !Array.isArray(checks.check_runs) || checks.total_count >= 100) {
-      return deny('GITHUB_REQUIRED_CHECKS_MISSING');
-    }
-    for (const required of new Set(input.requiredChecks)) {
-      const runs = checks.check_runs.filter((c: any) => c?.name === required && c?.head_sha === headSha &&
-        c?.app?.slug === checkSlug);
-      if (!runs.length || runs.some((c: any) => c.status !== 'completed' || c.conclusion !== 'success')) {
-        return deny('GITHUB_REQUIRED_CHECKS_MISSING');
-      }
-    }
-    if (!Array.isArray(reviews) || reviews.length >= 100) return deny('GITHUB_APPROVAL_NOT_VERIFIED');
-    const latest = new Map<string, any>();
-    const reviewsSorted = reviews
-      .filter((r: any) => r?.user?.login && r?.submitted_at &&
-        new Date(r.submitted_at).getTime() <= new Date(pr.merged_at).getTime())
-      .sort((a: any, b: any) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
-    for (const review of reviewsSorted) latest.set(review.user.login, review);
-    let approvals = 0;
-    for (const [reviewer, review] of latest) {
-      if (reviewer !== pr.user?.login && review.state === 'APPROVED') approvals++;
-    }
-    if (approvals < input.requiredApprovals) return deny('GITHUB_APPROVAL_NOT_VERIFIED');
+    const review=evaluateGithubReviewPolicy({
+      checks,reviews,headSha,prAuthor:String(pr.user?.login||''),
+      requiredChecks:input.requiredChecks,requiredApprovals:input.requiredApprovals,
+      checkAppSlug:checkSlug,cutoff:String(pr.merged_at)
+    });
+    if(review.blocks.length)
+      return deny(review.blocks[0]);
     return { verified: true, repo: input.repo, prNumber: pr.number, branch: input.branch,
       headSha, mergeSha, treeSha: input.candidateTreeSha };
   } catch (error) {

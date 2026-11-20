@@ -15,6 +15,9 @@ type Fixture = {
   filenames?: string[];
   checkSuccess?: boolean;
   approve?: boolean;
+  reviewCommit?: string;
+  changesRequested?: boolean;
+  checkCountOverride?: number;
   onMain?: boolean;
   commits?: number;
 };
@@ -23,7 +26,8 @@ function input(overrides: Fixture = {}) {
   const opts: Required<Fixture> = {
     merged: true, tree: TREE, mergedTree: TREE, parent: BASE,
     filenames: ['src/safe.ts'], checkSuccess: true,
-    approve: true, onMain: true, commits: 1, ...overrides
+    approve: true, reviewCommit: HEAD, changesRequested: false,
+    checkCountOverride: 1, onMain: true, commits: 1, ...overrides
   };
   const fetcher: GitHubFetcher = async (url: string) => {
     const pathname = new URL(url).pathname;
@@ -49,13 +53,15 @@ function input(overrides: Fixture = {}) {
     if (pathname.endsWith('/pulls/12/files'))
       return response(opts.filenames.map(filename => ({ filename, status: 'modified' })));
     if (pathname.endsWith('/commits/' + HEAD + '/check-runs'))
-      return response({ total_count: 1, check_runs: [{
+      return response({ total_count: opts.checkCountOverride, check_runs: [{
         name: 'CI / tests', head_sha: HEAD, app: { slug: 'github-actions' },
         status: 'completed', conclusion: opts.checkSuccess ? 'success' : 'failure'
       }] });
     if (pathname.endsWith('/pulls/12/reviews'))
-      return response([{ user: { login: 'reviewer' },
-        state: opts.approve ? 'APPROVED' : 'COMMENTED',
+      return response([{ user: { login: 'reviewer',type:'User' },
+        state: opts.changesRequested ? 'CHANGES_REQUESTED' :
+          opts.approve ? 'APPROVED' : 'COMMENTED',
+        commit_id: opts.reviewCommit,
         submitted_at: '2026-11-06T16:00:00Z' }]);
     if (pathname.endsWith('/compare/' + MERGED + '...main'))
       return response({ status: opts.onMain ? 'ahead' : 'diverged', base_commit: { sha: MERGED } });
@@ -86,6 +92,9 @@ for (const [name, options, reason] of [
   ['extra unapproved PR file', { filenames: ['src/safe.ts', 'src/other.ts'] }, 'GITHUB_PR_FILE_SCOPE_MISMATCH'],
   ['failed required check', { checkSuccess: false }, 'GITHUB_REQUIRED_CHECKS_MISSING'],
   ['no independent approval', { approve: false }, 'GITHUB_APPROVAL_NOT_VERIFIED'],
+  ['stale approval from earlier HEAD', { reviewCommit: 'e'.repeat(40) }, 'GITHUB_APPROVAL_NOT_VERIFIED'],
+  ['change request still active', { changesRequested: true }, 'GITHUB_REVIEW_CHANGES_REQUESTED'],
+  ['incomplete check-run page', { checkCountOverride: 3 }, 'GITHUB_REQUIRED_CHECKS_MISSING'],
   ['merge absent on main', { onMain: false }, 'GITHUB_MERGE_NOT_ON_MAIN'],
   ['multiple head commits', { commits: 2 }, 'GITHUB_MERGED_PR_NOT_UNAMBIGUOUS']
 ] as const) {

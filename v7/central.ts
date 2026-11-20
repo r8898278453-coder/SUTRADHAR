@@ -13,6 +13,7 @@ import type {PoolConnection} from 'mysql2/promise';
 import {verifyGitHubMergeEvidence} from '../github_merge_verifier.ts';
 import {createVerifiedDraftPr,inspectVerifiedDraftPr} from '../github_pr_creator.ts';
 import {inspectGitRemote} from './git_remote.ts';
+import {inspectGithubPrReview} from './pr_review.ts';
 import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest,validTaskBranch,isProtectedScope} from './rules.ts';
 import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
@@ -1775,10 +1776,68 @@ app.post('/v7/git/pr-recover-readonly',jsonRoute(async req=>{
   return finalizeDraftPr(info.info,pr,info.attemptId,info.attemptOp,
     {requestId,head,reason});
 }));
+// Owner read-only snapshot of human-review and required CI on the immutable
+// registered candidate. NEVER marks a PR ready through GitHub, merges, or
+// grants a bypass of target-repository protection. The status can go stale.
+app.get('/v7/owner/pr-review/:ticketId',jsonRoute(async req=>{
+  admin(req);
+  const ticketId=requireId(req.params.ticketId);
+  const info=await transaction(async c=>{
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
+    const j=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=?',[ticketId]);
+    const p=t?await one(c,'SELECT * FROM v7_projects WHERE project_id=?',
+      [t.project_id]):null;
+    const context=prExactContext(t,j,p);
+    await prEvidence(c,t,j);
+    if(!Number.isSafeInteger(Number(j.pr_number))||Number(j.pr_number)<1||
+       j.pr_url!=='https://github.com/'+p.repository+'/pull/'+j.pr_number)
+      fault('VERIFIED_GIT_DRAFT_PR_REQUIRED',409);
+    return {t,j,p,context};
+  });
+  const required=(process.env.SUTRADHAR_REQUIRED_CHECKS||'')
+    .split(';').map(x=>x.trim()).filter(Boolean);
+  const preview=await inspectGithubPrReview({
+    repo:info.p.repository,token:process.env.SUTRADHAR_GITHUB_TOKEN||'',
+    prNumber:Number(info.j.pr_number),baseBranch:info.p.base_branch,
+    branch:info.t.branch_name,baselineSha:info.t.baseline_sha,
+    headSha:info.j.remote_head_sha,treeSha:info.t.candidate_tree_sha,
+    changedFiles:prChangedFiles(info.t,info.j),
+    requiredChecks:required,
+    requiredApprovals:Number(process.env.SUTRADHAR_MIN_GITHUB_APPROVALS||1)
+  });
+  return {ticket_id:ticketId,repository:info.p.repository,
+    pr_number:Number(info.j.pr_number),url:info.j.pr_url,
+    expected_head_sha:info.j.remote_head_sha,
+    expected_tree_sha:info.t.candidate_tree_sha,
+    base_branch:info.p.base_branch,review:preview,
+    snapshot_only:true,read_only:true,merge_performed:false,
+    production_deployed:false};
+}));
 app.post('/v7/tasks/verify-merge',jsonRoute(async req=>{
   // This does NOT merge: read-only authenticated remote verification only.
   admin(req);
   const d=req.body||{},ticket=requireId(d.ticket_id),requestId=requireId(d.request_id);
+  const head=requireSha(d.expected_remote_head_sha);
+  const prNumber=Number(d.expected_pr_number);
+  const note=requireStr(d.owner_review_note,500);
+  if(d.owner_confirmed_readonly_verification!==true||note.length<20||
+     !Number.isSafeInteger(prNumber)||prNumber<1)
+    fault('MERGE_VERIFICATION_OWNER_CONFIRMATION_REQUIRED',403);
+  // A lost HTTP response after DONE must be replayable from the original
+  // durable idempotency receipt; otherwise a valid request would falsely
+  // return NOT_READY_FOR_GIT_VERIFICATION on retries.
+  const prior=await transaction(async c=>{
+    const row=await one(c,'SELECT operation,response_json FROM v7_commands '+
+      'WHERE actor="owner:web" AND request_id=? FOR UPDATE',[requestId]);
+    if(!row)return null;
+    if(row.operation!=='VERIFY_MERGE:'+digest(JSON.stringify(d)))
+      fault('IDEMPOTENCY_KEY_REUSED',409);
+    const saved=typeof row.response_json==='string'
+      ?JSON.parse(row.response_json):row.response_json;
+    if(!saved||saved.pending)fault('COMMAND_NOT_RECONCILED',503);
+    return saved;
+  });
+  if(prior)return prior;
   const info=await transaction(async c=>{
     const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticket]);
     if(!t||t.status!=='INTEGRATING')fault('NOT_READY_FOR_GIT_VERIFICATION',409);
@@ -1790,6 +1849,9 @@ app.post('/v7/tasks/verify-merge',jsonRoute(async req=>{
     if(!job||job.state!=='CONFIRMED'||!job.remote_head_sha||!job.pr_number||
        job.pr_url!=='https://github.com/'+p.repository+'/pull/'+job.pr_number)
       fault('VERIFIED_GIT_DRAFT_PR_REQUIRED',409);
+    if(job.remote_head_sha!==head||Number(job.pr_number)!==prNumber||
+       t.candidate_head_sha!==head)
+      fault('MERGE_VERIFICATION_CANDIDATE_CHANGED',409);
     if(t.risk==='CORE'||t.risk==='HIGH'){
       const approval=await one(c,'SELECT proposal_id FROM v7_approvals WHERE ticket_id=? AND state="APPROVED" AND kind!="QA_EVIDENCE_REVIEW"',[ticket]);
       if(!approval)fault('OWNER_APPROVAL_REQUIRED',409);
@@ -1812,15 +1874,26 @@ app.post('/v7/tasks/verify-merge',jsonRoute(async req=>{
     const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',[ticket]);
     if(job?.state!=='CONFIRMED'||job.remote_head_sha!==info.job.remote_head_sha||
        Number(job.pr_number)!==Number(info.job.pr_number)||
+       job.pr_url!==info.job.pr_url||
        t.status!=='INTEGRATING'||t.candidate_head_sha!==info.t.candidate_head_sha||
-      t.candidate_tree_sha!==info.t.candidate_tree_sha)fault('VERSION_CONFLICT',409);
+       t.candidate_tree_sha!==info.t.candidate_tree_sha||
+       t.baseline_sha!==info.t.baseline_sha)
+      fault('VERSION_CONFLICT',409);
+    const p=await one(c,'SELECT repository,base_branch FROM v7_projects WHERE project_id=?',
+      [t.project_id]);
+    if(!p||p.repository!==info.p.repository||
+       p.base_branch!==info.p.base_branch)
+      fault('VERSION_CONFLICT',409);
     await c.query('INSERT INTO v7_git_receipts(ticket_id,receipt_json) VALUES(?,?)',
       [ticket,JSON.stringify(verification)]);
     await c.query('UPDATE v7_tickets SET status="DONE",version=version+1 WHERE ticket_id=?',[ticket]);
     await c.query('DELETE FROM v7_reservations WHERE ticket_id=?',[ticket]);
     await c.query('UPDATE v7_leases SET revoked=1 WHERE ticket_id=?',[ticket]);
-    await event(c,'GITHUB_MERGE_VERIFIED','owner:web',Number((await leader(c)).epoch),ticket,verification);
-    return {accepted:true,ticket_id:ticket,status:'DONE',evidence_level:'REMOTE_VERIFIED',github:verification};
+    await event(c,'GITHUB_MERGE_VERIFIED','owner:web',Number((await leader(c)).epoch),
+      ticket,{...verification,owner_review_note:note});
+    return {accepted:true,ticket_id:ticket,status:'DONE',
+      evidence_level:'REMOTE_VERIFIED',github:verification,
+      read_only:true,merge_performed:false,production_deployed:false};
   }));
 }));
 app.get('/v7/audit',jsonRoute(async req=>{

@@ -23,6 +23,15 @@ function browser(){
     '/v7/projects':[],'/v7/tasks':[],'/v7/audit':[],
     '/v7/owner/maintenance':[],
     '/v7/owner/git-recovery':{epoch:7,phase:'READY',master_live:true,unresolved_jobs:[]},
+    '/v7/owner/pr-review/ticket_demo':{
+      ticket_id:'ticket_demo',repository:'example/repo',pr_number:77,
+      url:'https://github.com/example/repo/pull/77',
+      expected_head_sha:HEAD,expected_tree_sha:TREE,
+      base_branch:'main',read_only:true,merge_performed:false,
+      review:{checked:true,ready_for_manual_merge:false,draft:true,
+        independent_approvals:0,required_approvals:1,
+        checks_passed:true,blocks:['GITHUB_DRAFT_PR_REVIEW_REQUIRED']}
+    },
     '/v7/owner/pr-preflight/ticket_demo':{
       ticket_id:'ticket_demo',project_id:'project_demo',repository:'example/repo',
       branch:'ai/ticket_demo',base_branch:'main',baseline_sha:BASE,
@@ -51,6 +60,15 @@ function browser(){
           throw Error('GITHUB_PR_REPLY_LOST');
         }
         throw Error('Duplicate PR creation was attempted');
+      }
+      if(url==='/v7/tasks/verify-merge'){
+        assert.equal(body.owner_confirmed_readonly_verification,true);
+        assert.equal(body.expected_remote_head_sha,HEAD);
+        assert.equal(body.expected_pr_number,77);
+        return {ok:true,json:async()=>({
+          accepted:true,ticket_id:'ticket_demo',status:'DONE',
+          read_only:true,merge_performed:false,
+          github:{headSha:HEAD,prNumber:77,mergeSha:'d'.repeat(40)}})};
       }
       if(url==='/v7/git/pr-recover-readonly'){
         assert.equal(body.expected_remote_head_sha,HEAD);
@@ -141,4 +159,25 @@ test('lost GitHub PR create response permanently disables second Create and expo
   assert.equal(b.posts.filter(p=>p.url==='/v7/git/pr-draft').length,1);
   assert.equal(b.posts.filter(p=>p.url==='/v7/git/pr-recover-readonly').length,1);
   assert.match(get('pr-recovery-status').textContent,/No new PR created/);
+});
+test('Owner preview never merges and merged-proof receipt needs exact SHA, reason and consent',async()=>{
+  const b=browser();await b.connect();const get=b.get;
+  get('git-ticket-id').value='ticket_demo';
+  await get('pr-review-inspect').onclick();
+  assert.match(get('pr-review-summary').textContent,/DRAFT/);
+  assert.equal(get('verify-merge').disabled,true);
+  get('pr-confirm-head').value='f'.repeat(40);
+  get('pr-owner-note').value='Owner verified exact independent GitHub reviewer and required CI';
+  get('merge-verify-consent').checked=true;
+  get('pr-confirm-head').listeners.input();
+  get('pr-owner-note').listeners.input();
+  get('merge-verify-consent').listeners.change();
+  assert.equal(get('verify-merge').disabled,true);
+  get('pr-confirm-head').value=HEAD;
+  get('pr-confirm-head').listeners.input();
+  assert.equal(get('verify-merge').disabled,false);
+  await get('verify-merge').onclick();
+  assert.equal(b.posts.filter(x=>x.url==='/v7/tasks/verify-merge').length,1);
+  assert.match(get('message').textContent,/Ticket DONE/);
+  assert.equal(get('verify-merge').disabled,true);
 });

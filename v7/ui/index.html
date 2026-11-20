@@ -52,7 +52,12 @@
 <label class="inline" for="pr-consent"><input type="checkbox" id="pr-consent">
 I authorize ONE real GitHub Draft PR creation ONLY, not merge or main push.</label>
 <div class="flex"><button id="draft-pr" type="button" disabled>Create exact Draft PR ONCE</button>
-<button id="verify-merge" type="button" class="outline">Verify external merge</button></div>
+<button id="pr-review-inspect" type="button" class="outline">Inspect human review + GitHub CI (read-only)</button></div>
+<p id="pr-review-summary" role="status">Review status not inspected; no merge authorization is implied.</p>
+<label class="inline" for="merge-verify-consent">
+<input id="merge-verify-consent" type="checkbox">
+I independently confirmed GitHub merged the exact PR; verify remotely and mark ticket DONE only if every gate passes. This action does NOT merge GitHub.</label>
+<button id="verify-merge" type="button" class="outline" disabled>Verify external merge (read-only proof)</button>
 <p id="pr-status" role="status">No PR attempt authorized. First inspect the ticket and exact commit.</p></div>
 <div><label>Proposal ID</label><input id="proposal-id" placeholder="proposal_...">
 <div class="flex"><button data-command="APPROVE_PROPOSAL">Approve proposal</button><button data-command="DENY_PROPOSAL" class="danger">Deny</button></div></div>

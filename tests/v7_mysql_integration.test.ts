@@ -855,10 +855,18 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         'lease_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 120 SECOND) WHERE singleton=1');
       const previousPrFlag=process.env.SUTRADHAR_ENABLE_PR_CREATION;
       const previousPrToken=process.env.SUTRADHAR_GITHUB_PR_TOKEN;
+      const previousReadToken=process.env.SUTRADHAR_GITHUB_TOKEN;
+      const previousChecks=process.env.SUTRADHAR_REQUIRED_CHECKS;
+      const previousApprovals=process.env.SUTRADHAR_MIN_GITHUB_APPROVALS;
       const realFetch=globalThis.fetch;
       let prPostCalls=0,prGetCalls=0,remoteDraftExists=false;
+      let prReadyForReview=false,prMerged=false,reviewedOldHead=false;
+      const mergedSha='d'.repeat(40);
       try{
         process.env.SUTRADHAR_ENABLE_PR_CREATION='true';
+        process.env.SUTRADHAR_GITHUB_TOKEN='disposable-ci-readonly-token';
+        process.env.SUTRADHAR_REQUIRED_CHECKS='CI / tests';
+        process.env.SUTRADHAR_MIN_GITHUB_APPROVALS='1';
         delete process.env.SUTRADHAR_GITHUB_PR_TOKEN;
         const missingTokenPreflight=await fetch(base+'/v7/owner/pr-preflight/ticket_qa_test',{
           headers:{authorization:'Bearer '+admin}});
@@ -921,14 +929,34 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
           else if(path==='compare/'+'a'.repeat(40)+'...'+'b'.repeat(40))
             result={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,
               files:[{filename:'src/example.ts',status:'modified'}]};
-          else if(path.startsWith('pulls?')){
-            result=remoteDraftExists?[{number:77,
+          else if(path==='git/commits/'+mergedSha)
+            result={sha:mergedSha,tree:{sha:'c'.repeat(40)},
+              parents:[{sha:'b'.repeat(40)}]};
+          else if(path==='compare/'+mergedSha+'...main')
+            result={status:'ahead',base_commit:{sha:mergedSha}};
+          else if(path==='pulls/77/files?per_page=100')
+            result=[{filename:'src/example.ts',status:'modified'}];
+          else if(path==='commits/'+'b'.repeat(40)+'/check-runs?per_page=100')
+            result={total_count:1,check_runs:[{name:'CI / tests',
+              head_sha:'b'.repeat(40),app:{slug:'github-actions'},
+              status:'completed',conclusion:'success'}]};
+          else if(path==='pulls/77/reviews?per_page=100')
+            result=[{id:1,user:{login:'independent_reviewer',type:'User'},
+              state:'APPROVED',commit_id:reviewedOldHead?'e'.repeat(40):'b'.repeat(40),
+              submitted_at:'2026-11-06T16:00:00Z'}];
+          else if(path==='pulls/77'||path.startsWith('pulls?')){
+            const pr={number:77,commits:1,changed_files:1,
               html_url:'https://github.com/example/repo/pull/77',
-              state:'open',draft:true,
+              state:prMerged?'closed':'open',
+              draft:prMerged?false:!prReadyForReview,
+              merged_at:prMerged?'2026-11-06T17:00:00Z':null,
+              merge_commit_sha:prMerged?mergedSha:null,
+              user:{login:'author'},
               head:{ref:'ai/ticket_qa_test',sha:'b'.repeat(40),
                 repo:{full_name:'example/repo'}},
               base:{ref:'main',sha:'a'.repeat(40),
-                repo:{full_name:'example/repo'}}}]:[];
+                repo:{full_name:'example/repo'}}};
+            result=path==='pulls/77'?pr:(remoteDraftExists?[pr]:[]);
           }else throw Error('Unexpected GitHub PR query '+path);
           return new Response(JSON.stringify(result),{status:200});
         }) as typeof fetch;
@@ -998,12 +1026,101 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         const queueCleared=await fetch(base+'/v7/owner/pr-recovery',{
           headers:{authorization:'Bearer '+admin}});
         assert.equal((await queueCleared.json() as any).attempts.length,0);
+
+        const prReviewRoute=base+'/v7/owner/pr-review/ticket_qa_test';
+        const noOwnerPreview=await realFetch(prReviewRoute);
+        assert.equal(noOwnerPreview.status,401,
+          'Review status is authenticated Owner-only');
+        async function reviewSnapshot(){
+          const reply=await realFetch(prReviewRoute,{
+            headers:{authorization:'Bearer '+admin}});
+          assert.equal(reply.status,200);
+          return reply.json() as Promise<any>;
+        }
+        const draftPreview=await reviewSnapshot();
+        assert.equal(draftPreview.review.checked,true,JSON.stringify(draftPreview));
+        assert.equal(draftPreview.review.ready_for_manual_merge,false);
+        assert.ok(draftPreview.review.blocks.includes('GITHUB_DRAFT_PR_REVIEW_REQUIRED'));
+        assert.equal(draftPreview.merge_performed,false);
+        prReadyForReview=true;
+        const readyPreview=await reviewSnapshot();
+        assert.equal(readyPreview.review.ready_for_manual_merge,true,
+          JSON.stringify(readyPreview));
+        assert.equal(readyPreview.review.independent_approvals,1);
+        assert.equal(readyPreview.pr_number,77);
+        assert.equal(readyPreview.expected_head_sha,'b'.repeat(40));
+        reviewedOldHead=true;
+        const staleReview=await reviewSnapshot();
+        assert.equal(staleReview.review.ready_for_manual_merge,false);
+        assert.ok(staleReview.review.blocks.includes('GITHUB_APPROVAL_NOT_VERIFIED'));
+        reviewedOldHead=false;
+        prMerged=true;
+        const closedPreview=await reviewSnapshot();
+        assert.equal(closedPreview.review.ready_for_manual_merge,false);
+        assert.ok(closedPreview.review.blocks.includes(
+          'GITHUB_PR_ALREADY_CLOSED_USE_MERGE_VERIFIER'));
+        const finalIntent={
+          request_id:'mergeverify_exact_'+(++count),
+          ticket_id:'ticket_qa_test',
+          expected_remote_head_sha:'b'.repeat(40),
+          expected_pr_number:77,
+          owner_review_note:'Owner inspected the independent merged PR and target CI',
+          owner_confirmed_readonly_verification:true
+        };
+        const missingVerificationConsent=await post('/v7/tasks/verify-merge',
+          {...finalIntent,request_id:'merge_missing_'+(++count),
+            owner_confirmed_readonly_verification:false},admin);
+        assert.equal(missingVerificationConsent.code,403);
+        const wrongRegisteredPr=await post('/v7/tasks/verify-merge',{
+          ...finalIntent,request_id:'merge_wrong_'+(++count),expected_pr_number:78},admin);
+        assert.equal(wrongRegisteredPr.code,409);
+        assert.equal(wrongRegisteredPr.body.error_code,
+          'MERGE_VERIFICATION_CANDIDATE_CHANGED');
+        const verified=await post('/v7/tasks/verify-merge',finalIntent,admin);
+        assert.equal(verified.code,200,JSON.stringify(verified.body));
+        assert.equal(verified.body.status,'DONE');
+        assert.equal(verified.body.read_only,true);
+        assert.equal(verified.body.merge_performed,false);
+        assert.equal(verified.body.github.prNumber,77);
+        assert.equal(verified.body.github.headSha,'b'.repeat(40));
+        assert.equal(verified.body.github.mergeSha,mergedSha);
+        const getsBeforeReplay=prGetCalls;
+        const lostMergeReplyReplay=await post('/v7/tasks/verify-merge',finalIntent,admin);
+        assert.equal(lostMergeReplyReplay.code,200);
+        assert.deepEqual(lostMergeReplyReplay.body,verified.body,
+          'Lost response after DONE must return original durable receipt');
+        assert.equal(prGetCalls,getsBeforeReplay,
+          'Idempotent DONE replay never recontacts GitHub');
+        const mismatchedRequestReuse=await post('/v7/tasks/verify-merge',{
+          ...finalIntent,owner_review_note:'Different Owner decision'},admin);
+        assert.equal(mismatchedRequestReuse.code,409);
+        assert.equal(mismatchedRequestReuse.body.error_code,'IDEMPOTENCY_KEY_REUSED');
+        const anotherVerification=await post('/v7/tasks/verify-merge',{
+          ...finalIntent,request_id:'merge_second_'+(++count)},admin);
+        assert.equal(anotherVerification.code,409);
+        assert.equal(anotherVerification.body.error_code,
+          'NOT_READY_FOR_GIT_VERIFICATION');
+        const [doneRows]=await db.query('SELECT status FROM v7_tickets WHERE ticket_id=?',
+          ['ticket_qa_test']);
+        assert.equal((doneRows as any[])[0].status,'DONE');
+        const [mergeReceipts]=await db.query(
+          'SELECT ticket_id FROM v7_git_receipts WHERE ticket_id=?',['ticket_qa_test']);
+        assert.equal((mergeReceipts as any[]).length,1);
+        assert.equal(prPostCalls,1,
+          'Only original mock Draft PR create was a GitHub write');
+
       }finally{
         globalThis.fetch=realFetch;
         if(previousPrFlag===undefined)delete process.env.SUTRADHAR_ENABLE_PR_CREATION;
         else process.env.SUTRADHAR_ENABLE_PR_CREATION=previousPrFlag;
         if(previousPrToken===undefined)delete process.env.SUTRADHAR_GITHUB_PR_TOKEN;
         else process.env.SUTRADHAR_GITHUB_PR_TOKEN=previousPrToken;
+        if(previousReadToken===undefined)delete process.env.SUTRADHAR_GITHUB_TOKEN;
+        else process.env.SUTRADHAR_GITHUB_TOKEN=previousReadToken;
+        if(previousChecks===undefined)delete process.env.SUTRADHAR_REQUIRED_CHECKS;
+        else process.env.SUTRADHAR_REQUIRED_CHECKS=previousChecks;
+        if(previousApprovals===undefined)delete process.env.SUTRADHAR_MIN_GITHUB_APPROVALS;
+        else process.env.SUTRADHAR_MIN_GITHUB_APPROVALS=previousApprovals;
       }
 
     }finally{await db.end();}

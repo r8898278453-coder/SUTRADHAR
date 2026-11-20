@@ -107,8 +107,8 @@ test('HTTP GitHub merge approval uses signed durable lease and actual tested tre
           status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }
       ] });
     if (pathname.endsWith('/pulls/24/reviews'))
-      return body([{ state: 'APPROVED', user: { login: 'reviewer' },
-        submitted_at: '2026-11-06T18:00:00Z' }]);
+      return body([{ state: 'APPROVED', user: { login: 'reviewer',type:'User' },
+        commit_id: HEAD,submitted_at: '2026-11-06T18:00:00Z' }]);
     if (pathname.endsWith('/compare/' + MERGE + '...main'))
       return body({ status: 'ahead', base_commit: { sha: MERGE } });
     throw new Error('unexpected GitHub mocked path: ' + pathname);

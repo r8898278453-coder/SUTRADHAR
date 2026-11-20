@@ -18,6 +18,7 @@ function date(raw){if(!raw)return '—';const d=new Date(raw.endsWith('Z')?raw:r
 let gitRecoverySnapshot=null,gitRecoverySelection=null,gitRecoveryPending=null;
 
 let prSelected=null,prCreationAttempt=null;
+let prReviewSnapshot=null,mergeVerifyPending=null;
 let prRecoveryQueue=null,prRecoverySelected=null,prRecoveryPending=null;
 function prStatus(text){value('pr-status',text);}
 function updatePrAction(){
@@ -30,11 +31,29 @@ function updatePrAction(){
     $('pr-owner-note').value.trim().length<20||
     $('pr-owner-note').value.trim().length>500||
     !$('pr-consent').checked||Boolean(prCreationAttempt);
+  const ready=Boolean(prReviewSnapshot&&
+    prReviewSnapshot.ticket_id===$('git-ticket-id').value.trim()&&
+    Number.isSafeInteger(prReviewSnapshot.pr_number)&&
+    prReviewSnapshot.pr_number>0&&
+    gitHead.test(prReviewSnapshot.expected_head_sha)&&
+    $('pr-confirm-head').value===prReviewSnapshot.expected_head_sha&&
+    $('pr-owner-note').value.trim().length>=20&&
+    $('pr-owner-note').value.trim().length<=500&&
+    $('merge-verify-consent').checked&&
+    (!mergeVerifyPending||(
+      mergeVerifyPending.ticket_id===prReviewSnapshot.ticket_id&&
+      mergeVerifyPending.owner_review_note===$('pr-owner-note').value.trim())));
+  $('verify-merge').disabled=!ready||!key;
+  $('verify-merge').textContent=mergeVerifyPending?
+    'Retry SAME exact merge-verification receipt':'Verify external merge (read-only proof)';
 }
 function clearPrCreation(){
-  prSelected=null;prCreationAttempt=null;
+  prSelected=null;prCreationAttempt=null;prReviewSnapshot=null;
+  mergeVerifyPending=null;
   $('pr-expected-head').value='';$('pr-confirm-head').value='';
   $('pr-owner-note').value='';$('pr-consent').checked=false;
+  $('merge-verify-consent').checked=false;
+  value('pr-review-summary','Not inspected. No merge has been executed.');
   updatePrAction();
 }
 function updatePrRecovery(){
@@ -345,7 +364,73 @@ async function gitOperation(pathname){
     await refresh();
   }catch(e){message(e.message,true);}
 }
-$('verify-merge').onclick=()=>gitOperation('/v7/tasks/verify-merge');
+$('merge-verify-consent').addEventListener('change',updatePrAction);
+$('pr-review-inspect').onclick=async()=>{
+  prReviewSnapshot=null;mergeVerifyPending=null;updatePrAction();
+  const ticket=$('git-ticket-id').value.trim();
+  if(!/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(ticket)){
+    value('pr-review-summary','Enter a valid exact ticket ID first.');return;
+  }
+  try{
+    const snapshot=await request('/v7/owner/pr-review/'+encodeURIComponent(ticket));
+    if(snapshot.ticket_id!==ticket||!gitHead.test(snapshot.expected_head_sha)||
+       !Number.isSafeInteger(snapshot.pr_number)||snapshot.pr_number<1||
+       snapshot.read_only!==true||snapshot.merge_performed!==false)
+      throw Error('PR_REVIEW_SNAPSHOT_UNTRUSTED');
+    prReviewSnapshot=snapshot;
+    const x=snapshot.review||{};
+    value('pr-review-summary',
+      'GitHub PR #'+snapshot.pr_number+
+      ' at '+snapshot.expected_head_sha+
+      ' · '+(x.draft===true?'DRAFT':'Review/merge status')+
+      ' · checks: '+(x.checks_passed===true?'PASS':'NOT VERIFIED')+
+      ' · independent approvals: '+(x.independent_approvals??0)+
+      '/'+(x.required_approvals??'?')+
+      ' · ready for manual merge: '+(x.ready_for_manual_merge===true?'YES':'NO')+
+      ' · blockers: '+(Array.isArray(x.blocks)?x.blocks.join(', '):'unavailable')+
+      '. Read-only snapshot; never bypass GitHub branch protections.');
+    updatePrAction();
+  }catch(e){
+    value('pr-review-summary','Review/CI inspection blocked: '+e.message);
+    updatePrAction();
+  }
+};
+$('verify-merge').onclick=async()=>{
+  updatePrAction();if($('verify-merge').disabled)return;
+  const snap=prReviewSnapshot;
+  const intent=mergeVerifyPending||{
+    request_id:'mergeverify_'+crypto.randomUUID().replaceAll('-',''),
+    ticket_id:snap.ticket_id,
+    expected_remote_head_sha:snap.expected_head_sha,
+    expected_pr_number:snap.pr_number,
+    owner_review_note:$('pr-owner-note').value.trim(),
+    owner_confirmed_readonly_verification:true
+  };
+  if(!confirm('VERIFY EXTERNAL MERGE ONLY: exact GitHub PR #'+intent.expected_pr_number+
+    ' at '+intent.expected_remote_head_sha+
+    ' for ticket '+intent.ticket_id+
+    '. Central will READ GitHub and mark DONE ONLY if remote merge, human review, exact HEAD/tree and CI all verify. This will NEVER merge or push main.'))return;
+  mergeVerifyPending=intent;updatePrAction();
+  try{
+    const result=await request('/v7/tasks/verify-merge',{
+      method:'POST',body:JSON.stringify(intent)});
+    if(result.accepted!==true||result.ticket_id!==intent.ticket_id||
+       result.status!=='DONE'||result.read_only!==true||
+       result.merge_performed!==false||
+       result.github?.headSha!==intent.expected_remote_head_sha||
+       result.github?.prNumber!==intent.expected_pr_number)
+      throw Error('MERGE_VERIFICATION_RECEIPT_UNTRUSTED');
+    message('Exact externally merged PR verified at '+result.github.mergeSha+
+      '. Ticket DONE. Central did NOT merge/push/deploy.');
+    prReviewSnapshot=null;mergeVerifyPending=null;updatePrAction();
+    await refresh();
+  }catch(e){
+    value('pr-review-summary','External merge NOT verified: '+e.message+
+      '. Review real GitHub status. An ambiguous response may be retried ONLY with the same request ID and exact inputs.');
+    message('Merge verification blocked/uncertain: '+e.message,true);
+    updatePrAction();
+  }
+};
 $('git-ticket-id').addEventListener('input',clearPrCreation);
 for(const id of ['pr-confirm-head','pr-owner-note']){
   $(id).addEventListener('input',updatePrAction);
