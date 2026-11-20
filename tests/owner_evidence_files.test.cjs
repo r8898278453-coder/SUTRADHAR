@@ -9,7 +9,12 @@ const env={G0:'ci',G1:'hostinger-staging',G2:'hostinger-staging',
   G3:'windows-signer',G4:'physical-windows',G5:'physical-windows',
   G6:'physical-windows',G7:'owner-review'};
 function setup(){
-  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-owner-evidence-'));
+  // Resolve the Windows runner's temporary folder junction BEFORE creating
+  // fixture artifacts. Evidence verification intentionally refuses redirecting
+  // parent paths even when their final bytes are currently the same.
+  const canonicalTemp=fs.realpathSync.native(os.tmpdir());
+  const dir=fs.realpathSync.native(
+    fs.mkdtempSync(path.join(canonicalTemp,'sut-owner-evidence-')));
   const {publicKey,privateKey}=crypto.generateKeyPairSync('ed25519');
   const pub=publicKey.export({format:'pem',type:'spki'});
   const artifacts=[],gates=[];
