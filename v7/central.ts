@@ -17,6 +17,7 @@ import {inspectGithubPrReview} from './pr_review.ts';
 import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest,validTaskBranch,isProtectedScope} from './rules.ts';
 import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
+import {permitSignedHeartbeatPilotRecord} from './pilot_heartbeat_window.ts';
 import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,QaEvidenceError} from './qa_evidence.ts';
 import sharedContract from '../packages/shared/contract.json';
 
@@ -626,11 +627,23 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
       await c.query('UPDATE v7_cluster SET lease_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 180 SECOND) WHERE singleton=1');
     }
     const elected=await evaluate(c,'heartbeat');
-    // Staging PILOT OPT-IN: same-transaction audit, only AFTER heartbeat succeeds.
-    // Do not compromise liveness for oversize bodies; their absence fails audit.
-    if(process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_EVIDENCE==='true'){
-      const raw=(req as any).rawBody as Buffer;
-      if(Buffer.isBuffer(raw)&&raw.length>=20&&raw.length<=8192){
+    // Alpha pilot audit is OFF without an explicit Owner-staged UTC start/end
+    // window (maximum one hour). Even a forgotten enable flag cannot write
+    // after expiry or after 64 lifetime records per approved node.
+    // The leader-row lock above serializes this cap with parallel heartbeats.
+    const raw=(req as any).rawBody as Buffer;
+    const auditScope={
+      enabled:process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_EVIDENCE,
+      startsAt:process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_START_UTC,
+      endsAt:process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_END_UTC,
+      serverNowMs:clock,rawBodyLength:Buffer.isBuffer(raw)?raw.length:0
+    };
+    if(permitSignedHeartbeatPilotRecord({...auditScope,existingNodeRecords:0})){
+      const previousPilotRows=await one(c,
+        'SELECT COUNT(*) AS n FROM v7_events WHERE event_type=? AND actor=?',
+        ['NODE_HEARTBEAT_ACCEPTED',node.node_id]);
+      if(permitSignedHeartbeatPilotRecord({...auditScope,
+          existingNodeRecords:Number(previousPilotRows?.n)})){
         await event(c,'NODE_HEARTBEAT_ACCEPTED',node.node_id,
           Number(elected.epoch),node.node_id,{
             schema:1,node_id:node.node_id,
@@ -803,7 +816,8 @@ async function recoveryManifest(c:PoolConnection){
   // window and high-water cursor, not every historical event ever recorded.
   const events=await rows(c,'SELECT event_id,event_type,actor,epoch,resource_id,created_at FROM v7_events '+
     'WHERE event_type!="NODE_HEARTBEAT_ACCEPTED" ORDER BY event_id DESC LIMIT 300');
-  const newest=await one(c,'SELECT COALESCE(MAX(event_id),0) AS event_id FROM v7_events');
+  const newest=await one(c,'SELECT COALESCE(MAX(event_id),0) AS event_id FROM v7_events '+
+    'WHERE event_type!="NODE_HEARTBEAT_ACCEPTED"');
   // Unknown external Git side effects are a separate safety barrier, even
   // when the related ticket has no live worker lease.
   const unresolvedGitJobs=await rows(c,'SELECT ticket_id,agent_id,epoch,state FROM v7_git_jobs WHERE state IN ("RUNNING","NEEDS_RECONCILIATION") ORDER BY ticket_id LIMIT 301');

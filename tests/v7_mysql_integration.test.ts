@@ -125,8 +125,14 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const a=await edge(1),b=await edge(2),c=await edge(3),d=await edge(4,false);
     // Explicit pilot mode records ONLY the accepted, real signed heartbeat.
     process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_EVIDENCE='true';
+    process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_START_UTC=
+      new Date(Date.now()-60_000).toISOString();
+    process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_END_UTC=
+      new Date(Date.now()+15*60_000).toISOString();
     let h=await a.heartbeat();
     delete process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_EVIDENCE;
+    delete process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_START_UTC;
+    delete process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_END_UTC;
     assert.equal(h.code,200,JSON.stringify(h.body));
     const proofPath='/v7/owner/heartbeat-evidence/'+a.node_id;
     const deniedProof=await fetch(base+proofPath);
@@ -162,7 +168,24 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.ok(!originalMasterRecovery.body.events.some(
       (x:any)=>x.event_type==='NODE_HEARTBEAT_ACCEPTED'),
       'High-volume pilot packets must never crowd Master recovery manifest');
+    const watermarkDb=await mysql.createConnection({
+      host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+      user:process.env.DB_USER,password:process.env.DB_PASSWORD,
+      database:process.env.DB_NAME});
+    try{
+      const [observedRows]:any=await watermarkDb.query(
+        'SELECT COALESCE(MAX(event_id),0) AS newest FROM v7_events '+
+        'WHERE event_type!="NODE_HEARTBEAT_ACCEPTED"');
+      assert.equal(originalMasterRecovery.body.event_high_watermark,
+        Number(observedRows[0].newest),
+        'Pilot packet rows cannot advance the core Master recovery cursor');
+    }finally{await watermarkDb.end();}
     h=await b.heartbeat();assert.equal(h.code,200);
+    const noPilotForOtherNode=await fetch(base+'/v7/owner/heartbeat-evidence/'+b.node_id,{
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(noPilotForOtherNode.status,200);
+    assert.equal(((await noPilotForOtherNode.json()) as any).records.length,0,
+      'Absent pilot start/end opt-in must not log even accepted heartbeats');
     h=await c.heartbeat();assert.equal(h.code,200);
     h=await d.heartbeat();assert.equal(h.code,200);
     // Maintenance eligibility comes from durable Central MySQL state, not
