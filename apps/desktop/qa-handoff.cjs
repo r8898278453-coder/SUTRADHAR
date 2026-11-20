@@ -51,11 +51,11 @@ function shaFile(p){
 }
 function env(){
   const safe=Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('GIT_')));
-  return {...safe,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:os.devNull,
+  return {...safe,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',
     GIT_TERMINAL_PROMPT:'0',GIT_LFS_SKIP_SMUDGE:'1'};
 }
 function git(dir,...args){
-  const p=spawnSync('git',['-c','core.hooksPath='+os.devNull,
+  const p=spawnSync('git',['-c','core.hooksPath=/dev/null',
     '-c','core.fsmonitor=false','-c','diff.external=',
     '-c','protocol.ext.allow=never','-C',dir,...args],
   {encoding:null,timeout:30000,maxBuffer:2*1024*1024,windowsHide:true,env:env()});
