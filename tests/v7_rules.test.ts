@@ -34,7 +34,10 @@ test('v7 expired Master promotes backup 1 before backup 2',()=>{
 });
 test('v7 backup 2 takes over when backup 1 is missing',()=>{
   const now=ts(4),ld={...empty,bootstrapped:true,epoch:4,
-    master_agent_id:'master',lease_until_ms:now-1000,backup1:'b1',backup2:'b2'};
+    // Central persists old node even after the Master is absent from
+    // the candidate JOIN; this is mandatory for safe node independence.
+    master_agent_id:'master',master_node_id:'n1',
+    lease_until_ms:now-1000,backup1:'b1',backup2:'b2'};
   const arr=[candidate('b1','n2',2,now-181000),candidate('b2','n3',3,now)];
   assert.equal(chooseLeader(ld,arr,now),'b2');
 });
