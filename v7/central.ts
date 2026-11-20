@@ -1744,7 +1744,7 @@ app.post('/v7/git/pr-recover-readonly',jsonRoute(async req=>{
       [t.project_id]):null;
     prExactContext(t,j,p);
     const attemptId=String(j?.pr_url||'').startsWith(DRAFT_INTENT_PREFIX)
-      ?String(j.pr_url).slice(DRAFT_INTENT_PREFIX.length):null;
+      ?String(j.pr_url).slice(DRAFT_INTENT_PREFIX.length):'';
     if(j.pr_number||!attemptId||!okId(attemptId)||
        t.candidate_head_sha!==head)
       fault('DRAFT_PR_NO_PENDING_OWNER_RECOVERY',409);
