@@ -859,6 +859,19 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       let prPostCalls=0,prGetCalls=0,remoteDraftExists=false;
       try{
         process.env.SUTRADHAR_ENABLE_PR_CREATION='true';
+        delete process.env.SUTRADHAR_GITHUB_PR_TOKEN;
+        const missingTokenPreflight=await fetch(base+'/v7/owner/pr-preflight/ticket_qa_test',{
+          headers:{authorization:'Bearer '+admin}});
+        assert.equal(missingTokenPreflight.status,200);
+        assert.equal((await missingTokenPreflight.json() as any).ready_for_owner_intent,false);
+        const missingTokenWrite=await post('/v7/git/pr-draft',{
+          request_id:'prdraft_no_token_'+(++count),ticket_id:'ticket_qa_test',
+          expected_remote_head_sha:'b'.repeat(40),
+          expected_candidate_tree_sha:'c'.repeat(40),
+          owner_confirmed_draft_only:true,
+          owner_review_note:'Owner checked candidate but PR token is missing'},admin);
+        assert.equal(missingTokenWrite.code,503);
+        assert.equal(missingTokenWrite.body.error_code,'DRAFT_PR_TOKEN_NOT_CONFIGURED');
         process.env.SUTRADHAR_GITHUB_PR_TOKEN='disposable-ci-pr-api-token';
         const prPreflight=await fetch(base+'/v7/owner/pr-preflight/ticket_qa_test',{
           headers:{authorization:'Bearer '+admin}});

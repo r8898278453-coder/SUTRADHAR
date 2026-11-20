@@ -1493,6 +1493,11 @@ app.post('/v7/git/recover-remote-proof',jsonRoute(async req=>{
 // exact remote draft is independently recorded. There is deliberately no
 // schema migration and no automatic re-create after an ambiguous POST.
 const DRAFT_INTENT_PREFIX='DRAFT_PR_ATTEMPT_PENDING:';
+function configuredDraftPrWrite(){
+  const token=process.env.SUTRADHAR_GITHUB_PR_TOKEN||'';
+  return process.env.SUTRADHAR_ENABLE_PR_CREATION==='true'&&
+    token.length>=20&&!/\s/.test(token);
+}
 const REPO_FULL=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 function prChangedFiles(t:any,j:any){
   let files:any,scopes:any;
@@ -1646,7 +1651,7 @@ app.get('/v7/owner/pr-preflight/:ticketId',jsonRoute(async req=>{
     await prEvidence(c,t,j);
     const masterReady=ld.phase==='READY'&&!Number(ld.paused)&&
       await approvedMasterLease(c,ld);
-    const enabled=process.env.SUTRADHAR_ENABLE_PR_CREATION==='true';
+    const enabled=configuredDraftPrWrite();
     return {...context,ready_for_owner_intent:Boolean(masterReady)&&
       enabled&&!j.pr_url&&!j.pr_number,
       creation_enabled:enabled,master_ready:Boolean(masterReady),
@@ -1662,6 +1667,7 @@ app.post('/v7/git/pr-draft',jsonRoute(async req=>{
   admin(req);
   if(process.env.SUTRADHAR_ENABLE_PR_CREATION!=='true')
     fault('DRAFT_PR_CREATION_DISABLED',403);
+  if(!configuredDraftPrWrite())fault('DRAFT_PR_TOKEN_NOT_CONFIGURED',503);
   const d=req.body||{},ticketId=requireId(d.ticket_id),
     requestId=requireId(d.request_id);
   const expectedHead=requireSha(d.expected_remote_head_sha);
