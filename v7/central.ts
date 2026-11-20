@@ -206,7 +206,25 @@ async function evaluate(c:PoolConnection,reason='heartbeat'){
   const ld=await leader(c);
   const now=await dbNow(c), cs=await candidates(c);
   const old=ld.master_agent_id||null;
-  const next=chooseLeader({master_agent_id:old,
+  // A revoked/offline Master may be absent from eligible candidates; its
+  // persisted enrollment still identifies the physical node that MUST NOT
+  // be mistaken for an independent backup. Do not trust an agent assertion.
+  const oldNode=old?(cs.find(x=>x.agent_id===old)?.node_id||
+    (await one(c,'SELECT node_id FROM v7_agents WHERE agent_id=?',[old]))?.node_id||null):null;
+  // Once a Master becomes missing, preserve its previous PC exclusion until
+  // an INDEPENDENT node takes over. Without this, a second heartbeat from
+  // another agent on the original PC can immediately re-elect that PC while
+  // its old heartbeat/worker state is ambiguous. Reuse durable central audit
+  // history; never depend on a volatile process cache or node-supplied ID.
+  const missingFence=!old&&ld.phase==='NO_MASTER'&&Boolean(ld.bootstrapped_at);
+  const missing=missingFence?await one(c,
+    "SELECT a.node_id FROM v7_events e "+
+    "JOIN v7_agents a ON a.agent_id=JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$.previous')) "+
+    "WHERE e.event_type='MASTER_MISSING' AND e.epoch=? "+
+    "ORDER BY e.event_id DESC LIMIT 1",[Number(ld.epoch)]):null;
+  const next=chooseLeader({master_agent_id:old,master_node_id:oldNode,
+    recovery_requires_independent_node:missingFence,
+    recovery_excluded_node_id:missing?.node_id||null,
     lease_until_ms:ld.lease_until?Date.parse(ld.lease_until+'Z'):null,
     bootstrapped:Boolean(ld.bootstrapped_at),epoch:Number(ld.epoch),
     backup1:ld.backup1,backup2:ld.backup2},cs,now);

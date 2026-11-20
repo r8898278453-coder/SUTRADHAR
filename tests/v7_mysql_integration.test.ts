@@ -1346,5 +1346,76 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       'Later retries at the same sequence cannot repeat a committed heartbeat');
     assert.equal(replayAfterRace.body.error_code,'REPLAY_SEQUENCE');
 
+    // Multi-agent same-PC resilience regression: two approved, healthy agent
+    // identities on ONE physical node are NOT Backup-1 and Backup-2. An
+    // expired Master cannot hand control to its sibling on the same PC,
+    // including via a later NO_MASTER rebootstrap. Only a separately
+    // enrolled and heartbeating node may become the next Master.
+    const sharedPc=await edge(100,true);
+    const siblingId='agent_same_pc_100';
+    const siblingRegistration=await sharedPc.signed('/v7/agents/register',{
+      agent_id:siblingId,capabilities:{}});
+    assert.equal(siblingRegistration.code,200,JSON.stringify(siblingRegistration.body));
+    await owner('APPROVE_AGENT',{
+      agent_id:siblingId,master_eligible:true,qa_eligible:false});
+    function sharedPulse(sequence:number){
+      return {boot_id:'boot_shared_100',sequence,expected_master_epoch:197,
+        agents:[
+          {agent_id:sharedPc.agent_id,sequence,status:'ONLINE'},
+          {agent_id:siblingId,sequence,status:'ONLINE'}]};
+    }
+    const firstShared=await sharedPc.signed('/v7/nodes/heartbeat',sharedPulse(1));
+    assert.equal(firstShared.code,200,JSON.stringify(firstShared.body));
+    const multiPcDb=await mysql.createConnection({
+      host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+      user:process.env.DB_USER,password:process.env.DB_PASSWORD,
+      database:process.env.DB_NAME});
+    try{
+      await multiPcDb.query(
+        'UPDATE v7_agents SET last_seen=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 400 SECOND) '+
+        'WHERE agent_id NOT IN (?,?)',[sharedPc.agent_id,siblingId]);
+      // Test-only injection: Master and Backup-1 deliberately share one
+      // node. This represents a legacy unsafe election layout.
+      await multiPcDb.query(
+        'UPDATE v7_cluster SET epoch=197,master_agent_id=?,backup1=?,'+
+        'backup2=NULL,phase="READY",paused=0,'+
+        'lease_until=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND),'+
+        'bootstrapped_at=COALESCE(bootstrapped_at,UTC_TIMESTAMP(3)) '+
+        'WHERE singleton=1',[sharedPc.agent_id,siblingId]);
+      const samePcFirst=await sharedPc.signed(
+        '/v7/nodes/heartbeat',sharedPulse(2));
+      assert.equal(samePcFirst.code,200,JSON.stringify(samePcFirst.body));
+      assert.equal(samePcFirst.body.master_agent_id,null,
+        'The old Master and its same-PC backup cannot be independently promoted');
+      assert.equal(samePcFirst.body.phase,'NO_MASTER');
+      assert.equal(Number(samePcFirst.body.epoch),197);
+      assert.deepEqual(samePcFirst.body.backups,[null,null]);
+      const [missingRows]:any=await multiPcDb.query(
+        'SELECT COUNT(*) AS n FROM v7_events '+
+        'WHERE event_type="MASTER_MISSING" AND epoch=?',[197]);
+      assert.equal(Number(missingRows[0].n),1,
+        'Central must retain previous Master identity as a durable audit fence');
+      const samePcAgain=await sharedPc.signed(
+        '/v7/nodes/heartbeat',sharedPulse(3));
+      assert.equal(samePcAgain.code,200,JSON.stringify(samePcAgain.body));
+      assert.equal(samePcAgain.body.master_agent_id,null,
+        'NO_MASTER must not rebootstrap the old PC on another heartbeat');
+      assert.equal(samePcAgain.body.phase,'NO_MASTER');
+      assert.equal(Number(samePcAgain.body.epoch),197);
+      // A truly distinct approved PC may re-elect normally. No task or
+      // external Git effects are synthesized by this fixture.
+      const independent=await edge(101,true);
+      const otherPulse=await independent.heartbeat(197);
+      assert.equal(otherPulse.code,200,JSON.stringify(otherPulse.body));
+      assert.equal(otherPulse.body.master_agent_id,independent.agent_id,
+        'Independent physical node identity is required for takeover');
+      assert.equal(Number(otherPulse.body.epoch),198);
+      assert.equal(otherPulse.body.phase,'RECOVERING');
+      const [promotionRows]:any=await multiPcDb.query(
+        'SELECT COUNT(*) AS n FROM v7_events WHERE event_type="MASTER_PROMOTED" '+
+        'AND epoch=? AND resource_id=?',[198,independent.agent_id]);
+      assert.equal(Number(promotionRows[0].n),1);
+    }finally{await multiPcDb.end();}
+
   }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await shutdownV7ForTests();}
 });

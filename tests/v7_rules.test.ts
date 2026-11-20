@@ -55,9 +55,53 @@ test('v7 backups prefer physically distinct machines',()=>{
     candidate('b','n2',3,now),candidate('c','n3',4,now)];
   assert.deepEqual(chooseBackups('master',arr,now),['b','c']);
 });
-test('v7 fills remaining backup with same PC if none other available',()=>{
-  const now=ts(4),arr=[candidate('master','n1',1,now),candidate('a','n1',2,now)];
-  assert.deepEqual(chooseBackups('master',arr,now),['a',null]);
+test('v7 never promotes an independent backup from the Master PC',()=>{
+  const now=ts(4),arr=[candidate('master','n1',1,now),
+    candidate('a','n1',2,now),candidate('b','n1',3,now)];
+  assert.deepEqual(chooseBackups('master',arr,now),[null,null],
+    'One physical PC with three agents is not three failover PCs');
+  const expired={...empty,bootstrapped:true,epoch:5,
+    master_agent_id:'master',master_node_id:'n1',lease_until_ms:now-1000,
+    backup1:'a',backup2:'b'};
+  assert.equal(chooseLeader(expired,arr,now),null,
+    'Fake same-node backup must never be promoted after Master expiry');
+});
+test('v7 keeps backup slots vacant rather than duplicating a physical node',()=>{
+  const now=ts(4),arr=[candidate('master','n1',1,now),
+    candidate('a','n1',2,now),candidate('one','n2',3,now),
+    candidate('two','n2',4,now)];
+  assert.deepEqual(chooseBackups('master',arr,now),['one',null]);
+  const withThird=[...arr,candidate('three','n3',5,now)];
+  assert.deepEqual(chooseBackups('master',withThird,now),['one','three']);
+});
+test('v7 refuses same-PC backup when old Master is revoked or missing from candidates',()=>{
+  const now=ts(4);
+  const lost={...empty,bootstrapped:true,master_agent_id:'master',
+    master_node_id:'n1',lease_until_ms:now-1000,backup1:'same_pc',
+    backup2:'different_pc'};
+  assert.equal(chooseLeader(lost,[candidate('same_pc','n1',2,now),
+    candidate('different_pc','n2',3,now)],now),'different_pc');
+  assert.equal(chooseLeader({...lost,backup2:null},
+    [candidate('same_pc','n1',2,now)],now),null);
+  assert.equal(chooseLeader({...lost,master_node_id:null},
+    [candidate('same_pc','n1',2,now),candidate('different_pc','n2',3,now)],now),
+    null,'Unverifiable previous Master machine must fail closed');
+});
+
+test('v7 NO_MASTER recovery cannot rebootstrap the former PC',()=>{
+  const now=ts(4),oldNode='n1';
+  const waiting={...empty,bootstrapped:true,epoch:32,
+    recovery_requires_independent_node:true,
+    recovery_excluded_node_id:oldNode};
+  const candidates=[candidate('old_master','n1',1,now),
+    candidate('sibling','n1',2,now)];
+  assert.equal(chooseLeader(waiting,candidates,now),null,
+    'Repeated heartbeats from old PC cannot clear NO_MASTER');
+  assert.equal(chooseLeader({...waiting,recovery_excluded_node_id:null},[
+    ...candidates,candidate('independent','n2',3,now)],now),null,
+    'Missing durable previous-node proof must block all promotion');
+  assert.equal(chooseLeader(waiting,[
+    ...candidates,candidate('independent','n2',3,now)],now),'independent');
 });
 test('v7 blocked pre-bootstrap election after midnight until 08:00 IST',()=>{
   const now=ts(20);
