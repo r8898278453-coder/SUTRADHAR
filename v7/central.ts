@@ -801,7 +801,8 @@ async function recoveryManifest(c:PoolConnection){
   const checkpoints=await rows(c,'SELECT x.ticket_id,x.generation,x.summary,x.next_action,x.content_sha256 FROM v7_checkpoints x INNER JOIN (SELECT ticket_id,MAX(generation) gen FROM v7_checkpoints GROUP BY ticket_id) y ON y.ticket_id=x.ticket_id AND y.gen=x.generation JOIN v7_tickets t ON t.ticket_id=x.ticket_id WHERE t.status NOT IN ("DONE","CANCELLED") ORDER BY x.ticket_id LIMIT 301');
   // Events form an append-only audit ledger. Recovery needs a bounded recent
   // window and high-water cursor, not every historical event ever recorded.
-  const events=await rows(c,'SELECT event_id,event_type,actor,epoch,resource_id,created_at FROM v7_events ORDER BY event_id DESC LIMIT 300');
+  const events=await rows(c,'SELECT event_id,event_type,actor,epoch,resource_id,created_at FROM v7_events '+
+    'WHERE event_type!="NODE_HEARTBEAT_ACCEPTED" ORDER BY event_id DESC LIMIT 300');
   const newest=await one(c,'SELECT COALESCE(MAX(event_id),0) AS event_id FROM v7_events');
   // Unknown external Git side effects are a separate safety barrier, even
   // when the related ticket has no live worker lease.
@@ -1933,7 +1934,8 @@ app.post('/v7/tasks/verify-merge',jsonRoute(async req=>{
   }));
 }));
 app.get('/v7/audit',jsonRoute(async req=>{
-  admin(req);return transaction(c=>rows(c,'SELECT event_id,event_type,actor,epoch,resource_id,payload_json,created_at FROM v7_events ORDER BY event_id DESC LIMIT 250'));
+  admin(req);return transaction(c=>rows(c,'SELECT event_id,event_type,actor,epoch,resource_id,payload_json,created_at FROM v7_events '+
+    'WHERE event_type!="NODE_HEARTBEAT_ACCEPTED" ORDER BY event_id DESC LIMIT 250'));
 }));
 app.use((err:any,_req:Request,res:Response,_next:NextFunction)=>{
   if(res.headersSent)return;

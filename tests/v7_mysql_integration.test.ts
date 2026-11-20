@@ -150,6 +150,18 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       crypto.createPublicKey(a.public_key_pem),
       Buffer.from(packet.signature_base64,'base64')),true,
       'MySQL accepted event retains the original node-signed request');
+    const usualAuditRes=await fetch(base+'/v7/audit',{
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(usualAuditRes.status,200);
+    const usualAudit=await usualAuditRes.json() as any[];
+    assert.ok(!usualAudit.some(x=>x.event_type==='NODE_HEARTBEAT_ACCEPTED'),
+      'Pilot packet evidence must not crowd normal Owner audit history');
+    const originalMasterRecovery=await a.signed('/v7/recovery',undefined,'GET');
+    assert.equal(originalMasterRecovery.code,200,
+      JSON.stringify(originalMasterRecovery.body));
+    assert.ok(!originalMasterRecovery.body.events.some(
+      (x:any)=>x.event_type==='NODE_HEARTBEAT_ACCEPTED'),
+      'High-volume pilot packets must never crowd Master recovery manifest');
     h=await b.heartbeat();assert.equal(h.code,200);
     h=await c.heartbeat();assert.equal(h.code,200);
     h=await d.heartbeat();assert.equal(h.code,200);
