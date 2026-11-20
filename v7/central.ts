@@ -242,7 +242,9 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
   return idem(c,actor,requireId(body.request_id),command,payload,async()=>{
     const ld=await leader(c);
     let result:any;
-    if(command==='STATUS') result={cluster:await evaluate(c,'owner-read')};
+    // A status command may create an Owner audit/receipt, but must never
+    // promote a Master or revoke worker leases merely by observing them.
+    if(command==='STATUS') result={cluster:ld};
     else if(command==='PAUSE'||command==='RESUME'){
       await c.query('UPDATE v7_cluster SET paused=?,version=version+1 WHERE singleton=1',[command==='PAUSE'?1:0]);
       result={paused:command==='PAUSE'};
@@ -772,7 +774,10 @@ app.get('/v7/cluster/state',jsonRoute(async req=>{
   return transaction(async c=>{
     const mine=await one(c,'SELECT node_id FROM v7_nodes WHERE node_id=? AND state="APPROVED"',[node.node_id]);
     if(!mine)fault('NODE_NOT_APPROVED',403);
-    const ld=await evaluate(c,'signed-read');
+    // Signed GET creates a nonce replay record as usual, but never runs
+    // election/fencing. Only an authorized heartbeat or Owner mutation
+    // advances the Master. Read-side promotion would falsify pilot evidence.
+    const ld=await leader(c,false);
     return {epoch:Number(ld.epoch),master_agent_id:ld.master_agent_id,
       phase:ld.phase,paused:Boolean(ld.paused),backups:[ld.backup1,ld.backup2]};
   });

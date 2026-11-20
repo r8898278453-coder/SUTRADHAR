@@ -53,3 +53,14 @@ test('Owner and physical-pilot cluster GET is observation-only; never triggers M
   assert.doesNotMatch(route[1],/\b(?:UPDATE|INSERT|DELETE)\b/i,
     'GET status must not write MySQL');
 });
+
+test('signed cluster-state GET and Owner STATUS cannot elect or fence Master',()=>{
+  const signed=central.match(/app\.get\('\/v7\/cluster\/state',jsonRoute\(async req=>\{([\s\S]*?)\n\}\)\);/);
+  assert.ok(signed,'Signed cluster state route must exist');
+  assert.match(signed[1],/nodeAuth\(req\)/);
+  assert.match(signed[1],/leader\(c,false\)/);
+  assert.doesNotMatch(signed[1],/\bevaluate\s*\(/);
+  const owner=central.match(/async function ownerCommand[\s\S]*?if\(command==='STATUS'\)\s*result=\{cluster:ld\}/);
+  assert.ok(owner,'Owner STATUS must only return the current leader snapshot');
+  assert.doesNotMatch(owner[0],/evaluate\(c,'owner-read'\)/);
+});

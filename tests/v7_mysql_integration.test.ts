@@ -779,6 +779,15 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
           'Read-only snapshot must report expired Master as recorded, not elect');
         assert.equal(Number(visible.epoch),Number(status.epoch));
       }
+      // A signed node's read-only cluster-state GET and an Owner/Telegram
+      // STATUS command must be unable to force a takeover either.
+      const signedView=await b.signed('/v7/cluster/state',undefined,'GET');
+      assert.equal(signedView.code,200,JSON.stringify(signedView.body));
+      assert.equal(signedView.body.master_agent_id,a.agent_id);
+      assert.equal(Number(signedView.body.epoch),Number(status.epoch));
+      const ownerView=await owner('STATUS',{});
+      assert.equal(ownerView.state.cluster.master_agent_id,a.agent_id);
+      assert.equal(Number(ownerView.state.cluster.epoch),Number(status.epoch));
       const [afterSnapshotRows]:any=await db.query(
         'SELECT epoch,master_agent_id,phase,version,lease_until FROM v7_cluster WHERE singleton=1');
       const [afterEventRows]:any=await db.query(
