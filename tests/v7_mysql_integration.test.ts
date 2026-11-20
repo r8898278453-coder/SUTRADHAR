@@ -254,9 +254,49 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     // full 300 recent events are legal even with long-lived history.
     assert.equal(verifyRecoverySnapshot(recovered.body,Number(status.epoch)),
       recovered.body.manifest_sha256);
-    const pre=await a.signed('/v7/leadership/reconcile',{agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
-      request_id:'rec_'+(++count),manifest_sha256:recovered.body.manifest_sha256});
+    // Two separately signed simultaneous retries with the SAME recovery
+    // request ID must share the ONE durable READY receipt and event.
+    const recoveryIntent={agent_id:a.agent_id,
+      expected_master_epoch:Number(status.epoch),
+      request_id:'rec_'+(++count),manifest_sha256:recovered.body.manifest_sha256};
+    const [pre,concurrentPre]=await Promise.all([
+      a.signed('/v7/leadership/reconcile',recoveryIntent),
+      a.signed('/v7/leadership/reconcile',recoveryIntent)]);
     assert.equal(pre.code,200,JSON.stringify(pre.body));
+    assert.equal(concurrentPre.code,200,JSON.stringify(concurrentPre.body));
+    assert.deepEqual(concurrentPre.body,pre.body,
+      'Concurrent identical recovery requests must return one durable READY receipt');
+    assert.equal(pre.body.phase,'READY');
+    const lostRecoveryResponse=await a.signed('/v7/leadership/reconcile',recoveryIntent);
+    assert.equal(lostRecoveryResponse.code,200,JSON.stringify(lostRecoveryResponse.body));
+    assert.deepEqual(lostRecoveryResponse.body,pre.body,
+      'Lost successful READY HTTP response must be recoverable with same request ID');
+    const changedRecoveryIntent=await a.signed('/v7/leadership/reconcile',{
+      ...recoveryIntent,manifest_sha256:'0'.repeat(64)});
+    assert.equal(changedRecoveryIntent.code,409);
+    assert.equal(changedRecoveryIntent.body.error_code,'IDEMPOTENCY_KEY_REUSED');
+    const newRecoveryIntentAfterReady=await a.signed('/v7/leadership/reconcile',{
+      ...recoveryIntent,request_id:'new_recovery_after_ready_'+(++count)});
+    assert.equal(newRecoveryIntentAfterReady.code,409);
+    assert.equal(newRecoveryIntentAfterReady.body.error_code,'INVALID_PHASE');
+    const recoveryAuditDb=await mysql.createConnection({
+      host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+      user:process.env.DB_USER,password:process.env.DB_PASSWORD,
+      database:process.env.DB_NAME});
+    try{
+      const [ackRows]:any=await recoveryAuditDb.query(
+        'SELECT COUNT(*) AS n FROM v7_events '+
+        'WHERE event_type="MASTER_RECOVERY_ACK" AND actor=? AND epoch=?',
+        [a.agent_id,Number(status.epoch)]);
+      assert.equal(Number(ackRows[0].n),1,
+        'Two concurrent recovery retries must commit exactly one Master ACK event');
+      const [receipts]:any=await recoveryAuditDb.query(
+        'SELECT response_json FROM v7_commands WHERE actor=? AND request_id=?',
+        [a.agent_id,recoveryIntent.request_id]);
+      assert.equal(receipts.length,1);
+      assert.deepEqual(typeof receipts[0].response_json==='string'?
+        JSON.parse(receipts[0].response_json):receipts[0].response_json,pre.body);
+    }finally{await recoveryAuditDb.end();}
     // Owner can save a short-lived intent for an IDLE noncritical PC,
     // but NEVER authorizes installer execution or cluster stop.
     const pilotPayload={plan_id:'plan_pilot_001',node_id:d.node_id,
@@ -725,11 +765,30 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(staleNode.code,200,JSON.stringify(staleNode.body));
       assert.ok(Number(staleNode.body.agents[0].heartbeat_age_seconds)>=399,
         'Maintenance read endpoint must use MySQL server clock, not local uptime');
-      const promoted=await b.heartbeat(Number(status.epoch));
+      // Backup-1 and Backup-2 have separate node keys and may heartbeat at
+      // the SAME moment after Master-1 expires. The MySQL leader row must
+      // serialize a SINGLE promotion, preserving the intended backup order.
+      const [promoted,simultaneousBackup2]=await Promise.all([
+        b.heartbeat(Number(status.epoch)),
+        c.heartbeat(Number(status.epoch))]);
       assert.equal(promoted.code,200,JSON.stringify(promoted.body));
-      assert.equal(promoted.body.master_agent_id,b.agent_id);
-      assert.equal(promoted.body.phase,'RECOVERING');
-      assert.equal(Number(promoted.body.epoch),Number(status.epoch)+1);
+      assert.equal(simultaneousBackup2.code,200,JSON.stringify(simultaneousBackup2.body));
+      for(const received of [promoted,simultaneousBackup2]){
+        assert.equal(received.body.master_agent_id,b.agent_id,
+          'Concurrent backup heartbeats must both observe first-eligible Backup-1');
+        assert.equal(received.body.phase,'RECOVERING');
+        assert.equal(Number(received.body.epoch),Number(status.epoch)+1);
+      }
+      const [promotionRows]:any=await db.query(
+        'SELECT COUNT(*) AS n FROM v7_events '+
+        'WHERE event_type="MASTER_PROMOTED" AND epoch=? AND resource_id=?',
+        [Number(promoted.body.epoch),b.agent_id]);
+      assert.equal(Number(promotionRows[0].n),1,
+        'No duplicate Master promotion event under simultaneous backup heartbeats');
+      const fencedOldReceipt=await a.signed('/v7/leadership/reconcile',recoveryIntent);
+      assert.equal(fencedOldReceipt.code,409,
+        'Old Master may not replay its old successful receipt in a promoted epoch');
+      assert.equal(fencedOldReceipt.body.error_code,'STALE_MASTER_EPOCH');
       // The actually reserved Central one-shot job above remains unresolved.
       // Recovery cannot assume it was safe to retry after the Master changed.
       const uncertain=await b.signed('/v7/recovery',undefined,'GET');

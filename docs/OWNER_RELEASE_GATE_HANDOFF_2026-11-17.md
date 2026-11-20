@@ -333,3 +333,9 @@ Negative tests cover concurrent daemon acquisition, stale lock denial, identity/
 ## 21 November 2026 — Concurrent signed heartbeat replay MySQL regression
 
 The v7 disposable MySQL HTTP integration now tests two simultaneous independently signed node heartbeats with identical sequence and agent counter, followed by a replay after one commit. Exactly one of the concurrent requests may be accepted; the second and later retries are rejected with `REPLAY_SEQUENCE`. MySQL node/agent counters must commit once. This tests a real database locking/HTTP race, not an in-memory mock. It does not prove physical multi-PC failover, Hostinger staging or Windows power-loss acceptance; production remains HOLD.
+
+## 21 November 2026 — MySQL-serialized simultaneous backup promotion and idempotent Master recovery
+
+Central's real MySQL Master reconcile route was corrected so the same valid `(agent,request_id,epoch,manifest_sha256)` returns its previously committed `READY` receipt even after the phase has changed. The current Master identity, nonexpired lease, exact epoch and signed request are still verified before receipt retrieval; a new ID after READY, altered payload under the old ID and a demoted Master remain rejected. The transition and `MASTER_RECOVERY_ACK` event occur once. Concurrent Backup-1/Backup-2 node-signed heartbeats after an injected expired Master lease must serialize to one Backup-1 promotion and increment epoch only once. Regression test uses the disposable MySQL backend and signed HTTP transport, not mocked transaction order.
+
+No real physical machine disconnect, Windows reboot, Owner-approved Hostinger staging, protected MySQL migration, verified release or production cutover has been performed by this test. Production HOLD; see `docs/WORKER_RESTART_PREFLIGHT_V7.md`.

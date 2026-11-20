@@ -848,14 +848,19 @@ app.post('/v7/leadership/reconcile',jsonRoute(async req=>{
     await signedAgent(c,node.node_id,id);
     if(ld.master_agent_id!==id||Number(ld.epoch)!==epoch||!ld.lease_until||
        Date.parse(ld.lease_until+'Z')<=await dbNow(c))fault('STALE_MASTER_EPOCH',409);
-    if(ld.phase!=='RECOVERING')fault('INVALID_PHASE',409);
-    const current=await recoveryManifest(c);
-    if(current.manifest_sha256!==req.body.manifest_sha256)fault('STALE_RECOVERY_MANIFEST',409);
-    if(current.tickets.some(t=>t.status==='RECONCILIATION_REQUIRED'))
-      fault('TASK_RECONCILIATION_REQUIRED',423);
-    if(current.unresolved_git_jobs.length)
-      fault('GIT_RECONCILIATION_REQUIRED',423);
+    // A valid Master may lose the HTTP reply AFTER Central commits READY.
+    // Check the durable (actor, request_id, epoch, manifest) receipt FIRST;
+    // new intents still enforce RECOVERING, exact manifest and reconciliation
+    // barriers. The leader row is held FOR UPDATE throughout, so concurrent
+    // identical reconciliations have one event and one durable response.
     return idem(c,id,req.body.request_id,'RECOVERY',{epoch,hash:req.body.manifest_sha256},async()=>{
+      if(ld.phase!=='RECOVERING')fault('INVALID_PHASE',409);
+      const current=await recoveryManifest(c);
+      if(current.manifest_sha256!==req.body.manifest_sha256)fault('STALE_RECOVERY_MANIFEST',409);
+      if(current.tickets.some(t=>t.status==='RECONCILIATION_REQUIRED'))
+        fault('TASK_RECONCILIATION_REQUIRED',423);
+      if(current.unresolved_git_jobs.length)
+        fault('GIT_RECONCILIATION_REQUIRED',423);
       await c.query('UPDATE v7_cluster SET phase="READY",version=version+1 WHERE singleton=1');
       await event(c,'MASTER_RECOVERY_ACK',id,epoch,null,{manifest_sha256:req.body.manifest_sha256});
       return {accepted:true,phase:'READY',epoch};
