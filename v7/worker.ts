@@ -276,7 +276,10 @@ async function publish(id:string,reconcileOnly=false){
   if(!job&&!reconcileOnly){
     const cluster=await request('/v7/cluster/state',undefined,'GET');
     await request('/v7/git/reserve',{request_id:'publish_'+token(),agent_id:agentId,
-      expected_master_epoch:cluster.epoch,ticket_id:id});
+      expected_master_epoch:cluster.epoch,ticket_id:id,
+      expected_candidate_head_sha:t.candidate_head_sha,
+      expected_candidate_tree_sha:t.candidate_tree_sha,
+      expected_ticket_version:Number(t.version)});
   }else if(!job)throw new Error('Cannot reconcile unreserved Git publication');
   else if(job.state==='CONFIRMED'){
     console.log(JSON.stringify({already_confirmed:true,remote_head_sha:job.remote_head_sha}));

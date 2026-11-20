@@ -32,5 +32,6 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   attestQaEvidence:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:attestQaEvidence',agentId,ticketId),
   submitQaEvidenceForOwner:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:submitQaEvidenceForOwner',agentId,ticketId),
   submitOwnerReviewedQaReceipt:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:submitOwnerReviewedQaReceipt',agentId,ticketId),
+  publishReviewedGitBranch:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:publishReviewedGitBranch',agentId,ticketId),
   openProvider:name=>ipcRenderer.invoke('sutradhar:openProvider',name)
 }));

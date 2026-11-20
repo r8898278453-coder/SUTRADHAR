@@ -47,6 +47,8 @@
       "qa-execution.cjs",
       "qa-evidence.cjs",
       "qa-evidence-submit.cjs",
+      "git-publish.cjs",
+      "git-publish-policy.json",
       "qa-runner-policy.json",
       "enrollment.cjs",
       "enrollment-receipt.cjs",

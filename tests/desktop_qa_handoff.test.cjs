@@ -644,3 +644,242 @@ test('QA Central uploads are fixed scoped OS-vault actions, never generic render
   assert.match(js,/get\('workerQAReceipt'\)\.addEventListener/);
   assert.doesNotMatch(preload,/signWorkerAction|evidence_base64|request_id|private_key_pem/);
 });
+
+const {publishReviewedCandidate,validatePolicy,publicationPushArgs,
+  parseRefs,verifySingleCommit}=require('../apps/desktop/git-publish.cjs');
+const {verifiedLocal}=require('../apps/desktop/qa-evidence-submit.cjs');
+async function publicationFixture(f){
+  await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+  const docker=fakeDocker(f),evidenceDir=path.join(f.temp,'qa-publish');
+  await runIndependentQa({...f.opts,agentId:'agent_qa',repoDir:f.qaRepo,
+    evidenceDir,policy:docker.policy,dockerRunner:docker.runner});
+  const {signer}=qaSigningFixture(f);
+  await attestIndependentQa({...f.opts,agentId:'agent_qa',signer,evidenceDir});
+  f.updateTask({...f.task(),status:'INTEGRATING',version:4});
+  const origin='https://central.example.com',agentId='agent_qa',ticketId='ticket_abc';
+  const inspected=await verifiedLocal({origin,agentId,ticketId,signer,
+    dir:evidenceDir,fetcher:f.fetcher,allowReceiptReplay:true});
+  const local={schema:1,context:inspected.context,
+    body:{request_id:'qareceipt_local123'}};
+  const journal={...local,sha256:hex(JSON.stringify(local))};
+  fs.writeFileSync(path.join(evidenceDir,'qa_central_receipt_ticket_abc_receipt.json'),
+    JSON.stringify(journal)+'\n');
+  const gitExe=path.join(f.temp,'git.exe');
+  fs.writeFileSync(gitExe,'trusted stub: mock only');
+  const policy={schema:1,enabled:true,git_exe:gitExe,
+    allowed_repository:'example/repo',
+    credential_mode:'GCM_PRECONFIGURED_NONINTERACTIVE'};
+  const preflight={preflight_ready:true,one_shot:true,
+    automatic_push_allowed:false,git_published:false,merge_performed:false,
+    agent_id:agentId,ticket_id:ticketId,project_id:'project_aaa',
+    repository:'example/repo',base_branch:'main',branch:'ai/ticket_abc',
+    baseline_sha:f.baseline,candidate_head_sha:f.head,candidate_tree_sha:f.tree,
+    write_scopes:['src/feature.ts'],version:4,epoch:7,
+    qa_evidence_sha256:inspected.evidenceSha,
+    qa_receipt_id:'12345678-1234-4234-8234-123456789abc'};
+  const seen=[],bodySeen=[];
+  let failAt=null,remoteChanged=false;
+  const runner=(binary,args,opts)=>{
+    assert.equal(binary,gitExe);
+    assert.equal(opts.windowsHide,true);
+    assert.equal(opts.env.GCM_INTERACTIVE,'never');
+    assert.equal(opts.env.GIT_TERMINAL_PROMPT,'0');
+    assert.equal(opts.env.GIT_CONFIG_GLOBAL,'/dev/null');
+    assert.ok(!JSON.stringify(opts.env).includes('private_key_pem'));
+    seen.push({type:'git',args});
+    if(args.includes('ls-remote')){
+      return {status:0,stdout:
+        (remoteChanged?'f'.repeat(40):f.baseline)+'\trefs/heads/main\n',
+        stderr:''};
+    }
+    if(args.includes('push')){
+      if(failAt==='push')return {status:128,stdout:'',stderr:'network unknown'};
+      assert.ok(args.some(x=>x==='--force-with-lease=refs/heads/ai/ticket_abc:'));
+      assert.ok(args.includes('https://github.com/example/repo.git'));
+      assert.ok(!args.some(x=>x.includes('--force=')||x==='--force'));
+      return {status:0,stdout:'* [new branch]\n',stderr:''};
+    }
+    // Real Git object reads from temporary bare quarantine.
+    return cp.spawnSync('git',args,{...opts,
+      env:{...opts.env,PATH:process.env.PATH}});
+  };
+  const fetcher=async(url,opts)=>{
+    const uri=new URL(url).pathname;
+    if(uri==='/v7/tasks/detail/ticket_abc')return f.fetcher(url,opts);
+    if(uri==='/v7/git/preflight/ticket_abc'){
+      seen.push({type:'preflight'});
+      return new Response(JSON.stringify(preflight),{status:200});
+    }
+    if(opts.method!=='POST')throw Error('Unexpected URL '+uri);
+    const body=JSON.parse(opts.body);bodySeen.push({uri,body});
+    if(uri==='/v7/git/reserve'){
+      assert.equal(fs.existsSync(path.join(evidenceDir,
+        'git_publish_ticket_abc_intent.json')),true);
+      assert.equal(body.expected_candidate_head_sha,f.head);
+      assert.equal(body.expected_candidate_tree_sha,f.tree);
+      assert.equal(body.expected_ticket_version,4);
+      seen.push({type:'reserve'});
+      return new Response(JSON.stringify({accepted:true,one_shot:true,
+        ticket_id:ticketId,repository:'example/repo',base_branch:'main',
+        branch:'ai/ticket_abc',baseline_sha:f.baseline,
+        candidate_head_sha:f.head,candidate_tree_sha:f.tree,epoch:7}),
+        {status:200});
+    }
+    if(uri==='/v7/git/confirm'){
+      seen.push({type:'confirm'});
+      assert.equal(body.expected_remote_head_sha,f.head);
+      return new Response(JSON.stringify({accepted:true,ticket_id:ticketId,
+        remote_head_sha:f.head,tree_sha:f.tree,
+        status:'PUSH_CONFIRMED_NOT_MERGED'}),{status:200});
+    }
+    throw Error('Unexpected signed request '+uri);
+  };
+  return {evidenceDir,signer,policy,seen,bodySeen,runner,fetcher,
+    opts:{origin,agentId,ticketId,signer,evidenceDir,policy,
+      bundlePath:f.offer,repoDir:f.qaRepo,gitRunner:runner,fetcher},
+    failPush:()=>{failAt='push';},changeRemote:()=>{remoteChanged=true;}};
+}
+test('local Git absent-branch lease creates exact ai/* ref once, never changes main',
+  {skip:!available},()=>{
+    const f=fixture();
+    try{
+      const remote=path.join(f.temp,'test-remote.git');
+      cp.execFileSync('git',['init','--bare',remote]);
+      cmd(f.repo,'push',remote,'main:refs/heads/main');
+      const args=publicationPushArgs({head:f.head,
+        destination:'refs/heads/ai/ticket_abc',
+        url:'https://github.com/example/repo.git'});
+      assert.ok(args.includes('--force-with-lease=refs/heads/ai/ticket_abc:'));
+      const local=args.map(x=>x==='https://github.com/example/repo.git'?remote:x);
+      const first=cp.spawnSync('git',['-C',f.work,...local],{encoding:'utf8'});
+      assert.equal(first.status,0,first.stderr);
+      assert.equal(cmd(remote,'rev-parse','refs/heads/ai/ticket_abc'),f.head);
+      assert.equal(cmd(remote,'rev-parse','refs/heads/main'),f.baseline);
+      const second=cp.spawnSync('git',['-C',f.work,...local],{encoding:'utf8'});
+      assert.notEqual(second.status,0,
+        'Even identical HEAD cannot overwrite a branch that is no longer absent');
+      assert.equal(cmd(remote,'rev-parse','refs/heads/ai/ticket_abc'),f.head);
+      assert.equal(cmd(remote,'rev-parse','refs/heads/main'),f.baseline);
+      assert.throws(()=>publicationPushArgs({head:f.head,
+        destination:'refs/heads/main',url:'https://github.com/example/repo.git'}),
+        /GIT_PUBLISH_PUSH_ARGUMENTS_DENIED/);
+    }finally{f.close();}
+  });
+test('owner-gated QA publication follows immutable Central preflight, one-shot reserve and independent confirm',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      const p=await publicationFixture(f);
+      const result=await publishReviewedCandidate(p.opts);
+      assert.equal(result.status,'PUSH_CONFIRMED_NOT_MERGED');
+      assert.equal(result.remote_head_sha,f.head);
+      assert.equal(result.merge_performed,false);
+      assert.equal(result.production_deployed,false);
+      const gitEvents=p.seen.filter(x=>x.type==='git');
+      assert.equal(gitEvents.filter(x=>x.args.includes('push')).length,1);
+      assert.equal(gitEvents.filter(x=>x.args.includes('ls-remote')).length,2);
+      const order=p.seen.map(x=>x.type);
+      assert.ok(order.indexOf('reserve')>order.indexOf('preflight'));
+      assert.ok(order.indexOf('confirm')>order.indexOf('reserve'));
+      assert.equal(p.bodySeen.filter(x=>x.uri==='/v7/git/reserve').length,1);
+      assert.equal(p.bodySeen.filter(x=>x.uri==='/v7/git/confirm').length,1);
+      assert.ok(fs.existsSync(result.local_receipt_path));
+      assert.equal(cmd(f.qaRepo,'rev-parse','HEAD'),f.baseline);
+      assert.equal(cmd(f.qaRepo,'status','--porcelain'),'');
+      await assert.rejects(publishReviewedCandidate(p.opts),
+        /GIT_PUBLISH_PREVIOUS_ATTEMPT_OWNER_RECONCILIATION/);
+      assert.equal(p.seen.filter(x=>x.type==='reserve').length,1);
+    }finally{f.close();}
+  });
+test('failed Git remote transport is ambiguous and never retried or re-reserved',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      const p=await publicationFixture(f);
+      p.failPush();
+      await assert.rejects(publishReviewedCandidate(p.opts),
+        /GIT_PUBLISH_REMOTE_COMMAND_FAILED_OR_UNCERTAIN/);
+      assert.equal(fs.existsSync(path.join(p.evidenceDir,
+        'git_publish_ticket_abc_intent.json')),true);
+      assert.equal(fs.existsSync(path.join(p.evidenceDir,
+        'git_publish_ticket_abc_receipt.json')),false);
+      await assert.rejects(publishReviewedCandidate(p.opts),
+        /GIT_PUBLISH_PREVIOUS_ATTEMPT_OWNER_RECONCILIATION/);
+      assert.equal(p.seen.filter(x=>x.type==='reserve').length,1);
+      assert.equal(p.seen.filter(x=>x.type==='confirm').length,0);
+    }finally{f.close();}
+  });
+test('remote base drift is blocked BEFORE Central reserve or local publication intent',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      const p=await publicationFixture(f);
+      p.changeRemote();
+      await assert.rejects(publishReviewedCandidate(p.opts),
+        /GIT_PUBLISH_REMOTE_BASELINE_CHANGED_OR_DESTINATION_EXISTS/);
+      assert.equal(p.seen.filter(x=>x.type==='reserve').length,0);
+      assert.equal(fs.existsSync(path.join(p.evidenceDir,
+        'git_publish_ticket_abc_intent.json')),false);
+    }finally{f.close();}
+  });
+test('default Git publisher policy is disabled and cannot request Central reservation',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      assert.throws(()=>validatePolicy(require('../apps/desktop/git-publish-policy.json')),
+        /GIT_PUBLISH_OWNER_POLICY_DISABLED/);
+      await assert.rejects(publishReviewedCandidate({...f.opts,
+        agentId:'agent_qa',repoDir:f.qaRepo,evidenceDir:f.temp}),
+        /GIT_PUBLISH_OWNER_POLICY_DISABLED/);
+    }finally{f.close();}
+  });
+test('remote ref parser rejects existing destination and all baseline drift',()=>{
+  const refs={source:'refs/heads/main',destination:'refs/heads/ai/ticket_abc'};
+  const baseline='a'.repeat(40);
+  assert.equal(parseRefs(baseline+'\trefs/heads/main\n',refs,baseline),true);
+  assert.throws(()=>parseRefs(baseline+'\trefs/heads/main\n'+
+    'f'.repeat(40)+'\trefs/heads/ai/ticket_abc\n',refs,baseline),
+  /GIT_PUBLISH_REMOTE_BRANCH_CHANGED_OR_UNCERTAIN/);
+  assert.throws(()=>parseRefs('f'.repeat(40)+'\trefs/heads/main\n',refs,baseline),
+  /GIT_PUBLISH_REMOTE_BASELINE_CHANGED_OR_DESTINATION_EXISTS/);
+  assert.throws(()=>parseRefs('',refs,baseline),
+  /GIT_PUBLISH_REMOTE_BRANCH_CHANGED_OR_UNCERTAIN/);
+});
+test('multi-commit candidate is rejected even if QA handoff allows bounded linear ancestry',
+  {skip:!available},()=>{
+    const f=fixture();
+    try{
+      const gitExe=path.join(f.temp,'git.exe');
+      fs.writeFileSync(gitExe,'stub');
+      const run=(binary,args,opts)=>cp.spawnSync('git',args,{...opts,
+        env:{...opts.env,PATH:process.env.PATH}});
+      verifySingleCommit(f.work,{
+        candidate_head_sha:f.head,candidate_tree_sha:f.tree,
+        baseline_sha:f.baseline},gitExe,run);
+      fs.writeFileSync(path.join(f.work,'src','feature.ts'),'export const n=3;\n');
+      cmd(f.work,'add','.');
+      cmd(f.work,'-c','user.name=SUTRADHAR tests',
+        '-c','user.email=noreply@example.invalid','commit','-m','second commit');
+      const head2=cmd(f.work,'rev-parse','HEAD');
+      const tree2=cmd(f.work,'rev-parse','HEAD^{tree}');
+      assert.throws(()=>verifySingleCommit(f.work,{
+        candidate_head_sha:head2,candidate_tree_sha:tree2,
+        baseline_sha:f.baseline},gitExe,run),
+      /GIT_PUBLISH_REQUIRES_SINGLE_COMMIT_OVER_BASELINE/);
+    }finally{f.close();}
+  });
+test('Git publication Desktop MAIN only, without credentials or raw command access in renderer',()=>{
+  const root=path.resolve(__dirname,'../apps/desktop');
+  const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const html=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  const setup=fs.readFileSync(path.join(root,'setup.js'),'utf8');
+  assert.ok(pkg.build.files.includes('git-publish.cjs'));
+  assert.ok(pkg.build.files.includes('git-publish-policy.json'));
+  assert.match(main,/ipcMain\.handle\('sutradhar:publishReviewedGitBranch'/);
+  assert.match(preload,/publishReviewedGitBranch:\(agentId,ticketId\)/);
+  assert.match(html,/id="workerGitPublish"/);
+  assert.match(setup,/get\('workerGitPublish'\)\.addEventListener/);
+  assert.doesNotMatch(preload,/git_exe|credential_mode|private_key_pem|request_id|force-with-lease/);
+});

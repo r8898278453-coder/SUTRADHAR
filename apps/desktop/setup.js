@@ -71,6 +71,7 @@ async function loadStatus(){
     get('workerQAAttest').disabled=!approvedReadOnly;
     get('workerQAUpload').disabled=!approvedReadOnly;
     get('workerQAReceipt').disabled=!approvedReadOnly;
+    get('workerGitPublish').disabled=!approvedReadOnly||!s.gitPublishConfigured;
 
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
@@ -548,5 +549,22 @@ get('workerQAReceipt').addEventListener('click',async()=>{
     output.textContent='QA receipt denied/uncertain: '+
       String(error?.message||error)+
       '. Never bypass Owner approval or repeat with a new request ID.';
+  }finally{await loadStatus();}
+});
+get('workerGitPublish').addEventListener('click',async()=>{
+  const output=get('workerTasks'),button=get('workerGitPublish');
+  button.disabled=true;
+  try{
+    const r=await api.publishReviewedGitBranch(get('workerAgent').value,
+      exactWorkerTicket());
+    output.textContent=r.canceled?'Git publication cancelled; no remote write.':
+      'Central verified exact remote Git branch '+r.repository+'/'+r.branch+
+      ' at commit '+r.remote_head_sha+'. Status '+r.status+
+      '. No PR created, merge or production deployment performed.';
+  }catch(error){
+    output.textContent='Git publication blocked or outcome uncertain: '+
+      String(error?.message||error)+
+      '. DO NOT CLICK AGAIN or re-push. Preserve git_publish intent; '+
+      'Owner must inspect the exact remote branch and Central recovery queue.';
   }finally{await loadStatus();}
 });

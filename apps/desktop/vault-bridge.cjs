@@ -105,7 +105,8 @@ function createSignerBridge(vault){
     if(method!=='GET'||typeof uri!=='string'||!AGENT_ID.test(agent_id||'')||
       !v.agents.some(a=>a.id===agent_id)||
       !(uri==='/v7/tasks/available'||
-        /^\/v7\/tasks\/detail\/[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(uri)))
+        /^\/v7\/tasks\/detail\/[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(uri)||
+        /^\/v7\/git\/preflight\/[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(uri)))
       fail('VAULT_WORKER_READONLY_REQUEST_DENIED');
     const key=crypto.createPrivateKey(v.private_key_pem);
     const ts=Date.now(),nonce='nonce_'+crypto.randomUUID().replace(/-/g,'');
@@ -182,6 +183,26 @@ function createSignerBridge(vault){
          payload.evidence_ref!=='sha256:'+payload.evidence_sha256||
          typeof payload.passed!=='boolean'||
          !/^qaev_[a-f0-9]{64}$/.test(payload.review_proposal_id||''))
+        fail('VAULT_WORKER_ACTION_DENIED');
+    }else if(operation==='git-reserve'){
+      uri='/v7/git/reserve';
+      expected=['request_id','agent_id','ticket_id','expected_master_epoch',
+        'expected_candidate_head_sha','expected_candidate_tree_sha',
+        'expected_ticket_version'];
+      if(!id(payload.request_id)||!payload.request_id.startsWith('gitreserve_')||
+         !id(payload.ticket_id)||!epoch||
+         !Number.isSafeInteger(payload.expected_ticket_version)||
+         payload.expected_ticket_version<1||
+         !/^[a-f0-9]{40}$/.test(payload.expected_candidate_head_sha||'')||
+         !/^[a-f0-9]{40}$/.test(payload.expected_candidate_tree_sha||''))
+        fail('VAULT_WORKER_ACTION_DENIED');
+    }else if(operation==='git-confirm'){
+      uri='/v7/git/confirm';
+      expected=['request_id','agent_id','ticket_id','expected_master_epoch',
+        'expected_remote_head_sha'];
+      if(!id(payload.request_id)||!payload.request_id.startsWith('gitconfirm_')||
+         !id(payload.ticket_id)||!epoch||
+         !/^[a-f0-9]{40}$/.test(payload.expected_remote_head_sha||''))
         fail('VAULT_WORKER_ACTION_DENIED');
     }else if(operation==='renew-lease'||operation==='checkpoint'){
       uri=operation==='renew-lease'?'/v7/tasks/renew-lease':'/v7/tasks/checkpoint';

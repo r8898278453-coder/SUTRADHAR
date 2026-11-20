@@ -1164,6 +1164,59 @@ app.post('/v7/tasks/propose-change',jsonRoute(async req=>{
 }));
 // The PC performs the scoped Git push. Hostinger reserves one attempt, and
 // *independently* reads the remote GitHub commit/tree before accepting proof.
+// Signed, strictly READ-ONLY preflight. The QA PC may inspect a candidate
+// before reserving ANY one-shot remote Git write. No future promise that a
+// remote branch will remain absent is implied by this Central response.
+app.get('/v7/git/preflight/:ticketId',jsonRoute(async req=>{
+  const node=await nodeAuth(req);
+  const agentId=requireId(req.header('x-sutradhar-agent'));
+  const ticketId=requireId(req.params.ticketId);
+  return transaction(async c=>{
+    const ld=await leader(c,false);
+    await signedAgent(c,node.node_id,agentId,true);
+    await requireNoNodeDrain(c,node.node_id);
+    if(ld.paused||ld.phase!=='READY'||!ld.lease_until||
+       Date.parse(ld.lease_until+'Z')<=await dbNow(c)||
+       !await approvedMasterLease(c,ld))
+      fault('GIT_PREFLIGHT_MASTER_UNAVAILABLE',409);
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
+    if(!t||t.status!=='INTEGRATING'||t.worker_agent_id===agentId)
+      fault('GIT_PREFLIGHT_QA_INCOMPLETE',409);
+    const dev=await one(c,'SELECT node_id FROM v7_agents WHERE agent_id=?',
+      [t.worker_agent_id]);
+    if(!dev||dev.node_id===node.node_id)
+      fault('GIT_PREFLIGHT_QA_DEVICE_NOT_INDEPENDENT',403);
+    const allowed=await one(c,'SELECT can_qa FROM v7_project_agents '+
+      'WHERE project_id=? AND agent_id=?',[t.project_id,agentId]);
+    if(!allowed?.can_qa)fault('PROJECT_QA_ACCESS_DENIED',403);
+    const qa=await one(c,'SELECT receipt_id,evidence_sha256 FROM v7_qa_receipts '+
+      'WHERE ticket_id=? AND agent_id=? AND passed=1 AND head_sha=? AND tree_sha=?',
+      [ticketId,agentId,t.candidate_head_sha,t.candidate_tree_sha]);
+    if(!qa)fault('GIT_PREFLIGHT_QA_RECEIPT_MISSING',409);
+    const p=await one(c,'SELECT repository,base_branch FROM v7_projects WHERE project_id=?',
+      [t.project_id]);
+    if(!p)fault('GIT_PREFLIGHT_PROJECT_MISSING',409);
+    if(['HIGH','CORE'].includes(t.risk)){
+      const approval=await one(c,'SELECT proposal_id FROM v7_approvals '+
+        'WHERE ticket_id=? AND state="APPROVED" AND kind!="QA_EVIDENCE_REVIEW"',
+        [ticketId]);
+      if(!approval)fault('OWNER_APPROVAL_REQUIRED',403);
+    }
+    if(await one(c,'SELECT ticket_id FROM v7_git_jobs WHERE ticket_id=?',[ticketId]))
+      fault('GIT_JOB_ALREADY_RESERVED_RECONCILE',409);
+    const scopes=typeof t.scopes_json==='string'?JSON.parse(t.scopes_json):t.scopes_json;
+    return {preflight_ready:true,one_shot:true,automatic_push_allowed:false,
+      agent_id:agentId,ticket_id:ticketId,project_id:t.project_id,
+      repository:p.repository,base_branch:p.base_branch,branch:t.branch_name,
+      baseline_sha:t.baseline_sha,
+      candidate_head_sha:t.candidate_head_sha,
+      candidate_tree_sha:t.candidate_tree_sha,
+      write_scopes:scopes,version:Number(t.version),epoch:Number(ld.epoch),
+      qa_receipt_id:qa.receipt_id,
+      qa_evidence_sha256:qa.evidence_sha256,
+      git_published:false,merge_performed:false};
+  });
+}));
 app.post('/v7/git/reserve',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{};
   const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id);
@@ -1174,15 +1227,29 @@ app.post('/v7/git/reserve',jsonRoute(async req=>{
     if(ld.paused||ld.phase!=='READY'||Number(ld.epoch)!==Number(d.expected_master_epoch)||
        !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))
       fault('STALE_MASTER_EPOCH',409);
-    return idem(c,agentId,d.request_id,'GIT_RESERVE',{ticketId,epoch:d.expected_master_epoch},async()=>{
+    return idem(c,agentId,d.request_id,'GIT_RESERVE',{
+      ticketId,epoch:d.expected_master_epoch,
+      head:d.expected_candidate_head_sha,tree:d.expected_candidate_tree_sha,
+      version:d.expected_ticket_version},async()=>{
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
       if(!t||t.status!=='INTEGRATING'||t.worker_agent_id===agentId)fault('QA_NOT_COMPLETE',409);
+      if(t.candidate_head_sha!==d.expected_candidate_head_sha||
+         t.candidate_tree_sha!==d.expected_candidate_tree_sha||
+         Number(t.version)!==d.expected_ticket_version)
+        fault('GIT_RESERVATION_CANDIDATE_CHANGED',409);
+      const developer=await one(c,
+        'SELECT node_id FROM v7_agents WHERE agent_id=?',[t.worker_agent_id]);
+      if(!developer||developer.node_id===node.node_id)
+        fault('GIT_RESERVATION_QA_DEVICE_NOT_INDEPENDENT',403);
       const allowed=await one(c,'SELECT can_qa FROM v7_project_agents WHERE project_id=? AND agent_id=?',
         [t.project_id,agentId]);
       if(!allowed?.can_qa)fault('PROJECT_QA_ACCESS_DENIED',403);
       const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? AND agent_id=? AND passed=1 AND head_sha=? AND tree_sha=?',
         [ticketId,agentId,t.candidate_head_sha,t.candidate_tree_sha]);
       if(!qa)fault('INDEPENDENT_QA_RECEIPT_REQUIRED',409);
+      if(!SHA_RE.test(String(t.candidate_head_sha||''))||
+         !SHA_RE.test(String(t.candidate_tree_sha||'')))
+        fault('GIT_RESERVATION_CANDIDATE_INVALID',409);
       if(['HIGH','CORE'].includes(t.risk)){
         const approval=await one(c,'SELECT proposal_id FROM v7_approvals WHERE ticket_id=? AND state="APPROVED" AND kind!="QA_EVIDENCE_REVIEW"',[ticketId]);
         if(!approval)fault('OWNER_APPROVAL_REQUIRED',403);
@@ -1192,8 +1259,13 @@ app.post('/v7/git/reserve',jsonRoute(async req=>{
       await c.query('INSERT INTO v7_git_jobs(ticket_id,agent_id,epoch,request_id,state) VALUES(?,?,?,?,"RUNNING")',
         [ticketId,agentId,Number(ld.epoch),d.request_id]);
       await event(c,'GIT_PUBLICATION_RESERVED',agentId,Number(ld.epoch),ticketId);
-      return {accepted:true,ticket_id:ticketId,branch:t.branch_name,baseline_sha:t.baseline_sha,
-        candidate_tree_sha:t.candidate_tree_sha,one_shot:true};
+      const p=await one(c,'SELECT repository,base_branch FROM v7_projects WHERE project_id=?',
+        [t.project_id]);
+      if(!p)fault('GIT_RESERVATION_PROJECT_MISSING',409);
+      return {accepted:true,ticket_id:ticketId,repository:p.repository,
+        base_branch:p.base_branch,branch:t.branch_name,baseline_sha:t.baseline_sha,
+        candidate_head_sha:t.candidate_head_sha,candidate_tree_sha:t.candidate_tree_sha,
+        epoch:Number(ld.epoch),one_shot:true};
     });
   });
 }));
@@ -1215,7 +1287,8 @@ app.post('/v7/git/confirm',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{};
   const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id);
   const expectedHead=d.expected_remote_head_sha;
-  if(expectedHead!==undefined)requireSha(expectedHead);
+  if(expectedHead===undefined||requireSha(expectedHead)!==expectedHead)
+    fault('GIT_CONFIRM_EXACT_CANDIDATE_REQUIRED',400);
   const info=await transaction(async c=>{
     await signedAgent(c,node.node_id,agentId,true);
     const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=?',[ticketId]);
@@ -1235,7 +1308,7 @@ app.post('/v7/git/confirm',jsonRoute(async req=>{
     repo:info.p.repository,token:process.env.SUTRADHAR_GITHUB_TOKEN||'',
     branch:info.t.branch_name,baseline:info.t.baseline_sha,tree:info.t.candidate_tree_sha,
     writeScopes:typeof info.t.scopes_json==='string'?JSON.parse(info.t.scopes_json):info.t.scopes_json,
-    expectedHead
+    expectedHead:info.t.candidate_head_sha
   });
   const verified=proof.verified?proof:fault('REMOTE_PUBLISH_UNCERTAIN_'+proof.error_code,409);
   return transaction(async c=>{
@@ -1249,7 +1322,8 @@ app.post('/v7/git/confirm',jsonRoute(async req=>{
     return idem(c,agentId,d.request_id,'GIT_CONFIRM',{ticketId,head:verified.headSha},async()=>{
       const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',[ticketId]);
       const t=await one(c,'SELECT status,candidate_tree_sha FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
-      if(job?.state!=='RUNNING'||t?.status!=='INTEGRATING'||t.candidate_tree_sha!==verified.treeSha||
+      if(job?.state!=='RUNNING'||t?.status!=='INTEGRATING'||
+         t.candidate_head_sha!==verified.headSha||t.candidate_tree_sha!==verified.treeSha||
          Number(job.epoch)!==Number(ld.epoch))fault('GIT_CONFIRM_VERSION_CONFLICT',409);
       await c.query('UPDATE v7_git_jobs SET state="CONFIRMED",remote_head_sha=?,remote_tree_sha=?,changed_files_json=?,verified_at=UTC_TIMESTAMP(3),updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',
         [verified.headSha,verified.treeSha,JSON.stringify(verified.changedFiles),ticketId]);

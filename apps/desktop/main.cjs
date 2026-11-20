@@ -46,6 +46,8 @@ const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
 const {runIndependentQa,validPolicy}=require('./qa-execution.cjs');
 const {attestIndependentQa}=require('./qa-evidence.cjs');
 const {submitQaEvidenceForOwner,submitOwnerReviewedQaReceipt}=require('./qa-evidence-submit.cjs');
+const {publishReviewedCandidate,validatePolicy:validateGitPublishPolicy}=require('./git-publish.cjs');
+const gitPublishPolicy=require('./git-publish-policy.json');
 const qaRunnerPolicy=require('./qa-runner-policy.json');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 const {inspect:inspectEnrollment,prepare:prepareEnrollment,
@@ -160,6 +162,7 @@ function safeStatus(){
     agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,directInstallerExit,persistentObserver,postInstallObservation,failedInstallReview,failedRecoveryApproval,startupSupported,startupEnabled,
     workerClaimSupported:Boolean(process.platform==='win32'&&app.isPackaged),
     qaRunnerConfigured:(()=>{try{validPolicy(qaRunnerPolicy);return true;}catch{return false;}})(),
+    gitPublishConfigured:(()=>{try{validateGitPublishPolicy(gitPublishPolicy);return true;}catch{return false;}})(),
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent({manualOwnerRestart=false}={}){
@@ -711,6 +714,50 @@ app.whenReady().then(()=>{
       if(ok.response!==1)return {canceled:true};
       approvedWorkerOperator(agentId,ticketId,true);
       return submitOwnerReviewedQaReceipt({origin,agentId,ticketId,signer,
+        evidenceDir:path.join(nodeDir(),'qa')});
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:publishReviewedGitBranch',async(event,agentId,ticketId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    // The Owner must have approved the immutable Git-for-Windows executable,
+    // exact GitHub repository and noninteractive OS credential helper before
+    // packaging. Unconfigured installations cannot even attempt a reserve.
+    validateGitPublishPolicy(gitPublishPolicy);
+    workerClaimBusy=true;
+    try{
+      const bundle=await dialog.showOpenDialog(setupWindow,{
+        title:'Choose SAME offline QA-reviewed Git bundle (.bundle)',
+        properties:['openFile'],
+        filters:[{name:'SUTRADHAR reviewed Git bundle',extensions:['bundle']}]
+      });
+      if(bundle.canceled||bundle.filePaths.length!==1)return {canceled:true};
+      const repo=await dialog.showOpenDialog(setupWindow,{
+        title:'Choose your trusted baseline Git checkout (will NOT be modified)',
+        properties:['openDirectory']
+      });
+      if(repo.canceled||repo.filePaths.length!==1)return {canceled:true};
+      const approved=await dialog.showMessageBox(setupWindow,{
+        type:'warning',
+        buttons:['Cancel — no remote Git write',
+          'Reserve and create ONE exact remote branch (NO MERGE)'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'PUBLISH exact Owner-reviewed candidate to GitHub?',
+        detail:'Repository: '+gitPublishPolicy.allowed_repository+
+          '\nQA agent: '+agentId+'\nTicket: '+ticketId+
+          '\nThis is a REAL one-time GitHub branch creation, NOT a preview. '+
+          'Central must already have an independent Owner-reviewed PASS receipt. '+
+          'The selected bundle and local QA report are verified again; '+
+          'remote base must match the approved baseline, destination must be ABSENT. '+
+          'After reservation, an interruption or uncertain result permanently '+
+          'blocks automatic retry and requires Owner remote reconciliation. '+
+          'Git Credential Manager must already hold a scoped permission. '+
+          'No GitHub PR, merge, main push, deployment or release signing occurs.'
+      });
+      if(approved.response!==1)return {canceled:true};
+      approvedWorkerOperator(agentId,ticketId,true);
+      return publishReviewedCandidate({origin,agentId,ticketId,signer,
+        bundlePath:bundle.filePaths[0],repoDir:repo.filePaths[0],
         evidenceDir:path.join(nodeDir(),'qa')});
     }finally{workerClaimBusy=false;}
   });

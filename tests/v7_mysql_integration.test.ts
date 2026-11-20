@@ -586,6 +586,47 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const task=await fetch(base+'/v7/tasks',{headers:{authorization:'Bearer '+admin}});
     const list=await task.json() as any[];
     assert.equal(list.find(t=>t.ticket_id==='ticket_qa_test').status,'INTEGRATING');
+    // Publication gate remains read-only until an explicit Owner-reviewed QA
+    // acceptance. Single-ticket Master-version CAS and idempotent reservation
+    // are verified in disposable MySQL without any live GitHub push.
+    const preflight=await c.signed('/v7/git/preflight/ticket_qa_test',undefined,'GET');
+    assert.equal(preflight.code,200,JSON.stringify(preflight.body));
+    assert.equal(preflight.body.preflight_ready,true);
+    assert.equal(preflight.body.automatic_push_allowed,false);
+    assert.equal(preflight.body.git_published,false);
+    assert.equal(preflight.body.branch,'ai/ticket_qa_test');
+    assert.equal(preflight.body.base_branch,'main');
+    assert.equal(preflight.body.candidate_head_sha,'b'.repeat(40));
+    assert.equal(preflight.body.qa_evidence_sha256,proof.attestation.message.evidence_sha256);
+    const developerCannotPublish=await b.signed(
+      '/v7/git/preflight/ticket_qa_test',undefined,'GET');
+    assert.equal(developerCannotPublish.code,409,JSON.stringify(developerCannotPublish.body));
+    const badReserve={request_id:'gitreserve_wrong_'+(++count),
+      agent_id:c.agent_id,ticket_id:'ticket_qa_test',
+      expected_master_epoch:Number(status.epoch),
+      expected_candidate_head_sha:'f'.repeat(40),
+      expected_candidate_tree_sha:'c'.repeat(40),
+      expected_ticket_version:preflight.body.version};
+    const mismatched=await c.signed('/v7/git/reserve',badReserve);
+    assert.equal(mismatched.code,409,JSON.stringify(mismatched.body));
+    assert.equal(mismatched.body.error_code,'GIT_RESERVATION_CANDIDATE_CHANGED');
+    const reserveBody={...badReserve,
+      request_id:'gitreserve_real_'+(++count),
+      expected_candidate_head_sha:'b'.repeat(40)};
+    const reserved=await c.signed('/v7/git/reserve',reserveBody);
+    assert.equal(reserved.code,200,JSON.stringify(reserved.body));
+    assert.equal(reserved.body.one_shot,true);
+    assert.equal(reserved.body.candidate_head_sha,'b'.repeat(40));
+    assert.equal(reserved.body.baseline_sha,'a'.repeat(40));
+    const reReserve=await c.signed('/v7/git/reserve',reserveBody);
+    assert.deepEqual(reReserve,reserved,'Lost reserve reply has one durable MySQL job');
+    const changedReserve=await c.signed('/v7/git/reserve',{
+      ...reserveBody,request_id:'gitreserve_new_'+(++count)});
+    assert.equal(changedReserve.code,409);
+    assert.equal(changedReserve.body.error_code,'GIT_JOB_ALREADY_RESERVED_RECONCILE');
+    const preflightAfterReserve=await c.signed(
+      '/v7/git/preflight/ticket_qa_test',undefined,'GET');
+    assert.equal(preflightAfterReserve.code,409,'Existing remote Git intent blocks new preflight');
     const wrong=await post('/v7/tasks/verify-merge',{request_id:'merge_'+(++count),ticket_id:'ticket_qa_test'},admin);
     assert.notEqual(wrong.code,200,'No fabricated GitHub merge without live verifiable evidence');
 
@@ -606,10 +647,8 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(promoted.body.master_agent_id,b.agent_id);
       assert.equal(promoted.body.phase,'RECOVERING');
       assert.equal(Number(promoted.body.epoch),Number(status.epoch)+1);
-      // Uncertain external Git publication is NOT a work lease: it must still
-      // block recovery. Simulated SQL effects are confined to this disposable DB.
-      await db.query('INSERT INTO v7_git_jobs(ticket_id,agent_id,epoch,request_id,state) VALUES(?,?,?,?,"RUNNING")',
-        ['ticket_qa_test',c.agent_id,Number(status.epoch),'test_uncertain_git']);
+      // The actually reserved Central one-shot job above remains unresolved.
+      // Recovery cannot assume it was safe to retry after the Master changed.
       const uncertain=await b.signed('/v7/recovery',undefined,'GET');
       assert.equal(uncertain.code,200,JSON.stringify(uncertain.body));
       assert.equal(uncertain.body.unresolved_git_jobs.length,1);

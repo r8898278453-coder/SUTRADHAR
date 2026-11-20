@@ -70,7 +70,7 @@ function checkedTask(task,agentId,ticketId,role){
      !/^ai\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(task.branch_name||'')||
      !SHA.test(task.baseline_sha||'')||!SHA.test(task.candidate_head_sha||'')||
      !SHA.test(task.candidate_tree_sha||'')||
-     task.status!=='SUBMITTED_FOR_REVIEW'||
+     task.status!==(role==='PUBLISH'?'INTEGRATING':'SUBMITTED_FOR_REVIEW')||
      (role==='EXPORT'?task.worker_agent_id!==agentId:task.worker_agent_id===agentId)||
      !Array.isArray(task.write_scopes)||task.write_scopes.length<1||
      task.write_scopes.length>30||
@@ -243,9 +243,10 @@ function verifyHistory(bare,t){
   }
 }
 async function inspectQAHandoff({origin,agentId,ticketId,signer,
-  bundlePath,repoDir,fetcher=fetch,onVerifiedBare=null}){
+  bundlePath,repoDir,fetcher=fetch,onVerifiedBare=null,mode='QA'}){
+  if(!['QA','PUBLISH'].includes(mode))fail('HANDOFF_QA_MODE_INVALID');
   const t=checkedTask(await centralTask({origin,agentId,ticketId,signer,fetcher}),
-    agentId,ticketId,'QA');
+    agentId,ticketId,mode);
   if(typeof bundlePath!=='string'||!path.isAbsolute(bundlePath)||
      !bundlePath.endsWith('.bundle'))fail('HANDOFF_BUNDLE_PATH_INVALID');
   const manifestPath=bundlePath+'.json';
