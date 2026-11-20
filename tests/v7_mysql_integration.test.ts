@@ -124,6 +124,21 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       await bootstrapDb.query('UPDATE v7_cluster SET bootstrapped_at=UTC_TIMESTAMP(3) WHERE singleton=1');
     } finally {await bootstrapDb.end();}
     const a=await edge(1),b=await edge(2),c=await edge(3),d=await edge(4,false);
+    // This CI bootstrap deliberately sets bootstrapped_at before 08:00 IST.
+    // A bootstrapped NO_MASTER cluster is a post-failure state and must have
+    // durable previous-Master identity evidence to permit a different-PC
+    // successor. Seed that test-only audit history using an enrolled node
+    // that is not currently eligible, instead of bypassing the safety gate.
+    const historyDb=await mysql.createConnection({
+      host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+      user:process.env.DB_USER,password:process.env.DB_PASSWORD,
+      database:process.env.DB_NAME});
+    try{
+      await historyDb.query(
+        'INSERT INTO v7_events(event_type,actor,epoch,resource_id,payload_json) '+
+        'VALUES("MASTER_MISSING","central",0,NULL,?)',
+        [JSON.stringify({previous:d.agent_id,reason:'disposable_ci_bootstrap_fixture'})]);
+    }finally{await historyDb.end();}
     // Duplicate agent IDs are GLOBAL, not evidence that another computer
     // owns the agent. A restarted node may only reconcile its own approved ID.
     const duplicatedA=await a.signed('/v7/agents/register',
