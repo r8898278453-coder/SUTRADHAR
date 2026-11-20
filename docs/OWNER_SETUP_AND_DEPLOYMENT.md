@@ -163,3 +163,7 @@ Mark each line with **real evidence**; no automated status is inferred from thes
 **As of 12 November 2026 these release gates are NOT complete.** This guide is a deployment contract and checklist, not a claim of successful installation.
 
 **See also:** [README](../README.md) · [Architecture decision](ADR_001_MONOREPO_TWO_APPS.md) · [Release/recovery](RELEASE_OPERATIONS.md) · [Technical alpha runbook](../v7/README.md).
+
+## 21 November 2026 — Owner status GET compatibility and physical pilot safety
+
+The owner-only Central status `GET /v7/cluster` is now a **read-only snapshot** and may not promote Master or revoke task leases as a side effect of a dashboard refresh. The offline physical-PC pilot command refuses to call this endpoint unless the pinned Central `GET /v7/health` first explicitly reports `read_only_cluster_snapshot: true`. A legacy health result without this exact capability blocks the pilot. Verify the staging deployment source SHA independently and keep this alpha draft out of production; this endpoint and gate are not physical PC acceptance or deployment approval.

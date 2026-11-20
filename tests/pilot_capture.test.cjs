@@ -11,7 +11,8 @@ const healthy=()=>({
     node_state:'APPROVED',last_seen:new Date(now-25000).toISOString().replace(/Z$/,'')}))
 });
 function scenario({status=200,oversize=false,redirect=false,
-  cluster=healthy(),count,seen=[]}={}){
+  cluster=healthy(),health={ready:true,authority:'mysql',api_protocol:7,
+    read_only_cluster_snapshot:true},count,seen=[]}={}){
   const fetcher=async(url,opts)=>{
     assert.equal(opts.method,'GET');
     assert.equal(opts.redirect,'error');
@@ -21,8 +22,7 @@ function scenario({status=200,oversize=false,redirect=false,
     assert.equal(opts.headers.Authorization,'Bearer '+'private-ci-fixture-key'.repeat(3));
     seen.push(new URL(url).pathname);
     if(redirect)return new Response('',{status:302,headers:{location:'http://127.0.0.1'}});
-    const data=url.endsWith('/health')?
-      {ready:true,authority:'mysql',api_protocol:7}:cluster;
+    const data=url.endsWith('/health')?health:cluster;
     let json=JSON.stringify(data);
     if(oversize)json='a'.repeat(129*1024);
     return new Response(json,{status,
@@ -98,4 +98,21 @@ test('unverified Central role/heartbeat cannot be mistaken for a physical PASS',
   assert.equal(result.accepted,false);
   assert.equal(result.physical_machine_verified,false);
   assert.ok(result.failures.includes('NO_LIVE_MASTER'));
+});
+
+test('legacy or unproven Central health is refused BEFORE its potentially mutating cluster GET',async()=>{
+  for(const health of [
+    {ready:true,authority:'mysql',api_protocol:7},
+    {ready:true,authority:'mysql',api_protocol:7,read_only_cluster_snapshot:false},
+    {ready:true,authority:'mysql',api_protocol:7,read_only_cluster_snapshot:'true'},
+    {ready:true,authority:'mysql',api_protocol:7,read_only_cluster_snapshot:null}
+  ]){
+    const x=scenario({health});
+    const result=await capture(x);
+    assert.equal(result.accepted,false,JSON.stringify(health));
+    assert.deepEqual(result.failures,['PILOT_CLUSTER_GET_READ_ONLY_NOT_PROVEN']);
+    assert.deepEqual(x.seen,['/v7/health'],
+      'Unsafe or legacy Central must not receive GET /v7/cluster');
+    assert.equal(result.production_release_authorized,false);
+  }
 });

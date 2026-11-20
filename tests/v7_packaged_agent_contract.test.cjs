@@ -42,3 +42,14 @@ test('developer-only plaintext identity is fail-closed and never replaces the OS
   assert.doesNotMatch(packaged,/openDeveloperIdentity|developer_identity\.ts/);
   assert.match(packaged,/await bridge\('saveCounters',state\)/);
 });
+
+test('Owner and physical-pilot cluster GET is observation-only; never triggers Master election',()=>{
+  const route=central.match(/app\.get\('\/v7\/cluster',jsonRoute\(async req=>\{([\s\S]*?)\n\}\)\);/);
+  assert.ok(route,'Owner status route must remain explicit and testable');
+  assert.match(route[1],/admin\(req\)/);
+  assert.match(route[1],/leader\(c,false\)/);
+  assert.doesNotMatch(route[1],/\bevaluate\s*\(/,
+    'GET status must never change epoch, Master or lease state');
+  assert.doesNotMatch(route[1],/\b(?:UPDATE|INSERT|DELETE)\b/i,
+    'GET status must not write MySQL');
+});

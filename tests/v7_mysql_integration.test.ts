@@ -761,6 +761,36 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       await db.query('UPDATE v7_cluster SET lease_until=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE singleton=1');
       await db.query('UPDATE v7_agents SET last_seen=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 400 SECOND) WHERE agent_id=?',
         [a.agent_id]);
+      // An Owner's GET-only physical pilot must NEVER elect the next Master
+      // or fence worker leases. Before this regression, /v7/cluster called
+      // evaluate() even on a read-only snapshot and could cause promotion.
+      const [beforeSnapshotRows]:any=await db.query(
+        'SELECT epoch,master_agent_id,phase,version,lease_until FROM v7_cluster WHERE singleton=1');
+      const [beforeEventRows]:any=await db.query(
+        'SELECT COUNT(*) AS n FROM v7_events WHERE event_type="MASTER_PROMOTED"');
+      const [beforeLeaseRows]:any=await db.query(
+        'SELECT COUNT(*) AS n FROM v7_leases WHERE revoked=1');
+      const observation=await Promise.all(Array.from({length:4},()=>fetch(base+'/v7/cluster',{
+        headers:{authorization:'Bearer '+admin}})));
+      for(const response of observation){
+        assert.equal(response.status,200);
+        const visible=(await response.json() as any).cluster;
+        assert.equal(visible.master_agent_id,a.agent_id,
+          'Read-only snapshot must report expired Master as recorded, not elect');
+        assert.equal(Number(visible.epoch),Number(status.epoch));
+      }
+      const [afterSnapshotRows]:any=await db.query(
+        'SELECT epoch,master_agent_id,phase,version,lease_until FROM v7_cluster WHERE singleton=1');
+      const [afterEventRows]:any=await db.query(
+        'SELECT COUNT(*) AS n FROM v7_events WHERE event_type="MASTER_PROMOTED"');
+      const [afterLeaseRows]:any=await db.query(
+        'SELECT COUNT(*) AS n FROM v7_leases WHERE revoked=1');
+      assert.deepEqual(afterSnapshotRows,beforeSnapshotRows,
+        'Owner cluster GET cannot write epoch, phase, lease or version');
+      assert.equal(Number(afterEventRows[0].n),Number(beforeEventRows[0].n),
+        'Read-only physical capture cannot create promotion audit events');
+      assert.equal(Number(afterLeaseRows[0].n),Number(beforeLeaseRows[0].n),
+        'Read-only Owner inspection cannot revoke existing worker leases');
       const staleNode=await a.signed('/v7/nodes/me',undefined,'GET');
       assert.equal(staleNode.code,200,JSON.stringify(staleNode.body));
       assert.ok(Number(staleNode.body.agents[0].heartbeat_age_seconds)>=399,

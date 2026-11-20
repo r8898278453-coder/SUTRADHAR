@@ -461,7 +461,11 @@ function jsonRoute(fn:(req:Request,res:Response)=>Promise<any>){
 app.get('/v7/health',jsonRoute(async()=>{
   if(!configured)fault('CONTROL_UNAVAILABLE',503);
   await transaction(async c=>{await leader(c,false);});
-  return {service:'sutradhar-v7',ready:true,authority:'mysql',api_protocol:sharedContract.api_protocol};
+  return {service:'sutradhar-v7',ready:true,authority:'mysql',
+    api_protocol:sharedContract.api_protocol,
+    // Operator capture MUST confirm this BEFORE calling GET /v7/cluster.
+    // Older builds permitted GET to elect/fence; a pilot must refuse them.
+    read_only_cluster_snapshot:true};
 }));
 app.post('/v7/owner/migrate',jsonRoute(async req=>{
   admin(req);
@@ -681,11 +685,17 @@ app.get('/v7/owner/heartbeat-evidence/:nodeId',jsonRoute(async req=>{
       production_release_authorized:false};
   });
 }));
+// Owner dashboard and physical-pilot snapshots are OBSERVATION ONLY.
+// Never evaluate an election, extend a lease, fence workers, or append events
+// from a GET: a physical pilot must not cause the failover it claims to witness.
+// Mutating election remains confined to authenticated heartbeat/Owner actions.
 app.get('/v7/cluster',jsonRoute(async req=>{
   admin(req);
-  return transaction(async c=>{const ld=await evaluate(c,'owner-status');
+  return transaction(async c=>{
+    const ld=await leader(c,false);
     const agents=await rows(c,'SELECT a.agent_id,a.node_id,a.state,a.status,a.master_eligible,a.qa_eligible,a.last_seen,n.state AS node_state FROM v7_agents a JOIN v7_nodes n ON n.node_id=a.node_id ORDER BY a.agent_id');
-    return {cluster:ld,agents};});
+    return {cluster:ld,agents};
+  });
 }));
 app.get('/v7/nodes/me',jsonRoute(async req=>{
   const node=await nodeAuth(req);

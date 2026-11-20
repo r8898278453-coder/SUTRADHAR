@@ -83,6 +83,12 @@ async function capture({origin,allowedHostname,expectedSha,nodeIds,
     if(health.ready!==true||health.authority!=='mysql'||
        health.api_protocol!==7)
       return failure('PILOT_CENTRAL_NOT_READY');
+    // Older Central builds performed a live election during GET /v7/cluster.
+    // Never call that endpoint until health explicitly guarantees read-only
+    // semantics. This protects physical evidence collection from changing
+    // the very Master/lease state that the Owner wants to observe.
+    if(health.read_only_cluster_snapshot!==true)
+      return failure('PILOT_CLUSTER_GET_READ_ONLY_NOT_PROVEN');
     const remote=await readJson(fetcher,url.origin+'/v7/cluster',adminKey);
     const result=evaluatePilot(remote,nodeIds,now,offlineNodes);
     return {...result,capture_schema:1,
