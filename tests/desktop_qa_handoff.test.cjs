@@ -187,3 +187,162 @@ test('packaged handoff UI is main-only, with no renderer signing, Git publish or
   assert.match(html,/id="workerExport"/);
   assert.match(html,/id="workerQAInspect"/);
 });
+
+const {runIndependentQa,candidateArchive,validPolicy}
+  =require('../apps/desktop/qa-execution.cjs');
+function fakeDocker(f,{pass=true,changeCentral=false,cleanupFails=false}={}){
+  const exe=path.join(f.temp,'docker.exe');
+  fs.writeFileSync(exe,'mock executable never run');
+  const image='a'.repeat(64),seen=[];
+  const runner=(binary,args,options)=>{
+    assert.equal(binary,exe);
+    assert.equal(options.windowsHide,true);
+    seen.push({args,input:options.input});
+    let text='',status=0;
+    if(args[0]==='image'&&args[1]==='inspect')text='sha256:'+image+'\n';
+    else if(args[0]==='info')text='27.0.0\n';
+    else if(args[0]==='create'){
+      assert.ok(args.includes('--network'));
+      assert.equal(args[args.indexOf('--network')+1],'none');
+      assert.ok(args.includes('--read-only'));
+      assert.ok(args.includes('--cap-drop'));
+      assert.equal(args[args.indexOf('--cap-drop')+1],'ALL');
+      assert.equal(args[args.indexOf('--entrypoint')+1],'/bin/sh');
+      assert.equal(args[args.indexOf('--user')+1],'10001:10001');
+      assert.ok(!args.includes('--privileged'));
+      assert.ok(!args.includes('--volume'));
+      assert.ok(!args.includes('--mount'));
+      assert.ok(!args.includes('--publish'));
+      text='b'.repeat(64)+'\n';
+    }else if(args[0]==='start'){
+      assert.ok(Buffer.isBuffer(options.input));
+      assert.ok(options.input.length>0);
+      if(changeCentral)f.updateTask({...f.task(),candidate_head_sha:'f'.repeat(40)});
+      text=pass?'__SUTRADHAR_QA_TEST_STARTED__\n1 passed\n':'1 failed\n';
+      status=pass?0:1;
+    }else if(args[0]==='rm')status=cleanupFails?1:0;
+    else throw Error('Unexpected Docker invocation '+args.join(' '));
+    return {status,stdout:Buffer.from(text),stderr:Buffer.alloc(0)};
+  };
+  return {exe,image,seen,runner,
+    policy:{schema:1,enabled:true,image_sha256:image,docker_exe:exe,
+      test_profile:'PYTEST_TESTS_DIRECTORY'}};
+}
+test('Owner-pinned Docker and one-time QA test produce LOCAL_UNATTESTED evidence, not QA approval',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f);
+      const evidenceDir=path.join(f.temp,'qa-evidence');
+      const result=await runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner});
+      assert.equal(result.test_passed,true);
+      assert.equal(result.qa_approved,false);
+      assert.equal(result.qa_receipt_submitted,false);
+      assert.equal(result.evidence_level,'LOCAL_UNATTESTED');
+      assert.equal(result.candidate_head_sha,f.head);
+      assert.equal(result.git_published,false);
+      assert.equal(fs.existsSync(result.evidence_path),true);
+      const commands=d.seen.map(z=>z.args[0]);
+      assert.deepEqual(commands,['image','info','create','start','rm']);
+      assert.equal(cmd(f.qaRepo,'rev-parse','HEAD'),f.baseline);
+      assert.equal(cmd(f.qaRepo,'status','--porcelain'),'');
+      assert.equal(fs.existsSync(path.join(evidenceDir,'qa_started_ticket_abc.json')),true);
+      await assert.rejects(runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner}),
+        /QA_EXECUTION_PREVIOUS_ATTEMPT_OWNER_REVIEW/);
+    }finally{f.close();}
+  });
+test('default owner gate and invalid Docker policy prevent any candidate execution',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      await assert.rejects(runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir:path.join(f.temp,'qa-evidence')}),
+        /QA_EXECUTION_OWNER_IMAGE_NOT_CONFIGURED/);
+      assert.throws(()=>validPolicy({schema:1,enabled:true,
+        docker_exe:'docker',image_sha256:'a'.repeat(64),
+        test_profile:'PYTEST_TESTS_DIRECTORY'}),/QA_EXECUTION_OWNER_IMAGE_NOT_CONFIGURED/);
+      assert.equal(fs.existsSync(path.join(f.temp,'qa-evidence')),false);
+    }finally{f.close();}
+  });
+test('Docker test failure records failed evidence without approving QA or repeating execution',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f,{pass:false});
+      const evidenceDir=path.join(f.temp,'evidence');
+      const result=await runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner});
+      assert.equal(result.test_passed,false);
+      assert.equal(result.sandbox_started,false);
+      assert.equal(result.qa_receipt_submitted,false);
+      assert.equal(result.exit_code,1);
+      assert.ok(fs.existsSync(result.evidence_path));
+      assert.equal(d.seen.filter(x=>x.args[0]==='start').length,1);
+    }finally{f.close();}
+  });
+test('Central changes after sandbox execution preserve pending audit and require Owner review',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f,{changeCentral:true});
+      const evidenceDir=path.join(f.temp,'evidence');
+      await assert.rejects(runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner}),
+        /QA_EXECUTION_CENTRAL_CHANGED_OWNER_REVIEW/);
+      assert.equal(fs.existsSync(path.join(evidenceDir,'qa_started_ticket_abc.json')),true);
+      assert.equal(fs.existsSync(path.join(evidenceDir,'qa_result_ticket_abc.json')),false);
+      assert.ok(d.seen.some(x=>x.args[0]==='rm'));
+    }finally{f.close();}
+  });
+test('Docker cleanup uncertainty is fail closed and never produces QA success',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f,{cleanupFails:true});
+      const evidenceDir=path.join(f.temp,'evidence');
+      await assert.rejects(runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner}),
+        /QA_EXECUTION_DOCKER_CLEANUP_UNCERTAIN/);
+      assert.equal(fs.existsSync(path.join(evidenceDir,'qa_started_ticket_abc.json')),true);
+      assert.equal(fs.existsSync(path.join(evidenceDir,'qa_result_ticket_abc.json')),false);
+    }finally{f.close();}
+  });
+test('QA archive refuses untracked secrets, unsafe symlinks and Git metadata',
+  {skip:!available},()=>{
+    const f=fixture();
+    try{
+      const safe=candidateArchive(f.work,f.head);
+      assert.ok(Buffer.isBuffer(safe));
+      // A scoped source tree containing an unsafe hidden file may be valid Git,
+      // but it is not acceptable for local Docker QA archive execution.
+      fs.writeFileSync(path.join(f.work,'.env'),'TOP_SECRET');
+      cmd(f.work,'add','.env');
+      cmd(f.work,'-c','user.name=SUTRADHAR tests',
+        '-c','user.email=noreply@example.invalid','commit','-m','secret');
+      const unsafe=cmd(f.work,'rev-parse','HEAD');
+      assert.throws(()=>candidateArchive(f.work,unsafe),
+        /QA_EXECUTION_TREE_UNSAFE_PATH_OR_MODE/);
+    }finally{f.close();}
+  });
+test('QA Windows GUI wiring never exposes arbitrary docker command or QA approval to renderer',()=>{
+  const root=path.resolve(__dirname,'../apps/desktop');
+  const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const html=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  const js=fs.readFileSync(path.join(root,'setup.js'),'utf8');
+  assert.ok(pkg.build.files.includes('qa-execution.cjs'));
+  assert.ok(pkg.build.files.includes('qa-runner-policy.json'));
+  assert.match(main,/ipcMain\.handle\('sutradhar:runIndependentQa'/);
+  assert.match(preload,/runIndependentQa:\(agentId,ticketId\)/);
+  assert.match(html,/id="workerQARun"/);
+  assert.match(js,/get\('workerQARun'\)\.addEventListener/);
+  assert.doesNotMatch(preload,/dockerRunner|test_profile|signWorkerQaReceipt|private_key_pem/);
+});

@@ -43,6 +43,8 @@ const {claimApprovedTask,resumeApprovedTask}=require('./worker-claim.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
+const {runIndependentQa,validPolicy}=require('./qa-execution.cjs');
+const qaRunnerPolicy=require('./qa-runner-policy.json');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 const {inspect:inspectEnrollment,prepare:prepareEnrollment,
   markSubmitted:markEnrollmentSubmitted,requireSubmitted,
@@ -155,6 +157,7 @@ function safeStatus(){
     enrollmentState,enrollmentError,
     agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,directInstallerExit,persistentObserver,postInstallObservation,failedInstallReview,failedRecoveryApproval,startupSupported,startupEnabled,
     workerClaimSupported:Boolean(process.platform==='win32'&&app.isPackaged),
+    qaRunnerConfigured:(()=>{try{validPolicy(qaRunnerPolicy);return true;}catch{return false;}})(),
     signingStatus:vaultError||(vault?'OS_BACKED_ENCRYPTED_ALPHA':'OS_VAULT_UNAVAILABLE'),productionReady:false};
 }
 function startAgent({manualOwnerRestart=false}={}){
@@ -599,6 +602,44 @@ app.whenReady().then(()=>{
       approvedWorkerOperator(agentId,ticketId,true);
       return inspectQAHandoff({origin,agentId,ticketId,signer,
         bundlePath:bundle.filePaths[0],repoDir:repo.filePaths[0]});
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:runIndependentQa',async(event,agentId,ticketId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    // No default testing: only an Owner-pinned, locally installed image and
+    // absolute trusted Docker executable are accepted by the packaged app.
+    validPolicy(qaRunnerPolicy);
+    workerClaimBusy=true;
+    try{
+      const bundle=await dialog.showOpenDialog(setupWindow,{
+        title:'Choose the independently transferred QA candidate .bundle',
+        properties:['openFile'],
+        filters:[{name:'SUTRADHAR offline Git bundle',extensions:['bundle']}]
+      });
+      if(bundle.canceled||bundle.filePaths.length!==1)return {canceled:true};
+      const repo=await dialog.showOpenDialog(setupWindow,{
+        title:'Choose trusted QA Git checkout at the exact approved baseline',
+        properties:['openDirectory']
+      });
+      if(repo.canceled||repo.filePaths.length!==1)return {canceled:true};
+      const approved=await dialog.showMessageBox(setupWindow,{
+        type:'warning',
+        buttons:['Cancel — do not execute','Execute one isolated offline Docker pytest run'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Run a ONE-TIME independent sandbox test?',
+        detail:'The exact candidate will be reverified with Central. A pinned, preinstalled '+
+          'Owner-configured Docker image executes fixed pytest tests/ in an ephemeral '+
+          'networkless, unprivileged container. The trusted Git checkout stays unchanged. '+
+          'This creates a persistent local one-attempt audit and UNATTESTED test result. '+
+          'No QA receipt, approval, Git publish, merge or production deployment occurs. '+
+          'A crash/uncertain Docker cleanup must be investigated by the Owner; no automatic retry.'
+      });
+      if(approved.response!==1)return {canceled:true};
+      approvedWorkerOperator(agentId,ticketId,true);
+      return runIndependentQa({origin,agentId,ticketId,signer,
+        bundlePath:bundle.filePaths[0],repoDir:repo.filePaths[0],
+        evidenceDir:path.join(nodeDir(),'qa')});
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:checkUpdateReadiness',async event=>{

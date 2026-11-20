@@ -67,6 +67,7 @@ async function loadStatus(){
     get('workerSubmit').disabled=!approvedReadOnly;
     get('workerExport').disabled=!approvedReadOnly;
     get('workerQAInspect').disabled=!approvedReadOnly;
+    get('workerQARun').disabled=!approvedReadOnly||!s.qaRunnerConfigured;
 
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
@@ -479,5 +480,22 @@ get('workerQAInspect').addEventListener('click',async()=>{
   }catch(error){
     output.textContent='QA inspection blocked: '+String(error?.message||error)+
       '. Do not execute the bundle or manually force a Git import. Ask the Owner to review the mismatch.';
+  }finally{await loadStatus();}
+});
+get('workerQARun').addEventListener('click',async()=>{
+  const output=get('workerTasks'),button=get('workerQARun');
+  button.disabled=true;
+  try{
+    const r=await api.runIndependentQa(get('workerAgent').value,exactWorkerTicket());
+    if(r.canceled){output.textContent='Sandbox run canceled. No test was executed.';}
+    else{output.textContent='Independent QA local Docker test recorded for '+r.ticket_id+
+      '. Candidate SHA '+r.candidate_head_sha+
+      '. Test result: '+(r.test_passed?'PASS in local sandbox':'FAIL / not proven')+
+      '. Evidence file: '+r.evidence_path+
+      '. No Central QA receipt, QA approval, Git publication or deployment was performed.';}
+  }catch(error){
+    output.textContent='QA sandbox execution blocked or uncertain: '+
+      String(error?.message||error)+
+      '. Do not repeat this ticket automatically. Preserve the local qa_started journal and ask the Owner to inspect Docker cleanup and exact hashes.';
   }finally{await loadStatus();}
 });

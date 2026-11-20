@@ -243,7 +243,7 @@ function verifyHistory(bare,t){
   }
 }
 async function inspectQAHandoff({origin,agentId,ticketId,signer,
-  bundlePath,repoDir,fetcher=fetch}){
+  bundlePath,repoDir,fetcher=fetch,onVerifiedBare=null}){
   const t=checkedTask(await centralTask({origin,agentId,ticketId,signer,fetcher}),
     agentId,ticketId,'QA');
   if(typeof bundlePath!=='string'||!path.isAbsolute(bundlePath)||
@@ -267,6 +267,10 @@ async function inspectQAHandoff({origin,agentId,ticketId,signer,
     git(bare,'-c','protocol.file.allow=always','fetch','--no-tags',
       '--no-recurse-submodules',bundlePath,'HEAD');
     verifyHistory(bare,t);
+    if(onVerifiedBare!==null){
+      if(typeof onVerifiedBare!=='function')fail('HANDOFF_QA_CALLBACK_INVALID');
+      return await onVerifiedBare({bare,task:t,bundle_sha256:dig.hash});
+    }
     return {verified:true,kind:'QA_OFFLINE_OBJECTS_INSPECTED_ONLY',
       ticket_id:ticketId,candidate_head_sha:t.candidate_head_sha,
       candidate_tree_sha:t.candidate_tree_sha,bundle_sha256:dig.hash,

@@ -44,6 +44,8 @@
       "worker-progress.cjs",
       "worker-submit.cjs",
       "qa-handoff.cjs",
+      "qa-execution.cjs",
+      "qa-runner-policy.json",
       "enrollment.cjs",
       "enrollment-receipt.cjs",
       "single-instance.cjs",
