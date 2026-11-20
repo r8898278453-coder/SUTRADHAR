@@ -16,6 +16,76 @@ function rows(id,values){const body=$(id);body.replaceChildren();for(const row o
 function date(raw){if(!raw)return '—';const d=new Date(raw.endsWith('Z')?raw:raw+'Z');return isNaN(d.getTime())?'—':d.toLocaleString();}
 
 let gitRecoverySnapshot=null,gitRecoverySelection=null,gitRecoveryPending=null;
+
+let prSelected=null,prCreationAttempt=null;
+let prRecoveryQueue=null,prRecoverySelected=null,prRecoveryPending=null;
+function prStatus(text){value('pr-status',text);}
+function updatePrAction(){
+  const p=prSelected;
+  $('draft-pr').disabled=!key||!p||!p.ready_for_owner_intent||
+    $('git-ticket-id').value.trim()!==p.ticket_id||
+    $('pr-expected-head').value!==p.candidate_head_sha||
+    $('pr-confirm-head').value!==p.candidate_head_sha||
+    !gitHead.test(p.candidate_head_sha)||
+    $('pr-owner-note').value.trim().length<20||
+    $('pr-owner-note').value.trim().length>500||
+    !$('pr-consent').checked||Boolean(prCreationAttempt);
+}
+function clearPrCreation(){
+  prSelected=null;prCreationAttempt=null;
+  $('pr-expected-head').value='';$('pr-confirm-head').value='';
+  $('pr-owner-note').value='';$('pr-consent').checked=false;
+  updatePrAction();
+}
+function updatePrRecovery(){
+  const j=prRecoverySelected;
+  const r=$('pr-recovery-reason').value.trim();
+  $('pr-recovery-verify').disabled=!key||!j||
+    $('pr-recovery-ticket').value!==j.ticket_id||
+    $('pr-recovery-expected-head').value!==j.remote_head_sha||
+    $('pr-recovery-confirm-head').value!==j.remote_head_sha||
+    !gitHead.test(j.remote_head_sha)||r.length<20||r.length>500||
+    !$('pr-recovery-consent').checked||
+    Boolean(prRecoveryPending&&prRecoveryPending.reason!==r);
+}
+function clearPrRecovery(){
+  prRecoverySelected=null;prRecoveryPending=null;
+  $('pr-recovery-ticket').value='';$('pr-recovery-expected-head').value='';
+  $('pr-recovery-confirm-head').value='';$('pr-recovery-reason').value='';
+  $('pr-recovery-consent').checked=false;updatePrRecovery();
+}
+function renderPrRecovery(data){
+  const valid=data&&Array.isArray(data.attempts)&&
+    data.attempts.length<=100&&data.automatic_recreate_allowed===false;
+  prRecoveryQueue=valid?data:null;
+  value('pr-recovery-count',valid?data.attempts.length+' one-shot attempt(s)':
+    'Unavailable — no automated recovery');
+  $('pr-recovery-jobs').replaceChildren();
+  for(const j of valid?data.attempts:[]){
+    const tr=document.createElement('tr');
+    cell(tr,j.ticket_id);cell(tr,j.repository);cell(tr,j.branch);
+    cell(tr,j.remote_head_sha);
+    const td=document.createElement('td'),b=document.createElement('button');
+    b.type='button';b.textContent='Review exact remote';
+    b.disabled=Boolean(prRecoveryPending);
+    b.addEventListener('click',()=>{
+      if(prRecoveryPending)return;
+      prRecoverySelected=j;
+      $('pr-recovery-ticket').value=j.ticket_id;
+      $('pr-recovery-expected-head').value=j.remote_head_sha;
+      $('pr-recovery-confirm-head').value='';
+      $('pr-recovery-reason').value='';
+      $('pr-recovery-consent').checked=false;
+      value('pr-recovery-status','Review the original GitHub Draft PR externally, then enter the exact SHA.');
+      updatePrRecovery();
+    });
+    td.append(b);tr.append(td);$('pr-recovery-jobs').append(tr);
+  }
+  if(prRecoverySelected&&!prRecoveryPending&&!(!valid||
+    data.attempts.some(j=>j.ticket_id===prRecoverySelected.ticket_id&&
+      j.remote_head_sha===prRecoverySelected.remote_head_sha)))clearPrRecovery();
+}
+
 const gitHead=/^[a-f0-9]{40}$/;
 function recoveryStatus(text){value('git-recovery-status',text);}
 function clearGitRecoveryReview(){
@@ -150,6 +220,9 @@ async function refresh(){
   let gitRecovery=null;
   try{gitRecovery=await request('/v7/owner/git-recovery');}catch{}
   renderGitRecoveryQueue(gitRecovery);
+  let prQueue=null;
+  try{prQueue=await request('/v7/owner/pr-recovery');}catch{}
+  renderPrRecovery(prQueue);
   $('maintenance-epoch').value=String(c.epoch);
   value('master',c.master_agent_id||'No Master');value('epoch',c.epoch);
   value('phase',c.phase);value('backup1',c.backup1||'None');value('backup2','Backup 2: '+(c.backup2||'None'));
@@ -166,12 +239,12 @@ async function refresh(){
   value('auditCount',audit.length+' recent');rows('audit',audit.map(a=>[date(a.created_at),a.event_type,a.actor]));
   value('connection','Authenticated · live');$('dashboard').hidden=false;
 }
-$('connect').onclick=async()=>{clearGitRecoveryReview();key=$('key').value;$('key').value='';try{await refresh();message('Authenticated. Data refreshed.');}
+$('connect').onclick=async()=>{clearPrCreation();clearPrRecovery();clearGitRecoveryReview();key=$('key').value;$('key').value='';try{await refresh();message('Authenticated. Data refreshed.');}
   catch(e){key='';$('dashboard').hidden=true;value('connection','Disconnected');message(e.message,true);}
   if(timer)clearInterval(timer);
   if(key)timer=setInterval(()=>refresh().catch(e=>message(e.message,true)),20000);
 };
-$('disconnect').onclick=()=>{key='';clearGitRecoveryReview();gitRecoverySnapshot=null;$('dashboard').hidden=true;value('connection','Disconnected');
+$('disconnect').onclick=()=>{key='';clearPrCreation();clearPrRecovery();clearGitRecoveryReview();gitRecoverySnapshot=null;$('dashboard').hidden=true;value('connection','Disconnected');
   if(timer)clearInterval(timer);message('Disconnected. Credentials cleared from memory.');};
 $('refresh').onclick=()=>refresh().catch(e=>message(e.message,true));
 document.querySelectorAll('[data-command]').forEach(button=>button.addEventListener('click',async()=>{
@@ -272,8 +345,94 @@ async function gitOperation(pathname){
     await refresh();
   }catch(e){message(e.message,true);}
 }
-$('draft-pr').onclick=()=>gitOperation('/v7/git/pr-draft');
 $('verify-merge').onclick=()=>gitOperation('/v7/tasks/verify-merge');
+$('git-ticket-id').addEventListener('input',clearPrCreation);
+for(const id of ['pr-confirm-head','pr-owner-note']){
+  $(id).addEventListener('input',updatePrAction);
+}
+$('pr-consent').addEventListener('change',updatePrAction);
+$('pr-preflight').onclick=async()=>{
+  clearPrCreation();
+  const ticket=$('git-ticket-id').value.trim();
+  if(!/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(ticket)){
+    prStatus('Valid exact ticket ID required.');return;
+  }
+  try{
+    const p=await request('/v7/owner/pr-preflight/'+encodeURIComponent(ticket));
+    if(!p.git_published_verified||!gitHead.test(p.candidate_head_sha)||
+       p.ticket_id!==ticket)throw Error('PR_PREFLIGHT_UNTRUSTED');
+    prSelected=p;$('pr-expected-head').value=p.candidate_head_sha;
+    prStatus(p.ready_for_owner_intent?
+      'Ready only for ONE Owner-confirmed draft: '+p.repository+'/'+p.branch+
+      ' from '+p.base_branch+' at '+p.candidate_head_sha:
+      'Not ready: creation disabled, Master unavailable, PR already registered or pending Owner recovery.');
+    updatePrAction();
+  }catch(e){prStatus('PR preflight denied: '+e.message);}
+};
+$('draft-pr').onclick=async()=>{
+  updatePrAction();if($('draft-pr').disabled)return;
+  const p=prSelected;
+  const intent={request_id:'prdraft_'+crypto.randomUUID().replaceAll('-',''),
+    ticket_id:p.ticket_id,expected_remote_head_sha:p.candidate_head_sha,
+    expected_candidate_tree_sha:p.candidate_tree_sha,
+    owner_confirmed_draft_only:true,owner_review_note:$('pr-owner-note').value.trim()};
+  if(!confirm('CREATE one real Draft PR for '+p.repository+'/'+p.branch+
+    ' at exact head '+p.candidate_head_sha+' into '+p.base_branch+
+    '? This is a GitHub WRITE (Draft PR only). A lost response requires Owner read-only recovery; NEVER create a second PR.'))return;
+  prCreationAttempt=intent;updatePrAction();
+  prStatus('One-shot PR creation intent submitted. Do not create again if outcome is uncertain.');
+  try{
+    const v=await request('/v7/git/pr-draft',{method:'POST',body:JSON.stringify(intent)});
+    if(v.accepted!==true||v.head_sha!==p.candidate_head_sha||
+       v.merge_performed!==false||v.draft!==true)
+      throw Error('PR_RESPONSE_REVIEW_REQUIRED');
+    prStatus('Draft PR '+v.url+' verified; external human review and required CI remain mandatory. NO merge.');
+    await refresh();
+  }catch(e){
+    prStatus('PR outcome uncertain: '+e.message+
+      '. DO NOT retry Create. Inspect GitHub then use the Owner read-only PR recovery queue.');
+    message('Draft PR requires Owner reconciliation: '+e.message,true);
+    refresh().catch(()=>{});
+  }
+};
+for(const id of ['pr-recovery-confirm-head','pr-recovery-reason']){
+  $(id).addEventListener('input',updatePrRecovery);
+}
+$('pr-recovery-consent').addEventListener('change',updatePrRecovery);
+$('pr-recovery-clear').onclick=()=>{
+  clearPrRecovery();
+  value('pr-recovery-status','Cleared local selection; the durable Central attempt remains. NO second PR POST.');
+};
+$('pr-recovery-verify').onclick=async()=>{
+  updatePrRecovery();if($('pr-recovery-verify').disabled)return;
+  const j=prRecoverySelected;
+  const intent=prRecoveryPending||{
+    request_id:'prrecover_'+crypto.randomUUID().replaceAll('-',''),
+    ticket_id:j.ticket_id,expected_remote_head_sha:j.remote_head_sha,
+    reason:$('pr-recovery-reason').value.trim(),
+    owner_confirmed_readonly_proof:true
+  };
+  if(!confirm('READ-ONLY GitHub inspection of an EXISTING Draft PR for '+
+    j.ticket_id+' at '+j.remote_head_sha+'? No PR will be created, pushed or merged.'))return;
+  prRecoveryPending=intent;updatePrRecovery();
+  value('pr-recovery-status','Verifying existing remote PR read-only. Never resubmit Create.');
+  try{
+    const v=await request('/v7/git/pr-recover-readonly',{
+      method:'POST',body:JSON.stringify(intent)});
+    if(v.accepted!==true||v.head_sha!==j.remote_head_sha||
+      v.recovered_readonly!==true||v.second_pr_create_attempt!==false)
+      throw Error('PR_RECOVERY_RECEIPT_MISMATCH');
+    clearPrRecovery();
+    value('pr-recovery-status','Existing remote Draft PR '+v.url+
+      ' verified. No new PR created. Human review and CI still required.');
+    await refresh();
+  }catch(e){
+    value('pr-recovery-status','Read-only recovery uncertain: '+e.message+
+      '. Retry this SAME recovery request only; NEVER re-create PR.');
+    message('PR recovery not complete: '+e.message,true);
+    updatePrRecovery();
+  }
+};
 
 
 for(const id of ['git-recovery-confirm-sha','git-recovery-reason']){

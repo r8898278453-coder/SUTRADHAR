@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createVerifiedDraftPr, type DraftPrFetcher } from '../github_pr_creator.ts';
+import { createVerifiedDraftPr, inspectVerifiedDraftPr, type DraftPrFetcher } from '../github_pr_creator.ts';
 
 const BASE = 'a'.repeat(40);
 const HEAD = 'b'.repeat(40);
@@ -17,6 +17,8 @@ type Options = {
   changedOnPost?: boolean;
   baseChangedOnPost?: boolean;
   networkFailure?: boolean;
+  maliciousUrl?: boolean;
+  removedFile?: boolean;
 };
 
 function fixture(options: Options = {}) {
@@ -42,14 +44,15 @@ function fixture(options: Options = {}) {
         parents: [{ sha: BASE }] });
     }
     if (pathname.endsWith('/compare/' + BASE + '...' + HEAD)) {
-      const files = [{ filename: 'src/safe.ts', status: 'modified' }];
+      const files = [{ filename: 'src/safe.ts', status: options.removedFile ? 'removed' : 'modified' }];
       if (options.extraFile) files.push({ filename: 'src/other.ts', status: 'modified' });
       return ok({ status: 'ahead', ahead_by: options.extraCommit ? 2 : 1,
         behind_by: 0, total_commits: options.extraCommit ? 2 : 1, files });
     }
     if (pathname.endsWith('/pulls') && method === 'GET') {
       return ok(options.existing ? [{
-        number: 42, html_url: 'https://github.com/acme/widgets/pull/42',
+        number: 42, html_url: options.maliciousUrl?'https://example.invalid/steal':
+          'https://github.com/acme/widgets/pull/42',
         state: options.closedPr ? 'closed' : 'open', draft: true,
         head: { ref: BRANCH, sha: HEAD, repo: { full_name: 'acme/widgets' } },
         base: { ref: 'main', sha: BASE, repo: { full_name: 'acme/widgets' } }
@@ -57,7 +60,8 @@ function fixture(options: Options = {}) {
     }
     if (pathname.endsWith('/pulls') && method === 'POST') {
       return ok({
-        number: 43, html_url: 'https://github.com/acme/widgets/pull/43',
+        number: 43, html_url: options.maliciousUrl?'https://example.invalid/steal':
+          'https://github.com/acme/widgets/pull/43',
         state: 'open', draft: body?.draft,
         head: { ref: BRANCH, sha: options.changedOnPost ? 'e'.repeat(40) : HEAD,
           repo: { full_name: 'acme/widgets' } },
@@ -128,4 +132,39 @@ test('out-of-scope input never contacts GitHub', async () => {
   const result = await createVerifiedDraftPr({ ...input, changedFiles: ['src/secret.ts'] });
   assert.deepEqual(result, { created: false, error: 'DRAFT_PR_CONFIGURATION_INVALID' });
   assert.equal(calls.length, 0);
+});
+test('read-only Owner recovery inspects an existing exact draft without POST',async()=>{
+  const {calls,input}=fixture({existing:true});
+  const result=await inspectVerifiedDraftPr({...input,expectedHeadSha:HEAD,baseBranch:'main'});
+  assert.equal(result.created,true);
+  if(result.created){assert.equal(result.existing,true);assert.equal(result.prNumber,42);}
+  assert.equal(calls.filter(x=>x.method==='POST').length,0);
+});
+test('read-only Owner recovery never creates a missing draft',async()=>{
+  const {calls,input}=fixture();
+  const result=await inspectVerifiedDraftPr(input);
+  assert.deepEqual(result,{created:false,error:'DRAFT_PR_NOT_FOUND_OWNER_RECONCILIATION'});
+  assert.equal(calls.filter(x=>x.method==='POST').length,0);
+});
+test('wrong exact Central-confirmed HEAD and bad base ref cannot open PR',async()=>{
+  const a=fixture();
+  assert.deepEqual(await createVerifiedDraftPr({...a.input,expectedHeadSha:'f'.repeat(40)}),
+    {created:false,error:'DRAFT_PR_BRANCH_NOT_PUSHED'});
+  assert.equal(a.calls.filter(x=>x.method==='POST').length,0);
+  const b=fixture();
+  assert.deepEqual(await createVerifiedDraftPr({...b.input,baseBranch:'../main'}),
+    {created:false,error:'DRAFT_PR_CONFIGURATION_INVALID'});
+  assert.equal(b.calls.length,0);
+});
+test('remote PR URL is canonical and removal of previously QA-accepted files is forbidden',async()=>{
+  for(const opts of [{maliciousUrl:true},{removedFile:true}]){
+    const {input,calls}=fixture(opts);
+    const response=await createVerifiedDraftPr(input);
+    assert.equal(response.created,false);
+    assert.equal(calls.filter(x=>x.method==='POST').length,opts.maliciousUrl?1:0);
+  }
+  const prior=fixture({existing:true,maliciousUrl:true});
+  const result=await inspectVerifiedDraftPr(prior.input);
+  assert.deepEqual(result,{created:false,error:'DRAFT_PR_BRANCH_ALREADY_USED'});
+  assert.equal(prior.calls.filter(x=>x.method==='POST').length,0);
 });

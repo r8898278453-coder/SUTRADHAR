@@ -11,7 +11,7 @@ import * as path from 'node:path';
 import mysql from 'mysql2/promise';
 import type {PoolConnection} from 'mysql2/promise';
 import {verifyGitHubMergeEvidence} from '../github_merge_verifier.ts';
-import {createVerifiedDraftPr} from '../github_pr_creator.ts';
+import {createVerifiedDraftPr,inspectVerifiedDraftPr} from '../github_pr_creator.ts';
 import {inspectGitRemote} from './git_remote.ts';
 import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest,validTaskBranch,isProtectedScope} from './rules.ts';
 import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
@@ -1280,7 +1280,10 @@ app.get('/v7/git/job/:ticketId',jsonRoute(async req=>{
       [job.project_id,agentId]);
     if(!access?.can_qa)fault('PROJECT_QA_ACCESS_DENIED',403);
     return {ticket_id:ticketId,state:job.state,epoch:Number(job.epoch),
-      remote_head_sha:job.remote_head_sha,pr_number:job.pr_number,pr_url:job.pr_url};
+      remote_head_sha:job.remote_head_sha,pr_number:job.pr_number,
+      pr_url:job.pr_number?job.pr_url:null,
+      pr_owner_reconciliation_required:!job.pr_number&&
+        String(job.pr_url||'').startsWith('DRAFT_PR_ATTEMPT_PENDING:')};
   });
 }));
 app.post('/v7/git/confirm',jsonRoute(async req=>{
@@ -1486,41 +1489,285 @@ app.post('/v7/git/recover-remote-proof',jsonRoute(async req=>{
     });
   });
 }));
+// The existing git-job pr_url column is a durable *intent marker* until an
+// exact remote draft is independently recorded. There is deliberately no
+// schema migration and no automatic re-create after an ambiguous POST.
+const DRAFT_INTENT_PREFIX='DRAFT_PR_ATTEMPT_PENDING:';
+const REPO_FULL=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+function prChangedFiles(t:any,j:any){
+  let files:any,scopes:any;
+  try{
+    files=typeof j.changed_files_json==='string'
+      ?JSON.parse(j.changed_files_json):j.changed_files_json;
+    scopes=typeof t.scopes_json==='string'?JSON.parse(t.scopes_json):t.scopes_json;
+  }catch{fault('DRAFT_PR_REMOTE_FILES_UNTRUSTED',409);}
+  if(!Array.isArray(files)||!Array.isArray(scopes)||
+     files.length<1||files.length>99||scopes.length<1||scopes.length>30||
+     new Set(files).size!==files.length||
+     files.some((f:any)=>typeof f!=='string'||f.length>450||
+       !/^[A-Za-z0-9._/-]+$/.test(f)||f.startsWith('/')||
+       f.split('/').some((part:string)=>!part||part==='.'||part==='..')||
+       !scopes.some((scope:any)=>typeof scope==='string'&&
+         (f===scope||f.startsWith(scope+'/')))))
+    fault('DRAFT_PR_REMOTE_FILES_UNTRUSTED',409);
+  return files as string[];
+}
+function prExactContext(t:any,j:any,p:any){
+  if(!t||!j||!p||t.status!=='INTEGRATING'||j.state!=='CONFIRMED'||
+     !REPO_FULL.test(String(p.repository||''))||
+     !validTaskBranch(String(t.branch_name||''))||
+     !SHA_RE.test(String(t.baseline_sha||''))||
+     !SHA_RE.test(String(t.candidate_head_sha||''))||
+     !SHA_RE.test(String(t.candidate_tree_sha||''))||
+     j.remote_head_sha!==t.candidate_head_sha||
+     j.remote_tree_sha!==t.candidate_tree_sha)
+    fault('DRAFT_PR_EXACT_REMOTE_QA_RECEIPT_REQUIRED',409);
+  const allowed=prChangedFiles(t,j);
+  return {ticket_id:t.ticket_id,project_id:t.project_id,
+    repository:p.repository,base_branch:p.base_branch,branch:t.branch_name,
+    baseline_sha:t.baseline_sha,candidate_head_sha:t.candidate_head_sha,
+    candidate_tree_sha:t.candidate_tree_sha,changed_files:allowed,
+    version:Number(t.version)};
+}
+async function prEvidence(c:PoolConnection,t:any,j:any){
+  if(j.agent_id===t.worker_agent_id)fault('DRAFT_PR_INDEPENDENT_QA_REQUIRED',403);
+  const qa=await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? '+
+    'AND agent_id=? AND passed=1 AND head_sha=? AND tree_sha=?',
+    [t.ticket_id,j.agent_id,t.candidate_head_sha,t.candidate_tree_sha]);
+  if(!qa)fault('DRAFT_PR_OWNER_REVIEWED_QA_REQUIRED',409);
+  if(['HIGH','CORE'].includes(t.risk)){
+    const approval=await one(c,'SELECT proposal_id FROM v7_approvals '+
+      'WHERE ticket_id=? AND state="APPROVED" AND kind!="QA_EVIDENCE_REVIEW"',
+      [t.ticket_id]);
+    if(!approval)fault('OWNER_APPROVAL_REQUIRED',403);
+  }
+}
+function prGithubInput(info:any){
+  return {repo:info.p.repository,token:process.env.SUTRADHAR_GITHUB_PR_TOKEN||'',
+    branch:info.t.branch_name,baseBranch:info.p.base_branch,
+    ticketId:info.t.ticket_id,baselineCommit:info.t.baseline_sha,
+    candidateTreeSha:info.t.candidate_tree_sha,
+    expectedHeadSha:info.t.candidate_head_sha,
+    changedFiles:prChangedFiles(info.t,info.j),
+    allowedFiles:prChangedFiles(info.t,info.j),
+    title:info.t.title,description:info.t.description};
+}
+function checkedDraftPrRemote(pr:any,info:any){
+  if(!pr?.created||!Number.isSafeInteger(pr.prNumber)||pr.prNumber<1||
+     pr.existing!==true&&pr.existing!==false||
+     pr.headSha!==info.t.candidate_head_sha||
+     pr.treeSha!==info.t.candidate_tree_sha||
+     pr.repo!==info.p.repository||pr.branch!==info.t.branch_name||
+     pr.url!=='https://github.com/'+info.p.repository+'/pull/'+pr.prNumber)
+    fault('DRAFT_PR_REMOTE_UNCERTAIN_OWNER_RECONCILIATION',409);
+}
+async function finalizeDraftPr(info:any,pr:any,attemptId:string,op:string,
+  recovery?:{requestId:string;head:string;reason:string}){
+  return transaction(async c=>{
+    await leader(c);
+    const j=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',
+      [info.t.ticket_id]);
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',
+      [info.t.ticket_id]);
+    const p=await one(c,'SELECT * FROM v7_projects WHERE project_id=?',
+      [info.t.project_id]);
+    const expected=prExactContext(info.t,info.j,info.p);
+    const actual=prExactContext(t,j,p);
+    const attempt=await one(c,'SELECT operation,response_json FROM v7_commands '+
+      'WHERE actor="owner:web" AND request_id=? FOR UPDATE',[attemptId]);
+    const saved=typeof attempt?.response_json==='string'
+      ?JSON.parse(attempt.response_json):attempt?.response_json;
+    if(JSON.stringify(expected)!==JSON.stringify(actual)||
+       j.pr_number!==null||j.pr_url!==DRAFT_INTENT_PREFIX+attemptId||
+       !attempt||attempt.operation!==op||saved?.pending!==true||
+       saved?.ticket_id!==t.ticket_id||
+       saved?.candidate_head_sha!==t.candidate_head_sha)
+      fault('DRAFT_PR_FINALIZATION_CHANGED_OWNER_RECOVERY',409);
+    await prEvidence(c,t,j);
+    const result={accepted:true,ticket_id:t.ticket_id,draft:true,
+      existing_remote_draft:pr.existing,pr_number:pr.prNumber,url:pr.url,
+      head_sha:pr.headSha,tree_sha:pr.treeSha,base_branch:p.base_branch,
+      status:'REVIEW_REQUIRED',merge_performed:false,
+      automatic_merge_allowed:false};
+    await c.query('UPDATE v7_git_jobs SET pr_number=?,pr_url=?,updated_at=UTC_TIMESTAMP(3) '+
+      'WHERE ticket_id=? AND pr_number IS NULL AND pr_url=?',
+      [pr.prNumber,pr.url,t.ticket_id,DRAFT_INTENT_PREFIX+attemptId]);
+    await c.query('UPDATE v7_commands SET response_json=? WHERE actor="owner:web" '+
+      'AND request_id=? AND operation=?',
+      [JSON.stringify(result),attemptId,op]);
+    await event(c,'GITHUB_DRAFT_PR_VERIFIED','owner:web',
+      Number((await leader(c)).epoch),t.ticket_id,
+      {pr_number:pr.prNumber,head:pr.headSha,base:p.base_branch});
+    if(recovery){
+      const recovered={...result,recovered_readonly:true,
+        second_pr_create_attempt:false};
+      return idem(c,'owner:web',recovery.requestId,'DRAFT_PR_RECOVER',
+        {ticketId:t.ticket_id,head:recovery.head,reason:recovery.reason},async()=>{
+        await event(c,'DRAFT_PR_OWNER_READONLY_RECOVERY','owner:web',
+          Number((await leader(c)).epoch),t.ticket_id,
+          {pr_number:pr.prNumber,reason:recovery.reason});
+        return recovered;
+      });
+    }
+    return result;
+  });
+}
+// Inspect-only Owner queue, never checks GitHub or creates an external PR.
+app.get('/v7/owner/pr-recovery',jsonRoute(async req=>{
+  admin(req);
+  return transaction(async c=>{
+    const jobs=await rows(c,'SELECT j.ticket_id,j.request_id,j.pr_url,'+
+      'j.remote_head_sha,j.remote_tree_sha,t.branch_name,p.repository,p.base_branch '+
+      'FROM v7_git_jobs j JOIN v7_tickets t ON t.ticket_id=j.ticket_id '+
+      'JOIN v7_projects p ON p.project_id=t.project_id '+
+      'WHERE j.pr_number IS NULL AND LEFT(j.pr_url,?)=? '+
+      'ORDER BY j.updated_at DESC LIMIT 101',
+      [DRAFT_INTENT_PREFIX.length,DRAFT_INTENT_PREFIX]);
+    if(jobs.length>100)fault('DRAFT_PR_RECOVERY_PAGINATION_REQUIRED',409);
+    return {manual_owner_reconciliation_required:true,automatic_recreate_allowed:false,
+      attempts:jobs.map(j=>({ticket_id:j.ticket_id,
+        original_request_id:String(j.pr_url).slice(DRAFT_INTENT_PREFIX.length),
+        repository:j.repository,base_branch:j.base_branch,
+        branch:j.branch_name,remote_head_sha:j.remote_head_sha,
+        remote_tree_sha:j.remote_tree_sha,remote_post_result:'UNKNOWN'}))};
+  });
+}));
+// This preflight performs no GitHub POST, reservation, or Git job mutation.
+app.get('/v7/owner/pr-preflight/:ticketId',jsonRoute(async req=>{
+  admin(req);
+  const ticketId=requireId(req.params.ticketId);
+  return transaction(async c=>{
+    const ld=await leader(c,false);
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
+    const j=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=?',[ticketId]);
+    const p=t?await one(c,'SELECT * FROM v7_projects WHERE project_id=?',
+      [t.project_id]):null;
+    const context=prExactContext(t,j,p);
+    await prEvidence(c,t,j);
+    const masterReady=ld.phase==='READY'&&!Number(ld.paused)&&
+      await approvedMasterLease(c,ld);
+    const enabled=process.env.SUTRADHAR_ENABLE_PR_CREATION==='true';
+    return {...context,ready_for_owner_intent:Boolean(masterReady)&&
+      enabled&&!j.pr_url&&!j.pr_number,
+      creation_enabled:enabled,master_ready:Boolean(masterReady),
+      recovery_required:Boolean(j.pr_url&&!j.pr_number),
+      already_registered:Boolean(j.pr_number),
+      git_published_verified:true,draft_pr_created:Boolean(j.pr_number),
+      merge_performed:false};
+  });
+}));
+// Owner-controlled PR creation, fail closed. Persist durable ONE-SHOT intent
+// before the first GitHub POST and refuse to repeat an uncertain request.
 app.post('/v7/git/pr-draft',jsonRoute(async req=>{
   admin(req);
   if(process.env.SUTRADHAR_ENABLE_PR_CREATION!=='true')
     fault('DRAFT_PR_CREATION_DISABLED',403);
-  const d=req.body||{},ticketId=requireId(d.ticket_id);
+  const d=req.body||{},ticketId=requireId(d.ticket_id),
+    requestId=requireId(d.request_id);
+  const expectedHead=requireSha(d.expected_remote_head_sha);
+  const expectedTree=requireSha(d.expected_candidate_tree_sha);
+  const reviewNote=requireStr(d.owner_review_note,500);
+  if(d.owner_confirmed_draft_only!==true||reviewNote.length<20)
+    fault('DRAFT_PR_EXPLICIT_OWNER_CONFIRMATION_REQUIRED',403);
+  const op='DRAFT_PR_CREATION:'+digest(JSON.stringify({
+    ticketId,expectedHead,expectedTree,reviewNote}));
+  const reserved=await transaction(async c=>{
+    const ld=await leader(c);
+    if(ld.paused||ld.phase!=='READY'||!await approvedMasterLease(c,ld))
+      fault('DRAFT_PR_MASTER_NOT_READY',409);
+    const prior=await one(c,'SELECT operation,response_json FROM v7_commands '+
+      'WHERE actor="owner:web" AND request_id=? FOR UPDATE',[requestId]);
+    if(prior){
+      if(prior.operation!==op)fault('IDEMPOTENCY_KEY_REUSED',409);
+      const receipt=typeof prior.response_json==='string'
+        ?JSON.parse(prior.response_json):prior.response_json;
+      if(receipt?.accepted===true)return {replay:receipt};
+      fault('DRAFT_PR_RECONCILIATION_REQUIRED',409);
+    }
+    const j=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',
+      [ticketId]);
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',
+      [ticketId]);
+    const p=t?await one(c,'SELECT * FROM v7_projects WHERE project_id=?',
+      [t.project_id]):null;
+    prExactContext(t,j,p);
+    await prEvidence(c,t,j);
+    if(j.pr_number||j.pr_url)fault('DRAFT_PR_ALREADY_REGISTERED_OR_UNCERTAIN',409);
+    if(t.candidate_head_sha!==expectedHead||t.candidate_tree_sha!==expectedTree)
+      fault('DRAFT_PR_CANDIDATE_CHANGED',409);
+    const intent={pending:true,kind:'DRAFT_PR_CREATION',
+      ticket_id:ticketId,candidate_head_sha:expectedHead,
+      candidate_tree_sha:expectedTree,repository:p.repository,
+      branch:t.branch_name,base_branch:p.base_branch,
+      automatic_retry_allowed:false};
+    await c.query('INSERT INTO v7_commands(actor,request_id,operation,response_json) '+
+      'VALUES("owner:web",?,?,?)',[requestId,op,JSON.stringify(intent)]);
+    const [written]:any=await c.query('UPDATE v7_git_jobs SET pr_url=?,updated_at=UTC_TIMESTAMP(3) '+
+      'WHERE ticket_id=? AND pr_number IS NULL AND pr_url IS NULL',
+      [DRAFT_INTENT_PREFIX+requestId,ticketId]);
+    if(written.affectedRows!==1)fault('DRAFT_PR_INTENT_RACE',409);
+    await event(c,'DRAFT_PR_ONE_SHOT_INTENT_RESERVED','owner:web',
+      Number(ld.epoch),ticketId,{request_id:requestId,head:expectedHead});
+    return {info:{t,j,p}};
+  });
+  if('replay' in reserved)return reserved.replay;
+  const info=reserved.info;
+  const pr=await createVerifiedDraftPr(prGithubInput(info));
+  if(!pr.created)fault('DRAFT_PR_REMOTE_UNCERTAIN_'+pr.error,409);
+  checkedDraftPrRemote(pr,info);
+  return finalizeDraftPr(info,pr,requestId,op);
+}));
+// Only GET GitHub APIs, even when a prior PR creation POST timed out.
+// The original immutable PR attempt is reconciled; never recreate a draft.
+app.post('/v7/git/pr-recover-readonly',jsonRoute(async req=>{
+  admin(req);
+  const d=req.body||{},ticketId=requireId(d.ticket_id),
+    requestId=requireId(d.request_id),
+    head=requireSha(d.expected_remote_head_sha),
+    reason=requireStr(d.reason,500);
+  if(d.owner_confirmed_readonly_proof!==true||reason.length<20)
+    fault('DRAFT_PR_OWNER_READONLY_CONFIRMATION_REQUIRED',403);
+  const op='DRAFT_PR_RECOVER:'+digest(JSON.stringify({ticketId,head,reason}));
   const info=await transaction(async c=>{
-    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
+    const prior=await one(c,'SELECT operation,response_json FROM v7_commands '+
+      'WHERE actor="owner:web" AND request_id=?',[requestId]);
+    if(prior){
+      if(prior.operation!==op)fault('IDEMPOTENCY_KEY_REUSED',409);
+      const saved=typeof prior.response_json==='string'
+        ?JSON.parse(prior.response_json):prior.response_json;
+      if(saved?.accepted)return {replay:saved};
+      fault('DRAFT_PR_RECOVERY_NOT_RECONCILED',409);
+    }
     const j=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=?',[ticketId]);
-    if(!t||!j||j.state!=='CONFIRMED'||t.status!=='INTEGRATING')
-      fault('GIT_PROOF_REQUIRED',409);
-    const p=await one(c,'SELECT * FROM v7_projects WHERE project_id=?',[t.project_id]);
-    return {t,j,p};
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
+    const p=t?await one(c,'SELECT * FROM v7_projects WHERE project_id=?',
+      [t.project_id]):null;
+    prExactContext(t,j,p);
+    const attemptId=String(j?.pr_url||'').startsWith(DRAFT_INTENT_PREFIX)
+      ?String(j.pr_url).slice(DRAFT_INTENT_PREFIX.length):null;
+    if(j.pr_number||!attemptId||!okId(attemptId)||
+       t.candidate_head_sha!==head)
+      fault('DRAFT_PR_NO_PENDING_OWNER_RECOVERY',409);
+    await prEvidence(c,t,j);
+    const attempt=await one(c,'SELECT operation,response_json FROM v7_commands '+
+      'WHERE actor="owner:web" AND request_id=?',[attemptId]);
+    const saved=typeof attempt?.response_json==='string'
+      ?JSON.parse(attempt.response_json):attempt?.response_json;
+    if(!attempt?.operation?.startsWith('DRAFT_PR_CREATION:')||
+       !saved?.pending||saved.ticket_id!==ticketId||
+       saved.candidate_head_sha!==head||
+       saved.candidate_tree_sha!==t.candidate_tree_sha)
+      fault('DRAFT_PR_INTENT_INVALID',409);
+    return {info:{t,j,p},attemptId,attemptOp:attempt.operation};
   });
-  const changed=typeof info.j.changed_files_json==='string'?JSON.parse(info.j.changed_files_json):info.j.changed_files_json;
-  const pr=await createVerifiedDraftPr({
-    repo:info.p.repository,token:process.env.SUTRADHAR_GITHUB_PR_TOKEN||'',
-    branch:info.t.branch_name,ticketId,
-    baselineCommit:info.t.baseline_sha,candidateTreeSha:info.t.candidate_tree_sha,
-    changedFiles:changed,allowedFiles:changed,title:info.t.title,description:info.t.description
-  });
-  const created=pr.created?pr:fault('DRAFT_PR_REMOTE_UNCERTAIN',409);
-  if(created.headSha!==info.j.remote_head_sha)fault('DRAFT_PR_REMOTE_UNCERTAIN',409);
-  return transaction(async c=>idem(c,'owner:web',d.request_id,'DRAFT_PR',{ticketId,prNumber:created.prNumber},async()=>{
-    const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=? FOR UPDATE',[ticketId]);
-    if(!job||job.state!=='CONFIRMED'||job.remote_head_sha!==created.headSha)
-      fault('GIT_RECEIPT_CHANGED',409);
-    if(job.pr_number&&Number(job.pr_number)!==created.prNumber)
-      fault('DRAFT_PR_NUMBER_CONFLICT',409);
-    await c.query('UPDATE v7_git_jobs SET pr_number=?,pr_url=?,updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',
-      [created.prNumber,created.url,ticketId]);
-    await event(c,'GITHUB_DRAFT_PR_VERIFIED','owner:web',Number((await leader(c)).epoch),ticketId,
-      {pr_number:created.prNumber,head:created.headSha});
-    return {accepted:true,ticket_id:ticketId,draft:true,pr_number:created.prNumber,url:created.url,
-      status:'REVIEW_REQUIRED'};
-  }));
+  if('replay' in info)return info.replay;
+  // No POST: only an already existing, exact open draft can be reconciled.
+  const pr=await inspectVerifiedDraftPr(prGithubInput(info.info));
+  if(!pr.created||pr.existing!==true)
+    fault('DRAFT_PR_READONLY_PROOF_UNAVAILABLE',409);
+  checkedDraftPrRemote(pr,info.info);
+  return finalizeDraftPr(info.info,pr,info.attemptId,info.attemptOp,
+    {requestId,head,reason});
 }));
 app.post('/v7/tasks/verify-merge',jsonRoute(async req=>{
   // This does NOT merge: read-only authenticated remote verification only.
@@ -1534,7 +1781,8 @@ app.post('/v7/tasks/verify-merge',jsonRoute(async req=>{
       [ticket,t.candidate_head_sha,t.candidate_tree_sha]);
     if(!qa)fault('QA_REQUIRED',409);
     const job=await one(c,'SELECT * FROM v7_git_jobs WHERE ticket_id=?',[ticket]);
-    if(!job||job.state!=='CONFIRMED'||!job.remote_head_sha||!job.pr_number)
+    if(!job||job.state!=='CONFIRMED'||!job.remote_head_sha||!job.pr_number||
+       job.pr_url!=='https://github.com/'+p.repository+'/pull/'+job.pr_number)
       fault('VERIFIED_GIT_DRAFT_PR_REQUIRED',409);
     if(t.risk==='CORE'||t.risk==='HIGH'){
       const approval=await one(c,'SELECT proposal_id FROM v7_approvals WHERE ticket_id=? AND state="APPROVED" AND kind!="QA_EVIDENCE_REVIEW"',[ticket]);

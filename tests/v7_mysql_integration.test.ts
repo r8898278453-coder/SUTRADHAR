@@ -846,6 +846,153 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(clearedQueue.status,200);
       assert.deepEqual((await clearedQueue.json() as any).unresolved_jobs,[],
         'Owner queue must reflect committed exact remote proof receipt');
+
+      // Disposable-MySQL Owner PR lifecycle: a GitHub POST can succeed
+      // remotely then lose its HTTP response. Never issue a second POST;
+      // inspect the exact existing Draft PR read-only and finalize the SAME
+      // durable Central attempt. No real GitHub POST is made by this test.
+      await db.query('UPDATE v7_cluster SET phase="READY",paused=0,'+
+        'lease_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 120 SECOND) WHERE singleton=1');
+      const previousPrFlag=process.env.SUTRADHAR_ENABLE_PR_CREATION;
+      const previousPrToken=process.env.SUTRADHAR_GITHUB_PR_TOKEN;
+      const realFetch=globalThis.fetch;
+      let prPostCalls=0,prGetCalls=0,remoteDraftExists=false;
+      try{
+        process.env.SUTRADHAR_ENABLE_PR_CREATION='true';
+        process.env.SUTRADHAR_GITHUB_PR_TOKEN='disposable-ci-pr-api-token';
+        const prPreflight=await fetch(base+'/v7/owner/pr-preflight/ticket_qa_test',{
+          headers:{authorization:'Bearer '+admin}});
+        assert.equal(prPreflight.status,200);
+        const prReady=await prPreflight.json() as any;
+        assert.equal(prReady.ready_for_owner_intent,true);
+        assert.equal(prReady.candidate_head_sha,'b'.repeat(40));
+        assert.equal(prReady.candidate_tree_sha,'c'.repeat(40));
+        assert.equal(prReady.base_branch,'main');
+        const missingConsent=await post('/v7/git/pr-draft',{
+          request_id:'prdraft_denied_'+(++count),ticket_id:'ticket_qa_test',
+          expected_remote_head_sha:'b'.repeat(40),
+          expected_candidate_tree_sha:'c'.repeat(40),
+          owner_confirmed_draft_only:false,
+          owner_review_note:'Owner did not authorize any GitHub write'},admin);
+        assert.equal(missingConsent.code,403);
+        const wrongCommit=await post('/v7/git/pr-draft',{
+          request_id:'prdraft_wrong_'+(++count),ticket_id:'ticket_qa_test',
+          expected_remote_head_sha:'f'.repeat(40),
+          expected_candidate_tree_sha:'c'.repeat(40),
+          owner_confirmed_draft_only:true,
+          owner_review_note:'External QA review has authorized the exact draft'},admin);
+        assert.equal(wrongCommit.code,409);
+        assert.equal(wrongCommit.body.error_code,'DRAFT_PR_CANDIDATE_CHANGED');
+        globalThis.fetch=(async(input:any,init?:any)=>{
+          const url=typeof input==='string'?input:String(input?.url||input);
+          const prefix='https://api.github.com/repos/example/repo/';
+          if(!url.startsWith(prefix))return realFetch(input,init);
+          const path=url.slice(prefix.length),method=init?.method||'GET';
+          if(method==='POST'){
+            assert.equal(path,'pulls','Draft PR creator has no other GitHub write');
+            const body=JSON.parse(String(init.body));
+            assert.equal(body.head,'ai/ticket_qa_test');
+            assert.equal(body.base,'main');
+            assert.equal(body.draft,true);
+            prPostCalls++;remoteDraftExists=true;
+            throw Error('GITHUB_DRAFT_PR_CREATED_BUT_RESPONSE_LOST');
+          }
+          assert.equal(method,'GET');prGetCalls++;
+          let result:any;
+          if(path==='branches/main')result={commit:{sha:'a'.repeat(40)}};
+          else if(path==='branches/ai/ticket_qa_test')
+            result={commit:{sha:'b'.repeat(40)}};
+          else if(path==='git/commits/'+'b'.repeat(40))
+            result={sha:'b'.repeat(40),tree:{sha:'c'.repeat(40)},
+              parents:[{sha:'a'.repeat(40)}]};
+          else if(path==='compare/'+'a'.repeat(40)+'...'+'b'.repeat(40))
+            result={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,
+              files:[{filename:'src/example.ts',status:'modified'}]};
+          else if(path.startsWith('pulls?')){
+            result=remoteDraftExists?[{number:77,
+              html_url:'https://github.com/example/repo/pull/77',
+              state:'open',draft:true,
+              head:{ref:'ai/ticket_qa_test',sha:'b'.repeat(40),
+                repo:{full_name:'example/repo'}},
+              base:{ref:'main',sha:'a'.repeat(40),
+                repo:{full_name:'example/repo'}}}]:[];
+          }else throw Error('Unexpected GitHub PR query '+path);
+          return new Response(JSON.stringify(result),{status:200});
+        }) as typeof fetch;
+        const createRequest={request_id:'prdraft_timeout_'+(++count),
+          ticket_id:'ticket_qa_test',
+          expected_remote_head_sha:'b'.repeat(40),
+          expected_candidate_tree_sha:'c'.repeat(40),
+          owner_review_note:'Owner verified the independent QA and permits draft ONLY',
+          owner_confirmed_draft_only:true};
+        const ambiguous=await post('/v7/git/pr-draft',createRequest,admin);
+        assert.equal(ambiguous.code,409,JSON.stringify(ambiguous.body));
+        assert.equal(ambiguous.body.error_code,
+          'DRAFT_PR_REMOTE_UNCERTAIN_DRAFT_PR_GITHUB_API_UNAVAILABLE');
+        assert.equal(prPostCalls,1);
+        const [pendingRows]=await db.query(
+          'SELECT pr_number,pr_url FROM v7_git_jobs WHERE ticket_id=?',
+          ['ticket_qa_test']);
+        assert.equal((pendingRows as any[])[0].pr_number,null);
+        assert.equal((pendingRows as any[])[0].pr_url,
+          'DRAFT_PR_ATTEMPT_PENDING:'+createRequest.request_id);
+        const repeated=await post('/v7/git/pr-draft',createRequest,admin);
+        assert.equal(repeated.code,409);
+        assert.equal(repeated.body.error_code,'DRAFT_PR_RECONCILIATION_REQUIRED');
+        assert.equal(prPostCalls,1,'Ambiguous GitHub PR create MUST never re-POST');
+        const recoveryQueue=await fetch(base+'/v7/owner/pr-recovery',{
+          headers:{authorization:'Bearer '+admin}});
+        assert.equal(recoveryQueue.status,200);
+        const recoveryList=await recoveryQueue.json() as any;
+        assert.equal(recoveryList.automatic_recreate_allowed,false);
+        const pendingPr=recoveryList.attempts.find(
+          (z:any)=>z.ticket_id==='ticket_qa_test');
+        assert.equal(pendingPr.original_request_id,createRequest.request_id);
+        assert.equal(pendingPr.remote_head_sha,'b'.repeat(40));
+        const noProof=await post('/v7/git/pr-recover-readonly',{
+          request_id:'prrecover_denied_'+(++count),
+          ticket_id:'ticket_qa_test',expected_remote_head_sha:'b'.repeat(40),
+          reason:'Owner must inspect real GitHub evidence before recovery',
+          owner_confirmed_readonly_proof:false},admin);
+        assert.equal(noProof.code,403);
+        const recovery={request_id:'prrecover_exact_'+(++count),
+          ticket_id:'ticket_qa_test',expected_remote_head_sha:'b'.repeat(40),
+          reason:'Owner independently inspected the remote existing draft',
+          owner_confirmed_readonly_proof:true};
+        const recovered=await post('/v7/git/pr-recover-readonly',recovery,admin);
+        assert.equal(recovered.code,200,JSON.stringify(recovered.body));
+        assert.equal(recovered.body.recovered_readonly,true);
+        assert.equal(recovered.body.second_pr_create_attempt,false);
+        assert.equal(recovered.body.merge_performed,false);
+        assert.equal(recovered.body.pr_number,77);
+        assert.equal(recovered.body.head_sha,'b'.repeat(40));
+        assert.equal(prPostCalls,1);
+        assert.ok(prGetCalls>=10);
+        const replay=await post('/v7/git/pr-recover-readonly',recovery,admin);
+        assert.equal(replay.code,200,JSON.stringify(replay.body));
+        assert.deepEqual(replay.body,recovered.body);
+        assert.equal(prPostCalls,1);
+        const [registered]=await db.query(
+          'SELECT pr_number,pr_url FROM v7_git_jobs WHERE ticket_id=?',
+          ['ticket_qa_test']);
+        assert.equal(Number((registered as any[])[0].pr_number),77);
+        assert.equal((registered as any[])[0].pr_url,
+          'https://github.com/example/repo/pull/77');
+        const prAfter=await fetch(base+'/v7/owner/pr-preflight/ticket_qa_test',{
+          headers:{authorization:'Bearer '+admin}});
+        assert.equal(prAfter.status,200);
+        assert.equal((await prAfter.json() as any).already_registered,true);
+        const queueCleared=await fetch(base+'/v7/owner/pr-recovery',{
+          headers:{authorization:'Bearer '+admin}});
+        assert.equal((await queueCleared.json() as any).attempts.length,0);
+      }finally{
+        globalThis.fetch=realFetch;
+        if(previousPrFlag===undefined)delete process.env.SUTRADHAR_ENABLE_PR_CREATION;
+        else process.env.SUTRADHAR_ENABLE_PR_CREATION=previousPrFlag;
+        if(previousPrToken===undefined)delete process.env.SUTRADHAR_GITHUB_PR_TOKEN;
+        else process.env.SUTRADHAR_GITHUB_PR_TOKEN=previousPrToken;
+      }
+
     }finally{await db.end();}
     // Same Owner command + request ID must be one durable effect across concurrent retries.
     const same={request_id:'concurrent_duplicate',command:'PAUSE',payload:{}};

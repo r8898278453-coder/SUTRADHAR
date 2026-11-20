@@ -39,13 +39,45 @@
 <label class="inline"><input type="checkbox" id="can-qa"> QA access</label>
 <div class="flex"><button data-command="GRANT_PROJECT_AGENT">Grant access</button>
 <button class="danger" data-command="REVOKE_PROJECT_AGENT">Revoke access</button></div></div>
-<div><label>Git review: ticket ID</label><input id="git-ticket-id" placeholder="ticket_...">
-<p>Draft PR creation stays disabled until Owner enables the scoped GitHub PR token on Central. No automatic merge or direct main push.</p>
-<div class="flex"><button id="draft-pr" class="outline">Create verified draft PR</button>
-<button id="verify-merge" class="outline">Verify external merge</button></div></div>
+<div><label for="git-ticket-id">Git review: ticket ID</label>
+<input id="git-ticket-id" autocomplete="off" placeholder="ticket_...">
+<p>First inspect the exact Central-confirmed Git commit. No PR creation unless Owner explicitly enables GitHub PR credentials on Central.</p>
+<button id="pr-preflight" type="button" class="outline">Inspect Draft PR prerequisites (read-only)</button>
+<label for="pr-expected-head">Approved candidate commit SHA (read-only)</label>
+<input id="pr-expected-head" readonly aria-readonly="true" spellcheck="false">
+<label for="pr-confirm-head">Retype full 40-character candidate SHA</label>
+<input id="pr-confirm-head" maxlength="40" spellcheck="false" autocomplete="off">
+<label for="pr-owner-note">Owner review reason (20–500 characters)</label>
+<input id="pr-owner-note" maxlength="500" autocomplete="off">
+<label class="inline" for="pr-consent"><input type="checkbox" id="pr-consent">
+I authorize ONE real GitHub Draft PR creation ONLY, not merge or main push.</label>
+<div class="flex"><button id="draft-pr" type="button" disabled>Create exact Draft PR ONCE</button>
+<button id="verify-merge" type="button" class="outline">Verify external merge</button></div>
+<p id="pr-status" role="status">No PR attempt authorized. First inspect the ticket and exact commit.</p></div>
 <div><label>Proposal ID</label><input id="proposal-id" placeholder="proposal_...">
 <div class="flex"><button data-command="APPROVE_PROPOSAL">Approve proposal</button><button data-command="DENY_PROPOSAL" class="danger">Deny</button></div></div>
 </div></section>
+<section class="panel owner" aria-labelledby="pr-recovery-title">
+<div class="panelhead"><h2 id="pr-recovery-title">Uncertain Draft PR creation — Owner read-only recovery</h2>
+<span id="pr-recovery-count" role="status">Not loaded</span></div>
+<p>A timed-out GitHub PR creation can have succeeded remotely. NEVER click Create again to retry. This queue lets the Owner verify an already-existing exact open draft via GitHub READ-ONLY requests. No second PR POST, Git push, merge or release.</p>
+<div class="scroll"><table><thead><tr><th>Ticket</th><th>Repository</th><th>Branch</th><th>Expected commit</th><th>Review</th></tr></thead>
+<tbody id="pr-recovery-jobs"></tbody></table></div>
+<div class="formgrid">
+<div><label for="pr-recovery-ticket">Selected ticket (read-only)</label>
+<input id="pr-recovery-ticket" readonly aria-readonly="true">
+<label for="pr-recovery-expected-head">Central-pinned commit (read-only)</label>
+<input id="pr-recovery-expected-head" readonly aria-readonly="true"></div>
+<div><label for="pr-recovery-confirm-head">Type exact commit SHA</label>
+<input id="pr-recovery-confirm-head" maxlength="40" autocomplete="off" spellcheck="false">
+<label for="pr-recovery-reason">Owner reason (20–500 characters)</label>
+<input id="pr-recovery-reason" maxlength="500" autocomplete="off">
+<label class="inline" for="pr-recovery-consent"><input type="checkbox" id="pr-recovery-consent">
+Perform existing Draft PR verification only; no PR create, push or merge.</label>
+<div class="flex"><button type="button" id="pr-recovery-verify" disabled>Verify existing remote Draft PR</button>
+<button type="button" id="pr-recovery-clear" class="outline">Clear local selection</button></div></div>
+</div><p id="pr-recovery-status" role="status">Select a pending intent after reviewing the GitHub repository externally.</p>
+</section>
 <section class="panel owner" aria-labelledby="git-recovery-title">
 <div class="panelhead"><h2 id="git-recovery-title">Uncertain Git publication — Owner recovery review</h2>
 <span id="git-recovery-count" role="status">Not loaded</span></div>

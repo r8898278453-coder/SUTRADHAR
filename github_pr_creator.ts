@@ -9,7 +9,8 @@ export type DraftPrResult =
 export type DraftPrFetcher = (url: string, init?: RequestInit) => Promise<Response>;
 export type DraftPrInput = {
   repo: string; token: string; branch: string; ticketId: string;
-  baselineCommit: string; candidateTreeSha: string;
+  baselineCommit: string; candidateTreeSha: string; baseBranch?: string;
+  expectedHeadSha?: string;
   changedFiles: string[]; allowedFiles: string[];
   title: string; description: string;
   fetcher?: DraftPrFetcher;
@@ -23,14 +24,21 @@ const safePath = (p: string) =>
   !p.split('/').some(part => !part || part === '.' || part === '..') &&
   p.length < 500;
 
-export async function createVerifiedDraftPr(input: DraftPrInput): Promise<DraftPrResult> {
+async function runVerifiedDraftPr(input: DraftPrInput, allowCreate: boolean): Promise<DraftPrResult> {
   const deny = (error: string): DraftPrResult => ({ created: false, error });
   const { repo, branch, ticketId, baselineCommit, candidateTreeSha } = input;
+  const baseBranch=input.baseBranch||'main';
   const changed = new Set(input.changedFiles || []);
   const allowed = new Set(input.allowedFiles || []);
   if (!repoPattern.test(repo || '') || !branchPattern.test(branch || '') ||
-      !ticketId || ticketId.length > 128 || !sha.test(baselineCommit || '') ||
-      !sha.test(candidateTreeSha || '') || !input.token?.trim() ||
+      !ticketId || ticketId.length > 128 ||
+      !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$/.test(baseBranch) ||
+      baseBranch.includes('..') || baseBranch.includes('//') ||
+      baseBranch.endsWith('/') ||
+      !sha.test(baselineCommit || '') ||
+      !sha.test(candidateTreeSha || '') ||
+      (input.expectedHeadSha!==undefined&&!sha.test(input.expectedHeadSha)) ||
+      !input.token?.trim() ||
       changed.size === 0 || changed.size >= 100 ||
       changed.size !== input.changedFiles.length ||
       ![...changed].every(file => safePath(file) && allowed.has(file)) ||
@@ -55,14 +63,16 @@ export async function createVerifiedDraftPr(input: DraftPrInput): Promise<DraftP
     return r.json();
   }
   try {
-    const base = await request('/branches/main');
+    const safeBase=baseBranch.split('/').map(encodeURIComponent).join('/');
+    const base = await request('/branches/'+safeBase);
     if (base?.commit?.sha !== baselineCommit) return deny('DRAFT_PR_MAIN_MOVED_RETEST_REQUIRED');
     // A branch is expected to be pushed by the worker's scoped Git workflow.
     // This endpoint never creates/overwrites refs or uploads untested content.
     const safeBranch = branch.split('/').map(encodeURIComponent).join('/');
     const remote = await request(`/branches/${safeBranch}`);
     const headSha = remote?.commit?.sha;
-    if (typeof headSha !== 'string' || !sha.test(headSha) || headSha === baselineCommit) {
+    if (typeof headSha !== 'string' || !sha.test(headSha) || headSha === baselineCommit ||
+        (input.expectedHeadSha!==undefined&&headSha!==input.expectedHeadSha)) {
       return deny('DRAFT_PR_BRANCH_NOT_PUSHED');
     }
     const [commit, comparison] = await Promise.all([
@@ -80,33 +90,34 @@ export async function createVerifiedDraftPr(input: DraftPrInput): Promise<DraftP
         comparison.files.some((file: any) =>
           !changed.has(file?.filename) || !safePath(file.filename) ||
           !allowed.has(file.filename) ||
-          !['added', 'modified', 'removed'].includes(file.status) ||
+          !['added', 'modified'].includes(file.status) ||
           file.previous_filename)) {
       return deny('DRAFT_PR_TESTED_COMMIT_MISMATCH');
     }
 
     const [owner] = repo.split('/');
     const query = new URLSearchParams({
-      state: 'all', head: `${owner}:${branch}`, base: 'main', per_page: '100'
+      state: 'all', head: `${owner}:${branch}`, base: baseBranch, per_page: '100'
     });
     const existing = await request(`/pulls?${query.toString()}`);
     if (!Array.isArray(existing) || existing.length >= 100) return deny('DRAFT_PR_LIST_INCOMPLETE');
     const candidates = existing.filter((pr: any) =>
       pr?.head?.ref === branch && pr.head.repo?.full_name === repo &&
-      pr?.base?.ref === 'main' && pr.base.repo?.full_name === repo);
+      pr?.base?.ref === baseBranch && pr.base.repo?.full_name === repo);
     if (candidates.length) {
       if (candidates.length !== 1 || candidates[0].state !== 'open' ||
           candidates[0].draft !== true || candidates[0].head.sha !== headSha ||
           !Number.isSafeInteger(candidates[0].number) ||
           candidates[0].number < 1 ||
           candidates[0].base.sha !== baselineCommit ||
-          typeof candidates[0].html_url !== 'string') {
+          candidates[0].html_url!==`https://github.com/${repo}/pull/${candidates[0].number}`) {
         return deny('DRAFT_PR_BRANCH_ALREADY_USED');
       }
       return { created: true, existing: true, prNumber: candidates[0].number,
         url: candidates[0].html_url, headSha, treeSha: candidateTreeSha, branch, repo };
     }
 
+    if(!allowCreate)return deny('DRAFT_PR_NOT_FOUND_OWNER_RECONCILIATION');
     const body = [
       'SUTRADHAR: Human review required. This is NOT merged.',
       `Ticket: ${ticketId}`, `Tested baseline: ${baselineCommit}`,
@@ -116,17 +127,17 @@ export async function createVerifiedDraftPr(input: DraftPrInput): Promise<DraftP
     ].join('\n').slice(0, 3500);
     const created = await request('/pulls', 'POST', {
       title: input.title.slice(0, 180), head: branch,
-      base: 'main', draft: true, body
+      base: baseBranch, draft: true, body
     });
     // A concurrent worker push could change HEAD between preflight and PR create.
     // Never persist mismatched PR evidence; draft remains review-only.
     if (created?.draft !== true || created?.state !== 'open' ||
         created?.head?.ref !== branch || created.head.sha !== headSha ||
         created.head.repo?.full_name !== repo ||
-        created?.base?.ref !== 'main' || created.base.repo?.full_name !== repo ||
+        created?.base?.ref !== baseBranch || created.base.repo?.full_name !== repo ||
         created.base.sha !== baselineCommit ||
         !Number.isSafeInteger(created.number) || created.number < 1 ||
-        typeof created.html_url !== 'string') {
+        created.html_url!==`https://github.com/${repo}/pull/${created.number}`) {
       return deny('DRAFT_PR_RESPONSE_HEAD_CHANGED_MANUAL_REVIEW');
     }
     return { created: true, existing: false, prNumber: created.number,
@@ -135,4 +146,11 @@ export async function createVerifiedDraftPr(input: DraftPrInput): Promise<DraftP
     // The caller must not treat an API error (even after POST) as success.
     return deny('DRAFT_PR_GITHUB_API_UNAVAILABLE');
   }
+}
+/** The recovery path performs GETs only, even if the draft is absent. */
+export async function inspectVerifiedDraftPr(input: DraftPrInput): Promise<DraftPrResult>{
+  return runVerifiedDraftPr(input,false);
+}
+export async function createVerifiedDraftPr(input: DraftPrInput): Promise<DraftPrResult>{
+  return runVerifiedDraftPr(input,true);
 }
