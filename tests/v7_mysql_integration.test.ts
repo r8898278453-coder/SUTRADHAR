@@ -546,9 +546,9 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       candidate_tree_sha:'c'.repeat(40),evidence_ref:proof.evidence_ref,
       evidence_sha256:proof.attestation.message.evidence_sha256,
       passed:true,review_proposal_id:reviewedId};
-    const premature=await c.signed('/v7/tasks/qa-receipt',receiptBody);
-    assert.equal(premature.code,403,JSON.stringify(premature.body));
-    assert.equal(premature.body.error_code,'QA_VERIFIED_OWNER_REVIEW_REQUIRED');
+    const prematureQa=await c.signed('/v7/tasks/qa-receipt',receiptBody);
+    assert.equal(prematureQa.code,403,JSON.stringify(prematureQa.body));
+    assert.equal(prematureQa.body.error_code,'QA_VERIFIED_OWNER_REVIEW_REQUIRED');
     const genericOwner=await post('/v7/owner/command',{request_id:'qa_generic_'+(++count),
       command:'APPROVE_PROPOSAL',payload:{proposal_id:reviewedId}},admin);
     assert.equal(genericOwner.code,403,JSON.stringify(genericOwner.body));

@@ -48,6 +48,15 @@ function okId(x:unknown){return typeof x==='string'&&ID_RE.test(x);}
 function requireId(x:unknown){if(!okId(x))fault('INVALID_ID',400);return x as string;}
 function requireSha(x:unknown){if(typeof x!=='string'||!SHA_RE.test(x))fault('INVALID_SHA',400);return x;}
 function requireStr(x:unknown,max=1000):string{if(typeof x!=='string'||!x.trim()||x.length>max)fault('INVALID_FIELD',400);return (x as string).trim();}
+function storedQaProof(value:any,invalidCode:string):ReturnType<typeof validatedStoredQaEvidence>{
+  try{
+    return validatedStoredQaEvidence(typeof value==='string'?JSON.parse(value):value);
+  }catch{return fault(invalidCode,409);}
+}
+function uploadedQaProof(input:Parameters<typeof verifyQaEvidencePackage>[0]){
+  try{return verifyQaEvidencePackage(input);}
+  catch(e){if(e instanceof QaEvidenceError)return fault(e.code,400);throw e;}
+}
 function safeEqual(a:string|undefined,b:string|undefined){
   if(!a||!b)return false;
   const x=crypto.createHash('sha256').update(a).digest();
@@ -377,10 +386,7 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
       const review=await one(c,'SELECT * FROM v7_approvals WHERE proposal_id=? '+
         'AND kind="QA_EVIDENCE_REVIEW" FOR UPDATE',[proposalId]);
       if(!review||review.state!=='PENDING')fault('QA_REVIEW_NOT_PENDING',409);
-      let proof;
-      try{proof=validatedStoredQaEvidence(
-        typeof review.justification==='string'?JSON.parse(review.justification):review.justification);}
-      catch{fault('QA_REVIEW_PROOF_CORRUPT',409);}
+      const proof=storedQaProof(review.justification,'QA_REVIEW_PROOF_CORRUPT');
       if(qaEvidenceProposalId(proof)!==proposalId||
          review.ticket_id!==proof.ticket_id)
         fault('QA_REVIEW_PROOF_CORRUPT',409);
@@ -1020,10 +1026,7 @@ app.get('/v7/owner/qa-reviews',jsonRoute(async req=>{
       'FROM v7_approvals WHERE kind="QA_EVIDENCE_REVIEW" '+
       'AND state="PENDING" ORDER BY created_at ASC LIMIT 50');
     return {reviews:reviews.map(row=>{
-      let p;
-      try{p=validatedStoredQaEvidence(
-        typeof row.justification==='string'?JSON.parse(row.justification):row.justification);}
-      catch{fault('QA_REVIEW_PROOF_CORRUPT',409);}
+      const p=storedQaProof(row.justification,'QA_REVIEW_PROOF_CORRUPT');
       if(qaEvidenceProposalId(p)!==row.proposal_id||p.ticket_id!==row.ticket_id)
         fault('QA_REVIEW_PROOF_CORRUPT',409);
       return {review_proposal_id:row.proposal_id,ticket_id:p.ticket_id,
@@ -1055,23 +1058,18 @@ app.post('/v7/tasks/qa-evidence',jsonRoute(async req=>{
         'SELECT can_qa FROM v7_project_agents WHERE project_id=? AND agent_id=?',
         [t.project_id,agentId]);
       if(!grant?.can_qa)fault('PROJECT_QA_ACCESS_DENIED',403);
-      let proof;
-      try{proof=verifyQaEvidencePackage({
+      const proof=uploadedQaProof({
         evidence_base64:d.evidence_base64,attestation:d.attestation,
         enrolled_public_key_pem:node.public_key_pem,node_id:node.node_id,
         agent_id:agentId,ticket_id:ticketId,worker_agent_id:t.worker_agent_id,
         baseline_sha:t.baseline_sha,candidate_head_sha:t.candidate_head_sha,
-        candidate_tree_sha:t.candidate_tree_sha});}
-      catch(e){if(e instanceof QaEvidenceError)fault(e.code,400);throw e;}
+        candidate_tree_sha:t.candidate_tree_sha});
       if(d.evidence_ref!==proof.evidence_ref)fault('QA_EVIDENCE_REF_MISMATCH',400);
       const proposalId=qaEvidenceProposalId(proof);
       const prior=await one(c,'SELECT * FROM v7_approvals WHERE proposal_id=? FOR UPDATE',
         [proposalId]);
       if(prior){
-        let p;
-        try{p=validatedStoredQaEvidence(
-          typeof prior.justification==='string'?JSON.parse(prior.justification):prior.justification);}
-        catch{fault('QA_EVIDENCE_EXISTING_PROOF_INVALID',409);}
+        const p=storedQaProof(prior.justification,'QA_EVIDENCE_EXISTING_PROOF_INVALID');
         if(prior.kind!=='QA_EVIDENCE_REVIEW'||prior.ticket_id!==ticketId||
            JSON.stringify(p)!==JSON.stringify(proof))
           fault('QA_EVIDENCE_PROPOSAL_COLLISION',409);
@@ -1120,10 +1118,7 @@ app.post('/v7/tasks/qa-receipt',jsonRoute(async req=>{
       const review=await one(c,'SELECT * FROM v7_approvals WHERE proposal_id=? '+
         'AND ticket_id=? AND kind="QA_EVIDENCE_REVIEW" FOR UPDATE',[reviewId,ticket]);
       if(!review||review.state!=='APPROVED')fault('QA_VERIFIED_OWNER_REVIEW_REQUIRED',403);
-      let proof;
-      try{proof=validatedStoredQaEvidence(
-        typeof review.justification==='string'?JSON.parse(review.justification):review.justification);}
-      catch{fault('QA_VERIFIED_REVIEW_CORRUPT',409);}
+      const proof=storedQaProof(review.justification,'QA_VERIFIED_REVIEW_CORRUPT');
       if(qaEvidenceProposalId(proof)!==reviewId||
          proof.node_id!==node.node_id||proof.qa_agent_id!==id||
          proof.developer_agent_id!==t.worker_agent_id||
