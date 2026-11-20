@@ -16,6 +16,7 @@ import {inspectGitRemote} from './git_remote.ts';
 import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest,validTaskBranch,isProtectedScope} from './rules.ts';
 import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
+import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,QaEvidenceError} from './qa_evidence.ts';
 import sharedContract from '../packages/shared/contract.json';
 
 const app=express();
@@ -362,8 +363,60 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
       else await c.query('INSERT INTO v7_project_agents(project_id,agent_id,can_develop,can_qa) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE can_develop=VALUES(can_develop),can_qa=VALUES(can_qa)',
         [projectId,agentId,payload.can_develop===true?1:0,payload.can_qa===true?1:0]);
       result={project_id:projectId,agent_id:agentId,action:command};
+    }else if(command==='APPROVE_QA_EVIDENCE'||command==='REJECT_QA_EVIDENCE'){
+      const proposalId=requireId(payload.review_proposal_id);
+      const reviewNote=requireStr(payload.review_note,500);
+      if(!/^qaev_[a-f0-9]{64}$/.test(proposalId)||reviewNote.length<20)
+        fault('QA_OWNER_REVIEW_INPUT_INVALID',400);
+      if(command==='APPROVE_QA_EVIDENCE'&&
+         (payload.device_identity_confirmed!==true||
+          payload.runner_provenance_reviewed!==true||
+          payload.test_evidence_reviewed!==true||
+          payload.independence_verified!==true))
+        fault('QA_OWNER_INDEPENDENT_REVIEW_REQUIRED',403);
+      const review=await one(c,'SELECT * FROM v7_approvals WHERE proposal_id=? '+
+        'AND kind="QA_EVIDENCE_REVIEW" FOR UPDATE',[proposalId]);
+      if(!review||review.state!=='PENDING')fault('QA_REVIEW_NOT_PENDING',409);
+      let proof;
+      try{proof=validatedStoredQaEvidence(
+        typeof review.justification==='string'?JSON.parse(review.justification):review.justification);}
+      catch{fault('QA_REVIEW_PROOF_CORRUPT',409);}
+      if(qaEvidenceProposalId(proof)!==proposalId||
+         review.ticket_id!==proof.ticket_id)
+        fault('QA_REVIEW_PROOF_CORRUPT',409);
+      const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',
+        [proof.ticket_id]);
+      if(!t||t.status!=='SUBMITTED_FOR_REVIEW'||
+         t.worker_agent_id!==proof.developer_agent_id||
+         t.candidate_head_sha!==proof.candidate_head_sha||
+         t.candidate_tree_sha!==proof.candidate_tree_sha||
+         t.baseline_sha!==proof.baseline_sha)
+        fault('QA_REVIEW_CANDIDATE_CHANGED',409);
+      const grant=await one(c,'SELECT a.agent_id FROM v7_agents a '+
+        'JOIN v7_nodes n ON n.node_id=a.node_id '+
+        'JOIN v7_project_agents pa ON pa.agent_id=a.agent_id AND pa.project_id=? '+
+        'WHERE a.agent_id=? AND a.node_id=? AND a.state="APPROVED" '+
+        'AND a.qa_eligible=1 AND n.state="APPROVED" AND pa.can_qa=1',
+        [t.project_id,proof.qa_agent_id,proof.node_id]);
+      const workerNode=await one(c,
+        'SELECT node_id FROM v7_agents WHERE agent_id=?',[t.worker_agent_id]);
+      if(!grant||t.worker_agent_id===proof.qa_agent_id||
+         !workerNode||workerNode.node_id===proof.node_id)
+        fault('QA_REVIEW_INDEPENDENCE_OR_ACCESS_REVOKED',403);
+      await c.query('UPDATE v7_approvals SET state=?,resolved_at=UTC_TIMESTAMP(3) '+
+        'WHERE proposal_id=? AND state="PENDING"',
+        [command==='APPROVE_QA_EVIDENCE'?'APPROVED':'DENIED',proposalId]);
+      // The Owner may verify real Docker logs and physical independence OUTSIDE
+      // Central; do not describe these boolean attestations as automatic proof.
+      result={ticket_id:proof.ticket_id,review_proposal_id:proposalId,
+        state:command==='APPROVE_QA_EVIDENCE'?'APPROVED':'DENIED',
+        evidence_sha256:proof.evidence_sha256,
+        passed:proof.passed,qa_receipt_submitted:false,
+        integration_performed:false,review_note:reviewNote};
     }else if(command==='APPROVE_PROPOSAL'||command==='DENY_PROPOSAL'){
       const id=requireId(payload.proposal_id),state=command==='APPROVE_PROPOSAL'?'APPROVED':'DENIED';
+      const reserved=await one(c,'SELECT kind FROM v7_approvals WHERE proposal_id=? FOR UPDATE',[id]);
+      if(reserved?.kind==='QA_EVIDENCE_REVIEW')fault('QA_REVIEW_REQUIRES_OWNER_EVIDENCE_COMMAND',403);
       const [u]:any=await c.query('UPDATE v7_approvals SET state=?,resolved_at=UTC_TIMESTAMP(3) WHERE proposal_id=? AND state="PENDING"',[state,id]);
       if(u.affectedRows!==1)fault('PROPOSAL_NOT_PENDING',409);
       const ticketRow=await one(c,'SELECT ticket_id,status FROM v7_tickets WHERE ticket_id=(SELECT ticket_id FROM v7_approvals WHERE proposal_id=?) FOR UPDATE',[id]);
@@ -953,10 +1006,97 @@ app.post('/v7/tasks/submit',jsonRoute(async req=>{
     return {accepted:true,ticket_id:ticket,status:'SUBMITTED_FOR_REVIEW'};
   }));
 }));
+// Signed node/QA-agent upload: verify the *exact report bytes* and device
+// signature against the approved node key from MySQL. This only creates a
+// PENDING Owner review. No QA pass, integration or Git privilege is granted.
+// Owner-only review queue: safe metadata, no private report blobs or keys.
+// The operator must still obtain and inspect the original real Docker evidence
+// independently before deciding a review. Zero automatic approval.
+app.get('/v7/owner/qa-reviews',jsonRoute(async req=>{
+  admin(req);
+  return transaction(async c=>{
+    const reviews=await rows(c,
+      'SELECT proposal_id,ticket_id,justification,created_at '+
+      'FROM v7_approvals WHERE kind="QA_EVIDENCE_REVIEW" '+
+      'AND state="PENDING" ORDER BY created_at ASC LIMIT 50');
+    return {reviews:reviews.map(row=>{
+      let p;
+      try{p=validatedStoredQaEvidence(
+        typeof row.justification==='string'?JSON.parse(row.justification):row.justification);}
+      catch{fault('QA_REVIEW_PROOF_CORRUPT',409);}
+      if(qaEvidenceProposalId(p)!==row.proposal_id||p.ticket_id!==row.ticket_id)
+        fault('QA_REVIEW_PROOF_CORRUPT',409);
+      return {review_proposal_id:row.proposal_id,ticket_id:p.ticket_id,
+        qa_agent_id:p.qa_agent_id,developer_agent_id:p.developer_agent_id,
+        node_id:p.node_id,candidate_head_sha:p.candidate_head_sha,
+        candidate_tree_sha:p.candidate_tree_sha,
+        baseline_sha:p.baseline_sha,evidence_sha256:p.evidence_sha256,
+        image_sha256:p.image_sha256,passed:p.passed,
+        state:'PENDING',owner_review_required:true};
+    }),qa_approved_automatically:false,integration_performed:false};
+  });
+}));
+app.post('/v7/tasks/qa-evidence',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body||{};
+  const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id);
+  return transaction(async c=>{
+    await leader(c);
+    await signedAgent(c,node.node_id,agentId,true);
+    await requireNoNodeDrain(c,node.node_id);
+    return idem(c,agentId,d.request_id,'QA_EVIDENCE',d,async()=>{
+      const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
+      if(!t||t.status!=='SUBMITTED_FOR_REVIEW'||t.worker_agent_id===agentId)
+        fault('QA_EVIDENCE_INDEPENDENCE_OR_STATE',409);
+      const dev=await one(c,'SELECT node_id FROM v7_agents WHERE agent_id=?',
+        [t.worker_agent_id]);
+      if(!dev||dev.node_id===node.node_id)
+        fault('QA_DEVICE_NOT_INDEPENDENT',403);
+      const grant=await one(c,
+        'SELECT can_qa FROM v7_project_agents WHERE project_id=? AND agent_id=?',
+        [t.project_id,agentId]);
+      if(!grant?.can_qa)fault('PROJECT_QA_ACCESS_DENIED',403);
+      let proof;
+      try{proof=verifyQaEvidencePackage({
+        evidence_base64:d.evidence_base64,attestation:d.attestation,
+        enrolled_public_key_pem:node.public_key_pem,node_id:node.node_id,
+        agent_id:agentId,ticket_id:ticketId,worker_agent_id:t.worker_agent_id,
+        baseline_sha:t.baseline_sha,candidate_head_sha:t.candidate_head_sha,
+        candidate_tree_sha:t.candidate_tree_sha});}
+      catch(e){if(e instanceof QaEvidenceError)fault(e.code,400);throw e;}
+      if(d.evidence_ref!==proof.evidence_ref)fault('QA_EVIDENCE_REF_MISMATCH',400);
+      const proposalId=qaEvidenceProposalId(proof);
+      const prior=await one(c,'SELECT * FROM v7_approvals WHERE proposal_id=? FOR UPDATE',
+        [proposalId]);
+      if(prior){
+        let p;
+        try{p=validatedStoredQaEvidence(
+          typeof prior.justification==='string'?JSON.parse(prior.justification):prior.justification);}
+        catch{fault('QA_EVIDENCE_EXISTING_PROOF_INVALID',409);}
+        if(prior.kind!=='QA_EVIDENCE_REVIEW'||prior.ticket_id!==ticketId||
+           JSON.stringify(p)!==JSON.stringify(proof))
+          fault('QA_EVIDENCE_PROPOSAL_COLLISION',409);
+      }else{
+        await c.query('INSERT INTO v7_approvals(proposal_id,ticket_id,kind,justification) VALUES(?,?,?,?)',
+          [proposalId,ticketId,'QA_EVIDENCE_REVIEW',JSON.stringify(proof)]);
+      }
+      await event(c,'QA_EVIDENCE_DEVICE_VERIFIED',agentId,Number((await leader(c)).epoch),
+        ticketId,{proposal:proposalId,evidence_sha256:proof.evidence_sha256,
+          node_id:node.node_id,passed:proof.passed});
+      return {accepted:true,review_proposal_id:proposalId,
+        status:prior?.state==='APPROVED'?'APPROVED_OWNER_REVIEW':
+          prior?.state==='DENIED'?'DENIED_OWNER_REVIEW':'PENDING_OWNER_REVIEW',
+        evidence_sha256:proof.evidence_sha256,device_signature_verified:true,
+        qa_approved:false,qa_receipt_submitted:false,
+        integration_performed:false,git_published:false};
+    });
+  });
+}));
 app.post('/v7/tasks/qa-receipt',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{},id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
   const evidenceRef=requireStr(d.evidence_ref,450),hash=requireStr(d.evidence_sha256,64);
   if(!/^[0-9a-f]{64}$/.test(hash)||typeof d.passed!=='boolean')fault('INVALID_QA_RECEIPT',400);
+  // No legacy hash-only attestation or generic Owner approval can advance QA.
+  // The proof must be independently signed, Central-verified and Owner-reviewed.
   return transaction(async c=>{
     await leader(c); // QA work from a fenced PC cannot start anew.
     await signedAgent(c,node.node_id,id,true);
@@ -964,11 +1104,38 @@ app.post('/v7/tasks/qa-receipt',jsonRoute(async req=>{
     return idem(c,id,d.request_id,'QA_RECEIPT',d,async()=>{
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticket]);
       if(!t||t.status!=='SUBMITTED_FOR_REVIEW'||t.worker_agent_id===id)fault('QA_INDEPENDENCE_OR_STATE',409);
+      const developer=await one(c,'SELECT node_id FROM v7_agents WHERE agent_id=?',[t.worker_agent_id]);
+      if(!developer||developer.node_id===node.node_id)
+        fault('QA_DEVICE_NOT_INDEPENDENT',403);
       const access=await one(c,'SELECT can_qa FROM v7_project_agents WHERE project_id=? AND agent_id=?',
         [t.project_id,id]);
       if(!access?.can_qa)fault('PROJECT_QA_ACCESS_DENIED',403);
       if(t.candidate_head_sha!==d.candidate_head_sha||t.candidate_tree_sha!==d.candidate_tree_sha)
         fault('CANDIDATE_SHA_MISMATCH',409);
+      if(typeof d.review_proposal_id!=='string'||
+         !/^qaev_[a-f0-9]{64}$/.test(d.review_proposal_id)||
+         evidenceRef!=='sha256:'+hash)
+        fault('QA_VERIFIED_REVIEW_REQUIRED',403);
+      const reviewId=d.review_proposal_id;
+      const review=await one(c,'SELECT * FROM v7_approvals WHERE proposal_id=? '+
+        'AND ticket_id=? AND kind="QA_EVIDENCE_REVIEW" FOR UPDATE',[reviewId,ticket]);
+      if(!review||review.state!=='APPROVED')fault('QA_VERIFIED_OWNER_REVIEW_REQUIRED',403);
+      let proof;
+      try{proof=validatedStoredQaEvidence(
+        typeof review.justification==='string'?JSON.parse(review.justification):review.justification);}
+      catch{fault('QA_VERIFIED_REVIEW_CORRUPT',409);}
+      if(qaEvidenceProposalId(proof)!==reviewId||
+         proof.node_id!==node.node_id||proof.qa_agent_id!==id||
+         proof.developer_agent_id!==t.worker_agent_id||
+         proof.ticket_id!==ticket||proof.baseline_sha!==t.baseline_sha||
+         proof.candidate_head_sha!==t.candidate_head_sha||
+         proof.candidate_tree_sha!==t.candidate_tree_sha||
+         proof.evidence_sha256!==hash||proof.evidence_ref!==evidenceRef||
+         proof.passed!==d.passed)
+        fault('QA_VERIFIED_EVIDENCE_MISMATCH',409);
+      const used=await one(c,'SELECT receipt_id FROM v7_qa_receipts '+
+        'WHERE ticket_id=? AND evidence_sha256=? FOR UPDATE',[ticket,hash]);
+      if(used)fault('QA_EVIDENCE_ALREADY_CONSUMED',409);
       const receipt=crypto.randomUUID();
       await c.query('INSERT INTO v7_qa_receipts(receipt_id,ticket_id,agent_id,head_sha,tree_sha,passed,evidence_sha256,evidence_ref) VALUES(?,?,?,?,?,?,?,?)',
         [receipt,ticket,id,t.candidate_head_sha,t.candidate_tree_sha,d.passed?1:0,hash,evidenceRef]);
@@ -984,6 +1151,7 @@ app.post('/v7/tasks/qa-receipt',jsonRoute(async req=>{
 app.post('/v7/tasks/propose-change',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{},id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
   const kind=requireStr(d.kind,50),reason=requireStr(d.justification,1500);
+  if(kind==='QA_EVIDENCE_REVIEW')fault('QA_REVIEW_KIND_RESERVED',403);
   return transaction(async c=>{
     await leader(c);
     await signedAgent(c,node.node_id,id);
@@ -1021,7 +1189,7 @@ app.post('/v7/git/reserve',jsonRoute(async req=>{
         [ticketId,agentId,t.candidate_head_sha,t.candidate_tree_sha]);
       if(!qa)fault('INDEPENDENT_QA_RECEIPT_REQUIRED',409);
       if(['HIGH','CORE'].includes(t.risk)){
-        const approval=await one(c,'SELECT proposal_id FROM v7_approvals WHERE ticket_id=? AND state="APPROVED"',[ticketId]);
+        const approval=await one(c,'SELECT proposal_id FROM v7_approvals WHERE ticket_id=? AND state="APPROVED" AND kind!="QA_EVIDENCE_REVIEW"',[ticketId]);
         if(!approval)fault('OWNER_APPROVAL_REQUIRED',403);
       }
       if(await one(c,'SELECT ticket_id FROM v7_git_jobs WHERE ticket_id=?',[ticketId]))
@@ -1299,7 +1467,7 @@ app.post('/v7/tasks/verify-merge',jsonRoute(async req=>{
     if(!job||job.state!=='CONFIRMED'||!job.remote_head_sha||!job.pr_number)
       fault('VERIFIED_GIT_DRAFT_PR_REQUIRED',409);
     if(t.risk==='CORE'||t.risk==='HIGH'){
-      const approval=await one(c,'SELECT proposal_id FROM v7_approvals WHERE ticket_id=? AND state="APPROVED"',[ticket]);
+      const approval=await one(c,'SELECT proposal_id FROM v7_approvals WHERE ticket_id=? AND state="APPROVED" AND kind!="QA_EVIDENCE_REVIEW"',[ticket]);
       if(!approval)fault('OWNER_APPROVAL_REQUIRED',409);
     }
     return {t,p,job};

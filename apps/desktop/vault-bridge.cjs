@@ -154,6 +154,35 @@ function createSignerBridge(vault){
         !/^[a-f0-9]{40}$/.test(payload.candidate_head_sha||'')||
         !/^[a-f0-9]{40}$/.test(payload.candidate_tree_sha||'')||
         !epoch)fail('VAULT_WORKER_ACTION_DENIED');
+    }else if(operation==='qa-evidence'){
+      uri='/v7/tasks/qa-evidence';
+      expected=['request_id','agent_id','ticket_id','evidence_base64',
+        'attestation','evidence_ref'];
+      if(!id(payload.request_id)||!payload.request_id.startsWith('qaevidence_')||
+         !id(payload.ticket_id)||
+         typeof payload.evidence_base64!=='string'||
+         payload.evidence_base64.length<100||payload.evidence_base64.length>22000||
+         !/^[A-Za-z0-9+/]+={0,2}$/.test(payload.evidence_base64)||
+         !payload.attestation||typeof payload.attestation!=='object'||
+         Array.isArray(payload.attestation)||
+         payload.attestation.schema!==1||
+         typeof payload.evidence_ref!=='string'||
+         !/^sha256:[a-f0-9]{64}$/.test(payload.evidence_ref))
+        fail('VAULT_WORKER_ACTION_DENIED');
+    }else if(operation==='qa-receipt'){
+      uri='/v7/tasks/qa-receipt';
+      expected=['request_id','agent_id','ticket_id','candidate_head_sha',
+        'candidate_tree_sha','evidence_sha256','evidence_ref',
+        'passed','review_proposal_id'];
+      if(!id(payload.request_id)||!payload.request_id.startsWith('qareceipt_')||
+         !id(payload.ticket_id)||
+         !/^[a-f0-9]{40}$/.test(payload.candidate_head_sha||'')||
+         !/^[a-f0-9]{40}$/.test(payload.candidate_tree_sha||'')||
+         !/^[a-f0-9]{64}$/.test(payload.evidence_sha256||'')||
+         payload.evidence_ref!=='sha256:'+payload.evidence_sha256||
+         typeof payload.passed!=='boolean'||
+         !/^qaev_[a-f0-9]{64}$/.test(payload.review_proposal_id||''))
+        fail('VAULT_WORKER_ACTION_DENIED');
     }else if(operation==='renew-lease'||operation==='checkpoint'){
       uri=operation==='renew-lease'?'/v7/tasks/renew-lease':'/v7/tasks/checkpoint';
       expected=operation==='renew-lease'?
@@ -177,7 +206,8 @@ function createSignerBridge(vault){
       Object.keys(payload).some(k=>!expected.includes(k)))
       fail('VAULT_WORKER_ACTION_DENIED');
     const body=JSON.stringify(payload);
-    if(Buffer.byteLength(body,'utf8')>(operation==='checkpoint'?16*1024:2048))
+    if(Buffer.byteLength(body,'utf8')>(operation==='qa-evidence'?48*1024:
+      operation==='checkpoint'?16*1024:2048))
       fail('VAULT_WORKER_ACTION_DENIED');
     const key=crypto.createPrivateKey(v.private_key_pem);
     const ts=Date.now(),nonce='nonce_'+crypto.randomUUID().replace(/-/g,'');

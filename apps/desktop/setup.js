@@ -69,6 +69,8 @@ async function loadStatus(){
     get('workerQAInspect').disabled=!approvedReadOnly;
     get('workerQARun').disabled=!approvedReadOnly||!s.qaRunnerConfigured;
     get('workerQAAttest').disabled=!approvedReadOnly;
+    get('workerQAUpload').disabled=!approvedReadOnly;
+    get('workerQAReceipt').disabled=!approvedReadOnly;
 
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
@@ -515,5 +517,36 @@ get('workerQAAttest').addEventListener('click',async()=>{
   }catch(error){
     output.textContent='QA evidence signing blocked: '+String(error?.message||error)+
       '. Preserve local report and attempt journal; ask Owner to investigate tampering or changed Central candidate.';
+  }finally{await loadStatus();}
+});
+get('workerQAUpload').addEventListener('click',async()=>{
+  const output=get('workerTasks');get('workerQAUpload').disabled=true;
+  try{
+    const r=await api.submitQaEvidenceForOwner(get('workerAgent').value,
+      exactWorkerTicket());
+    output.textContent=r.canceled?'Central evidence upload canceled.':
+      'Central validated the QA device signature. Review ID: '+
+      r.review_proposal_id+'. Status: '+r.status+
+      '. Owner must inspect the original QA report and runner independently. '+
+      'No QA receipt, Git push or production deployment occurred.';
+  }catch(error){
+    output.textContent='Central QA evidence upload blocked/uncertain: '+
+      String(error?.message||error)+
+      '. Preserve immutable local journal. Retry only the exact agent/ticket.';
+  }finally{await loadStatus();}
+});
+get('workerQAReceipt').addEventListener('click',async()=>{
+  const output=get('workerTasks');get('workerQAReceipt').disabled=true;
+  try{
+    const r=await api.submitOwnerReviewedQaReceipt(get('workerAgent').value,
+      exactWorkerTicket());
+    output.textContent=r.canceled?'QA receipt canceled.':
+      'Central reviewed QA receipt: '+r.status+
+      ', exact ticket '+r.ticket_id+
+      '. This DOES NOT perform Git publication, merge or deployment.';
+  }catch(error){
+    output.textContent='QA receipt denied/uncertain: '+
+      String(error?.message||error)+
+      '. Never bypass Owner approval or repeat with a new request ID.';
   }finally{await loadStatus();}
 });

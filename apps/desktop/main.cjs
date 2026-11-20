@@ -45,6 +45,7 @@ const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
 const {runIndependentQa,validPolicy}=require('./qa-execution.cjs');
 const {attestIndependentQa}=require('./qa-evidence.cjs');
+const {submitQaEvidenceForOwner,submitOwnerReviewedQaReceipt}=require('./qa-evidence-submit.cjs');
 const qaRunnerPolicy=require('./qa-runner-policy.json');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 const {inspect:inspectEnrollment,prepare:prepareEnrollment,
@@ -663,6 +664,53 @@ app.whenReady().then(()=>{
       if(ok.response!==1)return {canceled:true};
       approvedWorkerOperator(agentId,ticketId,true);
       return attestIndependentQa({origin,agentId,ticketId,signer,
+        evidenceDir:path.join(nodeDir(),'qa')});
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:submitQaEvidenceForOwner',async(event,agentId,ticketId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    workerClaimBusy=true;
+    try{
+      const ok=await dialog.showMessageBox(setupWindow,{
+        type:'warning',
+        buttons:['Cancel — send nothing','Send exact signed evidence for Owner review ONLY'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Upload this QA device-signed test report to Central?',
+        detail:'A completed local QA test, durable attempt journal and the local '+
+          'OS-vault attestation are required. Central validates the enrolled '+
+          'device key, exact bytes, allowed QA project access and distinct '+
+          'Developer/QA agents. Only a PENDING Owner review is created. '+
+          'No QA pass, Git push, merge or deployment occurs. '+
+          'If the network outcome is uncertain, retain the original request ID.'
+      });
+      if(ok.response!==1)return {canceled:true};
+      approvedWorkerOperator(agentId,ticketId,true);
+      return submitQaEvidenceForOwner({origin,agentId,ticketId,signer,
+        evidenceDir:path.join(nodeDir(),'qa')});
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:submitOwnerReviewedQaReceipt',async(event,agentId,ticketId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    workerClaimBusy=true;
+    try{
+      const ok=await dialog.showMessageBox(setupWindow,{
+        type:'warning',
+        buttons:['Cancel — do not send QA receipt',
+          'Request exact Owner-approved QA receipt from Central'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Submit QA receipt after independent Owner approval?',
+        detail:'An Owner must have separately reviewed the actual Docker '+
+          'runner, original report, device public key and independent QA setup, '+
+          'then explicitly approved the exact QA evidence proposal in Central. '+
+          'Central rejects any missing, tampered or unapproved proof. A PASS '+
+          'changes this ticket to INTEGRATING; FAIL to TEST_FAILED. '+
+          'No Git push, merge or production deployment will be performed.'
+      });
+      if(ok.response!==1)return {canceled:true};
+      approvedWorkerOperator(agentId,ticketId,true);
+      return submitOwnerReviewedQaReceipt({origin,agentId,ticketId,signer,
         evidenceDir:path.join(nodeDir(),'qa')});
     }finally{workerClaimBusy=false;}
   });

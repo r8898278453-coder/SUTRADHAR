@@ -27,7 +27,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
   const nodes=[] as any[];
   async function edge(i:number,leaderEligible=true){
     const keys=crypto.generateKeyPairSync('ed25519');
-    const node_id='node_test_'+i,agent_id='agent_test_'+i;
+    const node_id='node_'+i.toString(16).padStart(32,'0'),agent_id='agent_test_'+i;
     const pub=keys.publicKey.export({format:'pem',type:'spki'}).toString();
     const proof=crypto.sign(null,Buffer.from('enroll:'+node_id),keys.privateKey).toString('base64');
     const e=await post('/v7/nodes/enroll',{node_id,public_key_pem:pub,proof,display_name:node_id},
@@ -50,7 +50,41 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const reg=await signed('/v7/agents/register',{agent_id,capabilities:{}});
     assert.equal(reg.code,200,JSON.stringify(reg.body));
     await owner('APPROVE_AGENT',{agent_id,master_eligible:leaderEligible,qa_eligible:i>=2});
-    const client={node_id,agent_id,signed,async heartbeat(epoch:number|null=0){
+    function signedQaPackage({ticketId,workerAgentId,baseline,head,tree,
+      passed=true}:{ticketId:string;workerAgentId:string;baseline:string;
+        head:string;tree:string;passed?:boolean}){
+      // Cryptographic integration FIXTURE, not real Docker/Owner evidence.
+      const h=(x:Buffer|string)=>crypto.createHash('sha256').update(x).digest('hex');
+      const report={schema:1,status:'LOCAL_QA_TEST_ONLY',
+        ticket_id:ticketId,qa_agent_id:agent_id,
+        developer_agent_id:workerAgentId,
+        baseline_sha:baseline,candidate_head_sha:head,candidate_tree_sha:tree,
+        bundle_sha256:'a'.repeat(64),image_sha256:'b'.repeat(64),
+        archive_sha256:'c'.repeat(64),recorded_at:new Date().toISOString(),
+        test_passed:passed,sandbox_started:passed,exit_code:passed?0:1,
+        stdout_sha256:h('fixture output'),stderr_sha256:h(''),
+        stdout_tail:passed?'1 passed (fixture)':'1 failed (fixture)',
+        stderr_tail:'',evidence_level:'LOCAL_UNATTESTED',
+        qa_approved:false,qa_receipt_submitted:false,
+        git_published:false,automatic_execution_allowed:false};
+      const raw=Buffer.from(JSON.stringify(report)+'\n');
+      const evidenceSha=h(raw);
+      const message={schema:1,kind:'SUTRADHAR_INDEPENDENT_QA_EVIDENCE',
+        node_id,agent_id,ticket_id:ticketId,
+        candidate_head_sha:head,candidate_tree_sha:tree,
+        evidence_sha256:evidenceSha,passed};
+      const signature=crypto.sign(null,
+        Buffer.from('SUTRADHAR_QA_EVIDENCE_V1\n'+JSON.stringify(message)),
+        keys.privateKey).toString('base64');
+      const attestation={schema:1,message,signature,
+        public_key_fingerprint_sha256:h(keys.publicKey.export({format:'der',type:'spki'})),
+        signed_by:'DEVICE_OS_VAULT_ED25519',
+        qa_approved:false,central_qa_receipt_submitted:false};
+      return {request_id:'qaevidence_fixture_'+(++count),agent_id,
+        ticket_id:ticketId,evidence_base64:raw.toString('base64'),
+        evidence_ref:'sha256:'+evidenceSha,attestation};
+    }
+    const client={node_id,agent_id,signed,signedQaPackage,async heartbeat(epoch:number|null=0){
       sequence++;agentSeq++;
       return signed('/v7/nodes/heartbeat',{sequence,boot_id:'boot_test_'+i,expected_master_epoch:epoch,
         agents:[{agent_id,sequence:agentSeq,status:'ONLINE'}]});}};
@@ -448,14 +482,107 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       ticket_id:'ticket_qa_test',lease_id:claim.body.lease_id,expected_master_epoch:Number(status.epoch),
       candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40)});
     assert.equal(submitted.code,200,JSON.stringify(submitted.body));
+    // Two different agent IDs on the SAME physical enrolled node are NOT
+    // independent QA. Central must compare approved node IDs too.
+    const samePcQa='agent_qa_samepc';
+    const registeredSamePc=await b.signed('/v7/agents/register',{
+      agent_id:samePcQa,capabilities:{qa:true}});
+    assert.equal(registeredSamePc.code,200,JSON.stringify(registeredSamePc.body));
+    await owner('APPROVE_AGENT',{agent_id:samePcQa,qa_eligible:true,master_eligible:false});
+    await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',
+      agent_id:samePcQa,can_qa:true,can_develop:false});
+    const sameDeviceDenied=await b.signed('/v7/tasks/qa-evidence',{
+      request_id:'qaevidence_samepc_'+(++count),
+      agent_id:samePcQa,ticket_id:'ticket_qa_test'});
+    assert.equal(sameDeviceDenied.code,403,JSON.stringify(sameDeviceDenied.body));
+    assert.equal(sameDeviceDenied.body.error_code,'QA_DEVICE_NOT_INDEPENDENT');
     const selfQA=await b.signed('/v7/tasks/qa-receipt',{request_id:'qa_self_'+(++count),agent_id:b.agent_id,
       ticket_id:'ticket_qa_test',candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40),
       evidence_ref:'sha256:self',evidence_sha256:'d'.repeat(64),passed:true});
     assert.notEqual(selfQA.code,200);
-    const qa=await c.signed('/v7/tasks/qa-receipt',{request_id:'qa_independent_'+(++count),agent_id:c.agent_id,
-      ticket_id:'ticket_qa_test',candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40),
-      evidence_ref:'sha256:independent',evidence_sha256:'d'.repeat(64),passed:true});
+    const legacyHashOnly=await c.signed('/v7/tasks/qa-receipt',{
+      request_id:'qa_legacy_'+(++count),agent_id:c.agent_id,ticket_id:'ticket_qa_test',
+      candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40),
+      evidence_ref:'sha256:'+'d'.repeat(64),evidence_sha256:'d'.repeat(64),passed:true});
+    assert.equal(legacyHashOnly.code,403,JSON.stringify(legacyHashOnly.body));
+    assert.equal(legacyHashOnly.body.error_code,'QA_VERIFIED_REVIEW_REQUIRED');
+    const proof=c.signedQaPackage({ticketId:'ticket_qa_test',
+      workerAgentId:b.agent_id,baseline:'a'.repeat(40),
+      head:'b'.repeat(40),tree:'c'.repeat(40)});
+    const forged=structuredClone(proof);
+    forged.attestation.message.passed=false;
+    const deniedForgery=await c.signed('/v7/tasks/qa-evidence',{
+      ...forged,request_id:'qaevidence_forged_'+(++count)});
+    assert.notEqual(deniedForgery.code,200,'Wrong signed QA passed flag is rejected');
+    const wrongNode=structuredClone(proof);
+    wrongNode.attestation.message.node_id=b.node_id;
+    const deniedNode=await c.signed('/v7/tasks/qa-evidence',{
+      ...wrongNode,request_id:'qaevidence_wrong_node_'+(++count)});
+    assert.notEqual(deniedNode.code,200,'Device signature must match enrolled node');
+    const verified=await c.signed('/v7/tasks/qa-evidence',proof);
+    assert.equal(verified.code,200,JSON.stringify(verified.body));
+    assert.equal(verified.body.device_signature_verified,true);
+    assert.equal(verified.body.qa_approved,false);
+    assert.equal(verified.body.status,'PENDING_OWNER_REVIEW');
+    const reviewedId=verified.body.review_proposal_id;
+    assert.match(reviewedId,/^qaev_[0-9a-f]{64}$/);
+    const anonQaQueue=await fetch(base+'/v7/owner/qa-reviews');
+    assert.equal(anonQaQueue.status,401,'QA review queue is Owner-only');
+    const ownerQaQueue=await fetch(base+'/v7/owner/qa-reviews',{
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(ownerQaQueue.status,200);
+    const queue=(await ownerQaQueue.json() as any);
+    const item=queue.reviews.find((z:any)=>z.review_proposal_id===reviewedId);
+    assert.ok(item,'Owner can locate exact pending signed QA evidence review');
+    assert.equal(item.candidate_head_sha,'b'.repeat(40));
+    assert.equal(item.qa_agent_id,c.agent_id);
+    assert.equal(item.node_id,c.node_id);
+    assert.equal(item.state,'PENDING');
+    assert.equal(queue.qa_approved_automatically,false);
+    const verifiedAgain=await c.signed('/v7/tasks/qa-evidence',proof);
+    assert.deepEqual(verifiedAgain,verified,'A lost upload response replays exact receipt');
+    const receiptBody={request_id:'qa_independent_'+(++count),agent_id:c.agent_id,
+      ticket_id:'ticket_qa_test',candidate_head_sha:'b'.repeat(40),
+      candidate_tree_sha:'c'.repeat(40),evidence_ref:proof.evidence_ref,
+      evidence_sha256:proof.attestation.message.evidence_sha256,
+      passed:true,review_proposal_id:reviewedId};
+    const premature=await c.signed('/v7/tasks/qa-receipt',receiptBody);
+    assert.equal(premature.code,403,JSON.stringify(premature.body));
+    assert.equal(premature.body.error_code,'QA_VERIFIED_OWNER_REVIEW_REQUIRED');
+    const genericOwner=await post('/v7/owner/command',{request_id:'qa_generic_'+(++count),
+      command:'APPROVE_PROPOSAL',payload:{proposal_id:reviewedId}},admin);
+    assert.equal(genericOwner.code,403,JSON.stringify(genericOwner.body));
+    assert.equal(genericOwner.body.error_code,'QA_REVIEW_REQUIRES_OWNER_EVIDENCE_COMMAND');
+    const unreviewedOwner=await post('/v7/owner/command',{request_id:'qa_bad_owner_'+(++count),
+      command:'APPROVE_QA_EVIDENCE',payload:{review_proposal_id:reviewedId,
+        review_note:'No independent Docker or QA device validation has been done'}},admin);
+    assert.equal(unreviewedOwner.code,403,JSON.stringify(unreviewedOwner.body));
+    assert.equal(unreviewedOwner.body.error_code,'QA_OWNER_INDEPENDENT_REVIEW_REQUIRED');
+    const beforeApproval=await fetch(base+'/v7/tasks',{headers:{authorization:'Bearer '+admin}});
+    assert.equal((await beforeApproval.json() as any[]).find(t=>t.ticket_id==='ticket_qa_test').status,
+      'SUBMITTED_FOR_REVIEW','Signed evidence alone never moves ticket to INTEGRATING');
+    // The actual product requires a real human Owner review of the external
+    // runner, approved node, physical independence and exact local report.
+    // These booleans simulate that authorization in disposable CI only.
+    const ownerReviewed=await owner('APPROVE_QA_EVIDENCE',{
+      review_proposal_id:reviewedId,
+      review_note:'Integration fixture externally reviewed by test Owner only',
+      device_identity_confirmed:true,runner_provenance_reviewed:true,
+      test_evidence_reviewed:true,independence_verified:true});
+    assert.equal(ownerReviewed.state.state,'APPROVED');
+    assert.equal(ownerReviewed.state.integration_performed,false);
+    const wrongEvidenceReceipt=await c.signed('/v7/tasks/qa-receipt',{
+      ...receiptBody,request_id:'qa_wrong_hash_'+(++count),
+      evidence_sha256:'f'.repeat(64),evidence_ref:'sha256:'+'f'.repeat(64)});
+    assert.equal(wrongEvidenceReceipt.code,409,JSON.stringify(wrongEvidenceReceipt.body));
+    assert.equal(wrongEvidenceReceipt.body.error_code,'QA_VERIFIED_EVIDENCE_MISMATCH');
+    const qa=await c.signed('/v7/tasks/qa-receipt',receiptBody);
     assert.equal(qa.code,200,JSON.stringify(qa.body));
+    const qaAgain=await c.signed('/v7/tasks/qa-receipt',receiptBody);
+    assert.deepEqual(qaAgain,qa,'Only identical approved QA receipt is idempotent');
+    const unauthorizedExtra=await c.signed('/v7/tasks/qa-receipt',{
+      ...receiptBody,request_id:'qa_replay_new_'+(++count)});
+    assert.notEqual(unauthorizedExtra.code,200,'Same report cannot cause another QA transition');
     const task=await fetch(base+'/v7/tasks',{headers:{authorization:'Bearer '+admin}});
     const list=await task.json() as any[];
     assert.equal(list.find(t=>t.ticket_id==='ticket_qa_test').status,'INTEGRATING');

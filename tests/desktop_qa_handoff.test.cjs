@@ -516,3 +516,131 @@ test('Desktop QA attestation only in Electron MAIN, no generic signer in rendere
   assert.match(setup,/id="workerQAAttest"/);
   assert.doesNotMatch(preload,/signQaEvidence|signWorkerAction|private_key_pem/);
 });
+
+const {submitQaEvidenceForOwner,submitOwnerReviewedQaReceipt}
+  =require('../apps/desktop/qa-evidence-submit.cjs');
+test('device-signed QA upload makes pending Owner review before receipt and preserves replay IDs',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f),evidenceDir=path.join(f.temp,'qa-evidence');
+      await runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner});
+      const {signer}=qaSigningFixture(f);
+      await attestIndependentQa({...f.opts,agentId:'agent_qa',signer,evidenceDir});
+      const requests=[],receipts=new Map(),processed=new Map();
+      let approved=false;
+      const fetcher=async(url,opts)=>{
+        const uri=new URL(url).pathname;
+        if(uri.startsWith('/v7/tasks/detail/'))return f.fetcher(url,opts);
+        assert.equal(opts.method,'POST');
+        assert.equal(opts.headers['x-sutradhar-agent'],'agent_qa');
+        const body=JSON.parse(opts.body);
+        requests.push({uri,body,headers:opts.headers});
+        if(uri==='/v7/tasks/qa-evidence'){
+          assert.match(body.evidence_ref,/^sha256:[a-f0-9]{64}$/);
+          assert.equal(body.evidence_base64,
+            fs.readFileSync(path.join(evidenceDir,'qa_result_ticket_abc.json')).toString('base64'));
+          const hash=crypto.createHash('sha256').update(Buffer.from(body.attestation.signature,'base64')).digest('hex');
+          const proposal='qaev_'+crypto.createHash('sha256').update([
+            'ticket_abc','agent_qa',signer.snapshot().node_id,f.head,f.tree,
+            body.attestation.message.evidence_sha256,hash,'PASS'
+          ].join('\n')).digest('hex');
+          const result={accepted:true,review_proposal_id:proposal,
+            status:'PENDING_OWNER_REVIEW',
+            evidence_sha256:body.attestation.message.evidence_sha256,
+            device_signature_verified:true,qa_approved:false,
+            qa_receipt_submitted:false,integration_performed:false,
+            git_published:false};
+          if(processed.has(body.request_id))assert.deepEqual(processed.get(body.request_id),body);
+          processed.set(body.request_id,body);
+          return new Response(JSON.stringify(result),{status:200});
+        }
+        if(uri==='/v7/tasks/qa-receipt'){
+          const result=approved?{accepted:true,ticket_id:'ticket_abc',
+            receipt_id:'12345678-1234-4234-8234-123456789abc',
+            status:'INTEGRATING',evidence_level:'AGENT_ATTESTED'}:
+            {error_code:'QA_VERIFIED_OWNER_REVIEW_REQUIRED'};
+          if(processed.has(body.request_id))assert.deepEqual(processed.get(body.request_id),body);
+          processed.set(body.request_id,body);
+          return new Response(JSON.stringify(result),{status:approved?200:403});
+        }
+        throw Error('Unexpected Central QA request '+uri);
+      };
+      const opts={...f.opts,agentId:'agent_qa',evidenceDir,signer,fetcher};
+      const upload=await submitQaEvidenceForOwner(opts);
+      assert.equal(upload.device_signature_verified,true);
+      assert.equal(upload.qa_approved,false);
+      assert.equal(upload.integration_performed,false);
+      const upload2=await submitQaEvidenceForOwner(opts);
+      assert.equal(upload2.already_submitted,true);
+      assert.equal(requests.filter(z=>z.uri==='/v7/tasks/qa-evidence').length,1);
+      await assert.rejects(submitOwnerReviewedQaReceipt(opts),
+        /QA_UPLOAD_QA_VERIFIED_OWNER_REVIEW_REQUIRED/);
+      const pending=JSON.parse(fs.readFileSync(path.join(evidenceDir,
+        'qa_central_receipt_ticket_abc_pending.json'),'utf8'));
+      assert.equal(pending.body.request_id,requests.at(-1).body.request_id);
+      approved=true;
+      const accepted=await submitOwnerReviewedQaReceipt(opts);
+      assert.equal(accepted.status,'INTEGRATING');
+      assert.equal(accepted.git_published,false);
+      assert.equal(accepted.qa_receipt_submitted,true);
+      assert.equal(requests.at(-1).body.request_id,pending.body.request_id);
+      const again=await submitOwnerReviewedQaReceipt(opts);
+      assert.equal(again.already_submitted,true);
+      assert.equal(requests.filter(z=>z.uri==='/v7/tasks/qa-receipt').length,2);
+      assert.ok(fs.existsSync(path.join(evidenceDir,
+        'qa_central_receipt_ticket_abc_receipt.json')));
+      assert.equal(cmd(f.qaRepo,'rev-parse','HEAD'),f.baseline);
+    }finally{f.close();}
+  });
+test('Central QA post blocks forged device signature, altered report, and unsigned original',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f),evidenceDir=path.join(f.temp,'qa-evidence');
+      await runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner});
+      const {signer}=qaSigningFixture(f);
+      const sent=[];
+      const fetcher=async(url,opts)=>{
+        if(opts.method==='GET')return f.fetcher(url,opts);
+        sent.push(opts);throw Error('This test must never POST invalid QA evidence');
+      };
+      const opts={...f.opts,agentId:'agent_qa',signer,evidenceDir,fetcher};
+      await assert.rejects(submitQaEvidenceForOwner(opts),
+        /QA_UPLOAD_LOCAL_EVIDENCE_UNTRUSTED/);
+      await attestIndependentQa({...f.opts,agentId:'agent_qa',signer,evidenceDir});
+      const attFile=path.join(evidenceDir,'qa_attested_ticket_abc.json');
+      const a=fs.readFileSync(attFile,'utf8');
+      fs.writeFileSync(attFile,a.replace('DEVICE_OS_VAULT_ED25519','DEVICE_FORGED'));
+      await assert.rejects(submitQaEvidenceForOwner(opts),
+        /QA_EVIDENCE_ATTESTATION_INVALID/);
+      fs.writeFileSync(attFile,a);
+      const reportFile=path.join(evidenceDir,'qa_result_ticket_abc.json');
+      fs.appendFileSync(reportFile,' ');
+      await assert.rejects(submitQaEvidenceForOwner(opts),
+        /QA_EVIDENCE_ATTESTATION_MISMATCH/);
+      assert.equal(sent.length,0);
+    }finally{f.close();}
+  });
+test('QA Central uploads are fixed scoped OS-vault actions, never generic renderer POST',()=>{
+  const root=path.resolve(__dirname,'../apps/desktop');
+  const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const html=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  const js=fs.readFileSync(path.join(root,'setup.js'),'utf8');
+  assert.ok(pkg.build.files.includes('qa-evidence-submit.cjs'));
+  assert.match(main,/ipcMain\.handle\('sutradhar:submitQaEvidenceForOwner'/);
+  assert.match(main,/ipcMain\.handle\('sutradhar:submitOwnerReviewedQaReceipt'/);
+  assert.match(preload,/submitQaEvidenceForOwner:\(agentId,ticketId\)/);
+  assert.match(preload,/submitOwnerReviewedQaReceipt:\(agentId,ticketId\)/);
+  assert.match(html,/id="workerQAUpload"/);
+  assert.match(html,/id="workerQAReceipt"/);
+  assert.match(js,/get\('workerQAUpload'\)\.addEventListener/);
+  assert.match(js,/get\('workerQAReceipt'\)\.addEventListener/);
+  assert.doesNotMatch(preload,/signWorkerAction|evidence_base64|request_id|private_key_pem/);
+});

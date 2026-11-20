@@ -30,5 +30,7 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   inspectQAHandoff:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:inspectQAHandoff',agentId,ticketId),
   runIndependentQa:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:runIndependentQa',agentId,ticketId),
   attestQaEvidence:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:attestQaEvidence',agentId,ticketId),
+  submitQaEvidenceForOwner:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:submitQaEvidenceForOwner',agentId,ticketId),
+  submitOwnerReviewedQaReceipt:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:submitOwnerReviewedQaReceipt',agentId,ticketId),
   openProvider:name=>ipcRenderer.invoke('sutradhar:openProvider',name)
 }));
