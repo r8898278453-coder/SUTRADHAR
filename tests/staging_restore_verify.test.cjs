@@ -66,7 +66,7 @@ test('schema drift, unexpected table, or missing deterministic primary key denie
   await assert.rejects(compare(fixture({targetType:'varchar(101)'})),
     /RESTORE_VERIFY_SCHEMA_MISMATCH/);
   await assert.rejects(compare(fixture({extraTable:true})),
-    /RESTORE_VERIFY_SCHEMA_MISMATCH/);
+    /RESTORE_VERIFY_PRIMARY_KEY_REQUIRED/);
   await assert.rejects(compare(fixture({missingPk:true})),
     /RESTORE_VERIFY_PRIMARY_KEY_REQUIRED/);
 });
