@@ -2,6 +2,8 @@
 
 **One system. Two applications. One GitHub repository.**
 
+**Developer Edge safety:** The separate developer-only plaintext identity daemon now requires a private single-process lock and durable local heartbeat counter writes. This does not change the packaged Electron OS-vault trust boundary or authorize deployment. See [Worker restart and developer Edge recovery](docs/WORKER_RESTART_PREFLIGHT_V7.md).
+
 > **Release status — 12 November 2026:** SUTRADHAR v7 is an **alpha implementation on a draft pull request**, NOT an approved production release. Do not connect the draft branch to a live Hostinger site or distribute it as a trusted PC installer. No production deployment, Windows installer, automatic updates, or full 8–10-PC acceptance has been completed.
 
 SUTRADHAR coordinates a group of PCs through an authoritative control plane:

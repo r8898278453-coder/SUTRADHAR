@@ -8,10 +8,11 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import {verifyRecoverySnapshot} from './recovery_validation.ts';
 import {verifyExistingAgentOnOwnNode} from './agent_restart_authority.ts';
-type Saved = {node_id:string;private_key_pem:string;public_key_pem:string;
-  node_sequence:number;boot_id:string;agents:{id:string;sequence:number}[]};
+import {openDeveloperIdentity} from './developer_identity.ts';
+import type {DeveloperIdentity as Saved} from './developer_identity.ts';
+
 const home=process.env.SUTRADHAR_NODE_DIR||path.join(os.homedir(),'.sutradhar','v7');
-const filename=path.join(home,'identity.json'),central=process.env.SUTRADHAR_CENTRAL_URL||'';
+const central=process.env.SUTRADHAR_CENTRAL_URL||'';
 if(!/^https:\/\//.test(central)&&!(process.env.SUTRADHAR_ALLOW_HTTP_LOCAL==='true'&&
   /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\/?$/.test(central)))
   throw new Error('HTTPS central URL required (local HTTP requires explicit opt-in)');
@@ -20,7 +21,6 @@ const base=central.replace(/\/+$/,'');
 if(fs.existsSync(path.join(home,'enrollment_requested')))delete process.env.SUTRADHAR_ENROLLMENT_CODE;
 const agentNames=(process.env.SUTRADHAR_AGENT_IDS||'').split(',').map(x=>x.trim()).filter(Boolean);
 if(!agentNames.length)throw new Error('SUTRADHAR_AGENT_IDS required');
-fs.mkdirSync(home,{recursive:true,mode:0o700});
 
 // Local status is informational only. Central remains the authority.
 // The Electron setup window reads this file; it contains NO credentials.
@@ -38,20 +38,14 @@ function reportStatus(info:Record<string,unknown>){
   }catch{console.error('Could not update local agent status');}
 }
 
-function persist(data:Saved){const tmp=filename+'.'+process.pid+'.tmp';
-  fs.writeFileSync(tmp,JSON.stringify(data,null,2),{mode:0o600});fs.renameSync(tmp,filename);fs.chmodSync(filename,0o600);}
-function newIdentity():Saved{
-  const {privateKey,publicKey}=crypto.generateKeyPairSync('ed25519');
-  return {node_id:'node_'+crypto.randomUUID().replace(/-/g,''),
-    boot_id:'boot_'+crypto.randomUUID().replace(/-/g,''),
-    private_key_pem:privateKey.export({type:'pkcs8',format:'pem'}).toString(),
-    public_key_pem:publicKey.export({type:'spki',format:'pem'}).toString(),node_sequence:0,agents:[]};}
-const state:Saved=fs.existsSync(filename)?JSON.parse(fs.readFileSync(filename,'utf8')):newIdentity();
-const ids=new Set(state.agents.map(x=>x.id));
-for(const id of agentNames){
-  if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(id))throw new Error('Invalid agent ID');
-  if(!ids.has(id)){state.agents.push({id,sequence:0});ids.add(id);}}
-state.boot_id='boot_'+crypto.randomUUID().replace(/-/g,'');persist(state);
+// This CLI/alpha identity is deliberately PLAINTEXT: never the packaged
+// Electron OS-vault identity and never approved for production Windows PCs.
+// A stale exclusive lock requires Owner inspection before any restart.
+const identitySession=openDeveloperIdentity(home,agentNames);
+const state:Saved=identitySession.state;
+process.on('exit',()=>identitySession.release());
+process.once('SIGINT',()=>{identitySession.release();process.exit(130);});
+process.once('SIGTERM',()=>{identitySession.release();process.exit(143);});
 const key=crypto.createPrivateKey(state.private_key_pem);
 function sig(pathname:string,body:string,ts:number,nonce:string,method='POST'){
   const value=[String(ts),nonce,method,pathname,crypto.createHash('sha256').update(body).digest('hex')].join('\n');
@@ -102,7 +96,7 @@ async function reconcileNewMaster(agentId:string,epoch:number){
 }
 async function heartbeat(epoch:number|null){
   state.node_sequence++;for(const a of state.agents)a.sequence++;
-  persist(state); // Never reuse sequences after a crash/ambiguous reply.
+  identitySession.persistHeartbeat(state); // fsync BEFORE signing/transmitting
   return api('/v7/nodes/heartbeat',{boot_id:state.boot_id,sequence:state.node_sequence,
     expected_master_epoch:epoch,
     agents:state.agents.map(a=>({agent_id:a.id,sequence:a.sequence,status:'ONLINE'}))});
@@ -152,6 +146,10 @@ async function run(){
         if(reply.master_agent_id&&state.agents.some(a=>a.id===reply.master_agent_id)&&reply.phase==='RECOVERING')
           await reconcileNewMaster(reply.master_agent_id,Number(reply.epoch));}
     }catch(e:any){
+      // A failed/ambiguous identity write poisons this daemon. Never continue
+      // generating node-authenticated requests against uncertain counters.
+      if(/^DEV_EDGE_(?:IDENTITY_|HEARTBEAT_)/.test(String(e?.message||'')))
+        throw e;
       console.error('Central unavailable/not approved:',String(e.message).slice(0,100));
       reportStatus({connection:heartbeatAccepted?'RECOVERY_BLOCKED':'NOT_ACKNOWLEDGED',
         last_error_at:new Date().toISOString(),

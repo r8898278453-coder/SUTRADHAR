@@ -32,3 +32,13 @@ test('both developer and packaged agents independently verify same-node ownershi
   assert.match(packaged,/send\('GET','\/v7\/nodes\/me'\)/);
   assert.match(developer,/signedGet\('\/v7\/nodes\/me'\)/);
 });
+
+test('developer-only plaintext identity is fail-closed and never replaces the OS-vault packaged edge',()=>{
+  assert.match(developer,/import\s*\{openDeveloperIdentity\}\s*from\s*['"]\.\/developer_identity\.ts['"]/);
+  assert.match(developer,/openDeveloperIdentity\(home,agentNames\)/);
+  assert.match(developer,/identitySession\.persistHeartbeat\(state\)/);
+  assert.match(developer,/identitySession\.release\(\)/);
+  assert.doesNotMatch(developer,/JSON\.parse\(fs\.readFileSync\(filename/);
+  assert.doesNotMatch(packaged,/openDeveloperIdentity|developer_identity\.ts/);
+  assert.match(packaged,/await bridge\('saveCounters',state\)/);
+});
