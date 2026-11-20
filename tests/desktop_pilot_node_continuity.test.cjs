@@ -142,4 +142,8 @@ test('Desktop export action is packaged-Windows-only main IPC with no private ke
   assert.match(preload,/exportPilotNodeProof:\(\)=>ipcRenderer\.invoke/);
   assert.doesNotMatch(preload,/private_key_pem/);
   assert.match(ui,/id="exportPilotNodeProof"/);
+  const packageConfig=JSON.parse(fs.readFileSync(
+    path.join(base,'package.json'),'utf8'));
+  assert.ok(packageConfig.build.files.includes('pilot-node-continuity.cjs'),
+    'Production and unsigned QA Electron package MUST contain this imported module');
 });

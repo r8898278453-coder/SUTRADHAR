@@ -52,6 +52,7 @@
       "qa-runner-policy.json",
       "enrollment.cjs",
       "enrollment-receipt.cjs",
+      "pilot-node-continuity.cjs",
       "single-instance.cjs",
       "update-readiness.cjs",
       "update-inspection-journal.cjs",

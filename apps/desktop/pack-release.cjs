@@ -10,6 +10,7 @@ const cp=require('node:child_process');
 const cwd=__dirname,root=path.resolve(__dirname,'../..');
 const pkg=JSON.parse(fs.readFileSync(path.join(cwd,'package.json'),'utf8'));
 const {verifyRuntime}=require('./runtime-policy.cjs');
+const {psLiteral,trustedWindowsPowerShell}=require('./windows-authenticode.cjs');
 const version=pkg.version;
 const sha=/^[a-f0-9]{40}$/;
 function fail(reason){throw Error('RELEASE_BLOCKED: '+reason);}
@@ -112,12 +113,19 @@ function main(){
     const installers=fs.readdirSync(out).filter(x=>x.endsWith('.exe')).map(x=>path.join(out,x));
     if(!installers.length)fail('no installer artifact');
     const receipts=[];
+    const trustedShell=trustedWindowsPowerShell({platform:process.platform});
     for(const file of installers){
-      const command='$s=Get-AuthenticodeSignature -LiteralPath '+JSON.stringify(file)+
-        '; if($s.Status -ne "Valid" -or $null -eq $s.SignerCertificate){ exit 42 };'+
-        ' if($s.SignerCertificate.Subject -cne '+JSON.stringify(signed)+'){ exit 43 };';
-      const verify=cp.spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',command],
-        {encoding:'utf8',timeout:30000});
+      // The release verifier must never use PATH resolution or PowerShell
+      // interpolated double-quoted file paths from a source checkout.
+      const command="$ErrorActionPreference='Stop';"+
+        '$s=Get-AuthenticodeSignature -LiteralPath '+psLiteral(file)+';'+
+        "if($s.Status -ne 'Valid' -or $null -eq $s.SignerCertificate){exit 42};"+
+        '$subject='+psLiteral(signed)+';'+
+        'if($s.SignerCertificate.Subject -cne $subject){exit 43};exit 0';
+      const encoded=Buffer.from(command,'utf16le').toString('base64');
+      const verify=cp.spawnSync(trustedShell.program,
+        ['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',encoded],
+        trustedShell.options);
       if(verify.error||verify.status!==0)fail('Windows Authenticode signer/signature verification failed');
       receipts.push({filename:path.basename(file),
         sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
