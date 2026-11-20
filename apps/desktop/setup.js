@@ -77,6 +77,8 @@ async function loadStatus(){
     get('autostart').disabled=!s.startupSupported;
     get('autostart').checked=Boolean(s.startupEnabled);
     get('reconcileEnrollment').disabled=!['PREPARED','OWNER_REVIEW_REQUIRED'].includes(s.enrollmentState);
+    get('exportPilotNodeProof').disabled=!s.configured||
+      s.enrollmentState!=='SUBMITTED'||!s.nodeId;
     if(s.enrollmentRequested){get('code').value='';get('code').placeholder='Already enrolled; code not required for later starts';}
   }catch(e){get('status').textContent='Could not read local status: '+String(e.message||e);}
 }
@@ -306,6 +308,18 @@ get('restartAfterMaintenance').addEventListener('click',async()=>{
       String(e.message||e)+
       '. Do not delete restart attempt or maintenance audit files. Owner review required.';
   }finally{button.disabled=false;}
+});
+get('exportPilotNodeProof').addEventListener('click',async()=>{
+  const button=get('exportPilotNodeProof');button.disabled=true;
+  showFeedback('Checking exact Owner session and protected OS-vault identity…');
+  try{
+    const out=await api.exportPilotNodeProof();
+    showFeedback(out.canceled?'Evidence export canceled; no proof written.':
+      'Signed '+out.phase+' node continuity file saved privately. '+
+      'Review it on a separate machine with the independently pinned public key. '+
+      'Actual reboot/hardware and production acceptance remain unverified.');
+  }catch(e){showFeedback(String(e.message||e));}
+  finally{await loadStatus();}
 });
 get('reconcileEnrollment').addEventListener('click',async()=>{
   const button=get('reconcileEnrollment');button.disabled=true;

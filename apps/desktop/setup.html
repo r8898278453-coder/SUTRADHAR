@@ -37,6 +37,8 @@
 <label class="toggle"><input id="autostart" type="checkbox"> Start SUTRADHAR automatically when I sign in (packaged app only)</label>
 <div class="actions"><button id="dashboard" type="button" class="secondary">Open Central dashboard</button><button id="refresh" type="button" class="secondary">Refresh status</button><button id="reconcileEnrollment" type="button" class="secondary">Recheck uncertain enrollment</button></div>
 <p class="hint">If enrollment was interrupted, this only checks the original PC's signed identity with Central. It does not send another grant, create another identity or approve itself. The Owner must approve the PC first.</p>
+<button id="exportPilotNodeProof" class="secondary" type="button">Export signed BEFORE / AFTER node-key continuity evidence</button>
+<p class="hint">For Owner physical-PC acceptance only. Select the exact reviewed session JSON, choose BEFORE or AFTER and save a new private file. No keys leave the OS vault. A signature does not by itself prove a physical reboot, genuine hardware or healthy Central.</p>
 </section>
 <section class="panel" aria-labelledby="workerReadTitle">
 <h2 id="workerReadTitle">My development tasks (manual alpha)</h2>

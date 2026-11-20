@@ -37,6 +37,8 @@ const {
 }=require('./desktop-config.cjs');
 const {summarizeCentralReceipt}=require('./status.cjs');
 const {createVault}=require('./os-vault.cjs');
+const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
+  require('./pilot-node-continuity.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
 const {claimApprovedTask,resumeApprovedTask}=require('./worker-claim.cjs');
@@ -380,6 +382,44 @@ app.whenReady().then(()=>{
       try{startAgent();}catch{ /* Existing child retries; status shows any further error. */ }
     }
     return safeStatus();
+  });
+  // No private-key access is exposed to setup HTML or the supervised agent.
+  // Human must choose both a local Owner challenge and the new destination.
+  ipcMain.handle('sutradhar:exportPilotNodeProof',async event=>{
+    verifySender(event);
+    if(process.platform!=='win32'||!app.isPackaged||!current||!vault)
+      throw Error('PILOT_NODE_PACKAGED_WINDOWS_REQUIRED');
+    const node=vault.read();
+    if(!node||!requireSubmitted({dir:nodeDir(),node,
+      centralUrl:current.centralUrl}))
+      throw Error('PILOT_NODE_EXISTING_ENROLLED_VAULT_REQUIRED');
+    const picked=await dialog.showOpenDialog(setupWindow,{
+      title:'Choose Owner-reviewed pilot continuity challenge JSON',
+      properties:['openFile'],filters:[{name:'Pilot challenge',extensions:['json']}]
+    });
+    if(picked.canceled||picked.filePaths.length!==1)return {canceled:true};
+    const file=picked.filePaths[0],stat=fs.lstatSync(file);
+    if(!stat.isFile()||stat.isSymbolicLink()||stat.size<50||stat.size>10000)
+      throw Error('PILOT_NODE_CHALLENGE_FILE_UNSAFE');
+    const challenge=JSON.parse(fs.readFileSync(file,'utf8'));
+    const choice=await dialog.showMessageBox(setupWindow,{
+      type:'warning',buttons:['Cancel','BEFORE (baseline)','AFTER (new boot)'],
+      defaultId:0,cancelId:0,noLink:true,
+      message:'Export an OS-vault signed continuity observation?',
+      detail:'Owner must independently verify this session, the real machine and actual reboot. The proof only signs software boot ID and monotonic counters using the current enrolled key. It cannot approve production, install, reboot or trigger failover.'
+    });
+    if(choice.response===0)return {canceled:true};
+    const phase=choice.response===1?'BEFORE':'AFTER';
+    const proof=createPilotNodeProof({node,challenge,phase,
+      centralOrigin:current.centralUrl,now:Date.now()});
+    const destination=await dialog.showSaveDialog(setupWindow,{
+      title:'Save immutable signed '+phase+' node continuity proof (private)',
+      defaultPath:'sutradhar-pilot-'+phase.toLowerCase()+'-'+
+        node.node_id.slice(0,15)+'.json',
+      filters:[{name:'Signed node proof',extensions:['json']}]
+    });
+    if(destination.canceled||!destination.filePath)return {canceled:true};
+    return writePilotNodeProof(destination.filePath,proof);
   });
   ipcMain.handle('sutradhar:setStartup',(event,enabled)=>{
     verifySender(event);
