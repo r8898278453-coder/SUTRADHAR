@@ -22,3 +22,13 @@ test('packaged heartbeat is connectivity only and Central derives work from auth
   }
   assert.match(central,/INVALID_AGENT_ACTIVITY/);
 });
+
+test('both developer and packaged agents independently verify same-node ownership after ID collision',()=>{
+  for(const source of [packaged,developer]){
+    assert.match(source,/import\s*\{verifyExistingAgentOnOwnNode\}/);
+    assert.match(source,/verifyExistingAgentOnOwnNode\(own,state\.node_id,/);
+    assert.doesNotMatch(source,/AGENT_ID_ALREADY_EXISTS['"]\)registered\.add/);
+  }
+  assert.match(packaged,/send\('GET','\/v7\/nodes\/me'\)/);
+  assert.match(developer,/signedGet\('\/v7\/nodes\/me'\)/);
+});

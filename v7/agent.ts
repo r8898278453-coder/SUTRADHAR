@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import {verifyRecoverySnapshot} from './recovery_validation.ts';
+import {verifyExistingAgentOnOwnNode} from './agent_restart_authority.ts';
 type Saved = {node_id:string;private_key_pem:string;public_key_pem:string;
   node_sequence:number;boot_id:string;agents:{id:string;sequence:number}[]};
 const home=process.env.SUTRADHAR_NODE_DIR||path.join(os.homedir(),'.sutradhar','v7');
@@ -131,8 +132,15 @@ async function run(){
       }
       for(const a of state.agents){if(registered.has(a.id))continue;
         try{await register(a.id);registered.add(a.id);}
-        catch(e:any){if(e.message==='AGENT_ID_ALREADY_EXISTS')registered.add(a.id);
-          else if(e.message!=='NODE_NOT_APPROVED')throw e;}}
+        catch(e:any){
+          if(e.message==='AGENT_ID_ALREADY_EXISTS'){
+            // Another PC may already own this global agent ID. Only Central's
+            // node-signed, node-filtered own view can reconcile a restart.
+            const own=await signedGet('/v7/nodes/me');
+            verifyExistingAgentOnOwnNode(own,state.node_id,a.id);
+            registered.add(a.id);
+          }else if(e.message!=='NODE_NOT_APPROVED')throw e;
+        }}
       if(registered.size===state.agents.length){
         const reply=await heartbeat(epoch);epoch=Number(reply.epoch);
         heartbeatAccepted=true;

@@ -6,6 +6,7 @@ import mysql from 'mysql2/promise';
 import {once} from 'node:events';
 import {app,shutdownV7ForTests} from '../v7/central.ts';
 import {verifyRecoverySnapshot} from '../v7/recovery_validation.ts';
+import {verifyExistingAgentOnOwnNode} from '../v7/agent_restart_authority.ts';
 // Run only against disposable MySQL database. No mocking SQL, no production credentials.
 const enabled=process.env.SUTRADHAR_RUN_V7_MYSQL_TEST==='1';
 test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover and QA gates',{skip:!enabled},async()=>{
@@ -123,6 +124,28 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       await bootstrapDb.query('UPDATE v7_cluster SET bootstrapped_at=UTC_TIMESTAMP(3) WHERE singleton=1');
     } finally {await bootstrapDb.end();}
     const a=await edge(1),b=await edge(2),c=await edge(3),d=await edge(4,false);
+    // Duplicate agent IDs are GLOBAL, not evidence that another computer
+    // owns the agent. A restarted node may only reconcile its own approved ID.
+    const duplicatedA=await a.signed('/v7/agents/register',
+      {agent_id:a.agent_id,capabilities:{}});
+    assert.equal(duplicatedA.code,409);
+    assert.equal(duplicatedA.body.error_code,'AGENT_ID_ALREADY_EXISTS');
+    const ownA=await a.signed('/v7/nodes/me',undefined,'GET');
+    assert.equal(ownA.code,200);
+    assert.equal(verifyExistingAgentOnOwnNode(
+      ownA.body,a.node_id,a.agent_id),true);
+    const crossNode=await b.signed('/v7/agents/register',
+      {agent_id:a.agent_id,capabilities:{}});
+    assert.equal(crossNode.code,409);
+    assert.equal(crossNode.body.error_code,'AGENT_ID_ALREADY_EXISTS');
+    const ownB=await b.signed('/v7/nodes/me',undefined,'GET');
+    assert.equal(ownB.code,200);
+    assert.throws(()=>verifyExistingAgentOnOwnNode(
+      ownB.body,b.node_id,a.agent_id),
+      /AGENT_EXISTS_ON_DIFFERENT_NODE_OR_NOT_OWNED/,
+      'A restart on PC B cannot adopt PC A global agent ID');
+    assert.equal(verifyExistingAgentOnOwnNode(
+      ownB.body,b.node_id,b.agent_id),true);
     // Explicit pilot mode records ONLY the accepted, real signed heartbeat.
     process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_EVIDENCE='true';
     process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_START_UTC=

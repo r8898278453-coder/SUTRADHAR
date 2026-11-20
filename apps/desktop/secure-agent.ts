@@ -10,6 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {HEARTBEAT_SECONDS,ID_RE} from '../../v7/rules.ts';
 import {verifyRecoverySnapshot} from '../../v7/recovery_validation.ts';
+import {verifyExistingAgentOnOwnNode} from '../../v7/agent_restart_authority.ts';
 type Agent={id:string;sequence:number};
 type Saved={node_id:string;public_key_pem:string;node_sequence:number;boot_id:string;agents:Agent[]};
 type Message={type:string;id:number;op?:string;payload?:unknown;result?:any;error?:string};
@@ -110,8 +111,15 @@ async function main(){
         if(registered.has(agent.id))continue;
         try{await send('POST','/v7/agents/register',{agent_id:agent.id,capabilities:{
           engine:'BROWSER_ASSISTED',platform:process.platform,secure_identity:true}});registered.add(agent.id);}
-        catch(e:any){if(e.message==='AGENT_ID_ALREADY_EXISTS')registered.add(agent.id);
-          else if(e.message!=='NODE_NOT_APPROVED')throw e;}
+        catch(e:any){
+          if(e.message==='AGENT_ID_ALREADY_EXISTS'){
+            // The OS vault signs this GET; the child gets only node-scoped
+            // public enrollment state, NEVER the private key.
+            const own=await send('GET','/v7/nodes/me');
+            verifyExistingAgentOnOwnNode(own,state.node_id,agent.id);
+            registered.add(agent.id);
+          }else if(e.message!=='NODE_NOT_APPROVED')throw e;
+        }
       }
       if(registered.size===state.agents.length){
         state.node_sequence++;
