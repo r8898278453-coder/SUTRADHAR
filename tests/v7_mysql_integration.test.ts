@@ -134,12 +134,12 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const acceptedProof=await fetch(base+proofPath,{
       headers:{authorization:'Bearer '+admin}});
     assert.equal(acceptedProof.status,200);
-    const proof=await acceptedProof.json() as any;
-    assert.equal(proof.node_id,a.node_id);
-    assert.equal(proof.records.length,1);
-    assert.equal(proof.physical_machine_verified,false);
-    assert.equal(proof.production_release_authorized,false);
-    const recorded=proof.records[0],packet=recorded.payload;
+    const heartbeatProof=await acceptedProof.json() as any;
+    assert.equal(heartbeatProof.node_id,a.node_id);
+    assert.equal(heartbeatProof.records.length,1);
+    assert.equal(heartbeatProof.physical_machine_verified,false);
+    assert.equal(heartbeatProof.production_release_authorized,false);
+    const recorded=heartbeatProof.records[0],packet=recorded.payload;
     assert.equal(packet.node_id,a.node_id);
     assert.ok(Number.isSafeInteger(recorded.committed_at_ms));
     const rawPacket=Buffer.from(packet.body_base64,'base64');
