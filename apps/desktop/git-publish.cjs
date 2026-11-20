@@ -260,9 +260,17 @@ async function publishReviewedCandidate({origin,agentId,ticketId,signer,
       // One more remote read. If absent-ref/base changed after reservation,
       // STOP; a reserved task is NOT automatically re-queued for retry.
       inspectRemote(initial,{policy:approved,runner:gitRunner});
-      execGit({gitExe:approved.git_exe,runner:gitRunner,timeout:60000,
+      const pushOutput=execGit({gitExe:approved.git_exe,runner:gitRunner,timeout:60000,
         args:['-C',bare,...publicationPushArgs({
           head:task.candidate_head_sha,destination:refs.destination,url:refs.url})]});
+      // git push --porcelain returns EXIT 0 for an existing same-SHA ref
+      // ([up to date]); this is NOT evidence of an absent-ref CREATE.
+      // Only the exact new-ref porcelain marker is admissible. Central
+      // independently verifies remote SHA/tree/parent after this witness.
+      const marker=task.candidate_head_sha+':'+refs.destination;
+      if(!pushOutput.split(/\r?\n/).some(line=>
+        line.startsWith('*\t')&&line.includes('\t'+marker+'\t[new branch]')))
+        fail('GIT_PUBLISH_NEW_REMOTE_REF_NOT_PROVEN');
       // Only Central may assert GitHub confirmation; it independently reads
       // immutable remote commit+tree/parent/changed files via GitHub API.
       const confirmed=await signedPost({origin,agentId,operation:'git-confirm',

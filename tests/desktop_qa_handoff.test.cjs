@@ -697,7 +697,8 @@ async function publicationFixture(f){
       assert.ok(args.some(x=>x==='--force-with-lease=refs/heads/ai/ticket_abc:'));
       assert.ok(args.includes('https://github.com/example/repo.git'));
       assert.ok(!args.some(x=>x.includes('--force=')||x==='--force'));
-      return {status:0,stdout:'* [new branch]\n',stderr:''};
+      return {status:0,stdout:'To github.com\n*\t'+f.head+
+        ':refs/heads/ai/ticket_abc\t[new branch]\nDone\n',stderr:''};
     }
     // Real Git object reads from temporary bare quarantine.
     return cp.spawnSync('git',args,{...opts,
@@ -756,8 +757,9 @@ test('local Git absent-branch lease creates exact ai/* ref once, never changes m
       assert.equal(cmd(remote,'rev-parse','refs/heads/ai/ticket_abc'),f.head);
       assert.equal(cmd(remote,'rev-parse','refs/heads/main'),f.baseline);
       const second=cp.spawnSync('git',['-C',f.work,...local],{encoding:'utf8'});
-      assert.notEqual(second.status,0,
-        'Even identical HEAD cannot overwrite a branch that is no longer absent');
+      assert.equal(second.status,0,'Git permits a same-SHA no-op, so exit code alone is unsafe');
+      assert.match(second.stdout,/\[up to date\]/);
+      assert.doesNotMatch(second.stdout,/\[new branch\]/);
       assert.equal(cmd(remote,'rev-parse','refs/heads/ai/ticket_abc'),f.head);
       assert.equal(cmd(remote,'rev-parse','refs/heads/main'),f.baseline);
       assert.throws(()=>publicationPushArgs({head:f.head,
@@ -829,7 +831,8 @@ test('default Git publisher policy is disabled and cannot request Central reserv
       assert.throws(()=>validatePolicy(require('../apps/desktop/git-publish-policy.json')),
         /GIT_PUBLISH_OWNER_POLICY_DISABLED/);
       await assert.rejects(publishReviewedCandidate({...f.opts,
-        agentId:'agent_qa',repoDir:f.qaRepo,evidenceDir:f.temp}),
+        agentId:'agent_qa',repoDir:f.qaRepo,evidenceDir:f.temp,
+        signer:{...f.signer,signWorkerAction:()=>null}}),
         /GIT_PUBLISH_OWNER_POLICY_DISABLED/);
     }finally{f.close();}
   });
