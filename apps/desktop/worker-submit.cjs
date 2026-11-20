@@ -105,6 +105,7 @@ function inspectCommittedCandidate(local,dir){
   }
   if(changed.length===0||new Set(changed).size!==changed.length)
     fail('SUBMIT_DIFF_FORMAT_INVALID');
+  verifyCandidateHistory(local,dir,head);
   // Claim-time attribute checks only covered paths already tracked at the
   // baseline. New scoped files may match dormant wildcard filters from a
   // previously committed .gitattributes, so inspect the candidate's own tree.
@@ -129,6 +130,43 @@ function inspectCommittedCandidate(local,dir){
       fail('SUBMIT_CANDIDATE_ACTIVE_GIT_FILTER_REQUIRES_OWNER_REVIEW');
   }
   return {head,tree,changed_paths:changed.sort()};
+}
+// The final tree is not sufficient QA provenance: a worker could change an
+// unauthorized file in an intermediate commit and revert it before submit.
+// Require a bounded, single-parent sequence from the exact approved baseline,
+// and independently check the raw path/mode delta at every step.
+function verifyCandidateHistory(local,dir,head){
+  const hooks=path.join(dir,'disabled-git-hooks');
+  const lines=gitText(local.worktree,hooks,'rev-list','--parents',
+    '--reverse','--max-count=41',local.baseline_sha+'..'+head).split('\n');
+  if(lines.length===0||lines.length>40)
+    fail('SUBMIT_HISTORY_TOO_COMPLEX_OR_MISSING');
+  let parent=local.baseline_sha,totalChanges=0;
+  for(const line of lines){
+    const m=/^([a-f0-9]{40}) ([a-f0-9]{40})$/.exec(line);
+    if(!m||m[2]!==parent)
+      fail('SUBMIT_HISTORY_NON_LINEAR_OR_SHALLOW');
+    const commit=m[1];
+    const raw=git(local.worktree,hooks,'diff','--raw','-r',
+      '--no-renames','-z',parent,commit);
+    if(raw.length===0||raw.length>1024*1024)
+      fail('SUBMIT_HISTORY_DIFF_MISSING_OR_EXCESSIVE');
+    const parts=raw.toString('utf8').split('\0');
+    if(parts.at(-1)!==''||(parts.length-1)%2!==0)
+      fail('SUBMIT_HISTORY_DIFF_UNTRUSTED');
+    for(let i=0;i<parts.length-1;i+=2){
+      const meta=parts[i],file=parts[i+1];
+      const mode=/^:(000000|100644) 100644 [a-f0-9]{4,64} [a-f0-9]{4,64} ([AM])$/.exec(meta);
+      if(!mode||(mode[2]==='A'&&mode[1]!=='000000')||
+        (mode[2]==='M'&&mode[1]!=='100644')||
+        !safePath(file)||!inScope(file,local.scopes))
+        fail('SUBMIT_HISTORY_PATH_OR_MODE_NOT_AUTHORIZED');
+      if(++totalChanges>1200)
+        fail('SUBMIT_HISTORY_TOO_COMPLEX_OR_MISSING');
+    }
+    parent=commit;
+  }
+  if(parent!==head)fail('SUBMIT_HISTORY_NON_LINEAR_OR_SHALLOW');
 }
 function files(dir,ticket){
   if(!path.isAbsolute(dir)||!ID.test(ticket))

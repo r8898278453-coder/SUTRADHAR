@@ -617,6 +617,71 @@ test('mismatched remote SHA after accepted POST does not mark submission verifie
       assert.equal(fs.existsSync(path.join(f.worker,'submission_receipt_ticket_abc.json')),false);
     }finally{f.close();}
   });
+test('hidden out-of-scope intermediate Git commit is rejected despite clean final diff',
+  {skip:!available},async()=>{
+    const f=fixture(),h=candidateHarness(f);
+    try{
+      await claimApprovedTask(args(f,h.fetcher));h.ready();
+      const work=path.join(f.worker,'worktrees','ticket_abc');
+      fs.mkdirSync(path.join(work,'private'));
+      fs.writeFileSync(path.join(work,'private','temporary.txt'),'secret history\n');
+      run(work,'add','private/temporary.txt');
+      run(work,'-c','user.name=SUTRADHAR CI',
+        '-c','user.email=test@example.invalid','commit','-m','hidden unauthorized addition');
+      run(work,'rm','private/temporary.txt');
+      run(work,'-c','user.name=SUTRADHAR CI',
+        '-c','user.email=test@example.invalid','commit','-m','hide previous change');
+      commitAuthorizedChange(f);
+      // Final baseline-to-head diff is only src/feature.ts, but Git history
+      // still carries the prohibited private/temporary.txt addition.
+      assert.equal(run(work,'diff','--name-only',f.baseline,'HEAD'),'src/feature.ts');
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_HISTORY_PATH_OR_MODE_NOT_AUTHORIZED/);
+      assert.equal(h.count(),0,'No Central submission on historical scope violation');
+    }finally{f.close();}
+  });
+
+test('non-linear merge history is denied despite an authorized final tree',
+  {skip:!available},async()=>{
+    const f=fixture(),h=candidateHarness(f);
+    try{
+      await claimApprovedTask(args(f,h.fetcher));h.ready();
+      const work=path.join(f.worker,'worktrees','ticket_abc');
+      run(work,'checkout','-b','side_review');
+      fs.writeFileSync(path.join(work,'src','feature.ts'),'export const feature=4;\n');
+      run(work,'add','src/feature.ts');
+      run(work,'-c','user.name=SUTRADHAR CI',
+        '-c','user.email=test@example.invalid','commit','-m','side change');
+      run(work,'checkout','ai/ticket_abc');
+      run(work,'-c','user.name=SUTRADHAR CI',
+        '-c','user.email=test@example.invalid','commit','--allow-empty','-m','candidate anchor');
+      run(work,'-c','user.name=SUTRADHAR CI',
+        '-c','user.email=test@example.invalid','merge','--no-ff','--no-edit','side_review');
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_HISTORY_NON_LINEAR_OR_SHALLOW/);
+      assert.equal(h.count(),0);
+    }finally{f.close();}
+  });
+
+test('two linear scoped commits remain eligible for candidate review',
+  {skip:!available},async()=>{
+    const f=fixture(),h=candidateHarness(f);
+    try{
+      await claimApprovedTask(args(f,h.fetcher));h.ready();
+      commitAuthorizedChange(f);
+      const work=path.join(f.worker,'worktrees','ticket_abc');
+      fs.writeFileSync(path.join(work,'src','feature.ts'),'export const feature=5;\n');
+      run(work,'add','src/feature.ts');
+      run(work,'-c','user.name=SUTRADHAR CI',
+        '-c','user.email=test@example.invalid','commit','-m','second authorized edit');
+      const response=await submitWorkerCandidate(candidateArgs(f,h));
+      assert.equal(response.accepted,true);
+      assert.equal(response.status,'SUBMITTED_FOR_REVIEW');
+      assert.deepEqual(response.changed_paths,['src/feature.ts']);
+      assert.equal(h.count(),1);
+    }finally{f.close();}
+  });
+
 test('new scoped candidate file matching a dormant baseline Git filter is rejected',
   {skip:!available},async()=>{
     const f=fixture();
