@@ -157,7 +157,8 @@ test('real admin HTTP rollback PR requires external review/CI evidence before co
       }] });
     if (pathname.endsWith('/pulls/77/reviews'))
       return answer([{ state: approved ? 'APPROVED' : 'COMMENTED',
-        user: { login: 'independent-reviewer' },
+        user: { login: 'independent-reviewer',type:'User' },
+        commit_id: REVERT_HEAD,
         submitted_at: '2026-11-09T23:00:00Z' }]);
     throw new Error('Unexpected mocked GitHub path ' + pathname);
   }) as typeof fetch;
