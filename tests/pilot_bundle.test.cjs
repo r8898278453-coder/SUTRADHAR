@@ -151,3 +151,72 @@ test('Owner signer hashes exact local evidence, verifies policy before signing a
     witnessBytes:x.witnessBytes,privateKeyPem,ownerAcknowledged:'yes',now}),
     /POLICY_BLOCKED/);
 });
+
+
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {registerBundle}=
+  require('../scripts/ops/pilot-session-ledger.cjs');
+function withPrivateLedger(fn){
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sutradhar-pilot-ledger-'));
+  if(process.platform!=='win32')fs.chmodSync(dir,0o700);
+  try{return fn(dir);}
+  finally{fs.rmSync(dir,{recursive:true,force:true});}
+}
+test('Owner pilot registry verifies exact signed evidence then records session once',()=>withPrivateLedger(dir=>{
+  const x=scenario();
+  const first=registerBundle({...x,ledgerDir:dir});
+  assert.equal(first.accepted,true,JSON.stringify(first));
+  assert.equal(first.session_recorded,true);
+  assert.equal(first.physical_test_verified,false);
+  assert.equal(first.production_release_authorized,false);
+  const location=path.join(dir,session+'.json');
+  const original=fs.readFileSync(location);
+  const saved=JSON.parse(original);
+  assert.equal(saved.session_id,session);
+  assert.equal(saved.source_sha,sha);
+  assert.equal(saved.before_sha256,hash(x.beforeBytes));
+  assert.equal(saved.production_release_authorized,false);
+  if(process.platform!=='win32')
+    assert.equal(fs.statSync(location).mode&0o077,0);
+  const retry=registerBundle({...x,ledgerDir:dir});
+  assert.equal(retry.accepted,false);
+  assert.equal(retry.error_code,'PILOT_SESSION_ALREADY_RECORDED');
+  assert.deepEqual(fs.readFileSync(location),original);
+}));
+test('invalid Owner signature, wrong expected SHA and tampered witness never consume session',()=>withPrivateLedger(dir=>{
+  const x=scenario();
+  for(const patch of [
+    {expectedSha:'b'.repeat(40)},
+    {ownerPublicKeyPem:crypto.generateKeyPairSync('ed25519').publicKey.export({type:'spki',format:'pem'}).toString()},
+    {witnessBytes:Buffer.concat([x.witnessBytes,Buffer.from('tamper')])}
+  ]){
+    const result=registerBundle({...x,...patch,ledgerDir:dir});
+    assert.equal(result.accepted,false);
+    assert.equal(result.error_code,'PILOT_SESSION_SIGNED_EVIDENCE_NOT_VERIFIED');
+  }
+  assert.deepEqual(fs.readdirSync(dir),[]);
+}));
+test('Owner pilot registry rejects public, symlinked, absent and relative ledger directories',()=>withPrivateLedger(dir=>{
+  const x=scenario(),nested=path.join(dir,'new-directory'),
+    linked=path.join(dir,'symlink');
+  const checks=[registerBundle({...x,ledgerDir:nested}),
+    registerBundle({...x,ledgerDir:'relative-folder'})];
+  assert.ok(checks.every(r=>!r.accepted));
+  if(process.platform!=='win32'){
+    fs.symlinkSync(dir,linked,'dir');
+    assert.equal(registerBundle({...x,ledgerDir:linked}).accepted,false);
+    fs.chmodSync(dir,0o777);
+    assert.equal(registerBundle({...x,ledgerDir:dir}).accepted,false);
+    fs.chmodSync(dir,0o700);
+  }
+  assert.equal(fs.existsSync(path.join(dir,session+'.json')),false);
+}));
+test('partial old ledger record blocks same session without destructive recovery',()=>withPrivateLedger(dir=>{
+  const target=path.join(dir,session+'.json');
+  fs.writeFileSync(target,'{"partial":', {flag:'wx',mode:0o600});
+  const x=scenario();
+  const result=registerBundle({...x,ledgerDir:dir});
+  assert.equal(result.accepted,false);
+  assert.equal(result.error_code,'PILOT_SESSION_ALREADY_RECORDED');
+  assert.equal(fs.readFileSync(target,'utf8'),'{"partial":');
+}));

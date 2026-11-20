@@ -51,7 +51,8 @@
     "ops:verify-pilot-evidence": "node scripts/ops/pilot-evidence-verifier.cjs",
     "ops:verify-pilot-node-continuity": "node scripts/ops/verify-pilot-node-continuity.cjs",
     "ops:pc-heartbeat-sample": "node scripts/ops/pilot-heartbeat-readonly.cjs",
-    "ops:verify-pilot-heartbeats": "node scripts/ops/pilot-heartbeat-audit.cjs"
+    "ops:verify-pilot-heartbeats": "node scripts/ops/pilot-heartbeat-audit.cjs",
+    "ops:register-pilot-session": "node scripts/ops/pilot-session-ledger.cjs"
   },
   "dependencies": {
     "@google/genai": "3.3.0",

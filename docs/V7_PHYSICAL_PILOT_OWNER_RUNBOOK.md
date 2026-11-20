@@ -79,3 +79,7 @@ A successful result intentionally says CENTRAL_LAST_SEEN_60_SECOND_CADENCE_ONLY,
 
 Keep full private BEFORE/AFTER key continuity receipts and cadence reports in the Owner witness/evidence register (with independent hashes). They are supporting G4/G5 artifacts, NOT full G0–G7 approval. Never upload keys, admin tokens, original device private data or sensitive Windows logs to GitHub/chat.
 
+
+## 20 November — Optional one-time Owner session replay ledger
+
+After the independently reviewed signed evidence verification, optionally register each exact Owner session once with `npm run ops:register-pilot-session`. The new offline command requires a pre-existing private Owner directory, re-verifies the signed evidence and refuses session reuse or partial-file overwrite. It does not certify real PCs, prevent tampering with the register or authorize production. See [Owner session ledger and limits](V7_PILOT_SESSION_LEDGER.md).

@@ -298,3 +298,7 @@ Manual `npm run ops:pc-heartbeat-sample` collects immutable, bounded read-only C
 
 New tests include wrong owner challenge/SHA/key, swapped/expired signed receipts, unchanged software boot ID, counter rollback, malformed approved agent sets, missing/misordered heartbeat samples, role switch, duplicate/fake agents, stale/oversized/misrouted Central responses and no automatic release. Owner guide: `docs/V7_PHYSICAL_PILOT_OWNER_RUNBOOK.md`. No real multi-PC trial, Hostinger staging, production-signed installer, physical Windows restart or production approval was performed in CI. Production remains HOLD.
 
+
+## 20 November 2026 — Optional offline pilot-session replay guard
+
+`npm run ops:register-pilot-session` adds a separate, strictly local Owner-review ledger: an existing private directory and one-time exclusive session file, signed-file re-verification and crash-left record refusal. Synthetic regression tests cover replay, tampering and unsafe directories. The ledger is not globally tamper-proof, does not prove physical PCs, does not perform remote actions and grants no release approval. See `docs/V7_PILOT_SESSION_LEDGER.md`. Real Hostinger staging, signed Windows binaries, physical-PC validation and full supply-chain audit remain mandatory NO-GO gates.
