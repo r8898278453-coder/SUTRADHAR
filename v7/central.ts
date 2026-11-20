@@ -626,10 +626,46 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
       await c.query('UPDATE v7_cluster SET lease_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 180 SECOND) WHERE singleton=1');
     }
     const elected=await evaluate(c,'heartbeat');
+    // Staging PILOT OPT-IN: same-transaction audit, only AFTER heartbeat succeeds.
+    // Do not compromise liveness for oversize bodies; their absence fails audit.
+    if(process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_EVIDENCE==='true'){
+      const raw=(req as any).rawBody as Buffer;
+      if(Buffer.isBuffer(raw)&&raw.length>=20&&raw.length<=8192){
+        await event(c,'NODE_HEARTBEAT_ACCEPTED',node.node_id,
+          Number(elected.epoch),node.node_id,{
+            schema:1,node_id:node.node_id,
+            timestamp_ms:Number(req.header('x-sutradhar-timestamp')),
+            nonce:req.header('x-sutradhar-nonce'),
+            signature_base64:req.header('x-sutradhar-signature'),
+            body_base64:raw.toString('base64'),accepted_at_ms:clock
+          });
+      }
+    }
     return {accepted:true,server_received_at:new Date(clock).toISOString(),epoch:Number(elected.epoch),
       master_agent_id:elected.master_agent_id,phase:elected.phase,
       backups:[elected.backup1,elected.backup2],paused:Boolean(elected.paused),
       heartbeat_interval_seconds:60};
+  });
+}));
+// Owner-only, bounded GET export of committed accepted heartbeat packet rows.
+app.get('/v7/owner/heartbeat-evidence/:nodeId',jsonRoute(async req=>{
+  admin(req);
+  const nodeId=requireId(req.params.nodeId);
+  if(!/^node_[a-f0-9]{32}$/.test(nodeId))fault('PILOT_NODE_ID_INVALID',400);
+  return transaction(async c=>{
+    const known=await one(c,'SELECT node_id FROM v7_nodes WHERE node_id=?',[nodeId]);
+    if(!known)fault('NODE_NOT_FOUND',404);
+    const recent=await rows(c,
+      'SELECT event_id,UNIX_TIMESTAMP(created_at)*1000 AS committed_at_ms,'+
+      'payload_json FROM v7_events WHERE event_type=? AND actor=? '+
+      'ORDER BY event_id DESC LIMIT 8',['NODE_HEARTBEAT_ACCEPTED',nodeId]);
+    return {schema:1,mode:'OWNER_CENTRAL_ACCEPTED_SIGNED_HEARTBEAT_LOG',
+      node_id:nodeId,records:recent.reverse().map(x=>({
+        event_id:Number(x.event_id),committed_at_ms:Number(x.committed_at_ms),
+        payload:typeof x.payload_json==='string'?
+          JSON.parse(x.payload_json):x.payload_json
+      })),read_only:true,physical_machine_verified:false,
+      production_release_authorized:false};
   });
 }));
 app.get('/v7/cluster',jsonRoute(async req=>{

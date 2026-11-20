@@ -84,7 +84,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         ticket_id:ticketId,evidence_base64:raw.toString('base64'),
         evidence_ref:'sha256:'+evidenceSha,attestation};
     }
-    const client={node_id,agent_id,signed,signedQaPackage,async heartbeat(epoch:number|null=0){
+    const client={node_id,agent_id,public_key_pem:pub,signed,signedQaPackage,async heartbeat(epoch:number|null=0){
       sequence++;agentSeq++;
       return signed('/v7/nodes/heartbeat',{sequence,boot_id:'boot_test_'+i,expected_master_epoch:epoch,
         agents:[{agent_id,sequence:agentSeq,status:'ONLINE'}]});}};
@@ -123,8 +123,33 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       await bootstrapDb.query('UPDATE v7_cluster SET bootstrapped_at=UTC_TIMESTAMP(3) WHERE singleton=1');
     } finally {await bootstrapDb.end();}
     const a=await edge(1),b=await edge(2),c=await edge(3),d=await edge(4,false);
+    // Explicit pilot mode records ONLY the accepted, real signed heartbeat.
+    process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_EVIDENCE='true';
     let h=await a.heartbeat();
+    delete process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_EVIDENCE;
     assert.equal(h.code,200,JSON.stringify(h.body));
+    const proofPath='/v7/owner/heartbeat-evidence/'+a.node_id;
+    const deniedProof=await fetch(base+proofPath);
+    assert.equal(deniedProof.status,401,'heartbeat evidence is Owner-only');
+    const acceptedProof=await fetch(base+proofPath,{
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(acceptedProof.status,200);
+    const proof=await acceptedProof.json() as any;
+    assert.equal(proof.node_id,a.node_id);
+    assert.equal(proof.records.length,1);
+    assert.equal(proof.physical_machine_verified,false);
+    assert.equal(proof.production_release_authorized,false);
+    const recorded=proof.records[0],packet=recorded.payload;
+    assert.equal(packet.node_id,a.node_id);
+    assert.ok(Number.isSafeInteger(recorded.committed_at_ms));
+    const rawPacket=Buffer.from(packet.body_base64,'base64');
+    assert.equal(JSON.parse(rawPacket.toString()).sequence,1);
+    const signedPacket=[String(packet.timestamp_ms),packet.nonce,'POST',
+      '/v7/nodes/heartbeat',crypto.createHash('sha256').update(rawPacket).digest('hex')].join('\n');
+    assert.equal(crypto.verify(null,Buffer.from(signedPacket),
+      crypto.createPublicKey(a.public_key_pem),
+      Buffer.from(packet.signature_base64,'base64')),true,
+      'MySQL accepted event retains the original node-signed request');
     h=await b.heartbeat();assert.equal(h.code,200);
     h=await c.heartbeat();assert.equal(h.code,200);
     h=await d.heartbeat();assert.equal(h.code,200);

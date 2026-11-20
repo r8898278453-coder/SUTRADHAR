@@ -302,3 +302,8 @@ New tests include wrong owner challenge/SHA/key, swapped/expired signed receipts
 ## 20 November 2026 — Optional offline pilot-session replay guard
 
 `npm run ops:register-pilot-session` adds a separate, strictly local Owner-review ledger: an existing private directory and one-time exclusive session file, signed-file re-verification and crash-left record refusal. Synthetic regression tests cover replay, tampering and unsafe directories. The ledger is not globally tamper-proof, does not prove physical PCs, does not perform remote actions and grants no release approval. See `docs/V7_PILOT_SESSION_LEDGER.md`. Real Hostinger staging, signed Windows binaries, physical-PC validation and full supply-chain audit remain mandatory NO-GO gates.
+
+
+## 20 November 2026 — Optional Central accepted signed heartbeat audit
+
+Staging-only opt-in SUTRADHAR_PILOT_SIGNED_HEARTBEAT_EVIDENCE=true records exact raw node-signed heartbeat packets only after real MySQL heartbeat acceptance, in the same transaction; default is OFF. Oversize packets are skipped without blocking liveness. Owner-only GET returns up to eight recent committed events per exact node; separate pinned-hostname read-only capture and independently pinned public-key offline Ed25519 verifier check nonce, signed body, sequences, boot identity and 60-second cadence. Unit negative tests and real disposable MySQL route integration are included. Exported JSON is NOT a signed database attestation or proof of physical PCs, secure Windows vault custody, actual Hostinger deployment, installer completion or production permission. Retain the strict release HOLD and separately approve staging data volume/retention. See docs/V7_PHYSICAL_PILOT_OWNER_RUNBOOK.md.
