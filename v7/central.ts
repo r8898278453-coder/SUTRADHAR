@@ -46,7 +46,7 @@ class Fault extends Error {
 const fault=(code:string,status=409):never=>{throw new Fault(code,status);};
 function okId(x:unknown){return typeof x==='string'&&ID_RE.test(x);}
 function requireId(x:unknown){if(!okId(x))fault('INVALID_ID',400);return x as string;}
-function requireSha(x:unknown){if(typeof x!=='string'||!SHA_RE.test(x))fault('INVALID_SHA',400);return x;}
+function requireSha(x:unknown):string{if(typeof x!=='string'||!SHA_RE.test(x))fault('INVALID_SHA',400);return x as string;}
 function requireStr(x:unknown,max=1000):string{if(typeof x!=='string'||!x.trim()||x.length>max)fault('INVALID_FIELD',400);return (x as string).trim();}
 function storedQaProof(value:any,invalidCode:string):ReturnType<typeof validatedStoredQaEvidence>{
   try{
