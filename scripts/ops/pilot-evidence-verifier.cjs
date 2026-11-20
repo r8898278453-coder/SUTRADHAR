@@ -14,7 +14,7 @@ const {compareFailover}=require('./pilot-policy.cjs');
 const PREFIX='SUTRADHAR_OWNER_PILOT_EVIDENCE_V1\n';
 const SHA=/^[a-f0-9]{40}$/,HEX=/^[a-f0-9]{64}$/,
   SESSION=/^[a-f0-9]{32}$/,NODE=/^node_[a-f0-9]{32}$/;
-const KEYS='after_sha256|before_sha256|case_type|central_origin|expires_at_ms|expected_node_ids|issued_at_ms|owner_review_note|physical_witness_sha256|schema|session_id|source_sha';
+const KEYS='after_sha256|before_sha256|case_type|central_origin|expected_node_ids|expires_at_ms|issued_at_ms|owner_review_note|physical_witness_sha256|schema|session_id|source_sha';
 const SNAPSHOT_KEYS=[
   'accepted','failures','measured_at_utc','checked_physical_node_ids',
   'deliberately_offline_node_ids','active_approved_nodes',

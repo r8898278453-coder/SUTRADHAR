@@ -17,10 +17,14 @@ test('Pilot refuses simulated or non-distinct PCs and stale agents',()=>{
   assert.equal(evaluatePilot(colocated,['pc_1','pc_2'],t).accepted,false);
 });
 test('Failover exact Backup1 and epoch fencing uses real before/after receipts',()=>{
-  const one=evaluatePilot(before,['pc_1','pc_2'],t);
-  const after={cluster:{master_agent_id:'agent_b01',backup1:'agent_c01',backup2:null,
+  const baselineTwo={cluster:{master_agent_id:'agent_a01',
+    backup1:'agent_b01',backup2:null,epoch:7,phase:'READY'},
+    agents:before.agents.slice(0,2)};
+  const one=evaluatePilot(baselineTwo,['pc_1','pc_2'],t);
+  assert.equal(one.accepted,true);
+  const after={cluster:{master_agent_id:'agent_b01',backup1:null,backup2:null,
     epoch:8,phase:'RECOVERING'},agents:[agent('agent_a01','pc_1',new Date(t-250000).toISOString().replace(/Z$/,'')),
-    agent('agent_b01','pc_2'),agent('agent_c01','pc_3')]};
+    agent('agent_b01','pc_2')]};
   const two=evaluatePilot(after,['pc_1','pc_2'],t+10000,['pc_1']);
   assert.equal(two.accepted,true);
   assert.equal(compareFailover(one,two).accepted,true);
@@ -43,7 +47,9 @@ test('Two-PC promotion can succeed with no remaining backup after Master goes of
 
 
 test('failover rejects reverted timestamp, wrong/offline PC, and incomplete same-set evidence',()=>{
-  const base=evaluatePilot(before,['pc_1','pc_2'],t);
+  const base=evaluatePilot({cluster:{...before.cluster,backup2:null},
+    agents:before.agents.slice(0,2)},['pc_1','pc_2'],t);
+  assert.equal(base.accepted,true);
   const afterRaw={cluster:{master_agent_id:'agent_b01',backup1:null,
     backup2:null,epoch:8,phase:'RECOVERING'},agents:[
     agent('agent_a01','pc_1',new Date(t-250000).toISOString().replace(/Z$/,'')),
