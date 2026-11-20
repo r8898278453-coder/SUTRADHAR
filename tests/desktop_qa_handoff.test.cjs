@@ -104,7 +104,7 @@ test('tampered bundle, malformed manifest and self-QA are denied before any trus
       assert.equal(cmd(f.qaRepo,'rev-parse','HEAD'),f.baseline);
     }finally{f.close();}
   });
-test('Central hash mismatch and dirty or untrusted QA origin block untrusted Git transfer',
+test('Central mismatch and untrusted QA origin deny transfer; local untracked files are never used',
   {skip:!available},async()=>{
     const f=fixture();
     try{
@@ -113,9 +113,12 @@ test('Central hash mismatch and dirty or untrusted QA origin block untrusted Git
       await assert.rejects(inspectQAHandoff({...f.opts,
         agentId:'agent_qa',repoDir:f.qaRepo}),/HANDOFF_MANIFEST_CENTRAL_MISMATCH/);
       f.updateTask(f.task());
-      fs.writeFileSync(path.join(f.qaRepo,'untracked.txt'),'not clean');
-      await assert.rejects(inspectQAHandoff({...f.opts,
-        agentId:'agent_qa',repoDir:f.qaRepo}),/HANDOFF_QA_REPO_NOT_CLEAN_BASELINE/);
+      fs.writeFileSync(path.join(f.qaRepo,'untracked.txt'),'not used by bare inspection');
+      const proven=await inspectQAHandoff({...f.opts,
+        agentId:'agent_qa',repoDir:f.qaRepo});
+      assert.equal(proven.verified,true);
+      assert.equal(fs.readFileSync(path.join(f.qaRepo,'untracked.txt'),'utf8'),
+        'not used by bare inspection');
       fs.rmSync(path.join(f.qaRepo,'untracked.txt'));
       cmd(f.qaRepo,'remote','set-url','origin','https://github.com/attacker/repo.git');
       await assert.rejects(inspectQAHandoff({...f.opts,

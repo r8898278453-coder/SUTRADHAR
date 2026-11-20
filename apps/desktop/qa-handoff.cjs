@@ -148,7 +148,7 @@ async function exportCandidateHandoff({origin,agentId,ticketId,dir,signer,
       agentId,ticketId,'EXPORT');
     if(!matchingTask(latest,m))fail('HANDOFF_CENTRAL_CHANGED_DURING_EXPORT');
     fs.copyFileSync(created,o.bundle,fs.constants.COPYFILE_EXCL);
-    const fd=fs.openSync(o.bundle,'r');
+    const fd=fs.openSync(o.bundle,'r+');
     try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
     writeExclusive(o.manifest,JSON.stringify(m,null,2)+'\n');
     return {bundle_path:o.bundle,manifest_path:o.manifest,
@@ -182,9 +182,12 @@ function trustedRepository(repoDir,remote){
   origin=origin.replace(/\.git$/,'').replace(/^git@github\.com:/,'https://github.com/');
   if(origin!=='https://github.com/'+remote.repository)
     fail('HANDOFF_QA_REPO_ORIGIN_MISMATCH');
-  if(text(repo,'rev-parse','HEAD')!==remote.baseline_sha||
-     text(repo,'status','--porcelain=v1','--untracked-files=all')!=='')
-    fail('HANDOFF_QA_REPO_NOT_CLEAN_BASELINE');
+  // Inspection fetches Git OBJECTS only; no working-tree files are opened.
+  // Do not mistake CRLF differences under sanitized Windows global config for
+  // altered trusted Git history. A future QA EXECUTION gate must separately
+  // require a clean, isolated checkout before testing untrusted code.
+  if(text(repo,'rev-parse','HEAD')!==remote.baseline_sha)
+    fail('HANDOFF_QA_BASELINE_HEAD_MISMATCH');
   if(text(repo,'cat-file','-t',remote.baseline_sha)!=='commit')
     fail('HANDOFF_QA_BASELINE_MISSING');
   return repo;

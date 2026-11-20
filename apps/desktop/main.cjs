@@ -582,7 +582,7 @@ app.whenReady().then(()=>{
       });
       if(bundle.canceled||bundle.filePaths.length!==1)return {canceled:true};
       const repo=await dialog.showOpenDialog(setupWindow,{
-        title:'Choose YOUR trusted clean Git checkout at the approved baseline',
+        title:'Choose YOUR trusted Git checkout at the approved baseline',
         properties:['openDirectory']
       });
       if(repo.canceled||repo.filePaths.length!==1)return {canceled:true};
