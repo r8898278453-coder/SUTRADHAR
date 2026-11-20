@@ -65,6 +65,8 @@ async function loadStatus(){
     get('workerCheckpoint').disabled=!approvedReadOnly;
     get('workerRenew').disabled=!approvedReadOnly;
     get('workerSubmit').disabled=!approvedReadOnly;
+    get('workerExport').disabled=!approvedReadOnly;
+    get('workerQAInspect').disabled=!approvedReadOnly;
 
     get('dashboard').disabled=!s.configured;
     get('autostart').disabled=!s.startupSupported;
@@ -447,5 +449,35 @@ get('workerSubmit').addEventListener('click',async()=>{
     output.textContent='Submission blocked: '+String(error?.message||error)+
       '. Preserve the local Git worktree and pending submission journal. '+
       'Do not change commits or send a new claim while Central status is uncertain; ask Owner to reconcile.';
+  }finally{await loadStatus();}
+});
+
+get('workerExport').addEventListener('click',async()=>{
+  const output=get('workerTasks');get('workerExport').disabled=true;
+  try{
+    const r=await api.exportCandidateHandoff(get('workerAgent').value,exactWorkerTicket());
+    output.textContent=r.canceled?'Export canceled; no files written.':
+      'Exported offline candidate bundle: '+r.bundle_path+
+      ' and manifest: '+r.manifest_path+
+      '. SHA256: '+r.bundle_sha256+
+      '. Move BOTH files to another approved QA PC using your trusted transfer method. '+
+      'This does not publish Git or approve QA.';
+  }catch(error){
+    output.textContent='Offline export blocked: '+String(error?.message||error)+
+      '. Preserve existing source and any previously exported files; do not overwrite uncertain handoffs.';
+  }finally{await loadStatus();}
+});
+get('workerQAInspect').addEventListener('click',async()=>{
+  const output=get('workerTasks');get('workerQAInspect').disabled=true;
+  try{
+    const r=await api.inspectQAHandoff(get('workerAgent').value,exactWorkerTicket());
+    output.textContent=r.canceled?'QA inspection canceled.':
+      'Independent QA handoff inspected ONLY. Exact Central candidate: '+
+      r.candidate_head_sha+' / tree '+r.candidate_tree_sha+
+      '. Bundle SHA256: '+r.bundle_sha256+
+      '. No objects entered your trusted checkout, no tests ran, and no QA approval was sent.';
+  }catch(error){
+    output.textContent='QA inspection blocked: '+String(error?.message||error)+
+      '. Do not execute the bundle or manually force a Git import. Ask the Owner to review the mismatch.';
   }finally{await loadStatus();}
 });

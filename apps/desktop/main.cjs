@@ -42,6 +42,7 @@ const {inspectWorkerTasks}=require('./worker-inspection.cjs');
 const {claimApprovedTask,resumeApprovedTask}=require('./worker-claim.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
+const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
 const {enrollWithOwnerGrant}=require('./enrollment.cjs');
 const {inspect:inspectEnrollment,prepare:prepareEnrollment,
   markSubmitted:markEnrollmentSubmitted,requireSubmitted,
@@ -541,6 +542,63 @@ app.whenReady().then(()=>{
       return submitWorkerCandidate({
         origin,agentId,ticketId,dir:path.join(nodeDir(),'worker'),signer
       });
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:exportCandidateHandoff',async(event,agentId,ticketId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    workerClaimBusy=true;
+    try{
+      const selected=await dialog.showSaveDialog(setupWindow,{
+        title:'Export the exact Central-submitted candidate for independent QA',
+        defaultPath:'sutradhar-'+ticketId+'.bundle',
+        filters:[{name:'SUTRADHAR offline Git bundle',extensions:['bundle']}]
+      });
+      if(selected.canceled||!selected.filePath)return {canceled:true};
+      const ok=await dialog.showMessageBox(setupWindow,{
+        type:'warning',
+        buttons:['Cancel — export nothing','Export only verified Git objects and manifest'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Prepare a manual offline candidate handoff?',
+        detail:'This only exports the exact committed candidate already recorded in Central. '+
+          'Both files (.bundle and .bundle.json) must be carried securely to the independent QA PC. '+
+          'No Git push, QA, installer or automatic execution is permitted.'
+      });
+      if(ok.response!==1)return {canceled:true};
+      approvedWorkerOperator(agentId,ticketId,true);
+      return exportCandidateHandoff({origin,agentId,ticketId,
+        dir:path.join(nodeDir(),'worker'),signer,bundlePath:selected.filePath});
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:inspectQAHandoff',async(event,agentId,ticketId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    workerClaimBusy=true;
+    try{
+      const bundle=await dialog.showOpenDialog(setupWindow,{
+        title:'Choose the copied candidate .bundle file on this QA PC',
+        properties:['openFile'],
+        filters:[{name:'SUTRADHAR offline Git bundle',extensions:['bundle']}]
+      });
+      if(bundle.canceled||bundle.filePaths.length!==1)return {canceled:true};
+      const repo=await dialog.showOpenDialog(setupWindow,{
+        title:'Choose YOUR trusted clean Git checkout at the approved baseline',
+        properties:['openDirectory']
+      });
+      if(repo.canceled||repo.filePaths.length!==1)return {canceled:true};
+      const ok=await dialog.showMessageBox(setupWindow,{
+        type:'warning',
+        buttons:['Cancel — inspect nothing','Inspect copied objects in temporary quarantine'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Inspect this handoff for independent QA?',
+        detail:'Central task '+ticketId+' will be checked with this QA agent. '+
+          'The bundle SHA and full commit history are independently verified in a disposable BARE Git store. '+
+          'Your trusted repository stays unchanged. No checkout, tests, QA approval, push or code execution.'
+      });
+      if(ok.response!==1)return {canceled:true};
+      approvedWorkerOperator(agentId,ticketId,true);
+      return inspectQAHandoff({origin,agentId,ticketId,signer,
+        bundlePath:bundle.filePaths[0],repoDir:repo.filePaths[0]});
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:checkUpdateReadiness',async event=>{
