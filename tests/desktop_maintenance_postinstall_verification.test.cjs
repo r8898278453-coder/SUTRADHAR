@@ -66,8 +66,13 @@ function initial(dir,{rollback=false}={}){
   }};
   const fetcher=async(url,options)=>{
     assert.equal(options.redirect,'error');
-    assert.equal(options.credentials,'omit');
-    assert.equal(options.cache,'no-store');
+    // Preparation and execution share this mock and predate the hardened
+    // observation request. Assert these options on observation-specific
+    // requests rather than accidentally failing earlier stages.
+    if(options.credentials!==undefined||options.cache!==undefined){
+      assert.equal(options.credentials,'omit');
+      assert.equal(options.cache,'no-store');
+    }
     if(replies.offline)throw Error('offline');
     const p=new URL(url).pathname;
     const d=p==='/v7/nodes/maintenance'?replies.maintenance:
@@ -132,7 +137,17 @@ async function launched(dir,{rollback=false}={}){
 }
 test('target version, same enrolled key, signed launch receipts and fresh Central produce observation only',()=>fixtures(async dir=>{
   const {f,check}=await launched(dir);
+  const sourceFetch=check.fetcher;
+  let boundedRequests=0;
+  check.fetcher=async(url,options)=>{
+    assert.equal(options.credentials,'omit');
+    assert.equal(options.cache,'no-store');
+    assert.equal(options.redirect,'error');
+    boundedRequests++;
+    return sourceFetch(url,options);
+  };
   const result=await observePostInstall(check);
+  assert.equal(boundedRequests,5);
   assert.equal(result.observed,true);
   assert.equal(result.installer_completion_proven,false);
   assert.equal(result.central_maintenance_reconfirmed,true);
