@@ -1215,5 +1215,38 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(together.code,200,JSON.stringify(together.body));
     assert.deepEqual(once.body,together.body);
 
+    // Real MySQL concurrency acceptance: two separately signed HTTP requests
+    // carrying the SAME next node+agent sequence must never both commit.
+    // This is a disposable node with no project/work; not production evidence.
+    const raceNode=await edge(99,false);
+    const pulse={boot_id:'boot_race_99',sequence:1,
+      expected_master_epoch:null,
+      agents:[{agent_id:raceNode.agent_id,sequence:1,status:'ONLINE'}]};
+    const [r1,r2]=await Promise.all([
+      raceNode.signed('/v7/nodes/heartbeat',pulse),
+      raceNode.signed('/v7/nodes/heartbeat',pulse)
+    ]);
+    const sorted=[r1.code,r2.code].sort((x,y)=>x-y);
+    assert.deepEqual(sorted,[200,409],JSON.stringify([r1,r2]));
+    const rejected=r1.code===409?r1:r2;
+    assert.equal(rejected.body.error_code,'REPLAY_SEQUENCE');
+    const actualDb=await mysql.createConnection({
+      host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+      user:process.env.DB_USER,password:process.env.DB_PASSWORD,
+      database:process.env.DB_NAME});
+    try{
+      const [nodeRows]:any=await actualDb.query(
+        'SELECT last_sequence,boot_id FROM v7_nodes WHERE node_id=?',[raceNode.node_id]);
+      const [agentRows]:any=await actualDb.query(
+        'SELECT last_sequence FROM v7_agents WHERE agent_id=?',[raceNode.agent_id]);
+      assert.equal(Number(nodeRows[0].last_sequence),1);
+      assert.equal(nodeRows[0].boot_id,pulse.boot_id);
+      assert.equal(Number(agentRows[0].last_sequence),1);
+    }finally{await actualDb.end();}
+    const replayAfterRace=await raceNode.signed('/v7/nodes/heartbeat',pulse);
+    assert.equal(replayAfterRace.code,409,
+      'Later retries at the same sequence cannot repeat a committed heartbeat');
+    assert.equal(replayAfterRace.body.error_code,'REPLAY_SEQUENCE');
+
   }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await shutdownV7ForTests();}
 });

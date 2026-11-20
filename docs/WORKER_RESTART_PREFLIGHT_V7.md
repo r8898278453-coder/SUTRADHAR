@@ -54,3 +54,9 @@ The **developer-only** `npm run edge:start` daemon has a separate, plain-text Ed
 **If `DEV_EDGE_ALREADY_RUNNING_OR_CRASH_UNRECONCILED` appears:** Do not delete the identity file or start two copies. First check the PC/service and make sure *no other daemon* is active; inspect protected node/agent sequences, heartbeat evidence and uncertain work in Central; only an authorized Owner/operator may decide whether removal of the **local lock file only** is safe. No automatic lock stealing, key rotation, lease resume, Master promotion, Git work retry, installer execution or Hostinger mutation occurs. A killed/stale process can leave a lock on purpose.
 
 Tests: `npm run test:v7` contains actual local-filesystem crash/replay/locking fixtures and source-contract assertions. This is **local alpha developer-only** validation, not Windows DPAPI/ACL/power-cut proof or physical multi-PC failover acceptance.
+
+## 21 November — Concurrent signed heartbeat retry acceptance (disposable MySQL)
+
+A dedicated throwaway enrolled and Owner-approved test node sends two real HTTP Ed25519-signed `POST /v7/nodes/heartbeat` requests concurrently, each with a distinct valid nonce but the **same next node and agent sequence**. Under the database leader-row serialization, exactly **one** can return HTTP 200. The other must return HTTP 409 `REPLAY_SEQUENCE`. The test independently checks the committed MySQL node/agent counters and rejects a later retry of that same sequence.
+
+This is a concurrency acceptance test against **disposable MySQL only**; it never contacts the live Hostinger service or certifies real two-PC failover, physical key custody, OS restart, Master lease correctness under a power-cut or production deployment.
