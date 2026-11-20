@@ -66,13 +66,16 @@ function initial(dir,{rollback=false}={}){
   }};
   const fetcher=async(url,options)=>{
     assert.equal(options.redirect,'error');
+    assert.equal(options.credentials,'omit');
+    assert.equal(options.cache,'no-store');
     if(replies.offline)throw Error('offline');
     const p=new URL(url).pathname;
     const d=p==='/v7/nodes/maintenance'?replies.maintenance:
       p==='/v7/cluster/state'?replies.cluster:
       p==='/v7/nodes/me'?replies.me:null;
     if(!d)throw Error('unsupported path '+p);
-    return {ok:true,json:async()=>d};
+    return new Response(JSON.stringify(d),{status:200,
+      headers:{'content-type':'application/json'}});
   };
   const authenticode=({expectedSha256,publisherSubject})=>({
     verified:true,file_sha256:expectedSha256,publisher_subject:publisherSubject,
@@ -278,4 +281,45 @@ test('Owner release rejects replaced EXE or changed signing publisher after a va
       publisher_subject:'CN=Untrusted Developer'})}),/INSTALLED_APP_CHANGED/);
   assert.throws(()=>verifyObservedReceipt({...verified,platform:'linux'}),
     /INSTALLED_PUBLISHER_REQUIRED/);
+}));
+
+
+test('oversized Central HTTP response cannot generate signed post-install evidence',()=>fixtures(async dir=>{
+  const {f,check}=await launched(dir);
+  const huge=async()=>new Response(new ReadableStream({
+    start(controller){controller.enqueue(new Uint8Array(65*1024));controller.close();}
+  }),{status:200,headers:{'content-type':'application/json'}});
+  await assert.rejects(observePostInstall({...check,fetcher:huge}),
+    /POSTINSTALL_CENTRAL_RESPONSE_TOO_LARGE/);
+  assert.equal(fs.existsSync(path.join(f.nodeDir,
+    'installer-postinstall-observed.json')),false);
+}));
+test('signed observation still rejects forged Central reconfirmation and impossible times',()=>fixtures(async dir=>{
+  const {f,check}=await launched(dir);
+  await observePostInstall(check);
+  const file=path.join(f.nodeDir,'installer-postinstall-observed.json');
+  const original=JSON.parse(fs.readFileSync(file,'utf8'));
+  const params={dir:f.nodeDir,node,agentIds:[agentId],
+    observedVersion:'7.1.0',installedExecutable:check.installedExecutable,
+    publisherSubject:check.publisherSubject,platform:'win32',
+    verifyPublisher:installedPublisher};
+  const resign=change=>{
+    const {signature_base64,...payload}=original;
+    const updated={...payload,...change};
+    const signature=crypto.sign(null,Buffer.from(
+      'SUTRADHAR_POSTINSTALL_OBSERVATION_V1\n'+JSON.stringify(updated)),
+      node.private_key_pem).toString('base64');
+    fs.writeFileSync(file,JSON.stringify({...updated,signature_base64:signature}));
+  };
+  resign({central_maintenance_reconfirmed:false});
+  assert.throws(()=>verifyObservedReceipt(params),
+    /POSTINSTALL_OBSERVATION_IDENTITY_MISMATCH/);
+  resign({observed_at_ms:1});
+  assert.throws(()=>verifyObservedReceipt(params),
+    /POSTINSTALL_OBSERVATION_IDENTITY_MISMATCH/);
+  resign({observed_at_ms:Date.now()+3600000});
+  assert.throws(()=>verifyObservedReceipt(params),
+    /POSTINSTALL_OBSERVATION_IDENTITY_MISMATCH/);
+  fs.writeFileSync(file,JSON.stringify(original));
+  assert.equal(verifyObservedReceipt(params).observed,true);
 }));

@@ -95,9 +95,10 @@ function baseEvidence({dir,node,agentIds,observedVersion}){
 }
 function verifyObservedReceipt({dir,node,agentIds,observedVersion,
   installedExecutable,publisherSubject,platform=process.platform,
-  verifyPublisher=verifyInstalledDesktopPublisher}={}){
+  verifyPublisher=verifyInstalledDesktopPublisher,now=Date.now()}={}){
   if(!node||!NODE.test(node.node_id||'')||
-     typeof dir!=='string'||!path.isAbsolute(dir))
+     typeof dir!=='string'||!path.isAbsolute(dir)||
+     !Number.isSafeInteger(now)||now<1)
     fail('POSTINSTALL_OBSERVATION_ARGUMENTS_INVALID');
   const receipt=verifySigned(
     jsonFile(path.join(dir,'installer-postinstall-observed.json')),
@@ -138,6 +139,11 @@ function verifyObservedReceipt({dir,node,agentIds,observedVersion,
      !Number.isSafeInteger(receipt.expected_epoch)||receipt.expected_epoch<1||
      receipt.installer_completion_proven!==false||
      receipt.installer_exit_code_verified!==false||
+     receipt.central_maintenance_reconfirmed!==true||
+     !Number.isSafeInteger(receipt.observed_at_ms)||
+     receipt.observed_at_ms<baseline.launch.observed_at_ms||
+     receipt.observed_at_ms<baseline.attempt.attempted_at_ms||
+     receipt.observed_at_ms>now+120000||
      receipt.auto_release_allowed!==false||
      receipt.automatic_rollback_allowed!==false)
     fail('POSTINSTALL_OBSERVATION_IDENTITY_MISMATCH');
@@ -188,10 +194,37 @@ async function observePostInstall({dir,node,agentIds,observedVersion,
     try{
       response=await fetcher(origin+uri,{method:'GET',
         headers:{...headers,Accept:'application/json'},
-        redirect:'error',signal:AbortSignal.timeout(12000)});
+        redirect:'error',cache:'no-store',credentials:'omit',
+        signal:AbortSignal.timeout(12000)});
     }catch{fail('POSTINSTALL_CENTRAL_UNREACHABLE');}
     if(!response?.ok)fail('POSTINSTALL_CENTRAL_DENIED');
-    try{data=await response.json();}catch{fail('POSTINSTALL_CENTRAL_INVALID');}
+    // Never trust an unbounded response.json() from Central, even on HTTPS.
+    // Keep response parsing bounded in bytes while streaming and fail closed.
+    const maxBytes=64*1024;
+    const declared=Number(response.headers?.get?.('content-length')||0);
+    if(!Number.isSafeInteger(declared)||declared<0||declared>maxBytes||
+       !response.body||typeof response.body.getReader!=='function')
+      fail('POSTINSTALL_CENTRAL_INVALID');
+    const reader=response.body.getReader();
+    const chunks=[];let total=0;
+    try{
+      for(;;){
+        const {done,value}=await reader.read();
+        if(done)break;
+        if(!value||!Number.isSafeInteger(value.byteLength))
+          fail('POSTINSTALL_CENTRAL_INVALID');
+        total+=value.byteLength;
+        if(total>maxBytes)fail('POSTINSTALL_CENTRAL_RESPONSE_TOO_LARGE');
+        chunks.push(Buffer.from(value));
+      }
+      data=JSON.parse(Buffer.concat(chunks,total).toString('utf8'));
+    }catch(error){
+      if(error?.message==='POSTINSTALL_CENTRAL_RESPONSE_TOO_LARGE')throw error;
+      fail('POSTINSTALL_CENTRAL_INVALID');
+    }finally{
+      try{await reader.cancel();}catch{}
+      reader.releaseLock();
+    }
     if(!data||typeof data!=='object'||Array.isArray(data))
       fail('POSTINSTALL_CENTRAL_INVALID');
     return data;

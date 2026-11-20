@@ -12,8 +12,27 @@ function psLiteral(s){
      /[\x00-\x1f]/.test(s))throw Error('UPDATE_AUTHENTICODE_LITERAL_INVALID');
   return "'"+s.replace(/'/g,"''")+"'";
 }
+// Pinned OS PowerShell binary; do not search the caller's PATH, inherit
+// an untrusted cwd/env, or accept nonstandard Windows roots silently.
+function trustedWindowsPowerShell({platform=process.platform,
+  systemRoot=process.env.SystemRoot,windir=process.env.WINDIR}={}){
+  if(platform!=='win32')throw Error('UPDATE_AUTHENTICODE_WINDOWS_TRUST_REQUIRED');
+  const root=systemRoot||windir||'C:\\Windows';
+  if(typeof root!=='string'||!/^[A-Za-z]:\\Windows$/i.test(root)||
+     (systemRoot&&String(systemRoot).toLowerCase()!==root.toLowerCase())||
+     (windir&&String(windir).toLowerCase()!==root.toLowerCase()))
+    throw Error('UPDATE_AUTHENTICODE_WINDOWS_ROOT_UNTRUSTED');
+  const system32=path.win32.join(root,'System32');
+  return Object.freeze({
+    program:path.win32.join(system32,'WindowsPowerShell','v1.0','powershell.exe'),
+    options:Object.freeze({timeout:30000,windowsHide:true,shell:false,
+      encoding:'utf8',cwd:system32,
+      env:Object.freeze({SystemRoot:root,WINDIR:root,PATH:system32,
+        PSModulePath:path.win32.join(system32,'WindowsPowerShell','v1.0','Modules')})})
+  });
+}
 function verifyWindowsPublisher({installerPath,publisherSubject,expectedSha256,
-  platform=process.platform,runner=spawnSync}={}){
+  platform=process.platform,runner=spawnSync,systemRoot,windir}={}){
   if(platform!=='win32'||typeof installerPath!=='string'||
      !/^CN=.{1,220}$/.test(publisherSubject||'')||
      !/^[0-9a-f]{64}$/.test(expectedSha256||''))
@@ -26,10 +45,10 @@ function verifyWindowsPublisher({installerPath,publisherSubject,expectedSha256,
     'if($s.SignerCertificate.Subject -cne '+psLiteral(publisherSubject)+'){exit 43};'+
     'exit 0';
   const encoded=Buffer.from(command,'utf16le').toString('base64');
+  const shell=trustedWindowsPowerShell({platform,systemRoot,windir});
   let result;
-  try{result=runner('powershell.exe',['-NoProfile','-NonInteractive',
-    '-EncodedCommand',encoded],{timeout:30000,windowsHide:true,
-    encoding:'utf8'});}
+  try{result=runner(shell.program,['-NoLogo','-NoProfile','-NonInteractive',
+    '-EncodedCommand',encoded],shell.options);}
   catch{throw Error('UPDATE_AUTHENTICODE_WINDOWS_VERIFICATION_FAILED');}
   if(!result||result.error||result.signal||result.status!==0)
     throw Error('UPDATE_AUTHENTICODE_WINDOWS_VERIFICATION_FAILED');
@@ -43,7 +62,7 @@ function verifyWindowsPublisher({installerPath,publisherSubject,expectedSha256,
  * installer. This does not attest NSIS completion, nor Windows installer exit.
  */
 function verifyInstalledDesktopPublisher({executablePath,publisherSubject,
-  platform=process.platform,runner=spawnSync}={}){
+  platform=process.platform,runner=spawnSync,systemRoot,windir}={}){
   if(platform!=='win32'||typeof executablePath!=='string'||
      !path.isAbsolute(executablePath)||
      !/^CN=.{1,220}$/.test(publisherSubject||''))
@@ -54,11 +73,12 @@ function verifyInstalledDesktopPublisher({executablePath,publisherSubject,
     'if($s.Status -ne \'Valid\' -or $null -eq $s.SignerCertificate){exit 42};'+
     'if($s.SignerCertificate.Subject -cne '+psLiteral(publisherSubject)+'){exit 43};'+
     'exit 0';
+  const shell=trustedWindowsPowerShell({platform,systemRoot,windir});
   let result;
   try{
-    result=runner('powershell.exe',['-NoProfile','-NonInteractive',
+    result=runner(shell.program,['-NoLogo','-NoProfile','-NonInteractive',
       '-EncodedCommand',Buffer.from(command,'utf16le').toString('base64')],
-      {timeout:30000,windowsHide:true,encoding:'utf8'});
+      shell.options);
   }catch{throw Error('POSTINSTALL_WINDOWS_PUBLISHER_VERIFICATION_FAILED');}
   if(!result||result.error||result.signal||result.status!==0)
     throw Error('POSTINSTALL_WINDOWS_PUBLISHER_VERIFICATION_FAILED');
@@ -68,4 +88,4 @@ function verifyInstalledDesktopPublisher({executablePath,publisherSubject,
     publisher_subject:publisherSubject,installation_success_proven:false});
 }
 
-module.exports={psLiteral,verifyWindowsPublisher,verifyInstalledDesktopPublisher};
+module.exports={psLiteral,verifyWindowsPublisher,verifyInstalledDesktopPublisher,trustedWindowsPowerShell};
