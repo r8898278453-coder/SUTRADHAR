@@ -17,7 +17,20 @@ function hashFile(file){
   if(typeof file!=='string'||!path.isAbsolute(file)||file.length>1024)
     fail('OWNER_EVIDENCE_ABSOLUTE_FILE_REQUIRED');
   const resolved=path.resolve(file);
-  if(fs.realpathSync.native(resolved)!==resolved)
+  const physical=fs.realpathSync.native(resolved);
+  // Windows may return different path casing or an extended-length prefix
+  // for the *same* filesystem object. Only that representational difference
+  // is accepted; any actual symlink/junction redirection still mismatches.
+  const normalize=x=>{
+    let p=path.normalize(x);
+    if(process.platform==='win32'){
+      const extended=String.fromCharCode(92,92,63,92);
+      if(p.startsWith(extended))p=p.slice(extended.length);
+      return p.toLowerCase();
+    }
+    return p;
+  };
+  if(normalize(physical)!==normalize(resolved))
     fail('OWNER_EVIDENCE_SYMLINK_OR_REDIRECT');
   const info=fs.lstatSync(resolved);
   if(!info.isFile()||info.isSymbolicLink()||info.size<1||info.size>LIMIT)
