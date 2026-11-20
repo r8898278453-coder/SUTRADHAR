@@ -241,7 +241,7 @@ async function submitOwnerReviewedQaReceipt({origin,agentId,ticketId,signer,
   if(result.accepted!==true||result.ticket_id!==ticketId||
      result.status!==(v.report.test_passed?'INTEGRATING':'TEST_FAILED')||
      typeof result.receipt_id!=='string'||
-     !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(result.receipt_id)||
+     !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(result.receipt_id)||
      result.evidence_level!=='AGENT_ATTESTED')
     fail('QA_RECEIPT_CENTRAL_RESPONSE_INVALID');
   complete(j,v.context,journalBody);
