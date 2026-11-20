@@ -38,7 +38,8 @@ test('OS vault encrypts persisted identity and prevents replay/clone',()=>{
     v.save(y);assert.deepEqual(v.read(),y);
     assert.throws(()=>v.save(x),/SEQUENCE_ROLLBACK/);
     assert.throws(()=>v.save({...y,node_id:'node_different'}),/ROTATION_REQUIRES_OWNER/);
-    assert.throws(()=>v.save({...y,agents:[{id:'agent_test_1',sequence:2}]}),/AGENT_REPLAY_DENIED/);
+    assert.throws(()=>v.save({...y,node_sequence:3,
+      agents:[{id:'agent_test_1',sequence:2}]}),/AGENT_REPLAY_DENIED/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 test('OS vault blocks missing key providers and plaintext Linux fallback',()=>{
