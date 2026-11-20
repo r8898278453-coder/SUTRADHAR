@@ -9,14 +9,33 @@ const assert=require('node:assert/strict');
 function atomicWrite(target,bytes){
   const dir=path.dirname(target);
   fs.mkdirSync(dir,{recursive:true,mode:0o700});
-  const folder=fs.lstatSync(dir);
-  if(!folder.isDirectory()||folder.isSymbolicLink()||
-     (process.platform!=='win32'&&(folder.mode&0o077)!==0))
+  let folder=fs.lstatSync(dir);
+  if(!folder.isDirectory()||folder.isSymbolicLink())
     throw Error('OS_VAULT_DIRECTORY_NOT_PRIVATE');
-  if(fs.existsSync(target)){
-    const current=fs.lstatSync(target);
-    if(!current.isFile()||current.isSymbolicLink())
-      throw Error('OS_VAULT_TARGET_UNSAFE');
+  let current=null;
+  try{current=fs.lstatSync(target);}
+  catch(e){if(e?.code!=='ENOENT')throw e;}
+  if(current&&(!current.isFile()||current.isSymbolicLink()))
+    throw Error('OS_VAULT_TARGET_UNSAFE');
+  if(process.platform!=='win32'&&(folder.mode&0o077)!==0){
+    // Existing identity in an exposed directory requires Owner review.
+    // For a NEW identity only, securely restrict the target directory
+    // BEFORE writing even encrypted key material (also supports QA fixtures).
+    if(current)throw Error('OS_VAULT_DIRECTORY_NOT_PRIVATE');
+    let dfd;
+    try{
+      dfd=fs.openSync(dir,fs.constants.O_RDONLY|
+        (fs.constants.O_DIRECTORY||0)|(fs.constants.O_NOFOLLOW||0));
+      const opened=fs.fstatSync(dfd);
+      if(opened.dev!==folder.dev||opened.ino!==folder.ino)
+        throw Error('OS_VAULT_DIRECTORY_CHANGED');
+      fs.fchmodSync(dfd,0o700);
+      fs.fsyncSync(dfd);
+    }finally{if(dfd!==undefined)fs.closeSync(dfd);}
+    folder=fs.lstatSync(dir);
+    if(!folder.isDirectory()||folder.isSymbolicLink()||
+       (folder.mode&0o077)!==0)
+      throw Error('OS_VAULT_DIRECTORY_NOT_PRIVATE');
   }
   const tmp=target+'.'+process.pid+'.'+require('node:crypto').randomUUID()+'.tmp';
   const payload=Buffer.isBuffer(bytes)?bytes:Buffer.from(bytes);
@@ -62,8 +81,9 @@ function createVault({safeStorage,dir,platform=process.platform}){
   const legacy=path.join(dir,'identity.json');
   if(fs.existsSync(legacy))throw Error('LEGACY_PLAINTEXT_IDENTITY_REQUIRES_OWNER_MIGRATION');
   function read(){
-    if(!fs.existsSync(file))return null;
-    const stat=fs.lstatSync(file);
+    let stat;
+    try{stat=fs.lstatSync(file);}
+    catch(e){if(e?.code==='ENOENT')return null;throw e;}
     if(!stat.isFile()||stat.isSymbolicLink()||stat.size<30||
        stat.size>64*1024||
        (process.platform!=='win32'&&(stat.mode&0o077)!==0))

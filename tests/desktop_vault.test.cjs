@@ -123,7 +123,52 @@ test('vault refuses unsafe symlink file and public directory on POSIX',()=>{
     assert.throws(()=>v.read(),/OS_VAULT_FILE_UNSAFE/);
     assert.throws(()=>v.save(identity()),/OS_VAULT_FILE_UNSAFE/);
     fs.unlinkSync(v.file);
+    v.save(identity());
     fs.chmodSync(dir,0o755);
-    assert.throws(()=>v.save(identity()),/OS_VAULT_DIRECTORY_NOT_PRIVATE/);
+    assert.throws(()=>v.save({...identity(),node_sequence:2,
+      agents:[{id:'agent_test_1',sequence:2}]}),
+      /OS_VAULT_DIRECTORY_NOT_PRIVATE/,
+      'A pre-existing identity in an exposed directory must never be rewritten');
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('new identity may narrow an otherwise empty directory before storing encrypted bytes',()=>{
+  if(process.platform==='win32')return;
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-vault-initial-perms-'));
+  try{
+    fs.chmodSync(dir,0o755);
+    const v=createVault({safeStorage:testStore(),dir,platform:'linux'});
+    v.save(identity());
+    assert.equal(fs.statSync(dir).mode&0o077,0);
+    assert.deepEqual(v.read(),identity());
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('OS vault treats dangling symlink as unsafe, never as absent identity',()=>{
+  if(process.platform==='win32')return;
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-vault-dangling-'));
+  try{
+    const v=createVault({safeStorage:testStore(),dir,platform:'linux'});
+    fs.symlinkSync(path.join(dir,'nonexistent'),v.file);
+    assert.throws(()=>v.read(),/OS_VAULT_FILE_UNSAFE/);
+    assert.throws(()=>v.save(identity()),/OS_VAULT_FILE_UNSAFE/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('failed ciphertext fsync leaves previous encrypted identity untouched',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-vault-interrupted-'));
+  const original=fs.fsyncSync;
+  try{
+    const v=createVault({safeStorage:testStore(),dir,platform:'win32'});
+    const previous=identity();
+    v.save(previous);
+    const originalBytes=fs.readFileSync(v.file);
+    fs.fsyncSync=function(){throw Error('TEST_ONLY_INTERRUPTED_FLUSH');};
+    try{
+      assert.throws(()=>v.save({...previous,node_sequence:2,
+        agents:[{id:'agent_test_1',sequence:2}]}),
+        /TEST_ONLY_INTERRUPTED_FLUSH/);
+    }finally{fs.fsyncSync=original;}
+    assert.deepEqual(fs.readFileSync(v.file),originalBytes);
+    assert.deepEqual(v.read(),previous);
+    assert.deepEqual(fs.readdirSync(dir),['identity.osvault.json']);
+  }finally{fs.fsyncSync=original;fs.rmSync(dir,{recursive:true,force:true});}
 });
