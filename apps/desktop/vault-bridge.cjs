@@ -64,14 +64,14 @@ function createSignerBridge(vault){
       candidate.public_key_pem!==existing.public_key_pem||
       candidate.boot_id!==existing.boot_id||
       !Number.isSafeInteger(candidate.node_sequence)||
-      candidate.node_sequence<existing.node_sequence||
+      candidate.node_sequence<=existing.node_sequence||
       !Array.isArray(candidate.agents)||candidate.agents.length!==existing.agents.length)
       fail('VAULT_IDENTITY_OR_SEQUENCE_MISMATCH');
     for(let i=0;i<candidate.agents.length;i++){
       const actual=candidate.agents[i],old=existing.agents[i];
       if(!actual||typeof actual!=='object'||Object.keys(actual).some(x=>!['id','sequence'].includes(x))||
         actual.id!==old.id||!Number.isSafeInteger(actual.sequence)||
-        actual.sequence<old.sequence)fail('VAULT_AGENT_REPLAY_OR_IDENTITY_MISMATCH');
+        actual.sequence<=old.sequence)fail('VAULT_AGENT_REPLAY_OR_IDENTITY_MISMATCH');
     }
     vault.save({...existing,node_sequence:candidate.node_sequence,
       agents:candidate.agents.map(a=>({id:a.id,sequence:a.sequence}))});

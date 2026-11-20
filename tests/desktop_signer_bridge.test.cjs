@@ -72,6 +72,19 @@ test('only monotonic counters, exact node and current boot ID may be saved by ch
       agents:[{id:'agent_aaa',sequence:2}]};
     assert.deepEqual(bridge.saveCounters(updated),{stored:true});
     assert.equal(bridge.snapshot().node_sequence,1);
+    assert.throws(()=>bridge.saveCounters(updated),/VAULT_IDENTITY_OR_SEQUENCE_MISMATCH/,
+      'A second child must not reuse an already-saved heartbeat sequence');
+    const sameNodeFromAnotherBridge=createSignerBridge(vault);
+    assert.throws(()=>sameNodeFromAnotherBridge.saveCounters(updated),
+      /VAULT_IDENTITY_OR_SEQUENCE_MISMATCH/,
+      'Concurrent child may not replay the same on-disk counters');
+    const nextState={...updated,node_sequence:2,
+      agents:[{id:'agent_aaa',sequence:3}]};
+    assert.deepEqual(bridge.saveCounters(nextState),{stored:true});
+    assert.equal(vault.read().node_sequence,2);
+    assert.throws(()=>bridge.saveCounters({...nextState,node_sequence:3}),
+      /VAULT_AGENT_REPLAY_OR_IDENTITY_MISMATCH/,
+      'Node counter advances cannot leave agent counter unchanged');
     assert.throws(()=>bridge.saveCounters(pub),/MISMATCH/);
     assert.throws(()=>bridge.saveCounters({...updated,private_key_pem:'secret'}),/INVALID/);
     assert.throws(()=>bridge.saveCounters({...updated,node_id:'node_wrong'}),/MISMATCH/);
