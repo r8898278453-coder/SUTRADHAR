@@ -399,7 +399,7 @@ test('offline Owner review tools remain separate from maintenance release and ha
     '../scripts/ops/verify-crash-owner-review.cjs',
     '../scripts/release/sign-crash-owner-review.cjs']){
     const source=fs.readFileSync(path.resolve(__dirname,file),'utf8');
-    assert.doesNotMatch(source,/spawnSync|execFileSync|child_process|\\.kill\\(|unlinkSync|renameSync|fetch\\(|axios|http\\.request|https\\.request|app\\.post/);
+    assert.doesNotMatch(source,/spawnSync|execFileSync|child_process|[.]kill[(]|unlinkSync|renameSync|fetch[(]|axios|http[.]request|https[.]request|app[.]post/);
   }
   const source=fs.readFileSync(path.resolve(__dirname,
     '../scripts/release/sign-crash-owner-review.cjs'),'utf8');
