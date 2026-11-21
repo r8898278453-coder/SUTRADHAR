@@ -76,10 +76,13 @@ $('node-recovery-crosscheck').addEventListener('click',async()=>{
   btn.disabled=true;
   try{
     const local=JSON.parse(raw);
-    // Never send local diagnostic JSON or independent pin over the network.
-    const central=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));
-    const report=window.SutradharCrashCrosscheck.inspect({
-      local,central,nodeId,pinnedPublicKeySha256:pin
+    // Two independent GETs catch moving Central counters, epoch, roles,
+    // maintenance and Git/worker state. Neither ever uploads local JSON/pin.
+    const centralBefore=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));
+    const centralAfter=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));
+    const report=window.SutradharCrashCrosscheck.inspectPair({
+      local,first:centralBefore,second:centralAfter,nodeId,
+      pinnedPublicKeySha256:pin,observedAtClientMs:Date.now()
     });
     if(report.state!=='OWNER_REVIEW_REQUIRED'||
        report.agent_restart_allowed!==false||
@@ -92,6 +95,9 @@ $('node-recovery-crosscheck').addEventListener('click',async()=>{
       'Central public-key fingerprint matches independent enrollment pin: '+
         String(report.central_fingerprint_matches_independent_enrollment_pin),
       'Local crash marker has expected shape: '+String(report.local_session_marker_shape_valid),
+      'Two Central observations unchanged: '+String(report.central_observation_unchanged),
+      'Central read window bounded (30 seconds): '+String(report.central_observation_window_bounded),
+      'Browser clock within 2 minutes of Central: '+String(report.central_browser_clock_near_central),
       'Potential inconsistencies: '+report.preliminary_inconsistency_count,
       'Finding codes: '+report.finding_codes.join(', '),
       'Local-to-Central identity/counter continuity and physical Windows shutdown NOT PROVEN.',

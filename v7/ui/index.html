@@ -34,7 +34,7 @@
 <p>Do NOT copy the pin from the Central response you are checking.</p></div>
 <div><label for="node-recovery-local-json">Original PC read-only crash diagnostic JSON (paste only the inspection result)</label>
 <textarea id="node-recovery-local-json" rows="6" maxlength="16000" autocomplete="off" spellcheck="false" placeholder="Paste the JSON object shown by Windows Desktop Inspect crash evidence; never paste keys or vault files"></textarea>
-<p>Local evidence stays in this browser tab. Crosscheck sends only the Node ID to the existing Owner GET; it never uploads pasted JSON.</p></div>
+<p>Local evidence stays in this browser tab. Crosscheck sends only the Node ID in two consecutive Owner GET requests; it never uploads pasted JSON or the fingerprint. Changes between snapshots, oversized sampling gaps or browser clock skew are flagged, never automatically reconciled.</p></div>
 </div>
 <button id="node-recovery-crosscheck" class="outline" type="button">Compare local report with fresh Central snapshot (GET only)</button>
 <pre id="node-recovery-crosscheck-results" role="status" aria-live="polite">Not compared. Independently verified enrollment key fingerprint and original PC diagnostic required. Every result remains HOLD.</pre>

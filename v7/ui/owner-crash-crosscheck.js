@@ -21,7 +21,14 @@
     return isObject(x)&&Object.keys(x).sort().join('|')===want.slice().sort().join('|');
   }
   function nonnegative(x){return Number.isSafeInteger(x)&&x>=0;}
-  function limitedDecimal(x){return typeof x==='string'&&DECIMAL.test(x);}
+  // MySQL BIGINT UNSIGNED must remain an exact decimal string. A well-shaped
+  // 20-digit number above 2^64-1 is not a valid counter, nor is a JS Number.
+  const MAX_U64='18446744073709551615';
+  function limitedDecimal(x){
+    return typeof x==='string'&&DECIMAL.test(x)&&
+      (x.length<MAX_U64.length||
+       (x.length===MAX_U64.length&&x<=MAX_U64));
+  }
   function validateLocal(local){
     if(!isObject(local)||local.schema!==1||
        local.kind!=='SUTRADHAR_LOCAL_CRASH_EVIDENCE_V1'||
@@ -140,7 +147,114 @@
       installer_execution_allowed:false,production_release_authorized:false
     });
   }
-  const api=Object.freeze({inspect});
+
+  function snapshotVector(data){
+    // Explicit allowlist of operational fields. Exclude the observation time
+    // and heartbeat-age counters, which naturally move between GET requests.
+    // Any other observed Central change is a warning, not a release permit.
+    const agents=data.agents.map(a=>({
+      agent_id:a.agent_id,state:a.state,status:a.status,
+      accepted_sequence_decimal:a.accepted_sequence_decimal,
+      master_eligible:a.master_eligible,qa_eligible:a.qa_eligible
+    })).sort((a,b)=>a.agent_id.localeCompare(b.agent_id));
+    return JSON.stringify({
+      node_id:data.node_id,node_state:data.node_state,
+      node_public_key_fingerprint_sha256:data.node_public_key_fingerprint_sha256,
+      accepted_boot_id:data.accepted_boot_id,
+      accepted_node_sequence_decimal:data.accepted_node_sequence_decimal,
+      agents,cluster:{
+        epoch_decimal:data.cluster.epoch_decimal,
+        phase:data.cluster.phase,paused:data.cluster.paused,
+        master_agent_id:data.cluster.master_agent_id,
+        backup1:data.cluster.backup1,backup2:data.cluster.backup2,
+        original_pc_in_cluster_roles:data.cluster.original_pc_in_cluster_roles
+      },maintenance:{
+        active_fence:data.maintenance.active_fence,
+        fence_state:data.maintenance.fence_state,
+        plan_id:data.maintenance.plan_id,
+        expected_epoch_decimal:data.maintenance.expected_epoch_decimal,
+        unresolved_intent_count:data.maintenance.unresolved_intent_count
+      },
+      active_worker_lease_count:data.active_worker_lease_count,
+      outstanding_worker_ticket_count:data.outstanding_worker_ticket_count,
+      unresolved_git_job_count:data.unresolved_git_job_count
+    });
+  }
+  function validateObservation(data){
+    // A higher-level validation for TWO sequential Owner GETs; no local
+    // signer or cryptographic attestation is available while crash-held.
+    if(!Number.isSafeInteger(data.observed_at_central_ms)||
+       data.observed_at_central_ms<=0||
+       !(data.accepted_boot_id===null||
+         (typeof data.accepted_boot_id==='string'&&
+          data.accepted_boot_id.length>0&&data.accepted_boot_id.length<=100))||
+       typeof data.cluster.phase!=='string'||data.cluster.phase.length>32||
+       data.cluster.phase.length===0||
+       typeof data.cluster.paused!=='boolean')
+      fail('CENTRAL_RECOVERY_OBSERVATION_MALFORMED');
+    const validAgentId=x=>x===null||
+      (typeof x==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(x));
+    for(const field of ['master_agent_id','backup1','backup2'])
+      if(!validAgentId(data.cluster[field]))
+        fail('CENTRAL_RECOVERY_CLUSTER_ROLE_INVALID');
+    if(!(data.maintenance.fence_state===null||
+         ['DRAINING','DRAINED'].includes(data.maintenance.fence_state))||
+       !validAgentId(data.maintenance.plan_id)||
+       !(data.maintenance.expected_epoch_decimal===null||
+         limitedDecimal(data.maintenance.expected_epoch_decimal)))
+      fail('CENTRAL_RECOVERY_MAINTENANCE_INVALID');
+    if(data.maintenance.active_fence!==(data.maintenance.fence_state!==null)||
+       data.maintenance.active_fence!==(data.maintenance.plan_id!==null))
+      fail('CENTRAL_RECOVERY_MAINTENANCE_INCONSISTENT');
+    const age=x=>x===null||(Number.isSafeInteger(x)&&x>=-120);
+    if(!age(data.heartbeat_age_seconds))
+      fail('CENTRAL_RECOVERY_HEARTBEAT_AGE_INVALID');
+    for(const agent of data.agents){
+      if(!['PENDING','APPROVED','REVOKED'].includes(agent.state)||
+         typeof agent.status!=='string'||agent.status.length>40||
+         typeof agent.master_eligible!=='boolean'||
+         typeof agent.qa_eligible!=='boolean'||
+         !age(agent.heartbeat_age_seconds))
+        fail('CENTRAL_RECOVERY_AGENT_FIELDS_INVALID');
+    }
+  }
+  function inspectPair({local,first,second,nodeId,
+    pinnedPublicKeySha256,observedAtClientMs}={}){
+    // Validate BOTH responses independently; a tampered first response must
+    // never be ignored just because the second looks plausible.
+    validateCentral(first,nodeId);
+    validateCentral(second,nodeId);
+    validateObservation(first);
+    validateObservation(second);
+    if(!Number.isSafeInteger(observedAtClientMs)||observedAtClientMs<=0)
+      fail('OWNER_OBSERVATION_CLIENT_CLOCK_REQUIRED');
+    const base=inspect({local,central:second,nodeId,pinnedPublicKeySha256});
+    const delta=second.observed_at_central_ms-first.observed_at_central_ms;
+    const stable=snapshotVector(first)===snapshotVector(second);
+    const bounded=delta>=0&&delta<=30000;
+    const clockAligned=Math.abs(observedAtClientMs-
+      second.observed_at_central_ms)<=120000;
+    const findings=base.finding_codes.slice();
+    if(!stable)findings.push('CENTRAL_STATE_CHANGED_BETWEEN_OWNER_READS');
+    if(!bounded)findings.push('CENTRAL_OBSERVATION_WINDOW_UNSAFE');
+    if(!clockAligned)findings.push('CENTRAL_BROWSER_CLOCK_MISMATCH');
+    return Object.freeze({
+      ...base,kind:'OWNER_PC_CRASH_DUAL_CROSSCHECK_V1',
+      central_observation_unchanged:stable,
+      central_observation_window_bounded:bounded,
+      central_browser_clock_near_central:clockAligned,
+      central_sample_gap_ms:delta,
+      preliminary_inconsistency_count:base.preliminary_inconsistency_count+
+        Number(!stable)+Number(!bounded)+Number(!clockAligned),
+      finding_codes:Object.freeze(findings),
+      // A stable pair of MySQL GETs is only two point-in-time observations.
+      // It never proves continuity since the last signed agent heartbeat.
+      owner_reconciliation_complete:false,agent_restart_allowed:false,
+      marker_removal_allowed:false,installer_execution_allowed:false,
+      production_release_authorized:false
+    });
+  }
+  const api=Object.freeze({inspect,inspectPair});
   if(typeof module==='object'&&module.exports)module.exports=api;
   if(root)root.SutradharCrashCrosscheck=api;
 })(typeof window==='object'?window:null);

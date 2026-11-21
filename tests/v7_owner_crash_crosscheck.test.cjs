@@ -5,7 +5,7 @@ const browser={};
 vm.runInNewContext(fs.readFileSync(path.resolve(__dirname,
   '../v7/ui/owner-crash-crosscheck.js'),'utf8'),{window:browser},
   {filename:'owner-crash-crosscheck.js'});
-const {inspect}=browser.SutradharCrashCrosscheck;
+const {inspect,inspectPair}=browser.SutradharCrashCrosscheck;
 const NODE='node_'+'a'.repeat(32),FP='c'.repeat(64);
 const record=(state='MISSING',bytes=10)=>state==='MISSING'||state==='UNSAFE_OR_UNREADABLE'?
   {state}:{state,bytes,sha256:'b'.repeat(64)};
@@ -25,12 +25,17 @@ function fixture(){
     records,other_directory_entries_count:5};
   const central={schema:1,mode:'OWNER_CENTRAL_NODE_CRASH_RECOVERY_OBSERVATION',
     node_id:NODE,node_state:'APPROVED',node_public_key_fingerprint_sha256:FP,
+    accepted_boot_id:'boot_fixture_001',heartbeat_age_seconds:17,
     accepted_node_sequence_decimal:'18446744073709551615',
-    agents:[{agent_id:'agent_local_01',accepted_sequence_decimal:'2'}],
-    cluster:{epoch_decimal:'18446744073709551615',original_pc_in_cluster_roles:false},
-    maintenance:{active_fence:false,unresolved_intent_count:0},
+    agents:[{agent_id:'agent_local_01',state:'APPROVED',status:'ONLINE',master_eligible:true,
+      qa_eligible:false,heartbeat_age_seconds:18,accepted_sequence_decimal:'2'}],
+    cluster:{epoch_decimal:'18446744073709551615',phase:'READY',paused:false,
+      master_agent_id:null,backup1:null,backup2:null,original_pc_in_cluster_roles:false},
+    maintenance:{active_fence:false,fence_state:null,plan_id:null,
+      expected_epoch_decimal:null,unresolved_intent_count:0},
     active_worker_lease_count:0,outstanding_worker_ticket_count:0,
-    unresolved_git_job_count:0,read_only:true,central_state_modified:false,
+    unresolved_git_job_count:0,observed_at_central_ms:1770000000000,
+    read_only:true,central_state_modified:false,
     device_signature_verified_by_this_request:false,
     local_os_vault_verified:false,physical_pc_verified:false,
     owner_reconciliation_complete:false,agent_restart_allowed:false,
@@ -100,6 +105,86 @@ test('rejects forged approval flags, malformed or extra local record fields, dup
     assert.throws(()=>inspect(input),/INVALID|REQUIRED|UNTRUSTED/,mutate.toString());
   }
 });
+
+function samples(){
+  const f=fixture(),first=JSON.parse(JSON.stringify(f.central)),
+    second=JSON.parse(JSON.stringify(f.central));
+  first.observed_at_central_ms=1770000000000;
+  second.observed_at_central_ms=1770000001500;
+  second.heartbeat_age_seconds=19;
+  second.agents[0].heartbeat_age_seconds=20;
+  return {...f,first,second,observedAtClientMs:1770000002500};
+}
+test('two valid Central snapshots with natural heartbeat-age drift never grant recovery',()=>{
+  const x=samples(),result=inspectPair(x);
+  assert.equal(result.central_observation_unchanged,true);
+  assert.equal(result.central_observation_window_bounded,true);
+  assert.equal(result.central_browser_clock_near_central,true);
+  assert.equal(result.central_sample_gap_ms,1500);
+  assert.equal(result.preliminary_inconsistency_count,0);
+  assert.equal(result.state,'OWNER_REVIEW_REQUIRED');
+  assert.equal(result.accepted_counter_continuity_verified,false);
+  assert.equal(result.owner_reconciliation_complete,false);
+  assert.equal(result.agent_restart_allowed,false);
+  assert.equal(result.marker_removal_allowed,false);
+  assert.equal(result.production_release_authorized,false);
+});
+test('racing epoch, counter, role, maintenance, worker and Git changes are flagged',()=>{
+  const mutate=[
+    x=>{x.second.accepted_node_sequence_decimal='1';},
+    x=>{x.second.agents[0].accepted_sequence_decimal='3';},
+    x=>{x.second.cluster.epoch_decimal='5';},
+    x=>{x.second.cluster.backup1='agent_local_01';},
+    x=>{x.second.maintenance.active_fence=true;
+      x.second.maintenance.fence_state='DRAINING';x.second.maintenance.plan_id='plan_test123';},
+    x=>{x.second.active_worker_lease_count=1;},
+    x=>{x.second.outstanding_worker_ticket_count=1;},
+    x=>{x.second.unresolved_git_job_count=1;},
+    x=>{x.second.node_public_key_fingerprint_sha256='f'.repeat(64);}
+  ];
+  for(const change of mutate){
+    const x=samples();change(x);
+    const r=inspectPair(x);
+    assert.equal(r.central_observation_unchanged,false,change.toString());
+    assert.ok(r.finding_codes.includes('CENTRAL_STATE_CHANGED_BETWEEN_OWNER_READS'));
+    assert.equal(r.agent_restart_allowed,false);
+  }
+});
+test('stale, reversed, overlong or skewed Central read windows remain HOLD',()=>{
+  const scenarios=[
+    x=>{x.second.observed_at_central_ms=x.first.observed_at_central_ms-1;},
+    x=>{x.second.observed_at_central_ms=x.first.observed_at_central_ms+31000;},
+    x=>{x.observedAtClientMs=x.second.observed_at_central_ms+121000;}
+  ];
+  for(const change of scenarios){
+    const x=samples();change(x);
+    const r=inspectPair(x);
+    assert.ok(r.preliminary_inconsistency_count>0);
+    assert.ok(r.finding_codes.some(code=>
+      ['CENTRAL_OBSERVATION_WINDOW_UNSAFE','CENTRAL_BROWSER_CLOCK_MISMATCH']
+        .includes(code)));
+    assert.equal(r.owner_reconciliation_complete,false);
+  }
+});
+test('both remote responses and exact unsigned BIGINT range are validated before comparison',()=>{
+  const failures=[
+    x=>{x.first.central_state_modified=true;},
+    x=>{x.first.node_id='node_'+'f'.repeat(32);},
+    x=>{x.second.agents[0].accepted_sequence_decimal=Number.MAX_SAFE_INTEGER;},
+    x=>{x.second.accepted_node_sequence_decimal='18446744073709551616';},
+    x=>{x.first.cluster.epoch_decimal='99999999999999999999';},
+    x=>{x.second.observed_at_central_ms='1770000001500';},
+    x=>{x.first.maintenance.fence_state='DRAINING';},
+    x=>{x.second.agents[0].state='NOT_RECOGNIZED';},
+    x=>{x.observedAtClientMs=NaN;}
+  ];
+  for(const change of failures){
+    const x=samples();change(x);
+    assert.throws(()=>inspectPair(x),/INVALID|REQUIRED|UNTRUSTED|MALFORMED|INCONSISTENT/,
+      change.toString());
+  }
+});
+
 test('Owner HTML comparison is GET-only and uses textContent, not hidden POST upload',()=>{
   const html=fs.readFileSync(path.resolve(__dirname,'../v7/ui/index.html'),'utf8');
   const dashboard=fs.readFileSync(path.resolve(__dirname,'../v7/ui/dashboard.js'),'utf8');
@@ -108,7 +193,9 @@ test('Owner HTML comparison is GET-only and uses textContent, not hidden POST up
     'node-recovery-crosscheck','node-recovery-crosscheck-results'])
     assert.ok(html.includes('id="'+id+'"'),id);
   assert.match(html,/src="\/owner-crash-crosscheck\.js"/);
-  assert.match(dashboard,/SutradharCrashCrosscheck\.inspect/);
+  assert.match(dashboard,/SutradharCrashCrosscheck\.inspectPair/);
+  assert.match(dashboard,/centralBefore=await request/);
+  assert.match(dashboard,/centralAfter=await request/);
   assert.match(dashboard,/request\('\/v7\/owner\/node-recovery\/'\+encodeURIComponent\(nodeId\)\)/);
   assert.match(dashboard,/crosscheckOutput\.textContent/);
   assert.doesNotMatch(library,/\bfetch\(|XMLHttpRequest|localStorage|sessionStorage|\.sign\(|unlinkSync|writeFileSync/);
