@@ -144,19 +144,75 @@ function verifyContinuity({challenge,before,after,expectedNodeId,
       warning:'Same-key signatures and software boot-id change do NOT prove physical hardware, DPAPI backend, OS reboot or healthy Central heartbeats.'};
   }catch{return fail('PILOT_NODE_SIGNATURE_OR_FORMAT_INVALID');}
 }
+/**
+ * Export already locally signed node-key evidence without overwriting or
+ * silently losing an incomplete write. Unlike a worker journal, this output
+ * is offline Owner evidence only; it is NEVER a restart/install authorization.
+ *
+ * POSIX: require a private Owner directory; fsync file and same parent inode.
+ * Windows: file sync is performed, but inherited ACL and power-loss semantics
+ * require separate physical Owner verification.
+ */
 function writeExclusive(file,proof){
   if(typeof file!=='string'||!path.isAbsolute(file)||file.length>1024)
     bad('PILOT_NODE_OUTPUT_PATH_INVALID');
-  const dir=fs.lstatSync(path.dirname(file));
-  if(!dir.isDirectory()||dir.isSymbolicLink()||fs.existsSync(file))
-    bad('PILOT_NODE_OUTPUT_UNSAFE');
+  const parent=path.dirname(file);
+  let dir;
+  try{dir=fs.lstatSync(parent);}
+  catch{bad('PILOT_NODE_OUTPUT_DIRECTORY_MISSING');}
+  if(!dir.isDirectory()||dir.isSymbolicLink()||
+     (process.platform!=='win32'&&((dir.mode&0o077)!==0||
+       (typeof process.getuid==='function'&&dir.uid!==process.getuid()))))
+    bad('PILOT_NODE_OUTPUT_UNSAFE_DIRECTORY');
+  if(!proof||typeof proof!=='object'||Array.isArray(proof)||
+     !proof.payload||typeof proof.payload!=='object'||
+     typeof proof.signature_base64!=='string')
+    bad('PILOT_NODE_OUTPUT_PROOF_INVALID');
   const bytes=Buffer.from(JSON.stringify(proof,null,2)+'\n');
   if(bytes.length>16000)bad('PILOT_NODE_PROOF_TOO_LARGE');
-  const fd=fs.openSync(file,'wx',0o600);
-  try{fs.writeSync(fd,bytes);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  let fd;
+  try{
+    // The atomic O_EXCL open, not a racy existsSync(), enforces no overwrite.
+    fd=fs.openSync(file,fs.constants.O_WRONLY|fs.constants.O_CREAT|
+      fs.constants.O_EXCL|(fs.constants.O_NOFOLLOW||0),0o600);
+  }catch(e){
+    bad(e&&e.code==='EEXIST'?'PILOT_NODE_OUTPUT_UNSAFE_ALREADY_EXISTS':
+      'PILOT_NODE_OUTPUT_CREATE_FAILED');
+  }
+  try{
+    let offset=0;
+    while(offset<bytes.length){
+      const n=fs.writeSync(fd,bytes,offset,bytes.length-offset,offset);
+      if(n<=0)throw Error('PILOT_NODE_OUTPUT_SHORT_WRITE');
+      offset+=n;
+    }
+    fs.fsyncSync(fd);
+  }catch{
+    // Leave even a partially created file untouched. An ambiguous prior
+    // attempt must not be automatically repeated under the same filename.
+    bad('PILOT_NODE_OUTPUT_WRITE_UNCERTAIN');
+  }finally{fs.closeSync(fd);}
+  if(process.platform!=='win32'){
+    let dfd;
+    try{
+      dfd=fs.openSync(parent,fs.constants.O_RDONLY|
+        (fs.constants.O_DIRECTORY||0)|(fs.constants.O_NOFOLLOW||0));
+      const live=fs.fstatSync(dfd);
+      if(!live.isDirectory()||live.dev!==dir.dev||live.ino!==dir.ino||
+         (live.mode&0o077)!==0||
+         (typeof process.getuid==='function'&&live.uid!==process.getuid()))
+        throw Error('PILOT_NODE_OUTPUT_DIRECTORY_CHANGED');
+      fs.fsyncSync(dfd);
+    }catch{
+      bad('PILOT_NODE_OUTPUT_DIRECTORY_SYNC_UNCERTAIN');
+    }finally{if(dfd!==undefined)fs.closeSync(dfd);}
+  }
   return {saved:true,node_id:proof.payload.node_id,
     phase:proof.payload.phase,session_id:proof.payload.session_id,
     public_key_sha256:proof.payload.node_key_sha256,
+    directory_durability:process.platform==='win32'?
+      'WINDOWS_POWER_LOSS_UNVERIFIED':'POSIX_FILE_AND_DIRECTORY_FSYNC',
+    windows_acl_verified:false,physical_reboot_verified:false,
     key_exported:false,production_release_authorized:false};
 }
 module.exports={createProof,verifyContinuity,writeExclusive,

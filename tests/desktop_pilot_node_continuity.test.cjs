@@ -147,3 +147,102 @@ test('Desktop export action is packaged-Windows-only main IPC with no private ke
   assert.ok(packageConfig.build.files.includes('pilot-node-continuity.cjs'),
     'Production and unsigned QA Electron package MUST contain this imported module');
 });
+
+test('node proof exporter finishes partial writes and syncs private evidence output',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-node-durable-')),
+    file=path.join(dir,'before.json'),originalWrite=fs.writeSync,
+    originalSync=fs.fsyncSync;
+  let writes=0,syncs=0;
+  try{
+    fs.writeSync=function(fd,buffer,offset,length,position){
+      writes++;
+      // Simulate an OS short write without losing byte order.
+      return originalWrite(fd,buffer,offset,Math.max(1,Math.floor(length/2)),position);
+    };
+    fs.fsyncSync=function(fd){syncs++;return originalSync(fd);};
+    const receipt=writeExclusive(file,pair().before);
+    assert.equal(receipt.saved,true);
+    assert.equal(receipt.key_exported,false);
+    assert.equal(receipt.production_release_authorized,false);
+    assert.equal(receipt.windows_acl_verified,false);
+    assert.equal(receipt.physical_reboot_verified,false);
+    assert.equal(receipt.directory_durability,process.platform==='win32'?
+      'WINDOWS_POWER_LOSS_UNVERIFIED':'POSIX_FILE_AND_DIRECTORY_FSYNC');
+    assert.ok(writes>1,'Short writes must be retried until the whole evidence is durable');
+    assert.ok(syncs>=(process.platform==='win32'?1:2),
+      'POSIX requires fsync of both output file and parent directory');
+    assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),pair().before);
+    if(process.platform!=='win32'){
+      assert.equal(fs.statSync(file).mode&0o077,0);
+      assert.equal(fs.statSync(dir).mode&0o077,0);
+    }
+  }finally{
+    fs.writeSync=originalWrite;fs.fsyncSync=originalSync;
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
+test('node proof write or file fsync uncertainty never deletes/overwrites evidence',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-node-uncertain-')),
+    zero=path.join(dir,'short.json'),sync=path.join(dir,'sync.json'),
+    originalWrite=fs.writeSync,originalSync=fs.fsyncSync;
+  try{
+    try{
+      fs.writeSync=()=>0;
+      assert.throws(()=>writeExclusive(zero,pair().before),
+        /PILOT_NODE_OUTPUT_WRITE_UNCERTAIN/);
+    }finally{fs.writeSync=originalWrite;}
+    assert.equal(fs.existsSync(zero),true);
+    assert.throws(()=>writeExclusive(zero,pair().before),
+      /PILOT_NODE_OUTPUT_UNSAFE_ALREADY_EXISTS/);
+    try{
+      fs.fsyncSync=()=>{throw Error('synthetic disk flush failure');};
+      assert.throws(()=>writeExclusive(sync,pair().before),
+        /PILOT_NODE_OUTPUT_WRITE_UNCERTAIN/);
+    }finally{fs.fsyncSync=originalSync;}
+    assert.equal(fs.existsSync(sync),true);
+    assert.throws(()=>writeExclusive(sync,pair().before),
+      /PILOT_NODE_OUTPUT_UNSAFE_ALREADY_EXISTS/);
+  }finally{
+    fs.writeSync=originalWrite;fs.fsyncSync=originalSync;
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
+test('POSIX directory fsync uncertainty fails closed with bytes preserved',()=>{
+  if(process.platform==='win32')return;
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-node-parent-fsync-')),
+    file=path.join(dir,'after.json'),original=fs.fsyncSync;
+  let call=0;
+  try{
+    try{
+      fs.fsyncSync=function(fd){
+        if(++call===2)throw Error('synthetic parent directory durability failure');
+        return original(fd);
+      };
+      assert.throws(()=>writeExclusive(file,pair().after),
+        /PILOT_NODE_OUTPUT_DIRECTORY_SYNC_UNCERTAIN/);
+    }finally{fs.fsyncSync=original;}
+    assert.equal(call,2);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),pair().after);
+    assert.throws(()=>writeExclusive(file,pair().after),
+      /PILOT_NODE_OUTPUT_UNSAFE_ALREADY_EXISTS/);
+  }finally{fs.fsyncSync=original;fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('node proof output refuses public, symlinked, missing and relative output directories',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-node-private-'));
+  try{
+    assert.throws(()=>writeExclusive('relative.json',pair().before),
+      /PILOT_NODE_OUTPUT_PATH_INVALID/);
+    assert.throws(()=>writeExclusive(path.join(dir,'missing','proof.json'),pair().before),
+      /PILOT_NODE_OUTPUT_DIRECTORY_MISSING/);
+    if(process.platform!=='win32'){
+      const link=path.join(dir,'linked');
+      fs.symlinkSync(dir,link,'dir');
+      assert.throws(()=>writeExclusive(path.join(link,'proof.json'),pair().before),
+        /PILOT_NODE_OUTPUT_UNSAFE_DIRECTORY/);
+      fs.chmodSync(dir,0o755);
+      assert.throws(()=>writeExclusive(path.join(dir,'proof.json'),pair().before),
+        /PILOT_NODE_OUTPUT_UNSAFE_DIRECTORY/);
+      assert.equal(fs.existsSync(path.join(dir,'proof.json')),false);
+    }
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});

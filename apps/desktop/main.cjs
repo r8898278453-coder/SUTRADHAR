@@ -406,7 +406,7 @@ app.whenReady().then(()=>{
       type:'warning',buttons:['Cancel','BEFORE (baseline)','AFTER (new boot)'],
       defaultId:0,cancelId:0,noLink:true,
       message:'Export an OS-vault signed continuity observation?',
-      detail:'Owner must independently verify this session, the real machine and actual reboot. The proof only signs software boot ID and monotonic counters using the current enrolled key. It cannot approve production, install, reboot or trigger failover.'
+      detail:'Save BEFORE/AFTER evidence to a new, protected Owner-reviewed folder with a NEW filename. A failed or interrupted save must never be overwritten or deleted as a retry. Windows folder ACL and power-loss durability still require independent Owner verification. The signature only proves key possession/software boot ID and counters, NOT real hardware reboot, production, installation or failover authorization.'
     });
     if(choice.response===0)return {canceled:true};
     const phase=choice.response===1?'BEFORE':'AFTER';
