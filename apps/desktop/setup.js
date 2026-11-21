@@ -90,8 +90,9 @@ get('inspectCrashEvidence').addEventListener('click',async()=>{
   output.textContent='Inspecting local files without changing them…';
   try{
     const result=await api.inspectAgentCrashEvidence();
-    output.textContent=JSON.stringify(result,null,2)+
-      '\nOWNER REVIEW REQUIRED. This unsigned local observation cannot authorize restart, installation, identity reset or marker removal.';
+    // Keep the entire displayed block valid JSON for an Owner to copy into
+    // Central's read-only crosscheck. Safety flags live inside the report.
+    output.textContent=JSON.stringify(result,null,2);
   }catch(e){
     output.textContent='DIAGNOSTIC BLOCKED: '+String(e?.message||e)+
       '. Preserve this PC and all original evidence for Owner investigation.';

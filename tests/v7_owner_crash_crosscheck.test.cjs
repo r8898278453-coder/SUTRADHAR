@@ -1,7 +1,11 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
-const fs=require('node:fs'),path=require('node:path');
-const {inspect}=require('../v7/ui/owner-crash-crosscheck.js');
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+const browser={};
+vm.runInNewContext(fs.readFileSync(path.resolve(__dirname,
+  '../v7/ui/owner-crash-crosscheck.js'),'utf8'),{window:browser},
+  {filename:'owner-crash-crosscheck.js'});
+const {inspect}=browser.SutradharCrashCrosscheck;
 const NODE='node_'+'a'.repeat(32),FP='c'.repeat(64);
 const record=(state='MISSING',bytes=10)=>state==='MISSING'||state==='UNSAFE_OR_UNREADABLE'?
   {state}:{state,bytes,sha256:'b'.repeat(64)};
