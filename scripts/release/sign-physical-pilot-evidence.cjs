@@ -47,6 +47,75 @@ function signBundle({draft,beforeBytes,afterBytes,witnessBytes,privateKeyPem,
   return {envelope,evidence_status:inspected.status,
     physical_test_verified:false,production_release_authorized:false};
 }
+/**
+ * Create a single Owner-signed envelope in a PRIVATE directory. A write or
+ * directory-sync failure leaves the path in place as uncertain evidence:
+ * never unlink, overwrite, or retry under the same path automatically.
+ *
+ * POSIX: fsync file AND verified parent inode/name. Windows: do not claim
+ * POSIX directory-sync durability or Windows power-loss acceptance.
+ */
+function writeOwnerEnvelope({output,envelope}={}){
+  if(typeof output!=='string'||!path.isAbsolute(output)||
+     output.length>1024)
+    fail('PILOT_OWNER_SIGNED_OUTPUT_UNSAFE');
+  const parent=path.dirname(output);
+  let stat;
+  try{stat=fs.lstatSync(parent);}
+  catch{fail('PILOT_OWNER_SIGNED_OUTPUT_DIRECTORY_UNAVAILABLE');}
+  if(!stat.isDirectory()||stat.isSymbolicLink()||
+     (process.platform!=='win32'&&((stat.mode&0o077)!==0||
+       (typeof process.getuid==='function'&&stat.uid!==process.getuid()))))
+    fail('PILOT_OWNER_SIGNED_OUTPUT_DIRECTORY_UNSAFE');
+  if(!envelope||typeof envelope!=='object'||Array.isArray(envelope)||
+     !Object.hasOwn(envelope,'payload')||
+     typeof envelope.signature_base64!=='string')
+    fail('PILOT_OWNER_SIGNED_ENVELOPE_INVALID');
+  const bytes=Buffer.from(JSON.stringify(envelope,null,2)+'\n','utf8');
+  if(bytes.length>128*1024)fail('PILOT_OWNER_SIGNED_ENVELOPE_TOO_LARGE');
+  let fd;
+  try{
+    // O_EXCL is the authority; existsSync would be subject to a race.
+    fd=fs.openSync(output,fs.constants.O_WRONLY|fs.constants.O_CREAT|
+      fs.constants.O_EXCL|(fs.constants.O_NOFOLLOW||0),0o600);
+  }catch(e){
+    fail(e&&e.code==='EEXIST'?'PILOT_OWNER_SIGNED_OUTPUT_ALREADY_EXISTS':
+      'PILOT_OWNER_SIGNED_OUTPUT_CREATE_FAILED');
+  }
+  try{
+    let offset=0;
+    while(offset<bytes.length){
+      const written=fs.writeSync(fd,bytes,offset,bytes.length-offset,offset);
+      if(written<=0)throw Error('PILOT_OWNER_SIGNED_OUTPUT_SHORT_WRITE');
+      offset+=written;
+    }
+    fs.fsyncSync(fd);
+  }catch{
+    // Intentionally leave any partly created file: prevents replay or
+    // overwrite after an ambiguous crash/storage failure.
+    fail('PILOT_OWNER_SIGNED_OUTPUT_WRITE_UNCERTAIN');
+  }finally{fs.closeSync(fd);}
+  if(process.platform!=='win32'){
+    let dirfd;
+    try{
+      dirfd=fs.openSync(parent,fs.constants.O_RDONLY|
+        (fs.constants.O_DIRECTORY||0)|(fs.constants.O_NOFOLLOW||0));
+      const live=fs.fstatSync(dirfd);
+      if(!live.isDirectory()||live.dev!==stat.dev||live.ino!==stat.ino||
+         (live.mode&0o077)!==0||
+         (typeof process.getuid==='function'&&live.uid!==process.getuid()))
+        throw Error('PILOT_OWNER_SIGNED_DIRECTORY_CHANGED');
+      fs.fsyncSync(dirfd);
+    }catch{
+      fail('PILOT_OWNER_SIGNED_OUTPUT_DIRECTORY_SYNC_UNCERTAIN');
+    }finally{if(dirfd!==undefined)fs.closeSync(dirfd);}
+  }
+  return {evidence_file_written:true,evidence_index_sha256:crypto.createHash('sha256')
+    .update(bytes).digest('hex'),
+    directory_durability:process.platform==='win32'?
+      'WINDOWS_POWER_LOSS_DURABILITY_UNVERIFIED':'POSIX_FILE_AND_DIRECTORY_FSYNC',
+    physical_test_verified:false,production_release_authorized:false};
+}
 function main(){
   try{
     const env=process.env;
@@ -69,23 +138,12 @@ function main(){
     const signed=signBundle({draft,beforeBytes:before,afterBytes:after,
       witnessBytes:witness,privateKeyPem:pem,ownerAcknowledged:'yes'});
     const output=env.SUTRADHAR_PILOT_OWNER_SIGNED_OUTPUT_FILE;
-    if(typeof output!=='string'||!path.isAbsolute(output)||
-       output.length>1024||fs.existsSync(output))
-      fail('PILOT_OWNER_SIGNED_OUTPUT_UNSAFE');
-    const dir=fs.lstatSync(path.dirname(output));
-    if(!dir.isDirectory()||dir.isSymbolicLink())
-      fail('PILOT_OWNER_SIGNED_OUTPUT_DIRECTORY_UNSAFE');
-    const bytes=Buffer.from(JSON.stringify(signed.envelope,null,2)+'\n');
-    const fd=fs.openSync(output,'wx',0o600);
-    try{fs.writeSync(fd,bytes);fs.fsyncSync(fd);}
-    finally{fs.closeSync(fd);}
-    console.log(JSON.stringify({signed:true,
-      evidence_index_sha256:hash(bytes),
-      physical_test_verified:false,production_release_authorized:false}));
+    const saved=writeOwnerEnvelope({output,envelope:signed.envelope});
+    console.log(JSON.stringify({...saved,signed:true}));
   }catch{
     console.error('PILOT_OWNER_OFFLINE_SIGNING_BLOCKED');
     process.exitCode=1;
   }
 }
 if(require.main===module)main();
-module.exports={signBundle};
+module.exports={signBundle,writeOwnerEnvelope};
