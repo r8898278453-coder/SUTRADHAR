@@ -91,7 +91,8 @@ function finishObservedSession({dir,session_id,reason}={}){
   const folder=trustedDirectory(dir);
   if(!folder)fail('AGENT_SESSION_MARKER_MISSING');
   const stat=markerStat(dir);
-  if(!stat||!stat.isFile()||stat.isSymbolicLink()||
+  if(!stat)fail('AGENT_SESSION_MARKER_MISSING');
+  if(!stat.isFile()||stat.isSymbolicLink()||
     stat.size<60||stat.size>512||
     (process.platform!=='win32'&&(stat.mode&0o077)!==0))
     fail('AGENT_SESSION_MARKER_UNSAFE');
