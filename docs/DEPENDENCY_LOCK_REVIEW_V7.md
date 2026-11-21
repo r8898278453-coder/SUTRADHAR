@@ -38,3 +38,9 @@
 | Live Hostinger backup/restore, multi-PC acceptance and approved release | NOT RUN |
 
 See [Owner provisioning](OWNER_PROVISIONING_RUNBOOK.md), [Production readiness](PRODUCTION_READINESS_V7_2026-11-12.md) and [Release operations](RELEASE_OPERATIONS.md).
+
+## 21 November 2026 — Superseding picomatch advisory evidence
+
+GitHub advisory `GHSA-fc5q-39xc-vjpf` was withdrawn **18 November 2026**, with the publisher stating it is not a security issue: https://github.com/advisories/GHSA-fc5q-39xc-vjpf. Historical 17 November high-severity failure records must remain as audit history, but are **not** proof of a currently open patched-version requirement. Do not install an invented patched `picomatch` release, run `npm audit fix --force`, or suppress new warnings.
+
+On the exact heartbeat-fix code SHA `a62c9faf5567ca9ef324851fec3a336baac96c16`, run [44892226516](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/44892226516) passed separate production-only, full-root and Desktop npm high/critical audit steps, and the production exposure control. Each later protected build must run its own exact-head independent checks; a new advisory reopens the relevant release gate. These npm results do not clear production installer signing, actual Hostinger staging/restore or physical PC acceptance.
