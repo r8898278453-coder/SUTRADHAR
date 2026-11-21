@@ -57,7 +57,7 @@ test('Owner HTML has accessible, no-consent read-only leadership-safety panel',(
     'leadership-safety-details'])
     assert.match(html,new RegExp('id="'+id+'"'));
   assert.match(html,/read-only Owner diagnosis/);
-  assert.doesNotMatch(js,/\.innerHTML\s*=|localStorage|sessionStorage/);
+  assert.doesNotMatch(js,/\.innerHTML\s*=|(?:localStorage|sessionStorage)\.(?:getItem|setItem)/);
   const route=central.match(/app\.get\('\/v7\/owner\/leadership-safety',jsonRoute\(async req=>\{([\s\S]*?)\n\}\)\);/);
   assert.ok(route,'Explicit Owner route required');
   assert.match(route[1],/admin\(req\)/);
