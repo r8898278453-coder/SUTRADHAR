@@ -54,3 +54,46 @@ test('a preexisting termination signal without observed exit is NOT confirmation
   assert.equal(result.exit_confirmed_by,'EXIT_TIMEOUT_OWNER_REVIEW');
   assert.equal(c.calls,0,'do not send a second signal to a process already signaled');
 });
+
+
+test('only a positively accepted stop for the exact child arms marker retirement',async()=>{
+  const c=child('exit'),accepted=[];
+  const result=await requestStopAndConfirm(c,{timeoutMs:200,
+    onStopAccepted:got=>accepted.push(got)});
+  assert.equal(result.agent_stopped,true);
+  assert.equal(result.agent_stop_requested,true);
+  assert.deepEqual(accepted,[c]);
+});
+test('preexisting SIGTERM plus eventual exit never masquerades as an accepted stop',async()=>{
+  const c=child('hang');c.signalCode='SIGTERM';
+  const accepted=[];
+  const p=requestStopAndConfirm(c,{timeoutMs:200,
+    onStopAccepted:got=>accepted.push(got)});
+  setImmediate(()=>c.emit('exit',null,'SIGTERM'));
+  const r=await p;
+  assert.equal(r.agent_stopped,true);
+  assert.equal(r.agent_stop_requested,false);
+  assert.equal(c.calls,0);
+  assert.deepEqual(accepted,[]);
+});
+test('rejected, thrown, or synchronous exit inside kill never arms stop authority',async()=>{
+  for(const mode of ['reject','throw','sync-exit-false','sync-exit-true']){
+    const c=child('hang'),accepted=[];
+    c.kill=()=>{
+      if(mode==='throw')throw Error('ACCESS_DENIED');
+      if(mode.startsWith('sync-exit'))c.emit('exit',null,'SIGTERM');
+      return mode==='sync-exit-true';
+    };
+    const r=await requestStopAndConfirm(c,{timeoutMs:25,
+      onStopAccepted:got=>accepted.push(got)});
+    assert.deepEqual(accepted,[],mode);
+    assert.equal(r.agent_stop_requested,mode==='sync-exit-true',mode);
+  }
+});
+test('invalid callback fails closed before any stop request',async()=>{
+  const c=child('exit');
+  assert.throws(()=>requestStopAndConfirm(c,{
+    timeoutMs:200,onStopAccepted:true
+  }),/CALLBACK_INVALID/);
+  assert.equal(c.calls,0);
+});

@@ -4,9 +4,14 @@
  * Caller must have already persisted the Owner-fenced local maintenance hold.
  */
 'use strict';
-function requestStopAndConfirm(child,{timeoutMs=12000}={}){
+function requestStopAndConfirm(child,{timeoutMs=12000,onStopAccepted=null}={}){
   if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>30000)
     throw Error('MAINTENANCE_STOP_TIMEOUT_INVALID');
+  // Only a positively accepted signal request for THIS tracked child may
+  // arm session-marker retirement. A prior signalCode or a resolved
+  // child-exit event is not evidence that this operation requested a stop.
+  if(onStopAccepted!==null&&typeof onStopAccepted!=='function')
+    throw Error('MAINTENANCE_STOP_ACCEPTED_CALLBACK_INVALID');
   if(!child)return Promise.resolve(Object.freeze({agent_stopped:true,
     agent_stop_requested:false,exit_confirmed_by:'NO_TRACKED_CHILD'}));
   if(typeof child.once!=='function'||typeof child.removeListener!=='function'||
@@ -36,7 +41,13 @@ function requestStopAndConfirm(child,{timeoutMs=12000}={}){
     if(!alreadySignaled){
       try{
         requested=child.kill();
-        if(requested!==true)finish(false,'STOP_REQUEST_REJECTED_OWNER_REVIEW');
+        if(requested!==true){
+          finish(false,'STOP_REQUEST_REJECTED_OWNER_REVIEW');
+        }else if(!finished&&onStopAccepted){
+          // A synchronous 'exit' during kill() cannot be retroactively
+          // called an accepted Owner stop. Preserve its session marker.
+          onStopAccepted(child);
+        }
       }catch{finish(false,'STOP_REQUEST_FAILED_OWNER_REVIEW');}
     }
   });

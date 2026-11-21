@@ -445,3 +445,7 @@ Code audit caught an overbroad Desktop exit condition: the mere existence of a v
 ### Additional fail-closed child-exit signer guard
 
 After the exit policy denies marker retirement, Main now clears its signer reference for that process before returning. This includes the subtle clean-exit-plus-unrequested-hold case: an unretired marker and an interactive signer may not coexist after the observed child exit. Static regression checks bind this invariant to the actual packaged Main source. Original PC physical tests remain mandatory.
+
+## 21 November 2026 — Owner maintenance stop acknowledgement race
+
+The Desktop Owner isolation stop marker is now armed only after the stop helper reports a positively accepted \`kill()\` for the tracked child. Previously it was armed before request acceptance, making an unrelated preexisting signal plus observed exit appear Owner-directed. A synchronous child exit inside the stop request conservatively retains the marker, as it precedes acknowledgement. Windows physical signal delivery/power loss and multi-PC evidence remain release blockers.

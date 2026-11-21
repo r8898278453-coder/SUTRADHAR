@@ -926,9 +926,15 @@ app.whenReady().then(()=>{
     // Bind authority to exactly the child the Owner explicitly chose to
     // stop. Timeout/error clears this expectation but NEVER clears the
     // durable maintenance hold or an unretired child-session marker.
-    expectedMaintenanceStopChild=target;
+    expectedMaintenanceStopChild=null;
     try{
-      const stopped=await requestStopAndConfirm(target,{timeoutMs:12000});
+      const stopped=await requestStopAndConfirm(target,{
+        timeoutMs:12000,
+        onStopAccepted:acceptedChild=>{
+          if(acceptedChild===target&&agent===target)
+            expectedMaintenanceStopChild=target;
+        }
+      });
       // A failed/uncertain stop does not erase the persisted hold. The agent
       // cannot auto-restart; Owner must review the actual local process.
       return {...isolated,...stopped};

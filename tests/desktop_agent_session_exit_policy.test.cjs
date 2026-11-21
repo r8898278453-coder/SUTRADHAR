@@ -69,6 +69,8 @@ test('packaged Main binds maintenance/shutdown retire paths to exact child event
   assert.match(main,/expectedMaintenanceStopChild===spawnedAgent/);
   assert.match(main,/expectedQuitChild===spawnedAgent/);
   assert.match(main,/expectedMaintenanceStopChild=target;/);
+  assert.match(main,/onStopAccepted:acceptedChild=>\{/);
+  assert.match(main,/acceptedChild===target&&agent===target/);
   assert.match(main,/finally\s*\{\s*if\(expectedMaintenanceStopChild===target\)/);
   assert.match(main,/if\(target\.signalCode===null&&target\.kill\(\)===true\)\s*expectedQuitChild=target/);
   assert.match(main,/classifyObservedAgentExit\(\{/);
