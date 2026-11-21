@@ -28,6 +28,16 @@
 <button id="node-recovery-inspect" class="outline" type="button">Inspect Central recovery snapshot (GET only)</button></div>
 <pre id="node-recovery-results" role="status" aria-live="polite">Not inspected. Keep original Windows evidence and session marker.</pre>
 <small>Central MySQL is authoritative for accepted counters. This un-signed Owner GET does not independently prove the local PC, physical shutdown, full QA/Git reconciliation, DPAPI key custody, or readiness to restart.</small>
+<div class="formgrid">
+<div><label for="node-recovery-pin">Independently verified original enrollment key fingerprint (SHA-256 hex)</label>
+<input id="node-recovery-pin" type="text" autocomplete="off" spellcheck="false" maxlength="64" placeholder="64 lowercase hex characters from separate Owner enrollment record">
+<p>Do NOT copy the pin from the Central response you are checking.</p></div>
+<div><label for="node-recovery-local-json">Original PC read-only crash diagnostic JSON (paste only the inspection result)</label>
+<textarea id="node-recovery-local-json" rows="6" maxlength="16000" autocomplete="off" spellcheck="false" placeholder="Paste the JSON object shown by Windows Desktop Inspect crash evidence; never paste keys or vault files"></textarea>
+<p>Local evidence stays in this browser tab. Crosscheck sends only the Node ID to the existing Owner GET; it never uploads pasted JSON.</p></div>
+</div>
+<button id="node-recovery-crosscheck" class="outline" type="button">Compare local report with fresh Central snapshot (GET only)</button>
+<pre id="node-recovery-crosscheck-results" role="status" aria-live="polite">Not compared. Independently verified enrollment key fingerprint and original PC diagnostic required. Every result remains HOLD.</pre>
 </section>
 <div class="grid"><section class="panel"><div class="panelhead"><h2>Registered agents</h2><span id="agentCount"></span></div>
 <div class="scroll"><table><thead><tr><th>Agent</th><th>Machine</th><th>Approval</th><th>Heartbeat</th></tr></thead><tbody id="agents"></tbody></table></div></section>
@@ -150,4 +160,4 @@ I authorize read-only GitHub proof for this exact commit; no push, PR or merge.<
 <tbody id="maintenance-plans"></tbody></table></div>
 </section></section>
 <footer>Live state from Central MySQL. UI is read-only unless an owner command is explicitly submitted. No browser session, credential or agent private key is transferred here.</footer>
-</div><script type="module" src="/dashboard.js"></script></body></html>
+</div><script src="/owner-crash-crosscheck.js"></script><script type="module" src="/dashboard.js"></script></body></html>

@@ -61,6 +61,47 @@ $('node-recovery-inspect').addEventListener('click',async()=>{
 });
 
 
+const crosscheckOutput=$('node-recovery-crosscheck-results');
+$('node-recovery-crosscheck').addEventListener('click',async()=>{
+  const btn=$('node-recovery-crosscheck');
+  const nodeId=$('node-recovery-input').value.trim();
+  const pin=$('node-recovery-pin').value.trim();
+  const raw=$('node-recovery-local-json').value;
+  crosscheckOutput.textContent='OWNER HOLD: preliminary crosscheck not verified.';
+  if(!/^node_[a-f0-9]{32}$/.test(nodeId)||
+     !/^[a-f0-9]{64}$/.test(pin)||raw.length<10||raw.length>16000){
+    crosscheckOutput.textContent='HOLD — exact node ID, independently pinned original Ed25519 fingerprint and bounded local diagnostic JSON are required. No recovery authorized.';
+    return;
+  }
+  btn.disabled=true;
+  try{
+    const local=JSON.parse(raw);
+    // Never send local diagnostic JSON or independent pin over the network.
+    const central=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));
+    const report=window.SutradharCrashCrosscheck.inspect({
+      local,central,nodeId,pinnedPublicKeySha256:pin
+    });
+    if(report.state!=='OWNER_REVIEW_REQUIRED'||
+       report.agent_restart_allowed!==false||
+       report.marker_removal_allowed!==false||
+       report.owner_reconciliation_complete!==false)
+      throw Error('CROSSCHECK_UNSAFE_RESULT');
+    crosscheckOutput.textContent=[
+      'OWNER REVIEW REQUIRED — NOT AN AUTHORIZATION.',
+      'Node ID entered by Owner: '+report.compared_node_id,
+      'Central public-key fingerprint matches independent enrollment pin: '+
+        String(report.central_fingerprint_matches_independent_enrollment_pin),
+      'Local crash marker has expected shape: '+String(report.local_session_marker_shape_valid),
+      'Potential inconsistencies: '+report.preliminary_inconsistency_count,
+      'Finding codes: '+report.finding_codes.join(', '),
+      'Local-to-Central identity/counter continuity and physical Windows shutdown NOT PROVEN.',
+      'No marker deletion, agent restart, installer launch, Git replay or production release.'
+    ].join('\n');
+  }catch{
+    crosscheckOutput.textContent='HOLD — local/remote data is invalid, tampered or unavailable. No recovery authorized; preserve original PC and evidence.';
+  }finally{btn.disabled=false;}
+});
+
 let gitRecoverySnapshot=null,gitRecoverySelection=null,gitRecoveryPending=null;
 
 let prSelected=null,prCreationAttempt=null;
@@ -354,7 +395,10 @@ $('connect').onclick=async()=>{clearPrCreation();clearPrRecovery();clearGitRecov
   if(timer)clearInterval(timer);
   if(key)timer=setInterval(()=>refresh().catch(e=>message(e.message,true)),20000);
 };
-$('disconnect').onclick=()=>{key='';clearPrCreation();clearPrRecovery();clearGitRecoveryReview();gitRecoverySnapshot=null;$('dashboard').hidden=true;value('connection','Disconnected');
+$('disconnect').onclick=()=>{key='';clearPrCreation();clearPrRecovery();clearGitRecoveryReview();gitRecoverySnapshot=null;
+  $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
+  crosscheckOutput.textContent='Disconnected — pasted local evidence cleared; no authorization.';
+  $('dashboard').hidden=true;value('connection','Disconnected');
   if(timer)clearInterval(timer);message('Disconnected. Credentials cleared from memory.');};
 $('refresh').onclick=()=>refresh().catch(e=>message(e.message,true));
 document.querySelectorAll('[data-command]').forEach(button=>button.addEventListener('click',async()=>{
