@@ -184,3 +184,39 @@ test('restoring old counters while process alive is detected before writing any 
     assert.equal(fs.existsSync(path.join(dir,'edge-owner.lock')),true);
   });
 });
+
+test('read-only Owner inspector accepts a REAL runtime-generated developer identity',()=>{
+  temp(dir=>{
+    const session=openDeveloperIdentity(dir,names);
+    const identityFile=path.join(dir,'identity.json');
+    const lockFile=path.join(dir,'edge-owner.lock');
+    const originalIdentity=fs.readFileSync(identityFile);
+    const originalLock=fs.readFileSync(lockFile);
+    const {inspectDeveloperEdgeDir}=createRequire(import.meta.url)(
+      '../scripts/ops/developer-edge-inspect.cjs') as {
+        inspectDeveloperEdgeDir:(dir:string)=>Record<string,any>
+      };
+    const diagnostic=inspectDeveloperEdgeDir(dir);
+    assert.equal(diagnostic.state,'LOCK_PRESENT_OWNER_REVIEW_REQUIRED');
+    assert.equal(diagnostic.local_ed25519_pair_verified,true);
+    assert.equal(diagnostic.configured_agent_roster_verified,false);
+    assert.equal(diagnostic.counter_rollback_verified,false);
+    assert.equal(diagnostic.restart_authorized,false);
+    assert.equal(diagnostic.central_verified,false);
+    assert.equal(diagnostic.identity.node_id,session.state.node_id);
+    assert.equal(diagnostic.identity.node_sequence,session.state.node_sequence);
+    assert.deepEqual(diagnostic.identity.agents.map((x:any)=>x.agent_id),names);
+    assert.equal(diagnostic.unexpected_artifact_count,0);
+    for(const secret of [session.state.private_key_pem,
+      session.state.public_key_pem,JSON.parse(originalLock.toString()).token]){
+      assert.equal(JSON.stringify(diagnostic).includes(secret),false);
+    }
+    assert.deepEqual(fs.readFileSync(identityFile),originalIdentity);
+    assert.deepEqual(fs.readFileSync(lockFile),originalLock);
+    session.release();
+    const unlocked=inspectDeveloperEdgeDir(dir);
+    assert.equal(unlocked.state,'UNLOCKED_NOT_RESTART_AUTHORIZED');
+    assert.equal(unlocked.local_ed25519_pair_verified,true);
+    assert.equal(unlocked.restart_authorized,false);
+  });
+});

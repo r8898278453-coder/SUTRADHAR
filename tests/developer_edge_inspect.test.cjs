@@ -3,12 +3,15 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),
   crypto=require('node:crypto'),cp=require('node:child_process');
 const {inspectDeveloperEdgeDir}=require('../scripts/ops/developer-edge-inspect.cjs');
-const fixture=()=>({
-  node_id:'node_'+'a'.repeat(32),boot_id:'boot_'+'b'.repeat(32),
-  private_key_pem:'SECRET_PEM_MUST_NOT_APPEAR_IN_INSPECTION',
-  public_key_pem:'PRIVATE_METADATA_NOT_TO_EXPORT',
-  node_sequence:34,agents:[{id:'agent_alpha',sequence:34},{id:'agent_beta',sequence:34}]
-});
+const fixture=()=>{
+  const pair=crypto.generateKeyPairSync('ed25519');
+  return {
+    node_id:'node_'+'a'.repeat(32),boot_id:'boot_'+'b'.repeat(32),
+    private_key_pem:pair.privateKey.export({type:'pkcs8',format:'pem'}).toString(),
+    public_key_pem:pair.publicKey.export({type:'spki',format:'pem'}).toString(),
+    node_sequence:34,agents:[{id:'agent_alpha',sequence:34},{id:'agent_beta',sequence:34}]
+  };
+};
 function inTemp(fn){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-dev-inspector-'));
   try{return fn(dir);}finally{fs.rmSync(dir,{recursive:true,force:true});}
@@ -109,6 +112,70 @@ test('malformed metadata and insecure files fail closed without printing secrets
       assert.throws(()=>inspectDeveloperEdgeDir(dir),/DEV_EDGE_INSPECT_FILE_UNSAFE/);
     });
   }
+});
+test('diagnostic enforces exact runtime identity schema and matching Ed25519 keys',()=>{
+  inTemp(dir=>{
+    const ident=fixture();
+    write(dir,'identity.json',JSON.stringify(ident));
+    assert.equal(inspectDeveloperEdgeDir(dir).local_ed25519_pair_verified,true);
+    const another=fixture();
+    write(dir,'identity.json',JSON.stringify({...ident,
+      private_key_pem:another.private_key_pem}));
+    assert.throws(()=>inspectDeveloperEdgeDir(dir),
+      /DEV_EDGE_INSPECT_IDENTITY_KEY_MISMATCH/);
+    write(dir,'identity.json',JSON.stringify({...ident,
+      public_key_pem:'NOT_AN_ED25519_PEM'}));
+    assert.throws(()=>inspectDeveloperEdgeDir(dir),
+      /DEV_EDGE_INSPECT_IDENTITY_KEY_MISMATCH/);
+    write(dir,'identity.json',JSON.stringify({...ident,
+      injected_secret:'do-not-print'}));
+    assert.throws(()=>inspectDeveloperEdgeDir(dir),
+      /DEV_EDGE_INSPECT_IDENTITY_INVALID/);
+    write(dir,'identity.json',JSON.stringify({...ident,
+      agents:[{...ident.agents[0],unexpected:true},ident.agents[1]]}));
+    assert.throws(()=>inspectDeveloperEdgeDir(dir),
+      /DEV_EDGE_INSPECT_IDENTITY_INVALID/);
+    write(dir,'identity.json',JSON.stringify({...ident,
+      agents:[{id:123,sequence:34},ident.agents[1]]}));
+    assert.throws(()=>inspectDeveloperEdgeDir(dir),
+      /DEV_EDGE_INSPECT_IDENTITY_INVALID/);
+    const good=JSON.stringify(ident);
+    write(dir,'identity.json',good);
+    const snapshot=fs.readFileSync(path.join(dir,'identity.json'));
+    const report=inspectDeveloperEdgeDir(dir);
+    assert.equal(report.local_ed25519_pair_verified,true);
+    assert.equal(report.configured_agent_roster_verified,false);
+    assert.equal(report.counter_rollback_verified,false);
+    assert.equal(report.central_verified,false);
+    assert.equal(report.restart_authorized,false);
+    assert.deepEqual(fs.readFileSync(path.join(dir,'identity.json')),snapshot);
+    const output=JSON.stringify(report);
+    for(const secret of [ident.private_key_pem,ident.public_key_pem,
+      'private_key_pem','public_key_pem','injected_secret'])
+      assert.equal(output.includes(secret),false);
+  });
+});
+test('unknown residual file prevents false NOT_ENROLLED, without exposing filename',()=>{
+  inTemp(dir=>{
+    const unknown='identity.json.unsigned-private-note.abandoned.tmp';
+    write(dir,unknown,'historical state');
+    const before=fs.readFileSync(path.join(dir,unknown));
+    const missing=inspectDeveloperEdgeDir(dir);
+    assert.equal(missing.state,'MISSING_IDENTITY_OWNER_REVIEW_REQUIRED');
+    assert.equal(missing.identity_present,false);
+    assert.equal(missing.unexpected_artifact_count,1);
+    assert.equal(missing.local_ed25519_pair_verified,false);
+    assert.equal(JSON.stringify(missing).includes(unknown),false);
+    assert.deepEqual(fs.readFileSync(path.join(dir,unknown)),before);
+    write(dir,'identity.json',JSON.stringify(fixture()));
+    const present=inspectDeveloperEdgeDir(dir);
+    assert.equal(present.state,'UNLOCKED_RESIDUAL_ARTIFACTS_OWNER_REVIEW_REQUIRED');
+    assert.equal(present.unexpected_artifact_count,1);
+    assert.equal(present.restart_authorized,false);
+    assert.equal(JSON.stringify(present).includes(unknown),false);
+    fs.rmSync(path.join(dir,unknown));
+    assert.equal(inspectDeveloperEdgeDir(dir).state,'UNLOCKED_NOT_RESTART_AUTHORIZED');
+  });
 });
 test('CLI read-only success and error paths never echo key or token',()=>{
   inTemp(dir=>{
