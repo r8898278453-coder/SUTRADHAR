@@ -408,3 +408,76 @@ test('offline Owner review tools remain separate from maintenance release and ha
   assert.match(source,/ACKNOWLEDGE_CRASH_EVIDENCE_REVIEW_ONLY/);
   assert.match(source,/production_release_authorized:false/);
 });
+
+
+test('offline Owner CLI signs, verifies and detects tampered evidence with disposable key only',()=>{
+  const os=require('node:os'),childProcess=require('node:child_process');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-owner-crash-review-'));
+  const x=samples(),now=Date.now();
+  x.first.observed_at_central_ms=now-1600;
+  x.second.observed_at_central_ms=now-900;
+  x.observedAtClientMs=now-500;
+  const files={
+    local:path.join(dir,'local.json'),
+    first:path.join(dir,'first.json'),
+    second:path.join(dir,'second.json'),
+    private:path.join(dir,'owner-private.pem'),
+    public:path.join(dir,'owner-public.pem'),
+    out:path.join(dir,'owner-review.json')
+  };
+  try{
+    for(const key of ['local','first','second'])
+      fs.writeFileSync(files[key],JSON.stringify(x[key]));
+    const keys=crypto.generateKeyPairSync('ed25519');
+    fs.writeFileSync(files.private,keys.privateKey.export({
+      format:'pem',type:'pkcs8'}),{mode:0o600});
+    fs.writeFileSync(files.public,keys.publicKey.export({
+      format:'pem',type:'spki'}),{mode:0o600});
+    const env={...process.env,
+      SUTRADHAR_CRASH_LOCAL_JSON:files.local,
+      SUTRADHAR_CRASH_CENTRAL_FIRST_JSON:files.first,
+      SUTRADHAR_CRASH_CENTRAL_SECOND_JSON:files.second,
+      SUTRADHAR_CRASH_NODE_ID:x.nodeId,
+      SUTRADHAR_CRASH_ENROLLMENT_FINGERPRINT:x.pinnedPublicKeySha256,
+      SUTRADHAR_CRASH_OBSERVED_AT_CLIENT_MS:String(x.observedAtClientMs),
+      SUTRADHAR_CRASH_OWNER_SIGNING_KEY_FILE:files.private,
+      SUTRADHAR_CRASH_OWNER_REVIEW_OUTPUT:files.out,
+      SUTRADHAR_CRASH_OWNER_REVIEW_NOTE:
+        'Owner reviewed the test-only crash evidence. No restart is permitted.',
+      SUTRADHAR_CRASH_OWNER_REVIEW_FILE:files.out,
+      SUTRADHAR_CRASH_OWNER_PUBLIC_KEY_FILE:files.public
+    };
+    const run=(script,patch={})=>childProcess.spawnSync(
+      process.execPath,[path.resolve(__dirname,script)],
+      {env:{...env,...patch},encoding:'utf8',timeout:10000});
+    let r=run('../scripts/release/sign-crash-owner-review.cjs');
+    assert.notEqual(r.status,0,'explicit Owner opt-in is mandatory');
+    assert.equal(fs.existsSync(files.out),false);
+    r=run('../scripts/release/sign-crash-owner-review.cjs',{
+      SUTRADHAR_OWNER_CRASH_EVIDENCE_REVIEW_APPROVED:'yes'
+    });
+    assert.equal(r.status,0,r.stderr);
+    assert.equal(JSON.parse(r.stdout).agent_restart_allowed,false);
+    const signature=JSON.parse(fs.readFileSync(files.out,'utf8'));
+    assert.equal(signature.signed.agent_restart_allowed,false);
+    r=run('../scripts/release/sign-crash-owner-review.cjs',{
+      SUTRADHAR_OWNER_CRASH_EVIDENCE_REVIEW_APPROVED:'yes'
+    });
+    assert.notEqual(r.status,0,'signed review output is exclusive; never overwritten');
+    r=run('../scripts/ops/verify-crash-owner-review.cjs');
+    assert.equal(r.status,0,r.stderr);
+    const verified=JSON.parse(r.stdout);
+    assert.equal(verified.owner_review_signature_valid,true);
+    assert.equal(verified.replay_prevention_enforced,false);
+    assert.equal(verified.marker_removal_allowed,false);
+    assert.equal(verified.production_release_authorized,false);
+    const tampered=JSON.parse(fs.readFileSync(files.second,'utf8'));
+    tampered.cluster.epoch_decimal='999';
+    fs.writeFileSync(files.second,JSON.stringify(tampered));
+    r=run('../scripts/ops/verify-crash-owner-review.cjs');
+    assert.notEqual(r.status,0,'new Central epoch invalidates old Owner review');
+    assert.match(r.stderr,/CRASH_OWNER_REVIEW_/);
+  }finally{
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
