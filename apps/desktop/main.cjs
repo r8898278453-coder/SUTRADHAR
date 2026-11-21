@@ -250,9 +250,10 @@ function startAgent({manualOwnerRestart=false}={}){
       }
     }catch(e){
       if(msg.op==='saveCounters'){
-        // Freeze automatic child restart and all subsequent signer use
-        // when counter persistence fails or the result is ambiguous.
+        // Freeze automatic child restart AND Main's interactive signing
+        // handlers, even when the failure occurred before vault.save().
         vaultError='OS_VAULT_COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW';
+        signer=null;
       }
       reply.error=msg.op==='saveCounters'&&vaultError?
         vaultError:String(e.message||'VAULT_ERROR').slice(0,100);
@@ -278,6 +279,7 @@ function startAgent({manualOwnerRestart=false}={}){
     // original identity and require Owner examination before relaunch.
     if(exitCode!==0||signal){
       vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED';
+      signer=null; // Also deny renderer-triggered worker/QA signing.
       return;
     }
     if(retryTimer)clearTimeout(retryTimer);

@@ -76,6 +76,8 @@ test('failed packaged OS-vault counter commits are terminal and parent never aut
   assert.match(main,/if\(shuttingDown\|\|vaultError\)return/);
   assert.match(main,/if\(exitCode!==0\|\|signal\)/);
   assert.match(main,/vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED'/);
+  assert.match(main,/vaultError='OS_VAULT_COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW';\s*signer=null/);
+  assert.match(main,/vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED';\s*signer=null/);
   assert.match(main,/if\(vaultError\)throw Error\(vaultError\)/);
   assert.match(vault,/identity\.osvault\.write-intent/);
   assert.match(vault,/fs\.openSync\(intent,[\s\S]*?fs\.fsyncSync\(intentFd\)/);
