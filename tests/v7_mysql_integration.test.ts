@@ -201,6 +201,16 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(recoveryBefore.marker_removal_allowed,false);
     assert.equal(recoveryBefore.owner_reconciliation_complete,false);
     assert.equal(recoveryBefore.historical_effects.retained_pilot_signed_heartbeat_packet_count,1);
+    const retained= recoveryBefore.historical_effects.last_retained_pilot_heartbeat;
+    assert.equal(retained.record_present,true);
+    assert.equal(retained.last_retained_packet_signature_verified,true);
+    assert.equal(retained.retained_sequence_equals_current_accepted_node_counter,true);
+    assert.equal(retained.retained_agent_sequences_not_ahead_of_central,true);
+    assert.equal(retained.retained_boot_id_matches_current,true);
+    assert.equal(retained.last_retained_node_sequence_decimal,'1');
+    assert.equal(retained.complete_signed_heartbeat_history,false);
+    assert.equal(retained.agent_restart_allowed,false);
+    assert.equal(JSON.stringify(retained).includes('signature_base64'),false);
     assert.equal(recoveryBefore.historical_effects.signed_heartbeat_history_complete,false);
     assert.ok(BigInt(recoveryBefore.historical_effects.global_audit_event_high_watermark_decimal)>0n);
     assert.equal(recoveryBefore.historical_effects.qa_receipts_created_by_this_pc_count,0);

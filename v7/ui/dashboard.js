@@ -51,6 +51,8 @@ $('node-recovery-inspect').addEventListener('click',async()=>{
       'Unresolved Git jobs involving this PC: '+result.unresolved_git_job_count,
       'Historical effect indicators (not proof of external resolution): '+
         JSON.stringify(result.historical_effects),
+      'Latest retained signed packet: '+
+        JSON.stringify(result.historical_effects?.last_retained_pilot_heartbeat),
       'Agents: '+JSON.stringify(result.agents),
       'Central observation time (ms): '+result.observed_at_central_ms,
       'Local PC key/DPAPI, physical shutdown, QA/Git side effects: NOT VERIFIED.',

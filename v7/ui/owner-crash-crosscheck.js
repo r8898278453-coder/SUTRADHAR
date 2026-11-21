@@ -86,6 +86,26 @@
           'centrally_confirmed_git_jobs_involving_this_pc_count',
           'local_agent_checkpoint_record_count'].every(k=>
           nonnegative(central.historical_effects[k]))||
+       !isObject(central.historical_effects.last_retained_pilot_heartbeat)||
+       !['record_present','last_retained_packet_signature_verified',
+         'retained_sequence_equals_current_accepted_node_counter',
+         'retained_agent_sequences_not_ahead_of_central',
+         'retained_boot_id_matches_current','read_only',
+         'complete_signed_heartbeat_history','local_pc_possession_now_verified',
+         'physical_pc_verified','agent_restart_allowed',
+         'production_release_authorized'].every(k=>
+         typeof central.historical_effects.last_retained_pilot_heartbeat[k]==='boolean')||
+       central.historical_effects.last_retained_pilot_heartbeat.read_only!==true||
+       central.historical_effects.last_retained_pilot_heartbeat.complete_signed_heartbeat_history!==false||
+       central.historical_effects.last_retained_pilot_heartbeat.local_pc_possession_now_verified!==false||
+       central.historical_effects.last_retained_pilot_heartbeat.agent_restart_allowed!==false||
+       central.historical_effects.last_retained_pilot_heartbeat.production_release_authorized!==false||
+       (central.historical_effects.last_retained_pilot_heartbeat.last_retained_node_sequence_decimal!==null&&
+         !limitedDecimal(central.historical_effects.last_retained_pilot_heartbeat.last_retained_node_sequence_decimal))||
+       (central.historical_effects.last_retained_pilot_heartbeat.last_retained_accepted_at_ms!==null&&
+         !nonnegative(central.historical_effects.last_retained_pilot_heartbeat.last_retained_accepted_at_ms))||
+       typeof central.historical_effects.last_retained_pilot_heartbeat.error_code!=='string'||
+       !/^[A-Z_]{3,90}$/.test(central.historical_effects.last_retained_pilot_heartbeat.error_code)||
        central.historical_effects.signed_heartbeat_history_complete!==false||
        central.historical_effects.qa_effects_independently_reconciled!==false||
        central.historical_effects.external_git_effects_independently_reconciled!==false||
@@ -149,8 +169,24 @@
       add('CENTRAL_GLOBAL_QA_QUEUE_INCOMPLETE_CONTEXT');
     if(effects.local_agent_checkpoint_record_count>0)
       add('CENTRAL_CHECKPOINT_HISTORY_REQUIRES_WORK_REVIEW');
-    if(effects.retained_pilot_signed_heartbeat_packet_count===0)
+    const last=effects.last_retained_pilot_heartbeat;
+    if(effects.retained_pilot_signed_heartbeat_packet_count===0){
       add('CENTRAL_RETAINED_SIGNED_HEARTBEAT_EVIDENCE_NOT_FOUND');
+      if(last.record_present||last.error_code!=='NO_PILOT_PACKET_RETAINED')
+        add('CENTRAL_PILOT_PACKET_COUNT_INCONSISTENT');
+    }else{
+      if(!last.record_present||!last.last_retained_packet_signature_verified||
+         last.error_code!=='NONE')
+        add('CENTRAL_RETAINED_HEARTBEAT_SIGNATURE_INVALID');
+      if(last.last_retained_packet_signature_verified&&
+         !last.retained_sequence_equals_current_accepted_node_counter)
+        add('RETAINED_SIGNED_PACKET_DOES_NOT_COVER_LATEST_COUNTER');
+      if(!last.retained_agent_sequences_not_ahead_of_central)
+        add('RETAINED_AGENT_COUNTERS_REQUIRE_OWNER_REVIEW');
+      if(last.last_retained_packet_signature_verified&&
+         !last.retained_boot_id_matches_current)
+        add('RETAINED_BOOT_ID_DIFFERS_FROM_CURRENT');
+    }
     // These are ALWAYS unresolved because the original PC is intentionally
     // not allowed to unlock/sign after crash; plain local hashes are NOT
     // authoritative evidence of key possession, process stop or counters.

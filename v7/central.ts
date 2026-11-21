@@ -19,6 +19,7 @@ import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
 import {permitSignedHeartbeatPilotRecord} from './pilot_heartbeat_window.ts';
 import {validSignedHeartbeat} from './heartbeat_validation.ts';
+import {inspectLastRetainedPilotHeartbeat} from './pilot_signed_packet_recheck.ts';
 import {inspectLeadershipSafety} from './leadership_diagnostic.ts';
 import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,QaEvidenceError} from './qa_evidence.ts';
 import sharedContract from '../packages/shared/contract.json';
@@ -790,6 +791,22 @@ app.get('/v7/owner/node-recovery/:nodeId',jsonRoute(async req=>{
     const signedPilot=await one(c,
       'SELECT COUNT(*) AS n FROM v7_events WHERE event_type="NODE_HEARTBEAT_ACCEPTED" '+
       'AND actor=?',[nodeId]);
+    const lastPilot=await one(c,
+      'SELECT payload_json FROM v7_events '+
+      'WHERE event_type="NODE_HEARTBEAT_ACCEPTED" AND actor=? '+
+      'ORDER BY event_id DESC LIMIT 1',[nodeId]);
+    // Verify persisted raw signed bytes using the enrolled public key;
+    // no signer, retry, nonce insertion or Central state modification.
+    const lastPilotCheck=inspectLastRetainedPilotHeartbeat({
+      retainedPayload:lastPilot?.payload_json??null,
+      nodeId,publicKeyPem:node.public_key_pem,
+      acceptedNodeSequenceDecimal:String(node.accepted_node_sequence_decimal),
+      acceptedBootId:node.boot_id||null,
+      agents:agents.map(a=>({
+        agent_id:a.agent_id,
+        accepted_sequence_decimal:String(a.accepted_sequence_decimal)
+      }))
+    });
     const auditWatermark=await one(c,
       'SELECT CAST(COALESCE(MAX(event_id),0) AS CHAR) AS high_watermark_decimal '+
       'FROM v7_events');
@@ -861,6 +878,7 @@ app.get('/v7/owner/node-recovery/:nodeId',jsonRoute(async req=>{
         global_audit_event_high_watermark_decimal:
           String(auditWatermark?.high_watermark_decimal),
         retained_pilot_signed_heartbeat_packet_count:count(signedPilot),
+        last_retained_pilot_heartbeat:lastPilotCheck,
         signed_heartbeat_history_complete:false,
         qa_receipts_created_by_this_pc_count:count(qaAsQa),
         qa_receipts_on_worker_tickets_for_this_pc_count:count(qaForWorker),

@@ -38,6 +38,16 @@ function fixture(){
     historical_effects:{
       global_audit_event_high_watermark_decimal:'1',
       retained_pilot_signed_heartbeat_packet_count:1,
+      last_retained_pilot_heartbeat:{
+        record_present:true,last_retained_packet_signature_verified:true,
+        retained_sequence_equals_current_accepted_node_counter:true,
+        retained_agent_sequences_not_ahead_of_central:true,
+        retained_boot_id_matches_current:true,last_retained_node_sequence_decimal:'7',
+        last_retained_accepted_at_ms:1770000000000,error_code:'NONE',
+        read_only:true,complete_signed_heartbeat_history:false,
+        local_pc_possession_now_verified:false,physical_pc_verified:false,
+        agent_restart_allowed:false,production_release_authorized:false
+      },
       signed_heartbeat_history_complete:false,
       qa_receipts_created_by_this_pc_count:0,
       qa_receipts_on_worker_tickets_for_this_pc_count:0,
@@ -204,6 +214,9 @@ test('both remote responses and exact unsigned BIGINT range are validated before
 test('historical QA, confirmed Git, pending reviews, checkpoints and pilot gaps remain explicit holds',()=>{
   const f=fixture(),h=f.central.historical_effects;
   h.retained_pilot_signed_heartbeat_packet_count=0;
+  h.last_retained_pilot_heartbeat.record_present=false;
+  h.last_retained_pilot_heartbeat.last_retained_packet_signature_verified=false;
+  h.last_retained_pilot_heartbeat.error_code='NO_PILOT_PACKET_RETAINED';
   h.qa_receipts_created_by_this_pc_count=1;
   h.qa_receipts_on_worker_tickets_for_this_pc_count=2;
   h.pending_qa_owner_reviews_for_worker_tickets_count=3;
@@ -220,6 +233,21 @@ test('historical QA, confirmed Git, pending reviews, checkpoints and pilot gaps 
     assert.ok(r.finding_codes.includes(code),code);
   assert.equal(r.agent_restart_allowed,false);
   assert.equal(r.owner_reconciliation_complete,false);
+});
+test('corrupt retained pilot packet, gap to current counter and counter inconsistency stay HOLD',()=>{
+  const f=fixture();
+  f.central.historical_effects.last_retained_pilot_heartbeat.last_retained_packet_signature_verified=false;
+  f.central.historical_effects.last_retained_pilot_heartbeat.error_code='PILOT_PACKET_SIGNATURE_INVALID';
+  const r=inspect(f);
+  assert.ok(r.finding_codes.includes('CENTRAL_RETAINED_HEARTBEAT_SIGNATURE_INVALID'));
+  const p=fixture();
+  p.central.historical_effects.last_retained_pilot_heartbeat.retained_sequence_equals_current_accepted_node_counter=false;
+  const gap=inspect(p);
+  assert.ok(gap.finding_codes.includes('RETAINED_SIGNED_PACKET_DOES_NOT_COVER_LATEST_COUNTER'));
+  for(const item of [r,gap]){
+    assert.equal(item.agent_restart_allowed,false);
+    assert.equal(item.owner_reconciliation_complete,false);
+  }
 });
 test('new historical-effect changes or audit watermark changes between GETs are flagged',()=>{
   const mutate=[
