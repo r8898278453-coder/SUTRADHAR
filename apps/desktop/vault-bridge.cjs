@@ -64,14 +64,14 @@ function createSignerBridge(vault){
       candidate.public_key_pem!==existing.public_key_pem||
       candidate.boot_id!==existing.boot_id||
       !Number.isSafeInteger(candidate.node_sequence)||
-      candidate.node_sequence<=existing.node_sequence||
+      candidate.node_sequence!==existing.node_sequence+1||
       !Array.isArray(candidate.agents)||candidate.agents.length!==existing.agents.length)
       fail('VAULT_IDENTITY_OR_SEQUENCE_MISMATCH');
     for(let i=0;i<candidate.agents.length;i++){
       const actual=candidate.agents[i],old=existing.agents[i];
       if(!actual||typeof actual!=='object'||Object.keys(actual).some(x=>!['id','sequence'].includes(x))||
         actual.id!==old.id||!Number.isSafeInteger(actual.sequence)||
-        actual.sequence<=old.sequence)fail('VAULT_AGENT_REPLAY_OR_IDENTITY_MISMATCH');
+        actual.sequence!==old.sequence+1)fail('VAULT_AGENT_REPLAY_OR_IDENTITY_MISMATCH');
     }
     vault.save({...existing,node_sequence:candidate.node_sequence,
       agents:candidate.agents.map(a=>({id:a.id,sequence:a.sequence}))});
@@ -89,6 +89,32 @@ function createSignerBridge(vault){
       Buffer.byteLength(body,'utf8')>128*1024||
       ((method==='GET'&&body!=='')||(method==='POST'&&!body.startsWith('{'))))
       fail('VAULT_SIGN_REQUEST_DENIED');
+    if(method==='POST'&&uri==='/v7/nodes/heartbeat'){
+      // The heartbeat child is NOT a general signing oracle. Its exact
+      // immutable packet must match the identity and per-agent counters
+      // already fsynced in the OS vault, including the current boot ID.
+      let packet;
+      try{packet=JSON.parse(body);}catch{fail('VAULT_HEARTBEAT_STATE_MISMATCH');}
+      const validKeys=x=>x&&typeof x==='object'&&!Array.isArray(x);
+      if(!validKeys(packet)||
+        Object.keys(packet).sort().join('|')!==
+          'agents|boot_id|expected_master_epoch|sequence'||
+        packet.boot_id!==v.boot_id||
+        !Number.isSafeInteger(v.node_sequence)||v.node_sequence<1||
+        packet.sequence!==v.node_sequence||
+        !(packet.expected_master_epoch===null||
+          (Number.isSafeInteger(packet.expected_master_epoch)&&
+            packet.expected_master_epoch>=0))||
+        !Array.isArray(packet.agents)||
+        packet.agents.length!==v.agents.length||
+        packet.agents.some((entry,i)=>!validKeys(entry)||
+          Object.keys(entry).sort().join('|')!=='agent_id|sequence|status'||
+          entry.agent_id!==v.agents[i].id||
+          entry.sequence!==v.agents[i].sequence||
+          !Number.isSafeInteger(entry.sequence)||entry.sequence<1||
+          entry.status!=='ONLINE'))
+        fail('VAULT_HEARTBEAT_STATE_MISMATCH');
+    }
     const ts=Date.now(),nonce='nonce_'+crypto.randomUUID().replace(/-/g,'');
     const hash=crypto.createHash('sha256').update(body).digest('hex');
     const canonical=[String(ts),nonce,method,uri,hash].join('\n');

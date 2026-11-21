@@ -39,12 +39,33 @@ test('OS vault encrypts persisted identity and prevents replay/clone',()=>{
     assert.equal(bytes.includes('PRIVATE KEY'),false);
     assert.equal(bytes.includes('node_test_identity'),false);
     assert.deepEqual(v.read(),x);
-    const y={...x,node_sequence:2,agents:[{id:'agent_test_1',sequence:3}]};
+    const y={...x,node_sequence:2,agents:[{id:'agent_test_1',sequence:2}]};
     v.save(y);assert.deepEqual(v.read(),y);
     assert.throws(()=>v.save(x),/SEQUENCE_ROLLBACK/);
     assert.throws(()=>v.save({...y,node_id:'node_'+'c'.repeat(32)}),/ROTATION_REQUIRES_OWNER/);
     assert.throws(()=>v.save({...y,node_sequence:3,
       agents:[{id:'agent_test_1',sequence:2}]}),/AGENT_REPLAY_DENIED/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('vault itself rejects skipped counter values even without the IPC signer bridge',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-vault-step-'));
+  try{
+    const vault=createVault({safeStorage:testStore(),dir,platform:'win32'});
+    const first=identity();vault.save(first);
+    const file=fs.readFileSync(vault.file);
+    const tamper=(node,agent)=>({...first,node_sequence:node,
+      agents:[{id:first.agents[0].id,sequence:agent}]});
+    assert.throws(()=>vault.save(tamper(3,2)),/OS_VAULT_SEQUENCE_GAP_DENIED/);
+    assert.throws(()=>vault.save(tamper(2,3)),/OS_VAULT_AGENT_SEQUENCE_GAP_DENIED/);
+    assert.throws(()=>vault.save(tamper(1,2)),/OS_VAULT_SEQUENCE_ROLLBACK_OR_REPLAY_DENIED/);
+    assert.deepEqual(fs.readFileSync(vault.file),file,
+      'Invalid gaps must not create a new encrypted identity record');
+    const correct=tamper(2,2);
+    vault.save(correct);assert.deepEqual(vault.read(),correct);
+    assert.throws(()=>vault.save(tamper(4,3)),/OS_VAULT_SEQUENCE_GAP_DENIED/);
+    assert.throws(()=>vault.save(tamper(3,4)),/OS_VAULT_AGENT_SEQUENCE_GAP_DENIED/);
+    assert.deepEqual(fs.readdirSync(dir),['identity.osvault.json'],
+      'Validation denials must not create an ambiguous write-intent');
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 test('OS vault blocks missing key providers and plaintext Linux fallback',()=>{

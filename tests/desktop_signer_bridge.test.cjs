@@ -46,7 +46,12 @@ test('signer bridge signs only known API methods and node enrollment proof',()=>
     const key=crypto.createPublicKey(pub.public_key_pem);
     const proof=bridge.sign({kind:'enroll'}).proof;
     assert.equal(crypto.verify(null,Buffer.from('enroll:'+pub.node_id),key,Buffer.from(proof,'base64')),true);
-    const body=JSON.stringify({agents:[]});
+    const saved={...pub,node_sequence:1,
+      agents:pub.agents.map(a=>({...a,sequence:1}))};
+    bridge.saveCounters(saved);
+    const body=JSON.stringify({boot_id:saved.boot_id,sequence:1,
+      expected_master_epoch:null,
+      agents:[{agent_id:'agent_aaa',sequence:1,status:'ONLINE'}]});
     const headers=bridge.sign({kind:'node_api',method:'POST',uri:'/v7/nodes/heartbeat',body});
     const canonical=[headers['x-sutradhar-timestamp'],headers['x-sutradhar-nonce'],
       'POST','/v7/nodes/heartbeat',crypto.createHash('sha256').update(body).digest('hex')].join('\n');
@@ -69,7 +74,7 @@ test('only monotonic counters, exact node and current boot ID may be saved by ch
     const bridge=createSignerBridge(vault);
     const pub=bridge.initialize({agent_ids:['agent_aaa']});
     const updated={...pub,node_sequence:pub.node_sequence+1,
-      agents:[{id:'agent_aaa',sequence:2}]};
+      agents:[{id:'agent_aaa',sequence:1}]};
     assert.deepEqual(bridge.saveCounters(updated),{stored:true});
     assert.equal(bridge.snapshot().node_sequence,1);
     assert.throws(()=>bridge.saveCounters(updated),/VAULT_IDENTITY_OR_SEQUENCE_MISMATCH/,
@@ -79,7 +84,7 @@ test('only monotonic counters, exact node and current boot ID may be saved by ch
       /VAULT_IDENTITY_OR_SEQUENCE_MISMATCH/,
       'Concurrent child may not replay the same on-disk counters');
     const nextState={...updated,node_sequence:2,
-      agents:[{id:'agent_aaa',sequence:3}]};
+      agents:[{id:'agent_aaa',sequence:2}]};
     assert.deepEqual(bridge.saveCounters(nextState),{stored:true});
     assert.equal(vault.read().node_sequence,2);
     assert.throws(()=>bridge.saveCounters({...nextState,node_sequence:3}),
@@ -93,6 +98,67 @@ test('only monotonic counters, exact node and current boot ID may be saved by ch
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
+test('heartbeat signature is bound to fsynced boot and exact saved node/agent sequences',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-sign-hb-bind-'));
+  try{
+    const vault=createVault({safeStorage:safeStorage(),dir,platform:'win32'});
+    const bridge=createSignerBridge(vault);
+    const pub=bridge.initialize({agent_ids:['agent_aaa','agent_bbb']});
+    const packet=(nodeSeq,seqA,seqB)=>({
+      boot_id:pub.boot_id,sequence:nodeSeq,expected_master_epoch:null,
+      agents:[{agent_id:'agent_aaa',sequence:seqA,status:'ONLINE'},
+        {agent_id:'agent_bbb',sequence:seqB,status:'ONLINE'}]
+    });
+    const sign=body=>bridge.sign({kind:'node_api',method:'POST',
+      uri:'/v7/nodes/heartbeat',body:JSON.stringify(body)});
+    assert.throws(()=>sign(packet(1,1,1)),/VAULT_HEARTBEAT_STATE_MISMATCH/,
+      'Cannot sign a heartbeat before the counters are durably saved');
+    const saved={...pub,node_sequence:1,
+      agents:pub.agents.map(x=>({...x,sequence:1}))};
+    bridge.saveCounters(saved);
+    const genuine=packet(1,1,1);
+    const headers=sign(genuine);
+    const canonical=[headers['x-sutradhar-timestamp'],headers['x-sutradhar-nonce'],
+      'POST','/v7/nodes/heartbeat',
+      crypto.createHash('sha256').update(JSON.stringify(genuine)).digest('hex')].join('\n');
+    assert.equal(crypto.verify(null,Buffer.from(canonical),
+      crypto.createPublicKey(pub.public_key_pem),
+      Buffer.from(headers['x-sutradhar-signature'],'base64')),true);
+    for(const forged of [
+      packet(2,2,2),packet(0,1,1),packet(1,2,1),packet(1,1,2),
+      {...genuine,boot_id:'boot_'+'f'.repeat(32)},
+      {...genuine,agents:[genuine.agents[1],genuine.agents[0]]},
+      {...genuine,agents:[genuine.agents[0]]},
+      {...genuine,agents:[{...genuine.agents[0],status:'BUSY'},genuine.agents[1]]},
+      {...genuine,expected_master_epoch:1.5},
+      {...genuine,unapproved:'operation'},
+      {...genuine,agents:[{...genuine.agents[0],extra:'x'},genuine.agents[1]]}
+    ])assert.throws(()=>sign(forged),/VAULT_HEARTBEAT_STATE_MISMATCH/);
+    assert.throws(()=>bridge.sign({kind:'node_api',method:'POST',
+      uri:'/v7/nodes/heartbeat',body:'{invalid'}),/VAULT_HEARTBEAT_STATE_MISMATCH/);
+    // Non-heartbeat sign scope remains unchanged.
+    assert.ok(bridge.sign({kind:'node_api',method:'GET',uri:'/v7/nodes/me',body:''})['x-sutradhar-signature']);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('packaged signer demands exactly one persisted counter step for EVERY local agent',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-sign-exact-step-'));
+  try{
+    const v=createVault({safeStorage:safeStorage(),dir,platform:'win32'});
+    const signer=createSignerBridge(v);
+    const initial=signer.initialize({agent_ids:['agent_aaa','agent_bbb']});
+    const first={...initial,node_sequence:1,
+      agents:initial.agents.map(x=>({...x,sequence:1}))};
+    for(const forged of [
+      {...first,node_sequence:2},
+      {...first,agents:[{...first.agents[0],sequence:2},first.agents[1]]},
+      {...first,agents:[first.agents[0],{...first.agents[1],sequence:2}]}
+    ])assert.throws(()=>signer.saveCounters(forged),/VAULT_(?:IDENTITY_OR_SEQUENCE_MISMATCH|AGENT_REPLAY_OR_IDENTITY_MISMATCH)/);
+    assert.deepEqual(signer.saveCounters(first),{stored:true});
+    assert.equal(v.read().node_sequence,1);
+    assert.deepEqual(v.read().agents.map(x=>x.sequence),[1,1]);
+    assert.throws(()=>signer.saveCounters(first),/VAULT_IDENTITY_OR_SEQUENCE_MISMATCH/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
 test('uncertain encrypted counter write denies every signing capability on the same PC',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-sign-poison-'));
   const original=fs.fsyncSync,storage=safeStorage();

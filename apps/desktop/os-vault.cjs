@@ -227,8 +227,12 @@ function createVault({safeStorage,dir,platform=process.platform}){
       }else{
         if(x.node_sequence<=old.node_sequence)
           throw Error('OS_VAULT_SEQUENCE_ROLLBACK_OR_REPLAY_DENIED');
+        if(x.node_sequence!==old.node_sequence+1)
+          throw Error('OS_VAULT_SEQUENCE_GAP_DENIED');
         if(old.agents.some((a,i)=>x.agents[i].sequence<=a.sequence))
           throw Error('OS_VAULT_AGENT_REPLAY_DENIED');
+        if(old.agents.some((a,i)=>x.agents[i].sequence!==a.sequence+1))
+          throw Error('OS_VAULT_AGENT_SEQUENCE_GAP_DENIED');
       }
     }
     const cipher=safeStorage.encryptString(JSON.stringify(x)).toString('base64');
