@@ -1,0 +1,22 @@
+:root{font:15px system-ui,-apple-system,sans-serif;color:#e9edf7;background:#0a1020}
+*{box-sizing:border-box}body{margin:0}.shell{max-width:1400px;margin:auto;padding:34px}
+header{display:flex;justify-content:space-between;align-items:center;gap:18px}
+h1{font-size:2.1rem;margin:7px 0}.eyebrow{font-size:.75rem;letter-spacing:.11em;text-transform:uppercase;color:#a3a9bf}
+p,small{color:#a9b1c4}.v{color:#78a8fd;font-weight:500}.chip{border:1px solid #536283;border-radius:40px;padding:11px 15px}
+.credential,.panel,.summary article{background:#141e33;border:1px solid #283652;border-radius:15px;padding:22px}
+.credential{margin:28px 0}label{display:block;margin:0 0 10px;color:#c8d3eb}.flex{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input{color:#eef3fc;background:#0d1527;border:1px solid #3b4a68;border-radius:7px;padding:11px 12px;max-width:100%;width:100%;font:inherit}
+.credential input{max-width:470px}input[type=checkbox]{width:auto;margin-right:8px}.inline{display:inline-flex;margin:12px 12px 12px 0;align-items:center}
+button{cursor:pointer;color:#fff;background:#2467c2;border:1px solid #377de0;border-radius:8px;padding:11px 16px;font-weight:600}
+button:hover{filter:brightness(1.16)}button.outline{background:transparent;border-color:#7585aa}
+button.danger{background:#812b3a;border-color:#a84959}
+.message{min-height:20px}.error{color:#ff8f91}.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.summary article strong{display:block;overflow-wrap:anywhere;font-size:1.5rem;margin:12px 0}
+.summary article small{display:block}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0}
+.panelhead{display:flex;justify-content:space-between;align-items:center}.panel h2{font-size:1.15rem;margin:0 0 17px}
+.scroll{overflow:auto;max-height:320px}table{width:100%;border-collapse:collapse;text-align:left;white-space:nowrap}
+td,th{border-bottom:1px solid #283652;padding:11px 8px}th{color:#8fa1c3;font-size:.8rem}
+.owner{margin-top:14px}.formgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px;margin-top:24px}
+.formgrid input{margin-bottom:15px}footer{color:#7787a8;padding:30px 0;line-height:1.5}
+@media(max-width:930px){.summary,.grid,.formgrid{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.shell{padding:18px}.summary,.grid,.formgrid{grid-template-columns:1fr}header{display:block}}

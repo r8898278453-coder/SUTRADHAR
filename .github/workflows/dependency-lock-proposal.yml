@@ -1,0 +1,80 @@
+name: Dependency Lock Integrity (Committed Source)
+
+# Directly verifies checked-in lockfiles. Does not regenerate or replace them.
+# No credential access, dependencies installed with lifecycle scripts disabled.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "apps/desktop/package.json"
+      - "apps/desktop/package-lock.json"
+      - "apps/desktop/runtime-policy.cjs"
+      - "scripts/release/verify-dependency-locks.cjs"
+      - "scripts/release/dependency-exposure.cjs"
+      - "tests/dependency_exposure.test.cjs"
+      - ".github/workflows/dependency-lock-proposal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: committed-lock-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  locked-install:
+    name: Verify committed lockfile on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Reject missing/untrusted committed npm lockfiles before network access
+        run: node scripts/release/verify-dependency-locks.cjs
+      - name: Clean npm ci with exact reviewed source locks (no lifecycle scripts)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix apps/desktop --ignore-scripts --no-audit --no-fund
+      - name: Recheck integrity and run static/security tests
+        run: |
+          npm run check:dependency-locks
+          npm run lint
+          npm run test:desktop
+          npm run test:release-gates
+      - name: Clarify limited acceptance
+        run: echo "Committed dependency locks installed; vulnerability audit and Owner approval still required."
+
+  advisory-audit:
+    name: Review high/critical npm advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Require committed lockfile integrity
+        run: node scripts/release/verify-dependency-locks.cjs
+      - name: Require known-vulnerable picomatch not enter production dependency graph
+        run: node scripts/release/dependency-exposure.cjs
+      - name: Audit production-only dependency graph (independent remote advisory verification)
+        run: npm audit --omit=dev --audit-level=high --no-fund
+      - name: Audit root dependencies (including build-time supply chain)
+        run: npm audit --audit-level=high --no-fund
+      - name: Audit Desktop Electron/installer dependencies
+        run: npm audit --prefix apps/desktop --audit-level=high --no-fund

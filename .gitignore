@@ -35,3 +35,7 @@ venv/
 # System Files
 .DS_Store
 Thumbs.db
+
+# Generated Desktop package assets; never commit QA binaries
+/apps/desktop/contract.json
+/apps/desktop/out/

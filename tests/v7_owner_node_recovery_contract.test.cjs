@@ -1,0 +1,41 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const fs=require('node:fs'),path=require('node:path');
+const central=fs.readFileSync(path.resolve(__dirname,'../v7/central.ts'),'utf8');
+const dashboard=fs.readFileSync(path.resolve(__dirname,'../v7/ui/dashboard.js'),'utf8');
+const html=fs.readFileSync(path.resolve(__dirname,'../v7/ui/index.html'),'utf8');
+test('Owner node-recovery GET is explicit, admin-authenticated, read-only and cannot reconcile itself',()=>{
+  const route=central.match(/app\.get\('\/v7\/owner\/node-recovery\/:nodeId',jsonRoute\(async req=>\{([\s\S]*?)\n\}\)\);/);
+  assert.ok(route,'Owner node recovery route must exist');
+  const source=route[1];
+  assert.match(source,/admin\(req\)/);
+  assert.match(source,/leader\(c,false\)/);
+  assert.match(source,/CAST\(last_sequence AS CHAR\)/);
+  assert.match(source,/CAST\(epoch AS CHAR\)/);
+  assert.match(source,/v7_pc_maintenance_fences/);
+  assert.match(source,/v7_git_jobs/);
+  assert.match(source,/v7_leases/);
+  assert.match(source,/v7_qa_receipts/);
+  assert.match(source,/v7_approvals/);
+  assert.match(source,/v7_checkpoints/);
+  assert.match(source,/CAST\(COALESCE\(MAX\(event_id\),0\) AS CHAR\)/);
+  assert.match(source,/qa_effects_independently_reconciled:false/);
+  assert.match(source,/signed_heartbeat_history_complete:false/);
+  assert.match(source,/inspectLastRetainedPilotHeartbeat/);
+  assert.match(source,/last_retained_pilot_heartbeat:lastPilotCheck/);
+  assert.match(source,/owner_reconciliation_complete:false/);
+  assert.match(source,/agent_restart_allowed:false,marker_removal_allowed:false/);
+  assert.match(source,/device_signature_verified_by_this_request:false/);
+  assert.doesNotMatch(source,/\b(?:UPDATE|INSERT|DELETE|REPLACE)\b|evaluate\(|nodeAuth\(|await event\(/,
+    'Observation must never mutate Central or request the held node private key');
+});
+test('Owner dashboard shows read-only node recovery snapshot without auto-restart or POST',()=>{
+  assert.match(html,/id="node-recovery-input"/);
+  assert.match(html,/id="node-recovery-inspect"/);
+  assert.match(html,/id="node-recovery-results"/);
+  assert.match(dashboard,/request\('\/v7\/owner\/node-recovery\/'\+encodeURIComponent\(nodeId\)\)/);
+  assert.match(dashboard,/result\.agent_restart_allowed!==false/);
+  assert.match(dashboard,/result\.marker_removal_allowed!==false/);
+  assert.match(dashboard,/nodeRecoveryResults\.textContent/);
+  assert.doesNotMatch(dashboard,/nodeRecoveryResults\.innerHTML\s*=/);
+});

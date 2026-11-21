@@ -1,0 +1,110 @@
+{
+  "name": "@sutradhar/desktop",
+  "productName": "SUTRADHAR Desktop Alpha",
+  "description": "Owner-assisted PC agent with Electron first-run wizard — ALPHA, NOT PRODUCTION",
+  "private": true,
+  "version": "7.0.0-alpha.1",
+  "main": "main.cjs",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "start": "electron .",
+    "pack:qa": "node pack-qa.cjs",
+    "pack:release": "node pack-release.cjs"
+  },
+  "devDependencies": {
+    "electron": "45.3.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "app.sutradhar.desktop.alpha",
+    "productName": "SUTRADHAR Desktop Alpha",
+    "asar": true,
+    "directories": {
+      "output": "out"
+    },
+    "files": [
+      "package.json",
+      "main.cjs",
+      "preload.cjs",
+      "desktop-config.cjs",
+      "setup.html",
+      "setup.js",
+      "setup.css",
+      "contract.json",
+      "status.cjs",
+      "os-vault.cjs",
+      "update-policy.cjs",
+      "update-trust.json",
+      "vault-bridge.cjs",
+      "worker-inspection.cjs",
+      "worker-claim.cjs",
+      "worker-progress.cjs",
+      "worker-submit.cjs",
+      "qa-handoff.cjs",
+      "qa-execution.cjs",
+      "qa-evidence.cjs",
+      "qa-evidence-submit.cjs",
+      "git-publish.cjs",
+      "git-publish-policy.json",
+      "qa-runner-policy.json",
+      "enrollment.cjs",
+      "enrollment-receipt.cjs",
+      "pilot-node-continuity.cjs",
+      "single-instance.cjs",
+      "update-readiness.cjs",
+      "update-inspection-journal.cjs",
+      "maintenance-recovery-hold.cjs",
+      "maintenance-local-isolation.cjs",
+      "maintenance-stop-confirm.cjs",
+      "maintenance-recovery-preflight.cjs",
+      "maintenance-release-grant.cjs",
+      "maintenance-release-executor.cjs",
+      "maintenance-reconciliation-barrier.cjs",
+      "maintenance-release-trust.json",
+      "maintenance-restart-grant.cjs",
+      "maintenance-restart.cjs",
+      "maintenance-restart-ack.cjs",
+      "windows-authenticode.cjs",
+      "maintenance-install-preparation.cjs",
+      "maintenance-installer-execution-grant.cjs",
+      "maintenance-installer-execution.cjs",
+      "installer-execution-trust.json",
+      "maintenance-postinstall-verification.cjs",
+      "maintenance-failed-install-review.cjs",
+      "maintenance-failure-review-verifier.cjs",
+      "maintenance-failure-owner-grant.cjs",
+      "maintenance-failure-owner-review.cjs",
+      "failure-review-trust.json",
+      "maintenance-install-incident-barrier.cjs",
+      "agent-session-fence.cjs",
+      "agent-session-exit-policy.cjs",
+      "agent-crash-evidence.cjs",
+      "maintenance-installer-direct-exit.cjs",
+      "maintenance-installer-persistent-observer.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/secure-agent.cjs",
+        "to": "secure-agent.cjs"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": null
+  }
+}

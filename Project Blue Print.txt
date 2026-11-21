@@ -1,5 +1,13 @@
 # Sutradhar System — Complete Architecture Blueprint (v6.0 Production)
 
+> **HISTORICAL DESIGN — DO NOT READ 'Production' AS DEPLOYMENT EVIDENCE.**
+> This preserved v6.0 proposal is superseded as the **target design** by
+> [Architecture Blueprint v7.0](docs/SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md),
+> [v7 Agent / Task / QA / Recovery Contract](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md)
+> and [v7 Acceptance Matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md).
+> Current code is not production ready. See [Implementation Tracker](docs/IMPLEMENTATION_TRACKER.md).
+
+
 ## 1. Core Design Philosophy
 
 Do alag layers, do alag zimmedariyan:

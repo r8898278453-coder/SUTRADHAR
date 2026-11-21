@@ -180,17 +180,14 @@ it('Records sandbox execution attempts', () => {
 });
 
 // 9. Rollback Bad Merge
-it('Creates rollback hotfix ticket and logs audit event', () => {
+it('Requests rollback without fabricating a completed Git revert', () => {
   db.updateTicket('TKT-PARENT-01', { rollbackCommit: 'a1b2c3d4' });
   const rbRes = db.rollbackMerge('TKT-PARENT-01', 'QA discovered regression', 'Master Node');
   assert.strictEqual(rbRes.success, true);
-  assert.ok(rbRes.hotfixId);
-
-  const tickets = db.getAllTickets();
-  const hotfix = tickets.find(x => x.id === rbRes.hotfixId);
-  assert.ok(hotfix);
-  assert.strictEqual(hotfix?.priority, 'P0_URGENT');
-  assert.strictEqual(hotfix?.status, 'SYNTHESIZING_DIFF');
+  assert.strictEqual(rbRes.hotfixId, undefined);
+  const ticket = db.getAllTickets().find(t => t.id === 'TKT-PARENT-01');
+  assert.strictEqual(ticket?.status, 'ROLLBACK_REQUESTED');
+  assert.ok(db.getAuditLogs(20).some(e => e.action === 'ROLLBACK_REQUESTED'));
 });
 
 // Clean up
