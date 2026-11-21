@@ -64,3 +64,21 @@ test('signed cluster-state GET and Owner STATUS cannot elect or fence Master',()
   assert.ok(owner,'Owner STATUS must only return the current leader snapshot');
   assert.doesNotMatch(owner[0],/evaluate\(c,'owner-read'\)/);
 });
+
+test('failed packaged OS-vault counter commits are terminal and parent never auto-restarts',()=>{
+  const main=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/main.cjs'),'utf8');
+  const vault=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/os-vault.cjs'),'utf8');
+  assert.match(packaged,/try\{await bridge\('saveCounters',state\);\}/);
+  assert.match(packaged,/catch\{throw Error\('OS_VAULT_COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW'\);\}/);
+  assert.match(packaged,/if\(e\?\.message==='OS_VAULT_COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW'\)/);
+  assert.match(packaged,/throw e;\s*\}\s*privateStatus\(state,/);
+  assert.match(main,/if\(msg\.op==='saveCounters'\)\s*\{[\s\S]*?vaultError='OS_VAULT_COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW'/);
+  assert.match(main,/if\(shuttingDown\|\|vaultError\)return/);
+  assert.match(main,/if\(exitCode!==0\|\|signal\)/);
+  assert.match(main,/vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED'/);
+  assert.match(main,/if\(vaultError\)throw Error\(vaultError\)/);
+  assert.match(vault,/identity\.osvault\.write-intent/);
+  assert.match(vault,/fs\.openSync\(intent,[\s\S]*?fs\.fsyncSync\(intentFd\)/);
+  assert.match(vault,/fs\.unlinkSync\(intent\)/);
+  assert.match(vault,/if\(poisoned\)throw Error\('OS_VAULT_WRITE_COMMIT_UNCERTAIN_OWNER_REVIEW'\)/);
+});

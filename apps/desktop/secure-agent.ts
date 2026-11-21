@@ -124,8 +124,12 @@ async function main(){
       if(registered.size===state.agents.length){
         state.node_sequence++;
         for(const a of state.agents)a.sequence++;
-        // A durable OS-vault write is mandatory BEFORE sending the heartbeat.
-        await bridge('saveCounters',state);
+        // A durable OS-vault write is mandatory BEFORE signing/transmitting.
+        // Any error OR lost IPC response leaves the counter commit uncertain.
+        // Do not increment again or retry: the Owner must reconcile the
+        // encrypted write-intent and Central's last accepted counters.
+        try{await bridge('saveCounters',state);}
+        catch{throw Error('OS_VAULT_COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW');}
         const reply=await send('POST','/v7/nodes/heartbeat',{
           boot_id:state.boot_id,sequence:state.node_sequence,expected_master_epoch:epoch,
           agents:state.agents.map(a=>({agent_id:a.id,sequence:a.sequence,status:'ONLINE'}))
@@ -139,6 +143,13 @@ async function main(){
           await recovery(reply.master_agent_id,epoch);
       }
     }catch(e:any){
+      if(e?.message==='OS_VAULT_COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW'){
+        privateStatus(state,{connection:'COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW',
+          error_code:e.message,last_error_at:new Date().toISOString()});
+        // Fatal, not an ordinary Central outage. Terminate the child so
+        // it can never sign with a guessed next sequence in this session.
+        throw e;
+      }
       privateStatus(state,{connection:accepted?'RECOVERY_BLOCKED':'NOT_ACKNOWLEDGED',
         error_code:String(e.message||'UNKNOWN').slice(0,100),last_error_at:new Date().toISOString()});
       // No LLM or local election. Never print node key, grant or env.

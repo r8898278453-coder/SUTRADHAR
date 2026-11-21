@@ -94,7 +94,8 @@ function agentScript(){
 }
 function safeStatus(){
   let nodeId=null,enrollmentState='NOT_REQUESTED',enrollmentError=null;
-  try{nodeId=vault?.read()?.node_id||null;}catch{vaultError='OS_VAULT_IDENTITY_UNREADABLE';}
+  try{nodeId=vault?.read()?.node_id||null;}
+  catch{if(!vaultError)vaultError='OS_VAULT_IDENTITY_UNREADABLE';}
   try{
     if(current){
       const state=inspectEnrollment({dir:nodeDir(),node:vault?.read(),centralUrl:current.centralUrl});
@@ -169,6 +170,9 @@ function safeStatus(){
 }
 function startAgent({manualOwnerRestart=false}={}){
   if(!current||shuttingDown||agent)return null;
+  // A failed/ambiguous signed-counter commit is a terminal Owner hold for
+  // this Desktop process, not an ordinary child crash or heartbeat outage.
+  if(vaultError)throw Error(vaultError);
   if(requiresReconciliation(nodeDir())&&!manualOwnerRestart)
     throw Error('MAINTENANCE_POST_RELEASE_RECONCILIATION_REQUIRED');
   requireNoInstallerIncident({dir:nodeDir(),manualOwnerRestart});
@@ -244,14 +248,22 @@ function startAgent({manualOwnerRestart=false}={}){
           pendingEnrollmentCode=null;
         }
       }
-    }catch(e){reply.error=String(e.message||'VAULT_ERROR').slice(0,100);}
+    }catch(e){
+      if(msg.op==='saveCounters'){
+        // Freeze automatic child restart and all subsequent signer use
+        // when counter persistence fails or the result is ambiguous.
+        vaultError='OS_VAULT_COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW';
+      }
+      reply.error=msg.op==='saveCounters'&&vaultError?
+        vaultError:String(e.message||'VAULT_ERROR').slice(0,100);
+    }
     try{if(agent===spawnedAgent&&spawnedAgent.connected)spawnedAgent.send(reply);}catch{}
   });
   spawnedAgent.on('error',()=>{ /* Agent stopped: operator can inspect local log. */ });
-  spawnedAgent.on('exit',()=>{
+  spawnedAgent.on('exit',(exitCode,signal)=>{
     if(agent!==spawnedAgent)return; // Ignore stale child exit after a replacement.
     agent=null;
-    if(shuttingDown)return;
+    if(shuttingDown||vaultError)return; // No auto-restart after uncertain vault commit.
     try{if(requiresReconciliation(nodeDir()))return;}catch{return;}
     // A confirmed or uncertain maintenance stop must not schedule retries.
     // Even malformed on-disk holds require Owner review, never a restart.
@@ -259,6 +271,14 @@ function startAgent({manualOwnerRestart=false}={}){
       try{
         if(inspectHold({dir:nodeDir(),nodeId:vault?.read()?.node_id}).active)return;
       }catch{return;}
+    }
+    // The child's saveCounters reply might have timed out or the IPC pipe
+    // failed entirely, so Main might never receive the error. A nonzero or
+    // signaled child exit is not a routine connectivity retry: preserve the
+    // original identity and require Owner examination before relaunch.
+    if(exitCode!==0||signal){
+      vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED';
+      return;
     }
     if(retryTimer)clearTimeout(retryTimer);
     retryTimer=setTimeout(()=>{

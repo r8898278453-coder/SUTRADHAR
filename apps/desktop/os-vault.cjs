@@ -36,7 +36,32 @@ function atomicWrite(target,bytes){
        (folder.mode&0o077)!==0)
       throw Error('OS_VAULT_DIRECTORY_NOT_PRIVATE');
   }
-  const tmp=target+'.'+process.pid+'.'+require('node:crypto').randomUUID()+'.tmp';
+  // A durable write intent must precede every encrypted identity replacement.
+  // A crash, interrupted fsync or ambiguous rename retains this fence so
+  // another Electron process cannot silently resume with uncertain counters.
+  // It contains NO ciphertext, keys, counters, enrollment grant or PC name.
+  const intent=path.join(dir,'identity.osvault.write-intent');
+  const intentBytes=Buffer.from('SUTRADHAR_OS_VAULT_WRITE_INTENT_V1\n');
+  let intentFd;
+  try{
+    intentFd=fs.openSync(intent,fs.constants.O_WRONLY|fs.constants.O_CREAT|
+      fs.constants.O_EXCL|(fs.constants.O_NOFOLLOW||0),0o600);
+    fs.writeSync(intentFd,intentBytes,0,intentBytes.length,0);
+    fs.fsyncSync(intentFd);
+    fs.closeSync(intentFd);intentFd=undefined;
+    if(process.platform!=='win32'){
+      const dfd=fs.openSync(dir,fs.constants.O_RDONLY|
+        (fs.constants.O_DIRECTORY||0)|(fs.constants.O_NOFOLLOW||0));
+      try{fs.fsyncSync(dfd);}finally{fs.closeSync(dfd);}
+    }
+  }catch(e){
+    if(intentFd!==undefined)try{fs.closeSync(intentFd);}catch{}
+    // A partially written marker is evidence too. Never clean it up here.
+    if(e?.code==='EEXIST')
+      throw Error('OS_VAULT_WRITE_INTENT_OWNER_REVIEW_REQUIRED');
+    throw e;
+  }
+  const tmp=target+'.'+process.pid+'.'+crypto.randomUUID()+'.tmp';
   const payload=Buffer.isBuffer(bytes)?bytes:Buffer.from(bytes);
   let fd,renamed=false;
   try{
@@ -63,10 +88,19 @@ function atomicWrite(target,bytes){
         fs.fsyncSync(dfd);
       }finally{fs.closeSync(dfd);}
     }
+    // Retire the intent ONLY after ciphertext file and directory commits.
+    // An interrupted deletion leaves Owner-review evidence. A Windows
+    // directory flush is not guaranteed: physical power-loss gate remains HOLD.
+    fs.unlinkSync(intent);
+    if(process.platform!=='win32'){
+      const dfd=fs.openSync(dir,fs.constants.O_RDONLY|
+        (fs.constants.O_DIRECTORY||0)|(fs.constants.O_NOFOLLOW||0));
+      try{fs.fsyncSync(dfd);}finally{fs.closeSync(dfd);}
+    }
   }catch(e){
     if(!renamed){try{fs.unlinkSync(tmp);}catch{}}
-    // If rename succeeded but directory sync failed, do not pretend the
-    // vault commit was durable or automatically roll back the encrypted file.
+    // Never remove the intent on failure, even if rename was successful.
+    // The caller poisons this vault object and prevents any further sign.
     throw e;
   }finally{if(fd!==undefined)fs.closeSync(fd);}
 }
@@ -78,8 +112,21 @@ function createVault({safeStorage,dir,platform=process.platform}){
     throw Error('OS_VAULT_PLAINTEXT_FALLBACK_DENIED');
   const file=path.join(dir,'identity.osvault.json');
   const legacy=path.join(dir,'identity.json');
+  const intent=path.join(dir,'identity.osvault.write-intent');
+  let poisoned=false;
   if(fs.existsSync(legacy))throw Error('LEGACY_PLAINTEXT_IDENTITY_REQUIRES_OWNER_MIGRATION');
+  function assertNotUncertain(){
+    if(poisoned)throw Error('OS_VAULT_WRITE_COMMIT_UNCERTAIN_OWNER_REVIEW');
+    // lstat, not existsSync: a dangling symlink/partial intent also blocks.
+    try{fs.lstatSync(intent);}
+    catch(e){
+      if(e?.code==='ENOENT')return;
+      throw Error('OS_VAULT_WRITE_INTENT_INSPECTION_FAILED');
+    }
+    throw Error('OS_VAULT_WRITE_INTENT_OWNER_REVIEW_REQUIRED');
+  }
   function read(){
+    assertNotUncertain();
     let stat;
     try{stat=fs.lstatSync(file);}
     catch(e){
@@ -160,6 +207,7 @@ function createVault({safeStorage,dir,platform=process.platform}){
     }catch{throw Error('OS_VAULT_IDENTITY_KEY_MISMATCH');}
   }
   function save(x){
+    assertNotUncertain();
     validate(x);
     const old=read();
     if(old){
@@ -184,7 +232,14 @@ function createVault({safeStorage,dir,platform=process.platform}){
       }
     }
     const cipher=safeStorage.encryptString(JSON.stringify(x)).toString('base64');
-    atomicWrite(file,JSON.stringify({version:1,mode:'os-safeStorage',ciphertext:cipher})+'\n');
+    try{
+      atomicWrite(file,JSON.stringify({version:1,mode:'os-safeStorage',ciphertext:cipher})+'\n');
+    }catch(e){
+      // No in-process retry, signing, boot rotation or worker action is safe
+      // after a possibly completed encrypted-counter write.
+      poisoned=true;
+      throw e;
+    }
     return {node_id:x.node_id,agent_count:x.agents.length};
   }
   function status(){return {exists:fs.existsSync(file),backend:platform==='win32'?'Windows DPAPI':

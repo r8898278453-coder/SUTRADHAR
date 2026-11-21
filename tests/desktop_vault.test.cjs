@@ -236,22 +236,70 @@ test('OS vault treats dangling symlink as unsafe, never as absent identity',()=>
     assert.throws(()=>v.save(identity()),/OS_VAULT_FILE_UNSAFE/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
-test('failed ciphertext fsync leaves previous encrypted identity untouched',()=>{
+test('failed encrypted ciphertext fsync preserves original bytes and durable Owner hold',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-vault-interrupted-'));
   const original=fs.fsyncSync;
+  const storage=testStore();
   try{
-    const v=createVault({safeStorage:testStore(),dir,platform:'win32'});
+    const v=createVault({safeStorage:storage,dir,platform:'win32'});
     const previous=identity();
     v.save(previous);
     const originalBytes=fs.readFileSync(v.file);
-    fs.fsyncSync=function(){throw Error('TEST_ONLY_INTERRUPTED_FLUSH');};
+    // Allow the preceding write-intent file AND its POSIX directory to
+    // become durable; fail specifically before the replacement ciphertext
+    // reaches the filesystem. Never use the fake storage for production.
+    let flushes=0;
+    const failAt=process.platform==='win32'?2:3;
+    fs.fsyncSync=function(fd){
+      if(++flushes===failAt)throw Error('TEST_ONLY_INTERRUPTED_FLUSH');
+      return original(fd);
+    };
     try{
       assert.throws(()=>v.save({...previous,node_sequence:2,
         agents:[{id:'agent_test_1',sequence:2}]}),
         /TEST_ONLY_INTERRUPTED_FLUSH/);
     }finally{fs.fsyncSync=original;}
-    assert.deepEqual(fs.readFileSync(v.file),originalBytes);
-    assert.deepEqual(v.read(),previous);
-    assert.deepEqual(fs.readdirSync(dir),['identity.osvault.json']);
+    assert.deepEqual(fs.readFileSync(v.file),originalBytes,
+      'Original ciphertext remains; failed write never publishes counters');
+    const intent=path.join(dir,'identity.osvault.write-intent');
+    assert.equal(fs.existsSync(intent),true,'Intent survives an interrupted write');
+    assert.throws(()=>v.read(),/OS_VAULT_WRITE_COMMIT_UNCERTAIN_OWNER_REVIEW/);
+    assert.throws(()=>v.save(previous),/OS_VAULT_WRITE_COMMIT_UNCERTAIN_OWNER_REVIEW/);
+    const reopened=createVault({safeStorage:storage,dir,platform:'win32'});
+    assert.throws(()=>reopened.read(),/OS_VAULT_WRITE_INTENT_OWNER_REVIEW_REQUIRED/,
+      'A fresh Electron process must not silently resume old counters');
+    assert.deepEqual(fs.readdirSync(dir).sort(),
+      ['identity.osvault.json','identity.osvault.write-intent']);
+    // Even malicious manual deletion cannot unblock an already poisoned
+    // in-memory vault. Do not do this on any real enrolled PC.
+    fs.unlinkSync(intent);
+    assert.throws(()=>v.read(),/OS_VAULT_WRITE_COMMIT_UNCERTAIN_OWNER_REVIEW/);
   }finally{fs.fsyncSync=original;fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('interrupted intent retirement fences a new Electron process even after rename',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-vault-intent-'));
+  const storage=testStore(),unlink=fs.unlinkSync;
+  try{
+    const v=createVault({safeStorage:storage,dir,platform:'win32'});
+    const old=identity();v.save(old);
+    const before=fs.readFileSync(v.file);
+    const newer={...old,node_sequence:old.node_sequence+1,
+      agents:old.agents.map(a=>({...a,sequence:a.sequence+1}))};
+    const intent=path.join(dir,'identity.osvault.write-intent');
+    fs.unlinkSync=function(target){
+      if(target===intent)throw Error('TEST_ONLY_INTERRUPTED_INTENT_RETIREMENT');
+      return unlink(target);
+    };
+    try{
+      assert.throws(()=>v.save(newer),/TEST_ONLY_INTERRUPTED_INTENT_RETIREMENT/);
+    }finally{fs.unlinkSync=unlink;}
+    assert.notDeepEqual(fs.readFileSync(v.file),before,
+      'Rename succeeded, but the caller cannot assume that the commit is safe');
+    assert.equal(fs.existsSync(intent),true);
+    assert.throws(()=>v.read(),/OS_VAULT_WRITE_COMMIT_UNCERTAIN_OWNER_REVIEW/);
+    const reopened=createVault({safeStorage:storage,dir,platform:'win32'});
+    assert.throws(()=>reopened.read(),/OS_VAULT_WRITE_INTENT_OWNER_REVIEW_REQUIRED/);
+    assert.throws(()=>reopened.save(newer),/OS_VAULT_WRITE_INTENT_OWNER_REVIEW_REQUIRED/);
+  }finally{fs.unlinkSync=unlink;fs.rmSync(dir,{recursive:true,force:true});}
 });

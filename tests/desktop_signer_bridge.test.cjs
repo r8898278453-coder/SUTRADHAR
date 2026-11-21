@@ -92,3 +92,38 @@ test('only monotonic counters, exact node and current boot ID may be saved by ch
     assert.throws(()=>bridge.saveCounters({...updated,agents:[{id:'agent_wrong',sequence:3}]}),/MISMATCH/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('uncertain encrypted counter write denies every signing capability on the same PC',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-sign-poison-'));
+  const original=fs.fsyncSync,storage=safeStorage();
+  try{
+    const vault=createVault({safeStorage:storage,dir,platform:'win32'});
+    const bridge=createSignerBridge(vault);
+    const pub=bridge.initialize({agent_ids:['agent_aaa']});
+    const next={...pub,node_sequence:pub.node_sequence+1,
+      agents:pub.agents.map(x=>({...x,sequence:x.sequence+1}))};
+    let flushes=0;
+    fs.fsyncSync=function(fd){
+      if(++flushes===(process.platform==='win32'?2:3))
+        throw Error('TEST_FAIL_VAULT_COUNTER_FSYNC');
+      return original(fd);
+    };
+    try{
+      assert.throws(()=>bridge.saveCounters(next),/TEST_FAIL_VAULT_COUNTER_FSYNC/);
+    }finally{fs.fsyncSync=original;}
+    const code=/OS_VAULT_WRITE_COMMIT_UNCERTAIN_OWNER_REVIEW/;
+    assert.throws(()=>bridge.snapshot(),code);
+    assert.throws(()=>bridge.initialize({agent_ids:['agent_aaa']}),code);
+    assert.throws(()=>bridge.sign({kind:'node_api',method:'GET',
+      uri:'/v7/nodes/me',body:''}),code);
+    assert.throws(()=>bridge.signWorkerReadOnly({method:'GET',
+      uri:'/v7/tasks/available',agent_id:'agent_aaa'}),code);
+    assert.throws(()=>bridge.signWorkerAction({operation:'claim',
+      agent_id:'agent_aaa',payload:{}}),code);
+    assert.throws(()=>bridge.signQaEvidence({agent_id:'agent_aaa'}),code);
+    const recreated=createSignerBridge(createVault({safeStorage:storage,dir,platform:'win32'}));
+    assert.throws(()=>recreated.snapshot(),
+      /OS_VAULT_WRITE_INTENT_OWNER_REVIEW_REQUIRED/);
+    assert.equal(fs.existsSync(path.join(dir,'identity.osvault.write-intent')),true);
+  }finally{fs.fsyncSync=original;fs.rmSync(dir,{recursive:true,force:true});}
+});
