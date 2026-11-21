@@ -200,6 +200,12 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(recoveryBefore.agent_restart_allowed,false);
     assert.equal(recoveryBefore.marker_removal_allowed,false);
     assert.equal(recoveryBefore.owner_reconciliation_complete,false);
+    assert.equal(recoveryBefore.historical_effects.retained_pilot_signed_heartbeat_packet_count,1);
+    assert.equal(recoveryBefore.historical_effects.signed_heartbeat_history_complete,false);
+    assert.ok(BigInt(recoveryBefore.historical_effects.global_audit_event_high_watermark_decimal)>0n);
+    assert.equal(recoveryBefore.historical_effects.qa_receipts_created_by_this_pc_count,0);
+    assert.equal(recoveryBefore.historical_effects.centrally_confirmed_git_jobs_involving_this_pc_count,0);
+    assert.equal(recoveryBefore.historical_effects.qa_effects_independently_reconciled,false);
     const recoveryObservations=await Promise.all(Array.from({length:3},readSnapshot));
     for(const result of recoveryObservations){
       assert.equal(result.accepted_node_sequence_decimal,
@@ -715,6 +721,15 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(item.node_id,c.node_id);
     assert.equal(item.state,'PENDING');
     assert.equal(queue.qa_approved_automatically,false);
+    // Read-only crash evidence on the developer PC sees Owner QA-review
+    // backlog even while the QA device is independent of that worker.
+    const workerEffectsPending=await fetch(base+'/v7/owner/node-recovery/'+b.node_id,{
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(workerEffectsPending.status,200);
+    const pendingWorker=(await workerEffectsPending.json() as any).historical_effects;
+    assert.equal(pendingWorker.pending_qa_owner_reviews_for_worker_tickets_count,1);
+    assert.ok(pendingWorker.pending_qa_owner_reviews_global_count>=1);
+    assert.equal(pendingWorker.qa_effects_independently_reconciled,false);
     const verifiedAgain=await c.signed('/v7/tasks/qa-evidence',proof);
     assert.deepEqual(verifiedAgain,verified,'A lost upload response replays exact receipt');
     const receiptBody={request_id:'qa_independent_'+(++count),agent_id:c.agent_id,
@@ -756,6 +771,17 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(qa.code,200,JSON.stringify(qa.body));
     const qaAgain=await c.signed('/v7/tasks/qa-receipt',receiptBody);
     assert.deepEqual(qaAgain,qa,'Only identical approved QA receipt is idempotent');
+    const qaEvidenceSnapshot=await fetch(base+'/v7/owner/node-recovery/'+c.node_id,{
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(qaEvidenceSnapshot.status,200);
+    const qaEffect=(await qaEvidenceSnapshot.json() as any).historical_effects;
+    assert.equal(qaEffect.qa_receipts_created_by_this_pc_count,1);
+    assert.equal(qaEffect.qa_effects_independently_reconciled,false);
+    const workerQaAfter=await fetch(base+'/v7/owner/node-recovery/'+b.node_id,{
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(workerQaAfter.status,200);
+    assert.equal((await workerQaAfter.json() as any)
+      .historical_effects.qa_receipts_on_worker_tickets_for_this_pc_count,1);
     const unauthorizedExtra=await c.signed('/v7/tasks/qa-receipt',{
       ...receiptBody,request_id:'qa_replay_new_'+(++count)});
     assert.notEqual(unauthorizedExtra.code,200,'Same report cannot cause another QA transition');
@@ -796,6 +822,17 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(reserved.body.baseline_sha,'a'.repeat(40));
     const reReserve=await c.signed('/v7/git/reserve',reserveBody);
     assert.deepEqual(reReserve,reserved,'Lost reserve reply has one durable MySQL job');
+    // A real one-shot reserved Git job must remain visible to a crashed
+    // developer even though the QA actor belongs to a different node.
+    const workerGitEffect=await fetch(base+'/v7/owner/node-recovery/'+b.node_id,{
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(workerGitEffect.status,200);
+    const workerGitSnapshot=await workerGitEffect.json() as any;
+    assert.equal(workerGitSnapshot.unresolved_git_job_count,1);
+    assert.equal(workerGitSnapshot.historical_effects
+      .centrally_confirmed_git_jobs_involving_this_pc_count,0);
+    assert.equal(workerGitSnapshot.historical_effects
+      .external_git_effects_independently_reconciled,false);
     const changedReserve=await c.signed('/v7/git/reserve',{
       ...reserveBody,request_id:'gitreserve_new_'+(++count)});
     assert.equal(changedReserve.code,409);

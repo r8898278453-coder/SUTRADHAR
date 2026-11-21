@@ -34,7 +34,22 @@ function fixture(){
     maintenance:{active_fence:false,fence_state:null,plan_id:null,
       expected_epoch_decimal:null,unresolved_intent_count:0},
     active_worker_lease_count:0,outstanding_worker_ticket_count:0,
-    unresolved_git_job_count:0,observed_at_central_ms:1770000000000,
+    unresolved_git_job_count:0,
+    historical_effects:{
+      global_audit_event_high_watermark_decimal:'1',
+      retained_pilot_signed_heartbeat_packet_count:1,
+      signed_heartbeat_history_complete:false,
+      qa_receipts_created_by_this_pc_count:0,
+      qa_receipts_on_worker_tickets_for_this_pc_count:0,
+      pending_qa_owner_reviews_for_worker_tickets_count:0,
+      pending_qa_owner_reviews_global_count:0,
+      centrally_confirmed_git_jobs_involving_this_pc_count:0,
+      local_agent_checkpoint_record_count:0,
+      qa_effects_independently_reconciled:false,
+      external_git_effects_independently_reconciled:false,
+      qa_only_pc_pending_review_coverage_complete:false
+    },
+    observed_at_central_ms:1770000000000,
     read_only:true,central_state_modified:false,
     device_signature_verified_by_this_request:false,
     local_os_vault_verified:false,physical_pc_verified:false,
@@ -182,6 +197,56 @@ test('both remote responses and exact unsigned BIGINT range are validated before
     const x=samples();change(x);
     assert.throws(()=>inspectPair(x),/INVALID|REQUIRED|UNTRUSTED|MALFORMED|INCONSISTENT/,
       change.toString());
+  }
+});
+
+
+test('historical QA, confirmed Git, pending reviews, checkpoints and pilot gaps remain explicit holds',()=>{
+  const f=fixture(),h=f.central.historical_effects;
+  h.retained_pilot_signed_heartbeat_packet_count=0;
+  h.qa_receipts_created_by_this_pc_count=1;
+  h.qa_receipts_on_worker_tickets_for_this_pc_count=2;
+  h.pending_qa_owner_reviews_for_worker_tickets_count=3;
+  h.pending_qa_owner_reviews_global_count=4;
+  h.centrally_confirmed_git_jobs_involving_this_pc_count=1;
+  h.local_agent_checkpoint_record_count=2;
+  const r=inspect(f);
+  for(const code of ['CENTRAL_CONFIRMED_GIT_HISTORY_REQUIRES_EXTERNAL_REVIEW',
+    'CENTRAL_QA_RECEIPT_HISTORY_REQUIRES_INDEPENDENT_REVIEW',
+    'CENTRAL_PENDING_QA_OWNER_REVIEW_ON_PC_WORK',
+    'CENTRAL_GLOBAL_QA_QUEUE_INCOMPLETE_CONTEXT',
+    'CENTRAL_CHECKPOINT_HISTORY_REQUIRES_WORK_REVIEW',
+    'CENTRAL_RETAINED_SIGNED_HEARTBEAT_EVIDENCE_NOT_FOUND'])
+    assert.ok(r.finding_codes.includes(code),code);
+  assert.equal(r.agent_restart_allowed,false);
+  assert.equal(r.owner_reconciliation_complete,false);
+});
+test('new historical-effect changes or audit watermark changes between GETs are flagged',()=>{
+  const mutate=[
+    x=>{x.second.historical_effects.qa_receipts_created_by_this_pc_count=1;},
+    x=>{x.second.historical_effects.pending_qa_owner_reviews_global_count=1;},
+    x=>{x.second.historical_effects.centrally_confirmed_git_jobs_involving_this_pc_count=1;},
+    x=>{x.second.historical_effects.global_audit_event_high_watermark_decimal='2';}
+  ];
+  for(const change of mutate){
+    const x=samples();change(x);
+    const r=inspectPair(x);
+    assert.equal(r.central_observation_unchanged,false);
+    assert.ok(r.finding_codes.includes('CENTRAL_STATE_CHANGED_BETWEEN_OWNER_READS'));
+    assert.equal(r.marker_removal_allowed,false);
+  }
+});
+test('forged evidence coverage, missing effects and malformed global event counter reject',()=>{
+  const mutate=[
+    x=>{x.central.historical_effects.signed_heartbeat_history_complete=true;},
+    x=>{x.central.historical_effects.external_git_effects_independently_reconciled=true;},
+    x=>{delete x.central.historical_effects;},
+    x=>{x.central.historical_effects.global_audit_event_high_watermark_decimal='18446744073709551616';},
+    x=>{x.central.historical_effects.pending_qa_owner_reviews_global_count=-1;}
+  ];
+  for(const change of mutate){
+    const x=fixture();change(x);
+    assert.throws(()=>inspect(x),/INVALID|UNTRUSTED/,change.toString());
   }
 });
 

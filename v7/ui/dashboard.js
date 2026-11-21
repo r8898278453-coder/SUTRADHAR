@@ -49,6 +49,8 @@ $('node-recovery-inspect').addEventListener('click',async()=>{
       'Active worker leases: '+result.active_worker_lease_count,
       'Outstanding worker tickets: '+result.outstanding_worker_ticket_count,
       'Unresolved Git jobs involving this PC: '+result.unresolved_git_job_count,
+      'Historical effect indicators (not proof of external resolution): '+
+        JSON.stringify(result.historical_effects),
       'Agents: '+JSON.stringify(result.agents),
       'Central observation time (ms): '+result.observed_at_central_ms,
       'Local PC key/DPAPI, physical shutdown, QA/Git side effects: NOT VERIFIED.',
@@ -98,6 +100,7 @@ $('node-recovery-crosscheck').addEventListener('click',async()=>{
       'Two Central observations unchanged: '+String(report.central_observation_unchanged),
       'Central read window bounded (30 seconds): '+String(report.central_observation_window_bounded),
       'Browser clock within 2 minutes of Central: '+String(report.central_browser_clock_near_central),
+      'Historical QA, checkpoint, Git and retained heartbeat coverage: review all finding codes below.',
       'Potential inconsistencies: '+report.preliminary_inconsistency_count,
       'Finding codes: '+report.finding_codes.join(', '),
       'Local-to-Central identity/counter continuity and physical Windows shutdown NOT PROVEN.',

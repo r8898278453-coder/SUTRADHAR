@@ -784,6 +784,42 @@ app.get('/v7/owner/node-recovery/:nodeId',jsonRoute(async req=>{
       'LEFT JOIN v7_agents worker ON worker.agent_id=t.worker_agent_id '+
       'WHERE g.state IN ("RUNNING","NEEDS_RECONCILIATION") '+
       'AND (qa.node_id=? OR worker.node_id=?)',[nodeId,nodeId]);
+    // Extra historical-effect indicators. A confirmed Central job or a
+    // locally accepted QA receipt is NOT independent proof of a remote merge,
+    // installer action, or absence of side effects on another PC.
+    const signedPilot=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_events WHERE event_type="NODE_HEARTBEAT_ACCEPTED" '+
+      'AND actor=?',[nodeId]);
+    const auditWatermark=await one(c,
+      'SELECT CAST(COALESCE(MAX(event_id),0) AS CHAR) AS high_watermark_decimal '+
+      'FROM v7_events');
+    const qaAsQa=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_qa_receipts q '+
+      'JOIN v7_agents a ON a.agent_id=q.agent_id WHERE a.node_id=?',[nodeId]);
+    const qaForWorker=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_qa_receipts q '+
+      'JOIN v7_tickets t ON t.ticket_id=q.ticket_id '+
+      'JOIN v7_agents worker ON worker.agent_id=t.worker_agent_id '+
+      'WHERE worker.node_id=?',[nodeId]);
+    const pendingWorkerQa=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_approvals p '+
+      'JOIN v7_tickets t ON t.ticket_id=p.ticket_id '+
+      'JOIN v7_agents worker ON worker.agent_id=t.worker_agent_id '+
+      'WHERE p.kind="QA_EVIDENCE_REVIEW" AND p.state="PENDING" '+
+      'AND worker.node_id=?',[nodeId]);
+    const pendingGlobalQa=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_approvals '+
+      'WHERE kind="QA_EVIDENCE_REVIEW" AND state="PENDING"');
+    const confirmedGit=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_git_jobs g '+
+      'JOIN v7_tickets t ON t.ticket_id=g.ticket_id '+
+      'LEFT JOIN v7_agents qa ON qa.agent_id=g.agent_id '+
+      'LEFT JOIN v7_agents worker ON worker.agent_id=t.worker_agent_id '+
+      'WHERE g.state="CONFIRMED" AND (qa.node_id=? OR worker.node_id=?)',
+      [nodeId,nodeId]);
+    const localCheckpoints=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_checkpoints k '+
+      'JOIN v7_agents a ON a.agent_id=k.agent_id WHERE a.node_id=?',[nodeId]);
     const mine=new Set(agents.map(a=>a.agent_id));
     const roleIds=[ld.master_agent_id,ld.backup1,ld.backup2];
     const count=(v:any)=>Number(v?.n||0);
@@ -821,6 +857,23 @@ app.get('/v7/owner/node-recovery/:nodeId',jsonRoute(async req=>{
       outstanding_worker_ticket_count:count(outstanding),
       active_worker_lease_count:count(leases),
       unresolved_git_job_count:count(git),
+      historical_effects:{
+        global_audit_event_high_watermark_decimal:
+          String(auditWatermark?.high_watermark_decimal),
+        retained_pilot_signed_heartbeat_packet_count:count(signedPilot),
+        signed_heartbeat_history_complete:false,
+        qa_receipts_created_by_this_pc_count:count(qaAsQa),
+        qa_receipts_on_worker_tickets_for_this_pc_count:count(qaForWorker),
+        pending_qa_owner_reviews_for_worker_tickets_count:count(pendingWorkerQa),
+        pending_qa_owner_reviews_global_count:count(pendingGlobalQa),
+        centrally_confirmed_git_jobs_involving_this_pc_count:count(confirmedGit),
+        local_agent_checkpoint_record_count:count(localCheckpoints),
+        qa_effects_independently_reconciled:false,
+        external_git_effects_independently_reconciled:false,
+        // QA review proposals for a QA-only PC can exist on OTHER workers'
+        // tickets; global count is context, not a per-PC classification.
+        qa_only_pc_pending_review_coverage_complete:false
+      },
       observed_at_central_ms:await dbNow(c),
       read_only:true,central_state_modified:false,
       device_signature_verified_by_this_request:false,

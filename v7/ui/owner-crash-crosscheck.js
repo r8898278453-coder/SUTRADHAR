@@ -76,6 +76,20 @@
        !nonnegative(central.active_worker_lease_count)||
        !nonnegative(central.outstanding_worker_ticket_count)||
        !nonnegative(central.unresolved_git_job_count)||
+       !isObject(central.historical_effects)||
+       !limitedDecimal(central.historical_effects.global_audit_event_high_watermark_decimal)||
+       !['retained_pilot_signed_heartbeat_packet_count',
+          'qa_receipts_created_by_this_pc_count',
+          'qa_receipts_on_worker_tickets_for_this_pc_count',
+          'pending_qa_owner_reviews_for_worker_tickets_count',
+          'pending_qa_owner_reviews_global_count',
+          'centrally_confirmed_git_jobs_involving_this_pc_count',
+          'local_agent_checkpoint_record_count'].every(k=>
+          nonnegative(central.historical_effects[k]))||
+       central.historical_effects.signed_heartbeat_history_complete!==false||
+       central.historical_effects.qa_effects_independently_reconciled!==false||
+       central.historical_effects.external_git_effects_independently_reconciled!==false||
+       central.historical_effects.qa_only_pc_pending_review_coverage_complete!==false||
        central.read_only!==true||central.central_state_modified!==false||
        central.device_signature_verified_by_this_request!==false||
        central.local_os_vault_verified!==false||
@@ -123,6 +137,20 @@
       add('CENTRAL_OUTSTANDING_WORKER_TICKETS');
     if(central.unresolved_git_job_count>0)
       add('CENTRAL_UNRESOLVED_GIT_EFFECTS');
+    const effects=central.historical_effects;
+    if(effects.centrally_confirmed_git_jobs_involving_this_pc_count>0)
+      add('CENTRAL_CONFIRMED_GIT_HISTORY_REQUIRES_EXTERNAL_REVIEW');
+    if(effects.qa_receipts_created_by_this_pc_count>0||
+       effects.qa_receipts_on_worker_tickets_for_this_pc_count>0)
+      add('CENTRAL_QA_RECEIPT_HISTORY_REQUIRES_INDEPENDENT_REVIEW');
+    if(effects.pending_qa_owner_reviews_for_worker_tickets_count>0)
+      add('CENTRAL_PENDING_QA_OWNER_REVIEW_ON_PC_WORK');
+    if(effects.pending_qa_owner_reviews_global_count>0)
+      add('CENTRAL_GLOBAL_QA_QUEUE_INCOMPLETE_CONTEXT');
+    if(effects.local_agent_checkpoint_record_count>0)
+      add('CENTRAL_CHECKPOINT_HISTORY_REQUIRES_WORK_REVIEW');
+    if(effects.retained_pilot_signed_heartbeat_packet_count===0)
+      add('CENTRAL_RETAINED_SIGNED_HEARTBEAT_EVIDENCE_NOT_FOUND');
     // These are ALWAYS unresolved because the original PC is intentionally
     // not allowed to unlock/sign after crash; plain local hashes are NOT
     // authoritative evidence of key possession, process stop or counters.
@@ -177,7 +205,10 @@
       },
       active_worker_lease_count:data.active_worker_lease_count,
       outstanding_worker_ticket_count:data.outstanding_worker_ticket_count,
-      unresolved_git_job_count:data.unresolved_git_job_count
+      unresolved_git_job_count:data.unresolved_git_job_count,
+      historical_effects:{
+        ...data.historical_effects
+      }
     });
   }
   function validateObservation(data){

@@ -15,6 +15,12 @@ test('Owner node-recovery GET is explicit, admin-authenticated, read-only and ca
   assert.match(source,/v7_pc_maintenance_fences/);
   assert.match(source,/v7_git_jobs/);
   assert.match(source,/v7_leases/);
+  assert.match(source,/v7_qa_receipts/);
+  assert.match(source,/v7_approvals/);
+  assert.match(source,/v7_checkpoints/);
+  assert.match(source,/CAST\(COALESCE\(MAX\(event_id\),0\) AS CHAR\)/);
+  assert.match(source,/qa_effects_independently_reconciled:false/);
+  assert.match(source,/signed_heartbeat_history_complete:false/);
   assert.match(source,/owner_reconciliation_complete:false/);
   assert.match(source,/agent_restart_allowed:false,marker_removal_allowed:false/);
   assert.match(source,/device_signature_verified_by_this_request:false/);
