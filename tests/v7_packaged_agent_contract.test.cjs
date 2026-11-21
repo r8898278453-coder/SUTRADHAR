@@ -84,3 +84,17 @@ test('failed packaged OS-vault counter commits are terminal and parent never aut
   assert.match(vault,/fs\.unlinkSync\(intent\)/);
   assert.match(vault,/if\(poisoned\)throw Error\('OS_VAULT_WRITE_COMMIT_UNCERTAIN_OWNER_REVIEW'\)/);
 });
+
+test('every packaged agent node POST signing route has a narrow child payload contract',()=>{
+  const bridge=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/vault-bridge.cjs'),'utf8');
+  assert.match(packaged,/agent_id:agent\.id,capabilities:\{\s*engine:'BROWSER_ASSISTED',platform:process\.platform,secure_identity:true/);
+  assert.match(packaged,/request_id:'recovery_'\+epoch\+'_'\+masterId,agent_id:masterId/);
+  assert.match(packaged,/expected_master_epoch:epoch,manifest_sha256/);
+  assert.match(bridge,/if\(uri==='\/v7\/agents\/register'\)/);
+  assert.match(bridge,/packet\.capabilities\.secure_identity!==true/);
+  assert.match(bridge,/!v\.agents\.some\(a=>a\.id===packet\.agent_id\)/);
+  assert.match(bridge,/uri==='\/v7\/leadership\/reconcile'/);
+  assert.match(bridge,/packet\.request_id!==[\s\S]*?'recovery_'\+packet\.expected_master_epoch\+'_'\+packet\.agent_id/);
+  assert.match(bridge,/VAULT_NODE_POST_CONTRACT_DENIED/);
+  assert.match(bridge,/packet\.boot_id!==v\.boot_id/);
+});

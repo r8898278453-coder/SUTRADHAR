@@ -89,6 +89,38 @@ function createSignerBridge(vault){
       Buffer.byteLength(body,'utf8')>128*1024||
       ((method==='GET'&&body!=='')||(method==='POST'&&!body.startsWith('{'))))
       fail('VAULT_SIGN_REQUEST_DENIED');
+    // The supervised heartbeat child must not be able to use a generic
+    // approved POST as an arbitrary agent-registration or Master-recovery
+    // signing oracle. Only its own roster and the exact v7 request contract
+    // may be signed. Central independently enforces approval and epoch.
+    if(method==='POST'&&(uri==='/v7/agents/register'||
+       uri==='/v7/leadership/reconcile')){
+      let packet;
+      try{packet=JSON.parse(body);}catch{fail('VAULT_NODE_POST_CONTRACT_DENIED');}
+      const plain=x=>x&&typeof x==='object'&&!Array.isArray(x);
+      const keys=(x,expected)=>plain(x)&&
+        Object.keys(x).sort().join('|')===expected;
+      if(uri==='/v7/agents/register'){
+        if(!keys(packet,'agent_id|capabilities')||
+          !v.agents.some(a=>a.id===packet.agent_id)||
+          !keys(packet.capabilities,'engine|platform|secure_identity')||
+          packet.capabilities.engine!=='BROWSER_ASSISTED'||
+          packet.capabilities.platform!==process.platform||
+          packet.capabilities.secure_identity!==true)
+          fail('VAULT_NODE_POST_CONTRACT_DENIED');
+      }else{
+        if(!keys(packet,
+          'agent_id|expected_master_epoch|manifest_sha256|request_id')||
+          !v.agents.some(a=>a.id===packet.agent_id)||
+          !Number.isSafeInteger(packet.expected_master_epoch)||
+          packet.expected_master_epoch<1||
+          packet.request_id!==
+            'recovery_'+packet.expected_master_epoch+'_'+packet.agent_id||
+          typeof packet.manifest_sha256!=='string'||
+          !/^[0-9a-f]{64}$/.test(packet.manifest_sha256))
+          fail('VAULT_NODE_POST_CONTRACT_DENIED');
+      }
+    }
     if(method==='POST'&&uri==='/v7/nodes/heartbeat'){
       // The heartbeat child is NOT a general signing oracle. Its exact
       // immutable packet must match the identity and per-agent counters

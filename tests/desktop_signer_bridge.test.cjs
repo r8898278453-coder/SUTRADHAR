@@ -193,3 +193,79 @@ test('uncertain encrypted counter write denies every signing capability on the s
     assert.equal(fs.existsSync(path.join(dir,'identity.osvault.write-intent')),true);
   }finally{fs.fsyncSync=original;fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('node registration POST signer accepts only a configured local agent and packaged capabilities',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-sign-register-scope-'));
+  try{
+    const vault=createVault({safeStorage:safeStorage(),dir,platform:'win32'});
+    const bridge=createSignerBridge(vault);
+    const pub=bridge.initialize({agent_ids:['agent_aaa','agent_bbb']});
+    const genuine={agent_id:'agent_bbb',
+      capabilities:{engine:'BROWSER_ASSISTED',platform:process.platform,secure_identity:true}};
+    const sign=body=>bridge.sign({kind:'node_api',method:'POST',
+      uri:'/v7/agents/register',body:JSON.stringify(body)});
+    const headers=sign(genuine);
+    const canonical=[headers['x-sutradhar-timestamp'],headers['x-sutradhar-nonce'],
+      'POST','/v7/agents/register',
+      crypto.createHash('sha256').update(JSON.stringify(genuine)).digest('hex')].join('\n');
+    assert.equal(crypto.verify(null,Buffer.from(canonical),
+      crypto.createPublicKey(pub.public_key_pem),
+      Buffer.from(headers['x-sutradhar-signature'],'base64')),true);
+    const forbidden=[
+      {...genuine,agent_id:'agent_foreign'},
+      {...genuine,capabilities:{...genuine.capabilities,secure_identity:false}},
+      {...genuine,capabilities:{...genuine.capabilities,engine:'AUTONOMOUS'}},
+      {...genuine,capabilities:{...genuine.capabilities,platform:'invalid'}},
+      {...genuine,capabilities:{...genuine.capabilities,privileges:['admin']}},
+      {...genuine,unexpected:'approval'},
+      {agent_id:'agent_aaa'},null,[],{'__proto__':'unused'}
+    ];
+    for(const packet of forbidden)
+      assert.throws(()=>sign(packet),
+        /VAULT_NODE_POST_CONTRACT_DENIED|VAULT_SIGN_REQUEST_DENIED/);
+    for(const bad of ['not-json','[]','{}','null'])
+      assert.throws(()=>bridge.sign({kind:'node_api',method:'POST',
+        uri:'/v7/agents/register',body:bad}),/VAULT_NODE_POST_CONTRACT_DENIED|VAULT_SIGN_REQUEST_DENIED/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('Master reconcile POST signer binds local agent, epoch, request ID and hash',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-sign-recovery-scope-'));
+  try{
+    const vault=createVault({safeStorage:safeStorage(),dir,platform:'win32'});
+    const bridge=createSignerBridge(vault);
+    const pub=bridge.initialize({agent_ids:['agent_aaa']});
+    const genuine={request_id:'recovery_9_agent_aaa',agent_id:'agent_aaa',
+      expected_master_epoch:9,manifest_sha256:'c'.repeat(64)};
+    const sign=body=>bridge.sign({kind:'node_api',method:'POST',
+      uri:'/v7/leadership/reconcile',body:JSON.stringify(body)});
+    const headers=sign(genuine);
+    const canonical=[headers['x-sutradhar-timestamp'],headers['x-sutradhar-nonce'],
+      'POST','/v7/leadership/reconcile',
+      crypto.createHash('sha256').update(JSON.stringify(genuine)).digest('hex')].join('\n');
+    assert.equal(crypto.verify(null,Buffer.from(canonical),
+      crypto.createPublicKey(pub.public_key_pem),
+      Buffer.from(headers['x-sutradhar-signature'],'base64')),true);
+    for(const forged of [
+      {...genuine,agent_id:'agent_other'},
+      {...genuine,request_id:'recovery_8_agent_aaa'},
+      {...genuine,request_id:'recovery_9_agent_other'},
+      {...genuine,expected_master_epoch:0},
+      {...genuine,expected_master_epoch:-1},
+      {...genuine,expected_master_epoch:1.5},
+      {...genuine,expected_master_epoch:'9'},
+      {...genuine,expected_master_epoch:Number.MAX_SAFE_INTEGER+1},
+      {...genuine,manifest_sha256:'f'.repeat(63)},
+      {...genuine,manifest_sha256:'A'.repeat(64)},
+      {...genuine,force:true},
+      null,[],{}
+    ])
+      assert.throws(()=>sign(forged),
+        /VAULT_NODE_POST_CONTRACT_DENIED|VAULT_SIGN_REQUEST_DENIED/);
+    assert.throws(()=>bridge.sign({kind:'node_api',method:'POST',
+      uri:'/v7/leadership/reconcile',body:'{bad'}),
+      /VAULT_NODE_POST_CONTRACT_DENIED/);
+    // A signed reconcile request is NOT approval to become Master: Central
+    // still gates phase, ownership, epoch and the exact recovery manifest.
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
