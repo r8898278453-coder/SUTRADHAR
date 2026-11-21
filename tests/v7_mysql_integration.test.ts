@@ -1357,6 +1357,23 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const pulse={boot_id:'boot_race_99',sequence:1,
       expected_master_epoch:null,
       agents:[{agent_id:raceNode.agent_id,sequence:1,status:'ONLINE'}]};
+    // Malformed but correctly node-signed JSON must not mutate Central's
+    // authoritative counters or accidentally renew an existing Master lease.
+    for(const malformed of [
+      {...pulse,sequence:'1'},
+      {...pulse,sequence:true},
+      {...pulse,expected_master_epoch:'0'},
+      {...pulse,agents:[{...pulse.agents[0],sequence:'1'}]},
+      {...pulse,agents:[{...pulse.agents[0],status:'OFFLINE'}]},
+      {...pulse,agents:[]},
+      {...pulse,agents:[...pulse.agents,pulse.agents[0]]},
+      {...pulse,unknown:'side_effect'},
+      {...pulse,agents:[{...pulse.agents[0],extra:'not_allowed'}]}
+    ]){
+      const denied=await raceNode.signed('/v7/nodes/heartbeat',malformed);
+      assert.equal(denied.code,400,JSON.stringify(denied.body));
+      assert.equal(denied.body.error_code,'INVALID_HEARTBEAT');
+    }
     const [r1,r2]=await Promise.all([
       raceNode.signed('/v7/nodes/heartbeat',pulse),
       raceNode.signed('/v7/nodes/heartbeat',pulse)

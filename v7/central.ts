@@ -18,6 +18,7 @@ import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scop
 import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
 import {permitSignedHeartbeatPilotRecord} from './pilot_heartbeat_window.ts';
+import {validSignedHeartbeat} from './heartbeat_validation.ts';
 import {inspectLeadershipSafety} from './leadership_diagnostic.ts';
 import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,QaEvidenceError} from './qa_evidence.ts';
 import sharedContract from '../packages/shared/contract.json';
@@ -617,10 +618,11 @@ app.post('/v7/agents/register',jsonRoute(async req=>{
   });
 }));
 app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
-  const node=await nodeAuth(req),data=req.body||{};
-  const sequence=Number(data.sequence),bootId=requireId(data.boot_id);
-  if(!Number.isSafeInteger(sequence)||sequence<1||!Array.isArray(data.agents)||data.agents.length>30)
-    fault('INVALID_HEARTBEAT',400);
+  const node=await nodeAuth(req),data=req.body;
+  // Reject coercible strings, booleans, unknown fields and partial/duplicate
+  // agent packets BEFORE acquiring the MySQL leader lock or updating counters.
+  if(!validSignedHeartbeat(data))fault('INVALID_HEARTBEAT',400);
+  const sequence=data.sequence,bootId=requireId(data.boot_id);
   return transaction(async c=>{
     // All worker/Owner/heartbeat writes take the leader lock FIRST, avoiding
     // cross-order deadlocks with task admission and persistent drain fencing.
@@ -631,7 +633,7 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
       [sequence,bootId,node.node_id]);
     const clock=await dbNow(c),seen=new Set<string>();
     for(const entry of data.agents){
-      const id=requireId(entry.agent_id),seq=Number(entry.sequence);
+      const id=requireId(entry.agent_id),seq=entry.sequence;
       if(seen.has(id)||!Number.isSafeInteger(seq)||seq<1)fault('INVALID_AGENT_SEQUENCE',400);
       seen.add(id);
       const a=await signedAgent(c,node.node_id,id);
@@ -664,7 +666,7 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
         await c.query('INSERT IGNORE INTO v7_arrivals(agent_id) VALUES(?)',[id]);
       }
     }
-    if(ld.master_agent_id&&seen.has(ld.master_agent_id)&&Number(data.expected_master_epoch)===Number(ld.epoch)&&
+    if(ld.master_agent_id&&seen.has(ld.master_agent_id)&&data.expected_master_epoch===Number(ld.epoch)&&
       ld.lease_until&&Date.parse(ld.lease_until+'Z')>clock){
       await c.query('UPDATE v7_cluster SET lease_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 180 SECOND) WHERE singleton=1');
     }
