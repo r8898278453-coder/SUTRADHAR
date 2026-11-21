@@ -74,7 +74,8 @@ test('failed packaged OS-vault counter commits are terminal and parent never aut
   assert.match(packaged,/throw e;\s*\}\s*privateStatus\(state,/);
   assert.match(main,/if\(msg\.op==='saveCounters'\)\s*\{[\s\S]*?vaultError='OS_VAULT_COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW'/);
   assert.match(main,/if\(shuttingDown\|\|vaultError\)return/);
-  assert.match(main,/if\(exitCode!==0\|\|signal\)/);
+  assert.match(main,/const clean=exitCode===0&&!signal/);
+  assert.match(main,/if\(!clean\)\{[\s\S]*?vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED'/);
   assert.match(main,/vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED'/);
   assert.match(main,/vaultError='OS_VAULT_COUNTER_COMMIT_UNCERTAIN_OWNER_REVIEW';\s*signer=null/);
   assert.match(main,/vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED';\s*signer=null/);
