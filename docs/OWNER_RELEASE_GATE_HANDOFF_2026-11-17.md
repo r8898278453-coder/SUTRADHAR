@@ -441,3 +441,7 @@ Owner's Central node recovery screen now includes a read-only Ed25519 verificati
 ## 21 November 2026 — Crash-session retirement safety audit
 
 Code audit caught an overbroad Desktop exit condition: the mere existence of a verified Owner maintenance hold was sufficient to retire a child session marker after an abnormal exit, even when the Owner had not requested a stop for that process. The policy now requires a matching in-flight Owner isolation stop request or positively accepted application-quit kill request, **and** an observed exit callback. A clean zero child exit without a maintenance hold remains supported. The new pure exit-classifier and packaged-main contract tests cover crashes, signals, timeouts, unrequested maintenance holds, vault errors and mismatched stop requests. Owner-held crashed machines remain blocked; there is still no automatic recovery or marker-deletion authority.
+
+### Additional fail-closed child-exit signer guard
+
+After the exit policy denies marker retirement, Main now clears its signer reference for that process before returning. This includes the subtle clean-exit-plus-unrequested-hold case: an unretired marker and an interactive signer may not coexist after the observed child exit. Static regression checks bind this invariant to the actual packaged Main source. Original PC physical tests remain mandatory.

@@ -313,6 +313,15 @@ function startAgent({manualOwnerRestart=false}={}){
         signer=null;
       }
     }
+    if(!decision.retire){
+      // A retained crash marker must never leave an interactive signer alive,
+      // including an exitCode=0 while an unrequested maintenance hold exists.
+      // The legacy abnormal-exit branch below supplies the specific error for
+      // an otherwise healthy/unexpected nonzero child exit.
+      signer=null;
+      if(clean||shuttingDown||ownerHold||holdInspectionFailed)
+        vaultError=vaultError||'OS_VAULT_AGENT_SESSION_UNRECONCILED_OWNER_REVIEW';
+    }
     if(shuttingDown||vaultError)return; // Never retry when retirement is uncertain.
     if(holdInspectionFailed){vaultError='MAINTENANCE_HOLD_INSPECTION_OWNER_REVIEW';signer=null;return;}
     if(ownerStop)return; // Local Owner hold blocks all further normal work.

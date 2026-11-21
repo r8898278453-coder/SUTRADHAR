@@ -74,6 +74,9 @@ test('packaged Main binds maintenance/shutdown retire paths to exact child event
   assert.match(main,/classifyObservedAgentExit\(\{/);
   assert.match(main,/if\(decision\.retire\)\s*\{\s*try\s*\{\s*finishObservedSession/);
   assert.match(main,/reason:decision\.reason/);
+  assert.match(main,/if\(!decision\.retire\)\s*\{[\s\S]*?signer=null;/);
+  assert.match(main,/if\(clean\|\|shuttingDown\|\|ownerHold\|\|holdInspectionFailed\)/);
+  assert.match(main,/OS_VAULT_AGENT_SESSION_UNRECONCILED_OWNER_REVIEW/);
   assert.doesNotMatch(main,/ownerStop=ownerHold&&!holdInspectionFailed;/);
   assert.doesNotMatch(main,/clean\|\|ownerStop\|\|appStop/);
 });
