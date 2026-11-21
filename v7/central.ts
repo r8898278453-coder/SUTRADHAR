@@ -18,6 +18,7 @@ import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scop
 import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
 import {permitSignedHeartbeatPilotRecord} from './pilot_heartbeat_window.ts';
+import {inspectLeadershipSafety} from './leadership_diagnostic.ts';
 import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,QaEvidenceError} from './qa_evidence.ts';
 import sharedContract from '../packages/shared/contract.json';
 
@@ -202,6 +203,27 @@ async function candidates(c:PoolConnection){
     arrival_id:Number(x.arrival_id),last_seen_ms:Date.parse(x.last_seen+'Z'),
     eligible:Boolean(x.master_eligible)}));
 }
+// The latest missing-Master event is authoritative. Never skip a malformed
+// latest event and accidentally use a stale older event for a new epoch.
+// Observation uses this same evidence path as mutating election.
+async function missingMasterEvidence(c:PoolConnection,epoch:number){
+  const record=await one(c,
+    "SELECT event_id,payload_json FROM v7_events "+
+    "WHERE event_type='MASTER_MISSING' AND epoch=? "+
+    "ORDER BY event_id DESC LIMIT 1",[epoch]);
+  if(!record)return {event_present:false,previous_master_agent_id:null,
+    previous_master_node_id:null};
+  let previous:string|null=null;
+  try{
+    const payload=typeof record.payload_json==='string'?
+      JSON.parse(record.payload_json):record.payload_json;
+    if(okId(payload?.previous))previous=payload.previous;
+  }catch{ /* fail closed instead of resolving an earlier event */ }
+  const bound=previous?await one(c,
+    'SELECT node_id FROM v7_agents WHERE agent_id=?',[previous]):null;
+  return {event_present:true,previous_master_agent_id:previous,
+    previous_master_node_id:typeof bound?.node_id==='string'?bound.node_id:null};
+}
 async function evaluate(c:PoolConnection,reason='heartbeat'){
   const ld=await leader(c);
   const now=await dbNow(c), cs=await candidates(c);
@@ -217,14 +239,10 @@ async function evaluate(c:PoolConnection,reason='heartbeat'){
   // its old heartbeat/worker state is ambiguous. Reuse durable central audit
   // history; never depend on a volatile process cache or node-supplied ID.
   const missingFence=!old&&ld.phase==='NO_MASTER'&&Boolean(ld.bootstrapped_at);
-  const missing=missingFence?await one(c,
-    "SELECT a.node_id FROM v7_events e "+
-    "JOIN v7_agents a ON a.agent_id=JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$.previous')) "+
-    "WHERE e.event_type='MASTER_MISSING' AND e.epoch=? "+
-    "ORDER BY e.event_id DESC LIMIT 1",[Number(ld.epoch)]):null;
+  const missing=missingFence?await missingMasterEvidence(c,Number(ld.epoch)):null;
   const next=chooseLeader({master_agent_id:old,master_node_id:oldNode,
     recovery_requires_independent_node:missingFence,
-    recovery_excluded_node_id:missing?.node_id||null,
+    recovery_excluded_node_id:missing?.previous_master_node_id||null,
     lease_until_ms:ld.lease_until?Date.parse(ld.lease_until+'Z'):null,
     bootstrapped:Boolean(ld.bootstrapped_at),epoch:Number(ld.epoch),
     backup1:ld.backup1,backup2:ld.backup2},cs,now);
@@ -715,6 +733,38 @@ app.get('/v7/cluster',jsonRoute(async req=>{
     const ld=await leader(c,false);
     const agents=await rows(c,'SELECT a.agent_id,a.node_id,a.state,a.status,a.master_eligible,a.qa_eligible,a.last_seen,n.state AS node_state FROM v7_agents a JOIN v7_nodes n ON n.node_id=a.node_id ORDER BY a.agent_id');
     return {cluster:ld,agents};
+  });
+}));
+// Owner-facing read-only safety explanation. Unlike evaluate(), this endpoint
+// never promotes, extends leases, revokes workers or authorizes recovery.
+app.get('/v7/owner/leadership-safety',jsonRoute(async req=>{
+  admin(req);
+  return transaction(async c=>{
+    const ld=await leader(c,false),now=await dbNow(c);
+    const roster=await candidates(c);
+    const roleIds=[ld.master_agent_id,ld.backup1,ld.backup2];
+    const bindings=await rows(c,
+      'SELECT agent_id,node_id FROM v7_agents WHERE agent_id IN (?,?,?)',
+      roleIds);
+    const roleNodes:Record<string,string>=Object.create(null);
+    for(const b of bindings)roleNodes[b.agent_id]=b.node_id;
+    const missingFence=!ld.master_agent_id&&ld.phase==='NO_MASTER'&&
+      Boolean(ld.bootstrapped_at);
+    const evidence=missingFence?await missingMasterEvidence(c,Number(ld.epoch)):
+      {event_present:false,previous_master_agent_id:null,
+        previous_master_node_id:null};
+    return inspectLeadershipSafety({
+      cluster:{epoch:Number(ld.epoch),phase:ld.phase,paused:Boolean(ld.paused),
+        bootstrapped:Boolean(ld.bootstrapped_at),
+        master_agent_id:ld.master_agent_id||null,
+        master_node_id:ld.master_agent_id?
+          roleNodes[ld.master_agent_id]||null:null,
+        master_lease_until_ms:ld.lease_until?
+          Date.parse(ld.lease_until+'Z'):null,
+        backup1:ld.backup1||null,backup2:ld.backup2||null},
+      roleNodes,missing:{required:missingFence,...evidence},
+      candidates:roster,nowMs:now
+    });
   });
 }));
 app.get('/v7/nodes/me',jsonRoute(async req=>{

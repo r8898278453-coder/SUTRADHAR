@@ -214,10 +214,55 @@ function renderGitRecoveryQueue(data){
   updateGitRecoveryAction();
 }
 
+function renderLeadershipSafety(data){
+  // Never infer safe-to-restart or safe-to-elect from an API/transport error.
+  const valid=Boolean(data&&data.mode==='OWNER_READ_ONLY_LEADERSHIP_SAFETY'&&
+    data.read_only===true&&data.central_state_modified===false&&
+    data.automatic_promotion_allowed===false&&
+    data.production_release_authorized===false&&
+    Number.isSafeInteger(data.epoch)&&Array.isArray(data.reason_codes)&&
+    data.reason_codes.length<=20&&
+    data.reason_codes.every(x=>typeof x==='string'&&/^[A-Z0-9_]{3,100}$/.test(x)));
+  if(!valid){
+    value('leadership-safety-status','UNKNOWN — Owner verification required');
+    value('leadership-safety-details','Diagnostic unavailable or unverified. Do not infer Master health, promote a PC, remove a local lock, install or retry uncertain work.');
+    return;
+  }
+  value('leadership-safety-status',data.reason_codes.length?
+    'Review required · epoch '+data.epoch:'No diagnostic warnings · epoch '+data.epoch);
+  const labels={
+    CLUSTER_PAUSED_OWNER_REVIEW:'Cluster is paused',
+    MASTER_RECOVERY_RECONCILIATION_REQUIRED:'New Master needs recovery/Owner review',
+    INITIAL_ELECTION_WAIT_UNTIL_08_IST:'First election waits until 08:00 IST',
+    PREVIOUS_MASTER_IDENTITY_EVIDENCE_MISSING:'Previous Master node evidence is missing — HOLD',
+    WAITING_FOR_DISTINCT_APPROVED_NODE_HEARTBEAT:'No healthy independent enrolled backup node — HOLD',
+    AWAITING_SIGNED_HEARTBEAT_FOR_ELECTION:'Waiting for an authorized signed election heartbeat',
+    AWAITING_FIRST_SIGNED_ELECTION_HEARTBEAT:'Waiting for first signed election heartbeat',
+    INCONSISTENT_MASTER_PHASE_OWNER_REVIEW:'Master/phase inconsistency — HOLD',
+    MASTER_NODE_BINDING_MISSING:'Master node binding missing — HOLD',
+    MASTER_LEASE_EXPIRED_AWAITING_SIGNED_HEARTBEAT:'Master lease expired — status view cannot elect',
+    MASTER_APPROVAL_OR_FRESH_HEARTBEAT_MISSING:'Master approval/fresh heartbeat unverified',
+    BACKUP_NODE_ID_COLLISION_OR_BINDING_MISSING:'Backup node identities conflict or are missing',
+    FEWER_THAN_TWO_DISTINCT_BACKUP_NODES:'Fewer than two independently enrolled backup nodes'
+  };
+  value('leadership-safety-details',
+    (data.reason_codes.length?data.reason_codes.map(x=>labels[x]||
+      'Unrecognized safety hold ('+x+')').join(' · '):
+      'Recorded roles look consistent at this instant (not physical-machine proof).')+
+    ' · Distinct approved/fresh node IDs: '+data.approved_fresh_eligible_node_count+
+    '. Independent candidate node IDs: '+data.approved_fresh_independent_node_count+
+    '. Read only; never a restart, promotion, Git retry or release authorization.');
+}
+
 async function refresh(){
   const [cluster,projects,tasks,audit]=await Promise.all([
     request('/v7/cluster'),request('/v7/projects'),request('/v7/tasks'),request('/v7/audit')]);
   const c=cluster.cluster;
+  // New Owner diagnostic is optional for older staging builds; unavailable
+  // never displays a green/safe-to-continue state.
+  let leadershipSafety=null;
+  try{leadershipSafety=await request('/v7/owner/leadership-safety');}catch{}
+  renderLeadershipSafety(leadershipSafety);
   // Optional migration-sensitive Owner maintenance surface. Keep the core
   // dashboard readable if the new staging schema is not yet provisioned,
   // but disable planning until the server returns valid authoritative rows.

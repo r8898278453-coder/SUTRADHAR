@@ -785,6 +785,28 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         'SELECT COUNT(*) AS n FROM v7_events WHERE event_type="MASTER_PROMOTED"');
       const [beforeLeaseRows]:any=await db.query(
         'SELECT COUNT(*) AS n FROM v7_leases WHERE revoked=1');
+      const unauthenticatedSafety=await fetch(base+'/v7/owner/leadership-safety');
+      assert.equal(unauthenticatedSafety.status,401,
+        'Leader safety diagnostics expose enrolled machine state only to Owner');
+      const safetyViews=await Promise.all(Array.from({length:4},()=>
+        fetch(base+'/v7/owner/leadership-safety',{
+          headers:{authorization:'Bearer '+admin}})));
+      for(const response of safetyViews){
+        assert.equal(response.status,200);
+        const observed=await response.json() as any;
+        assert.equal(observed.mode,'OWNER_READ_ONLY_LEADERSHIP_SAFETY');
+        assert.equal(observed.master_agent_id,a.agent_id);
+        assert.equal(observed.epoch,Number(status.epoch));
+        assert.equal(observed.lease_expired,true);
+        assert.ok(observed.reason_codes.includes(
+          'MASTER_LEASE_EXPIRED_AWAITING_SIGNED_HEARTBEAT'));
+        for(const f of ['read_only','physical_machine_verified',
+          'automatic_promotion_allowed','restart_authorized',
+          'production_release_authorized','central_state_modified']){
+          assert.equal(observed[f],f==='read_only',f);
+        }
+        assert.equal(JSON.stringify(observed).includes(admin),false);
+      }
       const observation=await Promise.all(Array.from({length:4},()=>fetch(base+'/v7/cluster',{
         headers:{authorization:'Bearer '+admin}})));
       for(const response of observation){
@@ -1417,6 +1439,19 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         'NO_MASTER must not rebootstrap the old PC on another heartbeat');
       assert.equal(samePcAgain.body.phase,'NO_MASTER');
       assert.equal(Number(samePcAgain.body.epoch),197);
+      const noMasterSafetyResponse=await fetch(base+'/v7/owner/leadership-safety',{
+        headers:{authorization:'Bearer '+admin}});
+      assert.equal(noMasterSafetyResponse.status,200);
+      const noMasterSafety=await noMasterSafetyResponse.json() as any;
+      assert.equal(noMasterSafety.phase,'NO_MASTER');
+      assert.equal(noMasterSafety.master_agent_id,null);
+      assert.equal(noMasterSafety.previous_master_missing_event_present,true);
+      assert.equal(noMasterSafety.previous_master_agent_id,sharedPc.agent_id);
+      assert.equal(noMasterSafety.previous_master_node_id,sharedPc.node_id);
+      assert.equal(noMasterSafety.approved_fresh_independent_node_count,0);
+      assert.ok(noMasterSafety.reason_codes.includes(
+        'WAITING_FOR_DISTINCT_APPROVED_NODE_HEARTBEAT'));
+      assert.equal(noMasterSafety.automatic_promotion_allowed,false);
       // A truly distinct approved PC may re-elect normally. No task or
       // external Git effects are synthesized by this fixture.
       const independent=await edge(101,true);
@@ -1426,6 +1461,15 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         'Independent physical node identity is required for takeover');
       assert.equal(Number(otherPulse.body.epoch),198);
       assert.equal(otherPulse.body.phase,'RECOVERING');
+      const recoveringResponse=await fetch(base+'/v7/owner/leadership-safety',{
+        headers:{authorization:'Bearer '+admin}});
+      assert.equal(recoveringResponse.status,200);
+      const recoveringSafety=await recoveringResponse.json() as any;
+      assert.equal(recoveringSafety.epoch,198);
+      assert.equal(recoveringSafety.master_agent_id,independent.agent_id);
+      assert.ok(recoveringSafety.reason_codes.includes(
+        'MASTER_RECOVERY_RECONCILIATION_REQUIRED'));
+      assert.equal(recoveringSafety.automatic_promotion_allowed,false);
       const [promotionRows]:any=await multiPcDb.query(
         'SELECT COUNT(*) AS n FROM v7_events WHERE event_type="MASTER_PROMOTED" '+
         'AND epoch=? AND resource_id=?',[198,independent.agent_id]);
