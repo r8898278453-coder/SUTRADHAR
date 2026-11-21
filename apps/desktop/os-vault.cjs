@@ -4,8 +4,7 @@
  * Fail closed if encryption unavailable, plaintext fallback or legacy cleartext.
  */
 'use strict';
-const fs=require('node:fs'),path=require('node:path');
-const assert=require('node:assert/strict');
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 function atomicWrite(target,bytes){
   const dir=path.dirname(target);
   fs.mkdirSync(dir,{recursive:true,mode:0o700});
@@ -83,32 +82,82 @@ function createVault({safeStorage,dir,platform=process.platform}){
   function read(){
     let stat;
     try{stat=fs.lstatSync(file);}
-    catch(e){if(e?.code==='ENOENT')return null;throw e;}
+    catch(e){
+      if(e?.code!=='ENOENT')throw e;
+      // The original encrypted identity may have been lost in an interrupted
+      // write, backup restore or manual deletion. As with the developer Edge,
+      // ANY remaining node-directory entry is evidence of prior activity.
+      // Never silently generate a new key against an existing Central node.
+      let entries;
+      try{entries=fs.readdirSync(dir);}
+      catch(err){
+        if(err?.code==='ENOENT')return null;
+        throw Error('OS_VAULT_DIRECTORY_INSPECTION_FAILED');
+      }
+      if(entries.length!==0)
+        throw Error('OS_VAULT_IDENTITY_MISSING_OWNER_RECOVERY_REQUIRED');
+      return null;
+    }
     if(!stat.isFile()||stat.isSymbolicLink()||stat.size<30||
        stat.size>64*1024||
        (process.platform!=='win32'&&(stat.mode&0o077)!==0))
       throw Error('OS_VAULT_FILE_UNSAFE');
-    const record=JSON.parse(fs.readFileSync(file,'utf8'));
-    if(record.version!==1||record.mode!=='os-safeStorage'||typeof record.ciphertext!=='string'||
-      record.ciphertext.length>50000)throw Error('OS_VAULT_RECORD_INVALID');
-    const clear=safeStorage.decryptString(Buffer.from(record.ciphertext,'base64'));
-    try{
-      const identity=JSON.parse(clear);
-      validate(identity);
-      return identity;
-    }catch{throw Error('OS_VAULT_IDENTITY_CORRUPT');}
+    // An exposed parent directory invalidates even a mode-0600 ciphertext.
+    const folder=fs.lstatSync(dir);
+    if(!folder.isDirectory()||folder.isSymbolicLink()||
+       (process.platform!=='win32'&&((folder.mode&0o077)!==0||
+         (typeof process.getuid==='function'&&folder.uid!==process.getuid()))))
+      throw Error('OS_VAULT_DIRECTORY_NOT_PRIVATE');
+    let record;
+    try{record=JSON.parse(fs.readFileSync(file,'utf8'));}
+    catch{throw Error('OS_VAULT_RECORD_INVALID');}
+    if(!record||typeof record!=='object'||Array.isArray(record)||
+       Object.keys(record).sort().join('|')!=='ciphertext|mode|version'||
+       record.version!==1||record.mode!=='os-safeStorage'||
+       typeof record.ciphertext!=='string'||record.ciphertext.length>50000||
+       record.ciphertext.length<16||
+       !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(record.ciphertext))
+      throw Error('OS_VAULT_RECORD_INVALID');
+    const encrypted=Buffer.from(record.ciphertext,'base64');
+    if(encrypted.toString('base64')!==record.ciphertext)
+      throw Error('OS_VAULT_RECORD_INVALID');
+    let clear;
+    try{clear=safeStorage.decryptString(encrypted);}
+    catch{throw Error('OS_VAULT_DECRYPT_FAILED');}
+    let identity;
+    try{identity=JSON.parse(clear);}catch{throw Error('OS_VAULT_IDENTITY_CORRUPT');}
+    validate(identity);
+    return identity;
   }
   function validate(x){
-    if(!x||typeof x!=='object'||!/^[a-zA-Z0-9_-]{8,100}$/.test(x.node_id)||
-      typeof x.private_key_pem!=='string'||!x.private_key_pem.includes('PRIVATE KEY')||
-      typeof x.public_key_pem!=='string'||!Array.isArray(x.agents)||
-      x.agents.length<1||x.agents.length>4||
-      !/^boot_[a-zA-Z0-9_-]{4,100}$/.test(x.boot_id||'')||
-      x.agents.some(a=>!a||!/^([a-zA-Z0-9][a-zA-Z0-9_-]{2,99})$/.test(a.id||'')||
+    // The encrypted Electron identity and the developer-only identity use
+    // the same *shape*, but independent storage/boot handling. Encrypted
+    // garbage, unknown fields or invalid keys must never look "enrolled".
+    if(!x||typeof x!=='object'||Array.isArray(x)||
+      Object.keys(x).sort().join('|')!==
+        'agents|boot_id|node_id|node_sequence|private_key_pem|public_key_pem'||
+      !/^node_[0-9a-f]{32}$/.test(x.node_id||'')||
+      !/^boot_[0-9a-f]{32}$/.test(x.boot_id||'')||
+      typeof x.private_key_pem!=='string'||x.private_key_pem.length>8000||
+      typeof x.public_key_pem!=='string'||x.public_key_pem.length>4000||
+      !Array.isArray(x.agents)||x.agents.length<1||x.agents.length>4||
+      x.agents.some(a=>!a||typeof a!=='object'||Array.isArray(a)||
+        Object.keys(a).sort().join('|')!=='id|sequence'||
+        typeof a.id!=='string'||
+        !/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(a.id)||
         !Number.isSafeInteger(a.sequence)||a.sequence<0)||
       new Set(x.agents.map(a=>a.id)).size!==x.agents.length||
       !Number.isSafeInteger(x.node_sequence)||x.node_sequence<0)
       throw Error('OS_VAULT_IDENTITY_INVALID');
+    try{
+      const privateKey=crypto.createPrivateKey(x.private_key_pem);
+      const publicKey=crypto.createPublicKey(x.public_key_pem);
+      if(privateKey.asymmetricKeyType!=='ed25519'||
+         publicKey.asymmetricKeyType!=='ed25519'||
+         !crypto.createPublicKey(privateKey).export({type:'spki',format:'der'})
+           .equals(publicKey.export({type:'spki',format:'der'})))
+        throw Error('MISMATCH');
+    }catch{throw Error('OS_VAULT_IDENTITY_KEY_MISMATCH');}
   }
   function save(x){
     validate(x);
