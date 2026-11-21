@@ -2,6 +2,7 @@
 const {contextBridge,ipcRenderer}=require('electron');
 contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   getStatus:()=>ipcRenderer.invoke('sutradhar:getStatus'),
+  inspectAgentCrashEvidence:()=>ipcRenderer.invoke('sutradhar:inspectAgentCrashEvidence'),
   reconcileEnrollment:()=>ipcRenderer.invoke('sutradhar:reconcileEnrollment'),
   exportPilotNodeProof:()=>ipcRenderer.invoke('sutradhar:exportPilotNodeProof'),
   saveSetup:input=>ipcRenderer.invoke('sutradhar:saveSetup',input),

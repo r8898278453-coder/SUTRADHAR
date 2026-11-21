@@ -24,6 +24,7 @@ async function loadStatus(){
         'Not yet submitted'],
       ['Enrollment recovery issue',s.enrollmentError||'None reported'],
       ['Local process',s.agentProcessRunning?'Running':'Not running'],
+      ['Agent restart safety',s.agentSessionStatus||'UNKNOWN — Owner review'],
       ['Maintenance recovery hold',s.maintenanceHold||'NONE'],
       ['Installer preparation',s.installerPreparation||'NONE'],
       ['Installer execution',s.installerExecution||'NOT_ATTEMPTED'],
@@ -77,11 +78,25 @@ async function loadStatus(){
     get('autostart').disabled=!s.startupSupported;
     get('autostart').checked=Boolean(s.startupEnabled);
     get('reconcileEnrollment').disabled=!['PREPARED','OWNER_REVIEW_REQUIRED'].includes(s.enrollmentState);
+    get('inspectCrashEvidence').disabled=!(s.agentSessionStatus==='OWNER_REVIEW_REQUIRED'&&!s.agentProcessRunning);
     get('exportPilotNodeProof').disabled=!s.configured||
       s.enrollmentState!=='SUBMITTED'||!s.nodeId;
     if(s.enrollmentRequested){get('code').value='';get('code').placeholder='Already enrolled; code not required for later starts';}
   }catch(e){get('status').textContent='Could not read local status: '+String(e.message||e);}
 }
+get('inspectCrashEvidence').addEventListener('click',async()=>{
+  const button=get('inspectCrashEvidence'),output=get('crashEvidence');
+  button.disabled=true;
+  output.textContent='Inspecting local files without changing them…';
+  try{
+    const result=await api.inspectAgentCrashEvidence();
+    output.textContent=JSON.stringify(result,null,2)+
+      '\nOWNER REVIEW REQUIRED. This unsigned local observation cannot authorize restart, installation, identity reset or marker removal.';
+  }catch(e){
+    output.textContent='DIAGNOSTIC BLOCKED: '+String(e?.message||e)+
+      '. Preserve this PC and all original evidence for Owner investigation.';
+  }finally{await loadStatus();}
+});
 get('setupForm').addEventListener('submit',async e=>{
   e.preventDefault();get('save').disabled=true;showFeedback('Checking Central and starting the local agent…');
   try{

@@ -30,6 +30,7 @@ const {releaseHold,boundedFile}=require('./maintenance-release-executor.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
 const {requireNoInstallerIncident}=require('./maintenance-install-incident-barrier.cjs');
 const {inspectAgentSession,requireNoAgentSession,beginAgentSession,finishObservedSession}=require('./agent-session-fence.cjs');
+const {inspectCrashEvidence}=require('./agent-crash-evidence.cjs');
 const {prepareManualRestart,confirmLiveCentral}=require('./maintenance-restart.cjs');
 const {waitForFreshAck,recordFreshAck}=require('./maintenance-restart-ack.cjs');
 const {
@@ -409,6 +410,16 @@ app.whenReady().then(()=>{
     dialog.showErrorBox('Invalid Desktop settings','Stored configuration is unreadable. Do not delete device identity; contact the Owner.');
   }
   ipcMain.handle('sutradhar:getStatus',event=>{verifySender(event);return safeStatus();});
+  ipcMain.handle('sutradhar:inspectAgentCrashEvidence',event=>{
+    verifySender(event);
+    if(process.platform!=='win32'||!app.isPackaged)
+      throw Error('AGENT_CRASH_DIAGNOSTIC_PACKAGED_WINDOWS_REQUIRED');
+    if(agent)
+      throw Error('AGENT_CRASH_DIAGNOSTIC_CHILD_EXIT_UNCONFIRMED');
+    // No signer, node key, Central API or installer operation is required.
+    // Intentionally works when the crashed session blocked vault startup.
+    return inspectCrashEvidence({dir:nodeDir()});
+  });
   ipcMain.handle('sutradhar:saveSetup',async(event,payload)=>{
     verifySender(event);
     if(configurationCorrupt)throw Error('Invalid stored device settings. Owner-guided recovery required; never overwrite an existing identity automatically.');

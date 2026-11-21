@@ -112,3 +112,21 @@ test('packaged Main durably fences sessions before spawn and blocks orphaned sig
   assert.match(main,/event\.preventDefault\(\)/);
   assert.match(main,/target\.once\('exit',finish\)/);
 });
+
+test('crash diagnostics remain a read-only local Owner inspection without signer or filesystem repair',()=>{
+  const main=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/preload.cjs'),'utf8');
+  const setup=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/setup.js'),'utf8');
+  const html=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/setup.html'),'utf8');
+  const pkg=require('../apps/desktop/package.json');
+  const diag=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/agent-crash-evidence.cjs'),'utf8');
+  assert.ok(pkg.build.files.includes('agent-crash-evidence.cjs'));
+  assert.match(main,/ipcMain\.handle\('sutradhar:inspectAgentCrashEvidence'/);
+  assert.match(main,/if\(agent\)[\s\S]*?AGENT_CRASH_DIAGNOSTIC_CHILD_EXIT_UNCONFIRMED/);
+  assert.match(preload,/inspectAgentCrashEvidence:\(\)=>ipcRenderer\.invoke/);
+  assert.match(setup,/get\('inspectCrashEvidence'\)\.addEventListener/);
+  assert.match(html,/id="inspectCrashEvidence"/);
+  assert.match(diag,/agent_restart_allowed:false/);
+  assert.match(diag,/marker_removal_allowed:false/);
+  assert.doesNotMatch(diag,/unlinkSync|renameSync|writeFileSync|\.sign\(|fetch\(/);
+});

@@ -34,6 +34,9 @@
 <h2>Current local status</h2>
 <div id="status">Loading device status…</div>
 <p class="hint">Agent process running does not mean this PC was approved or that the Master election succeeded.</p>
+<button id="inspectCrashEvidence" class="secondary" type="button" disabled>Inspect crash / restart evidence (read-only)</button>
+<p class="hint">Available only on a packaged Windows PC with an orphaned child-session hold. Hashes local evidence without decrypting credentials or contacting Central. Never removes the marker, restarts the agent, approves recovery or proves hardware reboot.</p>
+<pre id="crashEvidence" role="status" aria-live="polite">No crash diagnostic requested.</pre>
 <label class="toggle"><input id="autostart" type="checkbox"> Start SUTRADHAR automatically when I sign in (packaged app only)</label>
 <div class="actions"><button id="dashboard" type="button" class="secondary">Open Central dashboard</button><button id="refresh" type="button" class="secondary">Refresh status</button><button id="reconcileEnrollment" type="button" class="secondary">Recheck uncertain enrollment</button></div>
 <p class="hint">If enrollment was interrupted, this only checks the original PC's signed identity with Central. It does not send another grant, create another identity or approve itself. The Owner must approve the PC first.</p>
