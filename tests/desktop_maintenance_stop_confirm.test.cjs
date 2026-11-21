@@ -87,7 +87,10 @@ test('rejected, thrown, or synchronous exit inside kill never arms stop authorit
     const r=await requestStopAndConfirm(c,{timeoutMs:25,
       onStopAccepted:got=>accepted.push(got)});
     assert.deepEqual(accepted,[],mode);
-    assert.equal(r.agent_stop_requested,mode==='sync-exit-true',mode);
+    // Synchronous 'exit' happens BEFORE kill() returns and therefore before
+    // request acceptance can be attributed to this Owner operation.
+    assert.equal(r.agent_stop_requested,false,mode);
+    if(mode.startsWith('sync-exit'))assert.equal(r.agent_stopped,true);
   }
 });
 test('invalid callback fails closed before any stop request',async()=>{
