@@ -741,14 +741,15 @@ app.get('/v7/owner/node-recovery/:nodeId',jsonRoute(async req=>{
       'TIMESTAMPDIFF(SECOND,last_seen,UTC_TIMESTAMP(3)) AS heartbeat_age_seconds '+
       'FROM v7_nodes WHERE node_id=?',[nodeId]);
     if(!node)fault('NODE_NOT_FOUND',404);
-    let pub:crypto.KeyObject;
-    try{
-      pub=crypto.createPublicKey(node.public_key_pem);
-      if(pub.asymmetricKeyType!=='ed25519')
-        fault('OWNER_RECOVERY_NODE_PUBLIC_KEY_INVALID',409);
-    }catch{fault('OWNER_RECOVERY_NODE_PUBLIC_KEY_INVALID',409);}
-    const keyFingerprint=crypto.createHash('sha256').update(
-      pub.export({type:'spki',format:'der'})).digest('hex');
+    const keyFingerprint=(()=>{
+      try{
+        const publicKey=crypto.createPublicKey(node.public_key_pem);
+        if(publicKey.asymmetricKeyType!=='ed25519')
+          throw Error('INVALID_STORED_NODE_KEY');
+        return crypto.createHash('sha256').update(
+          publicKey.export({type:'spki',format:'der'})).digest('hex');
+      }catch{return fault('OWNER_RECOVERY_NODE_PUBLIC_KEY_INVALID',409);}
+    })();
     const agents=await rows(c,
       'SELECT agent_id,state,master_eligible,qa_eligible,status,'+
       'CAST(last_sequence AS CHAR) AS accepted_sequence_decimal,'+
