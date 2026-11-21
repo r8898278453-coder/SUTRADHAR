@@ -19,6 +19,16 @@
 <p id="leadership-safety-details">No recovery approval is implied. This displays Central MySQL observations only; it never elects a Master or restarts a PC.</p>
 <small>Distinct enrolled node IDs are not proof of separate physical Windows machines. Verify actual PCs, active work and Git reconciliation independently.</small>
 </section>
+<section class="panel" aria-labelledby="node-recovery-title">
+<div class="panelhead"><h2 id="node-recovery-title">PC crash recovery — Owner MySQL observation only</h2>
+<strong>HOLD · no restart grant</strong></div>
+<p>For an original Windows PC with an orphaned child-session marker: enter its exact Central node ID. The snapshot reads accepted counters, public key fingerprint, Master epoch, active work, Git and maintenance records. It cannot decrypt the original PC or authorize marker deletion.</p>
+<div class="flex"><label for="node-recovery-input">Original PC node ID</label>
+<input id="node-recovery-input" placeholder="node_ + 32 lowercase hex digits" autocomplete="off" spellcheck="false" maxlength="37">
+<button id="node-recovery-inspect" class="outline" type="button">Inspect Central recovery snapshot (GET only)</button></div>
+<pre id="node-recovery-results" role="status" aria-live="polite">Not inspected. Keep original Windows evidence and session marker.</pre>
+<small>Central MySQL is authoritative for accepted counters. This un-signed Owner GET does not independently prove the local PC, physical shutdown, full QA/Git reconciliation, DPAPI key custody, or readiness to restart.</small>
+</section>
 <div class="grid"><section class="panel"><div class="panelhead"><h2>Registered agents</h2><span id="agentCount"></span></div>
 <div class="scroll"><table><thead><tr><th>Agent</th><th>Machine</th><th>Approval</th><th>Heartbeat</th></tr></thead><tbody id="agents"></tbody></table></div></section>
 <section class="panel"><div class="panelhead"><h2>Projects</h2><span id="projectCount"></span></div>

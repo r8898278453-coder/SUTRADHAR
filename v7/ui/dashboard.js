@@ -15,6 +15,52 @@ function cell(row,text){const e=document.createElement('td');e.textContent=text=
 function rows(id,values){const body=$(id);body.replaceChildren();for(const row of values){const tr=document.createElement('tr');for(const v of row)cell(tr,v);body.append(tr);}}
 function date(raw){if(!raw)return '—';const d=new Date(raw.endsWith('Z')?raw:raw+'Z');return isNaN(d.getTime())?'—':d.toLocaleString();}
 
+const nodeRecoveryResults=$('node-recovery-results');
+$('node-recovery-inspect').addEventListener('click',async()=>{
+  const btn=$('node-recovery-inspect');
+  const nodeId=$('node-recovery-input').value.trim();
+  if(!/^node_[0-9a-f]{32}$/.test(nodeId)){
+    nodeRecoveryResults.textContent='INVALID NODE ID. Expected node_ followed by 32 lowercase hexadecimal characters. No request sent.';
+    return;
+  }
+  btn.disabled=true;
+  nodeRecoveryResults.textContent='Inspecting Central MySQL read-only snapshot…';
+  try{
+    const result=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));
+    if(result?.schema!==1||result.mode!=='OWNER_CENTRAL_NODE_CRASH_RECOVERY_OBSERVATION'||
+       result.node_id!==nodeId||result.read_only!==true||
+       result.central_state_modified!==false||
+       result.agent_restart_allowed!==false||
+       result.marker_removal_allowed!==false||
+       result.installer_execution_allowed!==false||
+       result.production_release_authorized!==false||
+       result.owner_reconciliation_complete!==false)
+      throw new Error('UNTRUSTED_OWNER_RECOVERY_RESPONSE');
+    nodeRecoveryResults.textContent=[
+      'OWNER REVIEW REQUIRED — do not remove the original PC crash marker.',
+      'Node: '+result.node_id+' ('+result.node_state+')',
+      'Ed25519 public-key fingerprint SHA-256: '+result.node_public_key_fingerprint_sha256,
+      'Accepted node boot: '+(result.accepted_boot_id||'none'),
+      'Accepted node sequence: '+result.accepted_node_sequence_decimal,
+      'Cluster epoch: '+result.cluster?.epoch_decimal+', phase: '+result.cluster?.phase,
+      'This PC currently in Master/backup roles: '+String(result.cluster?.original_pc_in_cluster_roles),
+      'Maintenance fence: '+String(result.maintenance?.active_fence),
+      'Unresolved maintenance intent(s): '+result.maintenance?.unresolved_intent_count,
+      'Active worker leases: '+result.active_worker_lease_count,
+      'Outstanding worker tickets: '+result.outstanding_worker_ticket_count,
+      'Unresolved Git jobs involving this PC: '+result.unresolved_git_job_count,
+      'Agents: '+JSON.stringify(result.agents),
+      'Central observation time (ms): '+result.observed_at_central_ms,
+      'Local PC key/DPAPI, physical shutdown, QA/Git side effects: NOT VERIFIED.',
+      'Restart, marker removal, installation, production release: NOT AUTHORIZED.'
+    ].join('\n');
+  }catch(e){
+    nodeRecoveryResults.textContent='OWNER RECOVERY OBSERVATION UNAVAILABLE: '+
+      String(e?.message||e)+'. No authorization implied; preserve original device evidence.';
+  }finally{btn.disabled=false;}
+});
+
+
 let gitRecoverySnapshot=null,gitRecoverySelection=null,gitRecoveryPending=null;
 
 let prSelected=null,prCreationAttempt=null;

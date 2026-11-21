@@ -172,6 +172,44 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     delete process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_START_UTC;
     delete process.env.SUTRADHAR_PILOT_SIGNED_HEARTBEAT_END_UTC;
     assert.equal(h.code,200,JSON.stringify(h.body));
+    // A crashed Desktop cannot sign a recovery GET. The Owner can still
+    // inspect Central's exact counters without mutating election/leases.
+    const snapshotPath='/v7/owner/node-recovery/'+a.node_id;
+    const anonymousSnapshot=await fetch(base+snapshotPath);
+    assert.equal(anonymousSnapshot.status,401);
+    const malformedSnapshot=await fetch(base+'/v7/owner/node-recovery/foreign', {
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(malformedSnapshot.status,400);
+    const absentSnapshot=await fetch(base+'/v7/owner/node-recovery/'+
+      'node_'+'f'.repeat(32),{headers:{authorization:'Bearer '+admin}});
+    assert.equal(absentSnapshot.status,404);
+    const readSnapshot=async()=>{
+      const r=await fetch(base+snapshotPath,{headers:{authorization:'Bearer '+admin}});
+      assert.equal(r.status,200);
+      return await r.json() as any;
+    };
+    const recoveryBefore=await readSnapshot();
+    assert.equal(recoveryBefore.mode,'OWNER_CENTRAL_NODE_CRASH_RECOVERY_OBSERVATION');
+    assert.equal(recoveryBefore.accepted_node_sequence_decimal,'1');
+    assert.equal(recoveryBefore.agents.length,1);
+    assert.equal(recoveryBefore.agents[0].accepted_sequence_decimal,'1');
+    const expectedFingerprint=crypto.createHash('sha256').update(
+      crypto.createPublicKey(a.public_key_pem).export({type:'spki',format:'der'})).digest('hex');
+    assert.equal(recoveryBefore.node_public_key_fingerprint_sha256,expectedFingerprint);
+    assert.equal(recoveryBefore.local_os_vault_verified,false);
+    assert.equal(recoveryBefore.agent_restart_allowed,false);
+    assert.equal(recoveryBefore.marker_removal_allowed,false);
+    assert.equal(recoveryBefore.owner_reconciliation_complete,false);
+    const recoveryObservations=await Promise.all(Array.from({length:3},readSnapshot));
+    for(const result of recoveryObservations){
+      assert.equal(result.accepted_node_sequence_decimal,
+        recoveryBefore.accepted_node_sequence_decimal);
+      assert.equal(result.cluster.epoch_decimal,recoveryBefore.cluster.epoch_decimal);
+      assert.equal(result.unresolved_git_job_count,0);
+      assert.equal(result.maintenance.active_fence,false);
+      assert.equal(result.central_state_modified,false);
+      assert.equal(result.production_release_authorized,false);
+    }
     const proofPath='/v7/owner/heartbeat-evidence/'+a.node_id;
     const deniedProof=await fetch(base+proofPath);
     assert.equal(deniedProof.status,401,'heartbeat evidence is Owner-only');

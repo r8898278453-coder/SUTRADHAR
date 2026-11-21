@@ -725,6 +725,112 @@ app.get('/v7/owner/heartbeat-evidence/:nodeId',jsonRoute(async req=>{
       production_release_authorized:false};
   });
 }));
+// Owner-only crash-recovery MySQL observation for one original node identity.
+// The inspected PC cannot sign while its durable orphaned child marker is held.
+// Do NOT ask it to clear that marker or use a node credential to collect this.
+// No lease extension, Master election, counter adjustment or authorization.
+app.get('/v7/owner/node-recovery/:nodeId',jsonRoute(async req=>{
+  admin(req);
+  const nodeId=requireId(req.params.nodeId);
+  if(!/^node_[0-9a-f]{32}$/.test(nodeId))
+    fault('OWNER_RECOVERY_NODE_ID_INVALID',400);
+  return transaction(async c=>{
+    const node=await one(c,
+      'SELECT node_id,state,public_key_pem,boot_id,'+
+      'CAST(last_sequence AS CHAR) AS accepted_node_sequence_decimal,'+
+      'TIMESTAMPDIFF(SECOND,last_seen,UTC_TIMESTAMP(3)) AS heartbeat_age_seconds '+
+      'FROM v7_nodes WHERE node_id=?',[nodeId]);
+    if(!node)fault('NODE_NOT_FOUND',404);
+    let pub:crypto.KeyObject;
+    try{
+      pub=crypto.createPublicKey(node.public_key_pem);
+      if(pub.asymmetricKeyType!=='ed25519')
+        fault('OWNER_RECOVERY_NODE_PUBLIC_KEY_INVALID',409);
+    }catch{fault('OWNER_RECOVERY_NODE_PUBLIC_KEY_INVALID',409);}
+    const keyFingerprint=crypto.createHash('sha256').update(
+      pub.export({type:'spki',format:'der'})).digest('hex');
+    const agents=await rows(c,
+      'SELECT agent_id,state,master_eligible,qa_eligible,status,'+
+      'CAST(last_sequence AS CHAR) AS accepted_sequence_decimal,'+
+      'TIMESTAMPDIFF(SECOND,last_seen,UTC_TIMESTAMP(3)) AS heartbeat_age_seconds '+
+      'FROM v7_agents WHERE node_id=? ORDER BY agent_id LIMIT 51',[nodeId]);
+    if(agents.length>50)fault('OWNER_RECOVERY_AGENT_ROSTER_TOO_LARGE',409);
+    const ld=await leader(c,false);
+    const epochRow=await one(c,
+      'SELECT CAST(epoch AS CHAR) AS epoch_decimal FROM v7_cluster WHERE singleton=1');
+    if(!epochRow)fault('SCHEMA_NOT_INITIALIZED',503);
+    const maintenance=await one(c,
+      'SELECT plan_id,state,CAST(expected_epoch AS CHAR) AS expected_epoch_decimal '+
+      'FROM v7_pc_maintenance_fences WHERE node_id=?',[nodeId]);
+    const pending=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_pc_maintenance_plans '+
+      'WHERE node_id=? AND state="INTENT_ONLY"',[nodeId]);
+    const leases=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_leases l '+
+      'JOIN v7_agents a ON a.agent_id=l.agent_id '+
+      'WHERE a.node_id=? AND l.revoked=0 '+
+      'AND l.expires_at>UTC_TIMESTAMP(3)',[nodeId]);
+    const outstanding=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_tickets t '+
+      'JOIN v7_agents a ON a.agent_id=t.worker_agent_id '+
+      'WHERE a.node_id=? AND t.status NOT IN ("DONE","CANCELLED")',[nodeId]);
+    // A Git effect on a different QA PC may still be associated with a
+    // ticket originally developed here. Count BOTH developer and QA links.
+    const git=await one(c,
+      'SELECT COUNT(*) AS n FROM v7_git_jobs g '+
+      'JOIN v7_tickets t ON t.ticket_id=g.ticket_id '+
+      'LEFT JOIN v7_agents qa ON qa.agent_id=g.agent_id '+
+      'LEFT JOIN v7_agents worker ON worker.agent_id=t.worker_agent_id '+
+      'WHERE g.state IN ("RUNNING","NEEDS_RECONCILIATION") '+
+      'AND (qa.node_id=? OR worker.node_id=?)',[nodeId,nodeId]);
+    const mine=new Set(agents.map(a=>a.agent_id));
+    const roleIds=[ld.master_agent_id,ld.backup1,ld.backup2];
+    const count=(v:any)=>Number(v?.n||0);
+    return {
+      schema:1,mode:'OWNER_CENTRAL_NODE_CRASH_RECOVERY_OBSERVATION',
+      node_id:nodeId,node_state:node.state,
+      node_public_key_fingerprint_sha256:keyFingerprint,
+      accepted_boot_id:node.boot_id||null,
+      accepted_node_sequence_decimal:String(node.accepted_node_sequence_decimal),
+      heartbeat_age_seconds:node.heartbeat_age_seconds===null?null:
+        Number(node.heartbeat_age_seconds),
+      agents:agents.map(a=>({
+        agent_id:a.agent_id,state:a.state,
+        accepted_sequence_decimal:String(a.accepted_sequence_decimal),
+        status:a.status,master_eligible:Boolean(a.master_eligible),
+        qa_eligible:Boolean(a.qa_eligible),
+        heartbeat_age_seconds:a.heartbeat_age_seconds===null?null:
+          Number(a.heartbeat_age_seconds)
+      })),
+      cluster:{
+        epoch_decimal:String(epochRow.epoch_decimal),phase:ld.phase,
+        paused:Boolean(ld.paused),
+        master_agent_id:ld.master_agent_id||null,
+        backup1:ld.backup1||null,backup2:ld.backup2||null,
+        original_pc_in_cluster_roles:roleIds.some(x=>mine.has(x))
+      },
+      maintenance:{
+        active_fence:Boolean(maintenance),
+        fence_state:maintenance?.state||null,
+        plan_id:maintenance?.plan_id||null,
+        expected_epoch_decimal:maintenance?
+          String(maintenance.expected_epoch_decimal):null,
+        unresolved_intent_count:count(pending)
+      },
+      outstanding_worker_ticket_count:count(outstanding),
+      active_worker_lease_count:count(leases),
+      unresolved_git_job_count:count(git),
+      observed_at_central_ms:await dbNow(c),
+      read_only:true,central_state_modified:false,
+      device_signature_verified_by_this_request:false,
+      local_os_vault_verified:false,physical_pc_verified:false,
+      owner_reconciliation_complete:false,
+      agent_restart_allowed:false,marker_removal_allowed:false,
+      installer_execution_allowed:false,production_release_authorized:false,
+      next_action:'Owner: compare this MySQL snapshot with the original PC, the OS-vault key fingerprint, full accepted heartbeat/agent counters, QA and Git side effects. Preserve crash marker. This report NEVER grants signing, restart, marker deletion or installation.'
+    };
+  });
+}));
 // Owner dashboard and physical-pilot snapshots are OBSERVATION ONLY.
 // Never evaluate an election, extend a lease, fence workers, or append events
 // from a GET: a physical pilot must not cause the failover it claims to witness.
