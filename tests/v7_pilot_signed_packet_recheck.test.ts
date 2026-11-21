@@ -55,7 +55,8 @@ test('older valid signed packet is a partial historical observation',()=>{
 });
 test('cryptographic tampering or wrong node key fails closed',()=>{
   const bad=[
-    p=>{p.signature_base64='A'+p.signature_base64.slice(1);},
+    p=>{p.signature_base64=(p.signature_base64[0]==='A'?'B':'A')+
+      p.signature_base64.slice(1);},
     p=>{p.node_id='node_'+'f'.repeat(32);},
     p=>{p.accepted_at_ms=p.timestamp_ms+400001;},
     p=>{p.body_base64=Buffer.from('{"sequence":7}').toString('base64');},

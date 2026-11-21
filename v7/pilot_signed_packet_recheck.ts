@@ -101,7 +101,7 @@ export function inspectLastRetainedPilotHeartbeat({
     // counters. That is an evidence GAP, not a reason to adjust them.
     const validAgents=new Map(agents.map(a=>
       [a.agent_id,a.accepted_sequence_decimal]));
-    const agentCheck=packet.agents.every(a=>{
+    const agentCheck=packet.agents.every((a:{agent_id:string;sequence:number})=>{
       const accepted=validAgents.get(a.agent_id);
       return accepted!==undefined&&BigInt(accepted)>=BigInt(a.sequence);
     });
