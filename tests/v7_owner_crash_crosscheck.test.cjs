@@ -289,8 +289,122 @@ test('Owner HTML comparison is GET-only and uses textContent, not hidden POST up
   assert.match(dashboard,/SutradharCrashCrosscheck\.inspectPair/);
   assert.match(dashboard,/centralBefore=await request/);
   assert.match(dashboard,/centralAfter=await request/);
+  assert.match(dashboard,/const sameInputs=\(\)=>key===initialKey/);
+  assert.match(dashboard,/if\(!sameInputs\(\)\)throw Error\('OWNER_CRASH_CROSSCHECK_INPUT_CHANGED'\)/);
   assert.match(dashboard,/request\('\/v7\/owner\/node-recovery\/'\+encodeURIComponent\(nodeId\)\)/);
   assert.match(dashboard,/crosscheckOutput\.textContent/);
   assert.doesNotMatch(library,/\bfetch\(|XMLHttpRequest|localStorage|sessionStorage|\.sign\(|unlinkSync|writeFileSync/);
   assert.doesNotMatch(dashboard,/crosscheckOutput\.innerHTML\s*=/);
+});
+
+
+const crypto=require('node:crypto');
+const {createReviewManifest,verifySignedReview,canonical,SIGN_DOMAIN}=
+  require('../scripts/ops/crash-owner-review.cjs');
+const ownerKeys=crypto.generateKeyPairSync('ed25519');
+const ownerPublic=ownerKeys.publicKey.export({type:'spki',format:'pem'}).toString();
+function ownerSigned(input,patch={},now=input.observedAtClientMs){
+  const manifest=createReviewManifest(input);
+  const signed={schema:1,action:'ACKNOWLEDGE_CRASH_EVIDENCE_REVIEW_ONLY',
+    node_id:input.nodeId,
+    independent_enrollment_fingerprint_sha256:input.pinnedPublicKeySha256,
+    manifest_sha256:manifest.manifest_sha256,
+    review_id:'d'.repeat(64),
+    review_note:'Owner read-only evidence acknowledgement; manual review still required.',
+    issued_at_ms:now-1000,expires_at_ms:now+60000,
+    agent_restart_allowed:false,marker_removal_allowed:false,
+    installer_execution_allowed:false,production_release_authorized:false,
+    ...patch};
+  return {signed,signature_base64:crypto.sign(null,
+    Buffer.from(SIGN_DOMAIN+canonical(signed)),ownerKeys.privateKey)
+    .toString('base64')};
+}
+test('independent Owner-signed crash review binds exact double GET and local hashes, NOT authority',()=>{
+  const input=samples(),prior=JSON.stringify(input);
+  const m=createReviewManifest(input),signed=ownerSigned(input);
+  assert.match(m.manifest_sha256,/^[a-f0-9]{64}$/);
+  assert.equal(m.node_id,input.nodeId);
+  const v=verifySignedReview({input,envelope:signed,
+    pinnedOwnerReviewPublicKeyPem:ownerPublic,now:input.observedAtClientMs});
+  assert.equal(v.owner_review_signature_valid,true);
+  assert.equal(v.exact_evidence_digest_match,true);
+  assert.equal(v.replay_prevention_enforced,false);
+  assert.equal(v.owner_reconciliation_complete,false);
+  for(const k of ['agent_restart_allowed','marker_removal_allowed',
+    'installer_execution_allowed','production_release_authorized'])
+    assert.equal(v[k],false);
+  assert.equal(JSON.stringify(input),prior,'input is immutable from verifier');
+  assert.equal(JSON.stringify(v).includes('signature_base64'),false);
+  assert.equal(JSON.stringify(v).includes('private_key'),false);
+});
+test('same signed review invalid after local hash, Central counter, epoch or audit shift',()=>{
+  const input=samples(),signed=ownerSigned(input);
+  const changes=[
+    x=>{x.local.records.encrypted_identity.sha256='f'.repeat(64);},
+    x=>{x.first.accepted_node_sequence_decimal='2';},
+    x=>{x.second.cluster.epoch_decimal='5';},
+    x=>{x.second.historical_effects.global_audit_event_high_watermark_decimal='2';},
+    x=>{x.pinnedPublicKeySha256='f'.repeat(64);},
+    x=>{x.nodeId='node_'+'b'.repeat(32);},
+    x=>{x.observedAtClientMs+=1000;}
+  ];
+  for(const change of changes){
+    const altered=JSON.parse(JSON.stringify(input));change(altered);
+    assert.throws(()=>verifySignedReview({input:altered,envelope:signed,
+      pinnedOwnerReviewPublicKeyPem:ownerPublic,now:input.observedAtClientMs}),
+      /CRASH_OWNER_REVIEW_/);
+  }
+});
+test('invalid signature, different key, action, scope, expiry and authorization bits fail closed',()=>{
+  const x=samples(),good=ownerSigned(x);
+  assert.throws(()=>verifySignedReview({input:x,envelope:good,
+    pinnedOwnerReviewPublicKeyPem:crypto.generateKeyPairSync('ed25519')
+      .publicKey.export({type:'spki',format:'pem'}).toString(),
+    now:x.observedAtClientMs}),/SIGNATURE_INVALID/);
+  const change=[
+    {action:'restart_after_maintenance'},
+    {agent_restart_allowed:true},
+    {marker_removal_allowed:true},
+    {installer_execution_allowed:true},
+    {production_release_authorized:true},
+    {manifest_sha256:'f'.repeat(64)},
+    {review_id:'not_a_uuid'},
+    {review_note:'OK'},
+    {expires_at_ms:x.observedAtClientMs+300001},
+    {issued_at_ms:x.observedAtClientMs+61000}
+  ];
+  for(const patch of change){
+    assert.throws(()=>verifySignedReview({input:x,
+      envelope:ownerSigned(x,patch),
+      pinnedOwnerReviewPublicKeyPem:ownerPublic,
+      now:x.observedAtClientMs}),/SIGNED_REVIEW_SCOPE_INVALID/,JSON.stringify(patch));
+  }
+  assert.throws(()=>verifySignedReview({input:x,envelope:good,
+    pinnedOwnerReviewPublicKeyPem:ownerPublic,
+    now:x.observedAtClientMs+300001}),/SIGNED_REVIEW_SCOPE_INVALID/);
+});
+test('invalid local or remote data never becomes Owner-signed review',()=>{
+  for(const change of [
+    x=>{x.local.agent_restart_allowed=true;},
+    x=>{x.first.central_state_modified=true;},
+    x=>{x.second.node_id='node_'+'f'.repeat(32);},
+    x=>{x.first.historical_effects.signed_heartbeat_history_complete=true;}
+  ]){
+    const x=samples();change(x);
+    assert.throws(()=>createReviewManifest(x),/CRASH_OWNER_REVIEW_CROSSCHECK_INVALID/);
+  }
+});
+test('offline Owner review tools remain separate from maintenance release and have no execution path',()=>{
+  for(const file of ['../scripts/ops/crash-owner-review.cjs',
+    '../scripts/ops/verify-crash-owner-review.cjs',
+    '../scripts/release/sign-crash-owner-review.cjs']){
+    const source=fs.readFileSync(path.resolve(__dirname,file),'utf8');
+    assert.doesNotMatch(source,/spawnSync|execFileSync|child_process|\\.kill\\(|unlinkSync|renameSync|fetch\\(|axios|http\\.request|https\\.request|app\\.post/);
+  }
+  const source=fs.readFileSync(path.resolve(__dirname,
+    '../scripts/release/sign-crash-owner-review.cjs'),'utf8');
+  assert.match(source,/SUTRADHAR_OWNER_CRASH_EVIDENCE_REVIEW_APPROVED/);
+  assert.match(source,/outputPath,'wx'/);
+  assert.match(source,/ACKNOWLEDGE_CRASH_EVIDENCE_REVIEW_ONLY/);
+  assert.match(source,/production_release_authorized:false/);
 });

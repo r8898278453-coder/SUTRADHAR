@@ -82,8 +82,15 @@ $('node-recovery-crosscheck').addEventListener('click',async()=>{
     const local=JSON.parse(raw);
     // Two independent GETs catch moving Central counters, epoch, roles,
     // maintenance and Git/worker state. Neither ever uploads local JSON/pin.
+    const initialKey=key;
+    const sameInputs=()=>key===initialKey&&
+      $('node-recovery-input').value.trim()===nodeId&&
+      $('node-recovery-pin').value.trim()===pin&&
+      $('node-recovery-local-json').value===raw;
     const centralBefore=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));
+    if(!sameInputs())throw Error('OWNER_CRASH_CROSSCHECK_INPUT_CHANGED');
     const centralAfter=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));
+    if(!sameInputs())throw Error('OWNER_CRASH_CROSSCHECK_INPUT_CHANGED');
     const report=window.SutradharCrashCrosscheck.inspectPair({
       local,first:centralBefore,second:centralAfter,nodeId,
       pinnedPublicKeySha256:pin,observedAtClientMs:Date.now()
