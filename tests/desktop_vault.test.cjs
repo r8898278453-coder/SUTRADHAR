@@ -108,9 +108,9 @@ test('OS vault rejects same-boot replay, silent private-key rotation and agent r
     assert.throws(()=>v.save({...initial,boot_id:'boot_'+'d'.repeat(32),
       node_sequence:2,agents:[{id:'agent_test_1',sequence:2}]}),
       /BOOT_ROTATION_COUNTER_CHANGE_DENIED/);
-    const restart={...initial,boot_id:'boot_restart'};
+    const restart={...initial,boot_id:'boot_'+'d'.repeat(32)};
     v.save(restart);
-    assert.equal(v.read().boot_id,'boot_restart');
+    assert.equal(v.read().boot_id,restart.boot_id);
     assert.throws(()=>v.save(restart),/SEQUENCE_ROLLBACK_OR_REPLAY/);
     const advancing={...restart,node_sequence:2,agents:[
       {id:'agent_test_1',sequence:2}]};
