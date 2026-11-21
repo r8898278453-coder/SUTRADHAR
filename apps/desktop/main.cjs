@@ -30,6 +30,7 @@ const {releaseHold,boundedFile}=require('./maintenance-release-executor.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
 const {requireNoInstallerIncident}=require('./maintenance-install-incident-barrier.cjs');
 const {inspectAgentSession,requireNoAgentSession,beginAgentSession,finishObservedSession}=require('./agent-session-fence.cjs');
+const {classifyObservedAgentExit}=require('./agent-session-exit-policy.cjs');
 const {inspectCrashEvidence}=require('./agent-crash-evidence.cjs');
 const {prepareManualRestart,confirmLiveCentral}=require('./maintenance-restart.cjs');
 const {waitForFreshAck,recordFreshAck}=require('./maintenance-restart-ack.cjs');
@@ -62,7 +63,7 @@ const {installSingleInstanceGuard}=require('./single-instance.cjs');
 let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
 let vault=null,vaultError=null,signer=null;
-let agentSession=null,expectedQuitChild=null,quitCompletionStarted=false;
+let agentSession=null,expectedQuitChild=null,expectedMaintenanceStopChild=null,quitCompletionStarted=false;
 let maintenanceRestartBusy=false;
 let workerClaimBusy=false;
 let installerPreparationBusy=false;
@@ -289,17 +290,23 @@ function startAgent({manualOwnerRestart=false}={}){
     try{
       ownerHold=inspectHold({dir:nodeDir(),nodeId:vault?.read()?.node_id}).active;
     }catch{holdInspectionFailed=true;}
-    // Only an actual observed zero exit, an explicitly requested application
-    // stop, or a preexisting verified Owner maintenance hold can retire the
-    // session marker. An abnormal unrequested exit preserves it permanently.
-    const ownerStop=ownerHold&&!holdInspectionFailed;
+    // Never use maintenance hold existence as proof of requested stop.
+    // Only an explicit per-child request AND the actual observed exit may
+    // retire its pre-spawn marker; unknown/crash exit preserves it.
+    const ownerStop=ownerHold&&!holdInspectionFailed&&
+      expectedMaintenanceStopChild===spawnedAgent;
     const appStop=shuttingDown&&expectedQuitChild===spawnedAgent;
     const clean=exitCode===0&&!signal;
-    if(!vaultError&&!holdInspectionFailed&&(clean||ownerStop||appStop)){
+    const decision=classifyObservedAgentExit({
+      exitCode,signal:signal||null,ownerHold,
+      ownerStopRequested:ownerStop,appStopRequested:appStop,
+      shuttingDown,vaultHealthy:!vaultError,
+      holdInspectionHealthy:!holdInspectionFailed
+    });
+    if(decision.retire){
       try{
         finishObservedSession({dir:nodeDir(),session_id:session.session_id,
-          reason:appStop?'OBSERVED_APP_SHUTDOWN':
-            ownerStop?'OBSERVED_OWNER_MAINTENANCE_STOP':'CLEAN_EXIT'});
+          reason:decision.reason});
         agentSession=null;
       }catch{
         vaultError='OS_VAULT_AGENT_SESSION_RETIRE_UNCERTAIN_OWNER_REVIEW';
@@ -906,10 +913,20 @@ app.whenReady().then(()=>{
     // Persisted hold precedes termination. Its existence also rejects the
     // already-installed auto-restart timer on the child-process exit path.
     if(retryTimer){clearTimeout(retryTimer);retryTimer=null;}
-    const stopped=await requestStopAndConfirm(agent,{timeoutMs:12000});
-    // A failed/uncertain stop does not erase the persisted hold. The agent
-    // cannot auto-restart; Owner must review the actual local process.
-    return {...isolated,...stopped};
+    const target=agent;
+    // Bind authority to exactly the child the Owner explicitly chose to
+    // stop. Timeout/error clears this expectation but NEVER clears the
+    // durable maintenance hold or an unretired child-session marker.
+    expectedMaintenanceStopChild=target;
+    try{
+      const stopped=await requestStopAndConfirm(target,{timeoutMs:12000});
+      // A failed/uncertain stop does not erase the persisted hold. The agent
+      // cannot auto-restart; Owner must review the actual local process.
+      return {...isolated,...stopped};
+    }finally{
+      if(expectedMaintenanceStopChild===target)
+        expectedMaintenanceStopChild=null;
+    }
   });
   ipcMain.handle('sutradhar:checkMaintenanceRecovery',async event=>{
     verifySender(event);
@@ -1357,19 +1374,22 @@ app.on('before-quit',event=>{
   // before Electron quits. Timeout/failed kill leaves the durable marker.
   event.preventDefault();
   const target=agent;
-  expectedQuitChild=target;
+  // No exit-retirement authority until THIS child's kill() request is
+  // positively accepted. A preexisting signalCode is not a stop receipt.
+  expectedQuitChild=null;
   let finished=false;
   const finish=()=>{
     if(finished)return;finished=true;
     clearTimeout(timer);
+    if(expectedQuitChild===target)expectedQuitChild=null;
     quitCompletionStarted=true;
     app.quit();
   };
   target.once('exit',finish);
   const timer=setTimeout(finish,12000);
   try{
-    if(target.signalCode===null&&target.kill()!==true)
-      expectedQuitChild=null; // Not a verified Owner-requested termination.
+    if(target.signalCode===null&&target.kill()===true)
+      expectedQuitChild=target;
   }catch{expectedQuitChild=null;}
 });
 app.on('window-all-closed',()=>{if(!tray&&process.platform!=='darwin')app.quit();});

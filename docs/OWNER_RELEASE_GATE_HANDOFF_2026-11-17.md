@@ -437,3 +437,7 @@ Owner's read-only Central node recovery panel now also shows QA receipts on deve
 ## 21 November 2026 — Opt-in pilot signed packet recheck
 
 Owner's Central node recovery screen now includes a read-only Ed25519 verification summary of the most recent **opt-in retained** accepted signed heartbeat packet, with current accepted node/agent counters and boot ID comparison. Corrupt/tampered packet or counter rollback is surfaced as an Owner anomaly, never repaired. A cryptographically valid historic heartbeat cannot prove current Windows DPAPI custody or all intermediate activity; capture remains optional/time-bounded and the history-complete flag is always false. No automatic restart, crash-marker retirement or release authority is introduced.
+
+## 21 November 2026 — Crash-session retirement safety audit
+
+Code audit caught an overbroad Desktop exit condition: the mere existence of a verified Owner maintenance hold was sufficient to retire a child session marker after an abnormal exit, even when the Owner had not requested a stop for that process. The policy now requires a matching in-flight Owner isolation stop request or positively accepted application-quit kill request, **and** an observed exit callback. A clean zero child exit without a maintenance hold remains supported. The new pure exit-classifier and packaged-main contract tests cover crashes, signals, timeouts, unrequested maintenance holds, vault errors and mismatched stop requests. Owner-held crashed machines remain blocked; there is still no automatic recovery or marker-deletion authority.
