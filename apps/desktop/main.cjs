@@ -29,6 +29,7 @@ const {checkRecovery}=require('./maintenance-recovery-preflight.cjs');
 const {releaseHold,boundedFile}=require('./maintenance-release-executor.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
 const {requireNoInstallerIncident}=require('./maintenance-install-incident-barrier.cjs');
+const {inspectAgentSession,requireNoAgentSession,beginAgentSession,finishObservedSession}=require('./agent-session-fence.cjs');
 const {prepareManualRestart,confirmLiveCentral}=require('./maintenance-restart.cjs');
 const {waitForFreshAck,recordFreshAck}=require('./maintenance-restart-ack.cjs');
 const {
@@ -60,6 +61,7 @@ const {installSingleInstanceGuard}=require('./single-instance.cjs');
 let setupWindow=null,dashboardWindow=null,agent=null,tray=null;
 let current=null,pendingEnrollmentCode=null,shuttingDown=false,retryTimer=null,configurationCorrupt=false;
 let vault=null,vaultError=null,signer=null;
+let agentSession=null,expectedQuitChild=null,quitCompletionStarted=false;
 let maintenanceRestartBusy=false;
 let workerClaimBusy=false;
 let installerPreparationBusy=false;
@@ -149,6 +151,11 @@ function safeStatus(){
       if(hold.active)maintenanceHold='OWNER_REVIEW_REQUIRED';}
     catch(e){maintenanceHold='CORRUPT_OWNER_REVIEW_REQUIRED';}
   }
+  let agentSessionStatus='NONE';
+  try{
+    if(inspectAgentSession({dir:nodeDir()}).active)
+      agentSessionStatus=agent&&agentSession?'TRACKED_CHILD_RUNNING':'OWNER_REVIEW_REQUIRED';
+  }catch{agentSessionStatus='OWNER_REVIEW_REQUIRED';}
   const agentProcessRunning=Boolean(agent&&agent.exitCode===null);
   const startupSupported=Boolean(app.isPackaged&&['win32','darwin'].includes(process.platform));
   let startupEnabled=false;
@@ -162,7 +169,7 @@ function safeStatus(){
     pcName:current?.pcName||null,agentIds:current?.agentIds||[],
     nodeId,enrollmentRequested:enrollmentState==='SUBMITTED',
     enrollmentState,enrollmentError,
-    agentProcessRunning,centralReport,maintenanceHold,installerPreparation,installerExecution,directInstallerExit,persistentObserver,postInstallObservation,failedInstallReview,failedRecoveryApproval,startupSupported,startupEnabled,
+    agentProcessRunning,agentSessionStatus,centralReport,maintenanceHold,installerPreparation,installerExecution,directInstallerExit,persistentObserver,postInstallObservation,failedInstallReview,failedRecoveryApproval,startupSupported,startupEnabled,
     workerClaimSupported:Boolean(process.platform==='win32'&&app.isPackaged),
     qaRunnerConfigured:(()=>{try{validPolicy(qaRunnerPolicy);return true;}catch{return false;}})(),
     gitPublishConfigured:(()=>{try{validateGitPublishPolicy(gitPublishPolicy);return true;}catch{return false;}})(),
@@ -173,6 +180,9 @@ function startAgent({manualOwnerRestart=false}={}){
   // A failed/ambiguous signed-counter commit is a terminal Owner hold for
   // this Desktop process, not an ordinary child crash or heartbeat outage.
   if(vaultError)throw Error(vaultError);
+  // Orphan from an abrupt prior Electron/child exit always requires Owner review.
+  // Manual maintenance restart grants cannot bypass this independent safety hold.
+  requireNoAgentSession({dir:nodeDir()});
   if(requiresReconciliation(nodeDir())&&!manualOwnerRestart)
     throw Error('MAINTENANCE_POST_RELEASE_RECONCILIATION_REQUIRED');
   requireNoInstallerIncident({dir:nodeDir(),manualOwnerRestart});
@@ -204,6 +214,10 @@ function startAgent({manualOwnerRestart=false}={}){
     SUTRADHAR_NODE_DIR:nodeDir()
   });
   fs.mkdirSync(nodeDir(),{recursive:true,mode:0o700});
+  // A child session is durably recorded BEFORE spawn. An interrupted Main,
+  // power loss or unobserved exit cannot silently resume signing at login.
+  const session=beginAgentSession({dir:nodeDir()});
+  agentSession=session;
   const fd=fs.openSync(path.join(home(),'edge-agent.log'),'a',0o600);
   try{
     agent=spawn(process.execPath,[script],{
@@ -260,33 +274,53 @@ function startAgent({manualOwnerRestart=false}={}){
     }
     try{if(agent===spawnedAgent&&spawnedAgent.connected)spawnedAgent.send(reply);}catch{}
   });
-  spawnedAgent.on('error',()=>{ /* Agent stopped: operator can inspect local log. */ });
+  spawnedAgent.on('error',()=>{
+    // spawn errors are not guaranteed to yield an observed child exit.
+    // Leave the pre-spawn session marker intact across an app relaunch.
+    if(agent!==spawnedAgent)return;
+    vaultError='OS_VAULT_AGENT_PROCESS_ERROR_OWNER_REVIEW_REQUIRED';
+    signer=null;
+  });
   spawnedAgent.on('exit',(exitCode,signal)=>{
     if(agent!==spawnedAgent)return; // Ignore stale child exit after a replacement.
     agent=null;
-    if(shuttingDown||vaultError)return; // No auto-restart after uncertain vault commit.
-    try{if(requiresReconciliation(nodeDir()))return;}catch{return;}
-    // A confirmed or uncertain maintenance stop must not schedule retries.
-    // Even malformed on-disk holds require Owner review, never a restart.
-    if(fs.existsSync(nodeDir())){
+    let ownerHold=false,holdInspectionFailed=false;
+    try{
+      ownerHold=inspectHold({dir:nodeDir(),nodeId:vault?.read()?.node_id}).active;
+    }catch{holdInspectionFailed=true;}
+    // Only an actual observed zero exit, an explicitly requested application
+    // stop, or a preexisting verified Owner maintenance hold can retire the
+    // session marker. An abnormal unrequested exit preserves it permanently.
+    const ownerStop=ownerHold&&!holdInspectionFailed;
+    const appStop=shuttingDown&&expectedQuitChild===spawnedAgent;
+    const clean=exitCode===0&&!signal;
+    if(!vaultError&&!holdInspectionFailed&&(clean||ownerStop||appStop)){
       try{
-        if(inspectHold({dir:nodeDir(),nodeId:vault?.read()?.node_id}).active)return;
-      }catch{return;}
+        finishObservedSession({dir:nodeDir(),session_id:session.session_id,
+          reason:appStop?'OBSERVED_APP_SHUTDOWN':
+            ownerStop?'OBSERVED_OWNER_MAINTENANCE_STOP':'CLEAN_EXIT'});
+        agentSession=null;
+      }catch{
+        vaultError='OS_VAULT_AGENT_SESSION_RETIRE_UNCERTAIN_OWNER_REVIEW';
+        signer=null;
+      }
     }
-    // The child's saveCounters reply might have timed out or the IPC pipe
-    // failed entirely, so Main might never receive the error. A nonzero or
-    // signaled child exit is not a routine connectivity retry: preserve the
-    // original identity and require Owner examination before relaunch.
-    if(exitCode!==0||signal){
+    if(shuttingDown||vaultError)return; // Never retry when retirement is uncertain.
+    if(holdInspectionFailed){vaultError='MAINTENANCE_HOLD_INSPECTION_OWNER_REVIEW';signer=null;return;}
+    if(ownerStop)return; // Local Owner hold blocks all further normal work.
+    try{if(requiresReconciliation(nodeDir()))return;}catch{return;}
+    if(!clean){
       vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED';
-      signer=null; // Also deny renderer-triggered worker/QA signing.
+      signer=null;
       return;
     }
-    if(retryTimer)clearTimeout(retryTimer);
-    retryTimer=setTimeout(()=>{
-      retryTimer=null;
-      try{startAgent();}catch{ /* User may need to resupply enrollment code. */ }
-    },15000);
+    if(!agentSession){
+      if(retryTimer)clearTimeout(retryTimer);
+      retryTimer=setTimeout(()=>{
+        retryTimer=null;
+        try{startAgent();}catch{ /* Persistent hold or Owner enrollment review. */ }
+      },15000);
+    }
   });
   return spawnedAgent;
 }
@@ -362,7 +396,11 @@ async function checkCentral(origin){
 const primaryInstance=installSingleInstanceGuard(app,()=>showSetup());
 app.whenReady().then(()=>{
   if(!primaryInstance)return;
-  try{vault=createVault({safeStorage,dir:nodeDir()});signer=createSignerBridge(vault);}
+  try{
+    // Never expose an interactive signing capability on an orphaned session.
+    requireNoAgentSession({dir:nodeDir()});
+    vault=createVault({safeStorage,dir:nodeDir()});signer=createSignerBridge(vault);
+  }
   catch(e){vaultError=String(e.message||'OS_VAULT_UNAVAILABLE');}
   try{current=readSettings();}catch{
     configurationCorrupt=true;
@@ -1297,10 +1335,29 @@ app.whenReady().then(()=>{
   createTray().catch(()=>{/* Tray unavailable: app will exit when all windows close. */});
   showSetup();
 });
-app.on('before-quit',()=>{
+app.on('before-quit',event=>{
+  if(quitCompletionStarted)return;
   shuttingDown=true;
-  if(retryTimer)clearTimeout(retryTimer);
-  if(agent&&agent.exitCode===null){try{agent.kill();}catch{}}
+  if(retryTimer){clearTimeout(retryTimer);retryTimer=null;}
+  if(!agent||agent.exitCode!==null){quitCompletionStarted=true;return;}
+  // Give the supervised child a bounded opportunity to emit a REAL exit
+  // before Electron quits. Timeout/failed kill leaves the durable marker.
+  event.preventDefault();
+  const target=agent;
+  expectedQuitChild=target;
+  let finished=false;
+  const finish=()=>{
+    if(finished)return;finished=true;
+    clearTimeout(timer);
+    quitCompletionStarted=true;
+    app.quit();
+  };
+  target.once('exit',finish);
+  const timer=setTimeout(finish,12000);
+  try{
+    if(target.signalCode===null&&target.kill()!==true)
+      expectedQuitChild=null; // Not a verified Owner-requested termination.
+  }catch{expectedQuitChild=null;}
 });
 app.on('window-all-closed',()=>{if(!tray&&process.platform!=='darwin')app.quit();});
 app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)showSetup();});

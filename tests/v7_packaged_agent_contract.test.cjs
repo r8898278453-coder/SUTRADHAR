@@ -98,3 +98,16 @@ test('every packaged agent node POST signing route has a narrow child payload co
   assert.match(bridge,/VAULT_NODE_POST_CONTRACT_DENIED/);
   assert.match(bridge,/packet\.boot_id!==v\.boot_id/);
 });
+
+test('packaged Main durably fences sessions before spawn and blocks orphaned signing after relaunch',()=>{
+  const main=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/main.cjs'),'utf8');
+  const pkg=require('../apps/desktop/package.json');
+  assert.ok(pkg.build.files.includes('agent-session-fence.cjs'));
+  assert.match(main,/requireNoAgentSession\(\{dir:nodeDir\(\)\}\)/);
+  assert.match(main,/const session=beginAgentSession\(\{dir:nodeDir\(\)\}\);[\s\S]*?agent=spawn\(/);
+  assert.match(main,/finishObservedSession\(\{dir:nodeDir\(\),session_id:session\.session_id,/);
+  assert.match(main,/if\(!clean\)\{[\s\S]*?vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED'/);
+  assert.match(main,/if\(shuttingDown\|\|vaultError\)return/);
+  assert.match(main,/event\.preventDefault\(\)/);
+  assert.match(main,/target\.once\('exit',finish\)/);
+});

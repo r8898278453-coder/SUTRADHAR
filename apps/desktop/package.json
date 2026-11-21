@@ -79,6 +79,7 @@
       "maintenance-failure-owner-review.cjs",
       "failure-review-trust.json",
       "maintenance-install-incident-barrier.cjs",
+      "agent-session-fence.cjs",
       "maintenance-installer-direct-exit.cjs",
       "maintenance-installer-persistent-observer.cjs"
     ],
