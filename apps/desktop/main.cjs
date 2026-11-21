@@ -308,12 +308,14 @@ function startAgent({manualOwnerRestart=false}={}){
     if(shuttingDown||vaultError)return; // Never retry when retirement is uncertain.
     if(holdInspectionFailed){vaultError='MAINTENANCE_HOLD_INSPECTION_OWNER_REVIEW';signer=null;return;}
     if(ownerStop)return; // Local Owner hold blocks all further normal work.
-    try{if(requiresReconciliation(nodeDir()))return;}catch{return;}
+    // Always revoke the interactive signer on an abnormal exit, even during
+    // post-release reconciliation. A maintenance barrier is not a signer hold.
     if(!clean){
       vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED';
       signer=null;
       return;
     }
+    try{if(requiresReconciliation(nodeDir()))return;}catch{return;}
     if(!agentSession){
       if(retryTimer)clearTimeout(retryTimer);
       retryTimer=setTimeout(()=>{
