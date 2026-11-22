@@ -259,3 +259,15 @@ No provider automation, external Git push, QA approval, installer execution, or 
 ## 22 November 2026 — Signed read-only QA Owner-review recovery
 
 Added signed `GET /v7/tasks/qa-review/:proposalId` for the **original independently enrolled QA agent and device** to inspect the state of its uploaded QA evidence, even after an ambiguous network response. The endpoint checks Owner review proof, exact candidate/baseline, QA agent/device identity and any recorded QA receipt. It distinguishes PENDING, APPROVED, DENIED and recorded receipt states; it explicitly refuses any automatic QA approval, QA receipt or Git publication. A mismatched or advanced ticket without the corresponding signed QA receipt is a reconciliation HOLD, not guessed success. Signed disposable-MySQL tests cover pending/approved/receipt-recorded views and unauthorized cross-device/unsigned reads. No live Hostinger or Owner credentials are used.
+
+### QA developer CLI compatibility fence
+
+The legacy `edge:worker qa` command used plaintext developer-node key material and tried a hash-only `qa-receipt` without the required Owner-approved device-signed evidence. It now fails closed **before Docker, Git fetch or any HTTP QA mutation** with `QA_LEGACY_CLI_DISABLED_USE_PACKAGED_OWNER_REVIEW`. Use the already existing packaged Windows Electron OS-vault QA evidence + Owner-review workflow; do not mislabel the developer CLI's local report as OS-vault-signed evidence.
+
+An enrolled, approved QA agent may inspect only its original review without changing it:
+
+```sh
+npm run edge:worker -- qa-review QA_AGENT_ID TICKET_ID qaev_<64-lowercase-hex>
+```
+
+The command verifies the signed Central response and displays a **manual-only** next step. It cannot approve the review, submit a QA receipt or publish code. The developer-only CLI key is not a substitute for Windows vault custody; real physical Windows QA remains HOLD.

@@ -14,6 +14,7 @@ import {getOrCreateClaimIntent,hasPendingClaim,verifyClaimReceipt,closeClaimInte
 import {getOrCreateRenewIntent,verifyRenewReceipt,closeRenewIntent} from './worker_lease_journal.ts';
 import {getOrCreateCheckpointIntent,verifyCheckpointReceipt,closeCheckpointIntent,checkpointIntentPath} from './worker_checkpoint_journal.ts';
 import {getOrCreateSubmitIntent,hasPendingSubmit,verifySubmitReceipt,verifySubmitObservation,closeSubmitIntent} from './worker_submit_journal.ts';
+import {verifyQaReviewStatus,validQaReviewId} from './qa_review_status.ts';
 const home=process.env.SUTRADHAR_NODE_DIR||path.join(os.homedir(),'.sutradhar','v7');
 const identityFile=path.join(home,'identity.json');
 if(!fs.existsSync(identityFile))throw new Error('Run the node agent first; identity missing');
@@ -273,46 +274,22 @@ async function submit(id:string){
   console.log(JSON.stringify({...accepted,manual_only:true,
     note:'Submission recorded for independent QA; no Git publication or merge authorized.'},null,2));
 }
-async function qa(id:string){
-  const t=await request('/v7/tasks/detail/'+id,undefined,'GET');
-  if(t.status!=='SUBMITTED_FOR_REVIEW')throw new Error('Ticket not awaiting independent QA');
-  if(t.worker_agent_id===agentId)throw new Error('Developer cannot self-approve QA');
-  const repo=ensureRepository(t),head=t.candidate_head_sha,tree=t.candidate_tree_sha;
-  if(!SHA_RE.test(head)||!SHA_RE.test(tree))throw new Error('Candidate hash missing');
-  const qaDir=worktree(id+'_qa');
-  // Exact SHA must have been fetched by a trusted read-only operator.
-  try{git(repo,'cat-file','-e',head+'^{commit}');}
-  catch{
-    // Read-only fetch of the authorized branch, never push/rebase protected main.
-    git(repo,'fetch','--no-tags','origin',t.branch_name);
-    git(repo,'cat-file','-e',head+'^{commit}');
-  }
-  if(!fs.existsSync(qaDir)){
-    const p=spawnSync('git',['-C',repo,'worktree','add','--detach',qaDir,head],
-      {encoding:'utf8',timeout:30000});
-    if(p.status!==0)throw new Error('QA worktree failed');
-  }
-  if(git(qaDir,'rev-parse','HEAD')!==head||git(qaDir,'rev-parse','HEAD^{tree}')!==tree)
-    throw new Error('QA worktree SHA mismatch');
-  const command=process.env.SUTRADHAR_TRUSTED_QA_COMMAND;
-  if(!command||command.length>180)throw new Error('Configure trusted local QA command');
-  const runner=path.resolve(process.env.SUTRADHAR_SUTRADHAR_ROOT||process.cwd(),'sandbox/run_sandbox.sh');
-  if(!fs.existsSync(runner))throw new Error('Trusted sandbox script not found');
-  const test=spawnSync('bash',[runner,qaDir,command],{encoding:'utf8',timeout:60000,
-    maxBuffer:2*1024*1024});
-  const passed=test.status===0&&String(test.stdout).includes('__SUTRADHAR_CONTAINER_TEST_STARTED__');
-  const evidence={ticket_id:id,agent_id:agentId,head,tree,command_sha256:digest(command),
-    runner_sha256:digest(fs.readFileSync(runner)),passed,exit_code:test.status,
-    stdout:String(test.stdout).slice(-30000),stderr:String(test.stderr).slice(-30000),
-    started_at:new Date().toISOString(),environment:'Docker air-gapped sandbox'};
-  const raw=JSON.stringify(evidence),hash=digest(raw),signed=crypto.sign(null,Buffer.from(raw),key).toString('base64');
-  const evidenceFile=path.join(taskDir,'qa_'+id+'_'+hash+'.json');
-  fs.writeFileSync(evidenceFile,JSON.stringify({evidence,signature:signed},null,2),{mode:0o600});
-  const out=await request('/v7/tasks/qa-receipt',{request_id:'qa_'+token(),agent_id:agentId,
-    ticket_id:id,candidate_head_sha:head,candidate_tree_sha:tree,passed,
-    evidence_sha256:hash,evidence_ref:'local-signed://sha256/'+hash});
-  console.log(JSON.stringify({...out,local_evidence:evidenceFile},null,2));
-  if(!passed)process.exitCode=1;
+// Legacy developer-only QA used a non-vault signature and hash-only
+// receipt, incompatible with the required independent Owner evidence review.
+// Refuse before starting Docker, touching Git or posting an invalid receipt.
+async function qa(_id:string){
+  throw Error('QA_LEGACY_CLI_DISABLED_USE_PACKAGED_OWNER_REVIEW');
+}
+async function qaReviewStatus(id:string){
+  const proposalId=process.argv[5];
+  if(!ID_RE.test(id)||!validQaReviewId(proposalId))
+    throw Error('qa-review requires a ticket ID and qaev_<64 lowercase hex> ID');
+  const proof=await request('/v7/tasks/qa-review/'+proposalId,undefined,'GET');
+  const state=verifyQaReviewStatus({
+    agent_id:agentId,ticket_id:id,review_proposal_id:proposalId
+  },proof);
+  console.log(JSON.stringify({...state,
+    note:'READ ONLY. Owner decision is separate from QA receipt and Git publication.'},null,2));
 }
 async function publish(id:string,reconcileOnly=false){
   if(!reconcileOnly&&(process.env.SUTRADHAR_ENABLE_V7_GIT_PUSH!=='true'||
@@ -393,8 +370,9 @@ async function main(){
   else if(action==='checkpoint')await checkpoint(ticketId);
   else if(action==='submit')await submit(ticketId);
   else if(action==='qa')await qa(ticketId);
+  else if(action==='qa-review')await qaReviewStatus(ticketId);
   else if(action==='publish')await publish(ticketId,false);
   else if(action==='reconcile-push')await publish(ticketId,true);
-  else throw new Error('Usage: worker {list|detail|prepare|resume|renew|checkpoint|submit|qa|publish|reconcile-push} AGENT_ID [TICKET_ID] [reason|summary_file] [next_action]');
+  else throw new Error('Usage: worker {list|detail|prepare|resume|renew|checkpoint|submit|qa-review|publish|reconcile-push} AGENT_ID [TICKET_ID] [reason|summary_file] [next_action]');
 }
 main().catch(e=>{console.error('Worker failed closed:',e.message);process.exitCode=1;});
