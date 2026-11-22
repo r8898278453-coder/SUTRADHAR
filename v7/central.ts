@@ -442,12 +442,21 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
         fault('QA_REVIEW_PROOF_CORRUPT',409);
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',
         [proof.ticket_id]);
-      if(!t||t.status!=='SUBMITTED_FOR_REVIEW'||
+      if(!t||!['SUBMITTED_FOR_REVIEW','RECONCILIATION_REQUIRED'].includes(t.status)||
          t.worker_agent_id!==proof.developer_agent_id||
          t.candidate_head_sha!==proof.candidate_head_sha||
          t.candidate_tree_sha!==proof.candidate_tree_sha||
          t.baseline_sha!==proof.baseline_sha)
         fault('QA_REVIEW_CANDIDATE_CHANGED',409);
+      if(t.status==='RECONCILIATION_REQUIRED'&&command==='APPROVE_QA_EVIDENCE'){
+        if(ld.phase!=='RECOVERING'||Boolean(ld.paused)||
+           !(await approvedMasterLease(c,ld)))
+          fault('QA_RECOVERY_MASTER_NOT_LIVE',423);
+        if(await one(c,'SELECT ticket_id FROM v7_git_jobs WHERE ticket_id=?',[t.ticket_id]))
+          fault('GIT_PUBLICATION_REQUIRES_SEPARATE_RECOVERY',423);
+        if(await one(c,'SELECT ticket_id FROM v7_leases WHERE ticket_id=? AND revoked=0',[t.ticket_id]))
+          fault('QA_RECOVERY_OLD_LEASE_ACTIVE',423);
+      }
       const grant=await one(c,'SELECT a.agent_id FROM v7_agents a '+
         'JOIN v7_nodes n ON n.node_id=a.node_id '+
         'JOIN v7_project_agents pa ON pa.agent_id=a.agent_id AND pa.project_id=? '+
@@ -481,6 +490,70 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
         if(Number(unresolved.n)===0)await c.query('UPDATE v7_tickets SET status="READY",version=version+1 WHERE ticket_id=?',[ticketRow.ticket_id]);
       }
       result={proposal_id:id,state,ticket_id:ticketRow?.ticket_id||null};
+    }else if(command==='RESTORE_QA_CANDIDATE'){
+      // No worker lease, QA pass, Git publication or Master recovery ACK is
+      // issued here. Only a separately Owner-reviewed, immutable candidate
+      // may return to the independent QA receipt stage.
+      const ticketId=requireId(payload.ticket_id);
+      const proposalId=requireId(payload.review_proposal_id);
+      const reason=requireStr(payload.reason,500);
+      if(reason.trim().length<20||payload.owner_confirmed_recovery_review!==true||
+         typeof payload.expected_master_epoch!=='number'||
+         !Number.isSafeInteger(payload.expected_master_epoch)||
+         payload.expected_master_epoch!==Number(ld.epoch))
+        fault('QA_RECOVERY_OWNER_CONFIRMATION_REQUIRED',403);
+      if(ld.phase!=='RECOVERING'||Boolean(ld.paused)||
+         !(await approvedMasterLease(c,ld)))
+        fault('QA_RECOVERY_MASTER_NOT_LIVE',423);
+      if(!/^qaev_[a-f0-9]{64}$/.test(proposalId))
+        fault('QA_RECOVERY_REVIEW_ID_INVALID',400);
+      const review=await one(c,'SELECT * FROM v7_approvals WHERE proposal_id=? '+
+        'AND ticket_id=? AND kind="QA_EVIDENCE_REVIEW" FOR UPDATE',
+        [proposalId,ticketId]);
+      if(!review||review.state!=='APPROVED')
+        fault('QA_RECOVERY_REVIEW_NOT_APPROVED',403);
+      const proof=storedQaProof(review.justification,'QA_RECOVERY_REVIEW_CORRUPT');
+      if(qaEvidenceProposalId(proof)!==proposalId||proof.ticket_id!==ticketId)
+        fault('QA_RECOVERY_REVIEW_CORRUPT',409);
+      const ticket=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',
+        [ticketId]);
+      if(!ticket||ticket.status!=='RECONCILIATION_REQUIRED'||
+         ticket.worker_agent_id!==proof.developer_agent_id||
+         ticket.baseline_sha!==proof.baseline_sha||
+         ticket.candidate_head_sha!==proof.candidate_head_sha||
+         ticket.candidate_tree_sha!==proof.candidate_tree_sha||
+         ticket.candidate_head_sha!==payload.candidate_head_sha||
+         ticket.candidate_tree_sha!==payload.candidate_tree_sha)
+        fault('QA_RECOVERY_CANDIDATE_CHANGED',409);
+      if(await one(c,'SELECT ticket_id FROM v7_git_jobs WHERE ticket_id=?',[ticketId]))
+        fault('GIT_PUBLICATION_REQUIRES_SEPARATE_RECOVERY',423);
+      if(await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? LIMIT 1',[ticketId]))
+        fault('QA_RECOVERY_EXISTING_RECEIPT_REQUIRES_OWNER_REVIEW',423);
+      if(await one(c,'SELECT ticket_id FROM v7_leases WHERE ticket_id=? AND revoked=0',[ticketId]))
+        fault('QA_RECOVERY_OLD_LEASE_ACTIVE',423);
+      if(!await one(c,'SELECT checkpoint_id FROM v7_checkpoints WHERE ticket_id=? LIMIT 1',[ticketId]))
+        fault('QA_RECOVERY_CHECKPOINT_REQUIRED',409);
+      const qa=await one(c,'SELECT a.node_id FROM v7_agents a '+
+        'JOIN v7_nodes n ON n.node_id=a.node_id '+
+        'JOIN v7_project_agents p ON p.agent_id=a.agent_id AND p.project_id=? '+
+        'WHERE a.agent_id=? AND a.node_id=? AND a.state="APPROVED" '+
+        'AND a.qa_eligible=1 AND n.state="APPROVED" AND p.can_qa=1',
+        [ticket.project_id,proof.qa_agent_id,proof.node_id]);
+      const developer=await one(c,'SELECT node_id FROM v7_agents WHERE agent_id=?',
+        [ticket.worker_agent_id]);
+      if(!qa||!developer||developer.node_id===qa.node_id||
+         ticket.worker_agent_id===proof.qa_agent_id)
+        fault('QA_RECOVERY_INDEPENDENCE_REVOKED',403);
+      await c.query('UPDATE v7_tickets SET status="SUBMITTED_FOR_REVIEW",'+
+        'version=version+1,updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',[ticketId]);
+      await event(c,'OWNER_QA_CANDIDATE_RESTORED',actor,Number(ld.epoch),ticketId,
+        {review_proposal_id:proposalId,evidence_sha256:proof.evidence_sha256,
+         candidate_head_sha:ticket.candidate_head_sha,reason_sha256:digest(reason)});
+      result={ticket_id:ticketId,status:'SUBMITTED_FOR_REVIEW',
+        qa_review_proposal_id:proposalId,version:Number(ticket.version)+1,
+        epoch:Number(ld.epoch),old_worker_lease_restored:false,
+        qa_receipt_submitted:false,git_published:false,
+        automatic_reassignment_allowed:false,owner_recovery_ack_sent:false};
     }else if(command==='QUARANTINE_EXPIRED_WORKER'){
       // Explicit Owner command only: do not silently reassign an uncertain
       // worktree, delete its reservation, or grant a new worker authority.
@@ -1521,12 +1594,14 @@ app.get('/v7/tasks/qa-review/:proposalId',jsonRoute(async req=>{
     if(recorded&&(review.state!=='APPROVED'||
        !['INTEGRATING','TEST_FAILED'].includes(t.status)))
       fault('QA_REVIEW_RECEIPT_STATE_CONFLICT',409);
-    if(!recorded&&t.status!=='SUBMITTED_FOR_REVIEW')
+    if(!recorded&&!['SUBMITTED_FOR_REVIEW','RECONCILIATION_REQUIRED'].includes(t.status))
       fault('QA_REVIEW_TICKET_STATE_CHANGED',409);
     const manualNext=recorded?'RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY':
       review.state==='PENDING'?'WAIT_FOR_OWNER_REVIEW':
       review.state==='DENIED'?'STOP_OWNER_REVIEW_DENIED':
-      'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE';
+      t.status==='RECONCILIATION_REQUIRED'?
+        'OWNER_RESTORE_QA_CANDIDATE_BEFORE_RECEIPT':
+        'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE';
     return {review_proposal_id:proposalId,ticket_id:proof.ticket_id,
       qa_agent_id:agentId,owner_review_state:review.state,task_status:t.status,
       candidate_head_sha:proof.candidate_head_sha,
@@ -1547,8 +1622,20 @@ app.post('/v7/tasks/qa-evidence',jsonRoute(async req=>{
     await requireNoNodeDrain(c,node.node_id);
     return idem(c,agentId,d.request_id,'QA_EVIDENCE',d,async()=>{
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
-      if(!t||t.status!=='SUBMITTED_FOR_REVIEW'||t.worker_agent_id===agentId)
+      if(!t||!['SUBMITTED_FOR_REVIEW','RECONCILIATION_REQUIRED'].includes(t.status)||
+         t.worker_agent_id===agentId)
         fault('QA_EVIDENCE_INDEPENDENCE_OR_STATE',409);
+      if(t.status==='RECONCILIATION_REQUIRED'){
+        const ld=await leader(c);
+        if(ld.phase!=='RECOVERING'||Boolean(ld.paused)||
+           !(await approvedMasterLease(c,ld))||
+           !t.candidate_head_sha||!t.candidate_tree_sha)
+          fault('QA_RECOVERY_MASTER_OR_CANDIDATE_INVALID',423);
+        if(await one(c,'SELECT ticket_id FROM v7_git_jobs WHERE ticket_id=?',[ticketId]))
+          fault('GIT_PUBLICATION_REQUIRES_SEPARATE_RECOVERY',423);
+        if(await one(c,'SELECT ticket_id FROM v7_leases WHERE ticket_id=? AND revoked=0',[ticketId]))
+          fault('QA_RECOVERY_OLD_LEASE_ACTIVE',423);
+      }
       const dev=await one(c,'SELECT node_id FROM v7_agents WHERE agent_id=?',
         [t.worker_agent_id]);
       if(!dev||dev.node_id===node.node_id)
