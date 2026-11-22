@@ -1,13 +1,13 @@
 # SUTRADHAR v7.0 — Requirements, Acceptance Tests & Migration Matrix
 
 **Date:** 2026-11-11  
-**Status:** TEST SPECIFICATION ONLY. These V7 tests have **not** been implemented or run. Existing Git/Docker/SQLite tests do not count as Hostinger/MySQL/Electron/2-PC acceptance.  
+**Status:** ORIGINAL 11 NOVEMBER TEST-SPEC BASELINE. A subset of these scenarios has since acquired unit/CI and disposable MySQL implementations on Draft PR #1; this document does **not** contain an audited per-case CI→physical acceptance mapping. No actual Hostinger/MySQL staging restore, production-signed Windows installer, or physical multi-PC acceptance is inferred from CI.  
 **Source:** Owner-approved conversation requirements, [Architecture Blueprint v7](./SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md), [Agent / Task / QA / Recovery Contract](./AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md), and legacy v6.0 root blueprint.
 
 ## 1. Acceptance policy
 
 - Every row defines **one executable/fault-injection test**, expected outcome and the earliest intended milestone. A design document is not a passing test. P0 tests must pass in CI (for pure logic) and in a representative environment (for hosting, browser and Git) before any production claim.
-- Classification: **SPECIFIED** (this document), **CODED**, **LOCALLY_TESTED**, **LIVE_ACCEPTED**, **BLOCKED**. As of this document, all V7 rows are SPECIFIED / NOT_RUN.
+- Classification: **SPECIFIED** (this original matrix), **CODED**, **LOCALLY_TESTED**, **LIVE_ACCEPTED**, **BLOCKED**. Historical baseline was SPECIFIED/NOT_RUN. For current changes consult CI evidence on the exact Draft PR head; **do not** promote any of the 71 cases to LIVE_ACCEPTED without an independently observed target environment and linked Owner-reviewed receipt.
 - Never use a seeded/fake node, mocked GitHub merge, skipped Docker test or model self-report as actual deployment evidence. Keep immutable test receipts with specific Git SHA and environment.
 - Prioritize real 2-PC pilot + one disposable test repository; only then scale to 8–10 PCs. Do not change protected main, rotate secrets, or deploy without explicit owner approval.
 

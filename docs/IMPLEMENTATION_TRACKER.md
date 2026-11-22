@@ -1,5 +1,7 @@
 # SUTRADHAR — Implementation & Release Tracker
 
+> **Current-reading note (22 November 2026):** Rows labelled `SPECIFIED ONLY`, `NOT_RUN` or `NOT IMPLEMENTED` in the original 6–11 November baseline sections below are preserved as historical records; they do **not** describe every current alpha source feature. Newer dated development sections and the [repository README](../README.md) record subsequent code/CI changes. Nevertheless, real Hostinger staging, production Windows signing, physical multi-PC tests, provider-permitted autonomy and independent release acceptance remain **NOT ACCEPTED / HOLD**. Neither historical notes nor CI imply go-live.
+
 **Original tracker baseline:** 2026-11-06  
 **V7 architecture documentation update:** 2026-11-11 (SPECIFIED ONLY)  
 **Starting baseline:** `7d09b021bffcebe50300e175fbedb3938d6c523a`  

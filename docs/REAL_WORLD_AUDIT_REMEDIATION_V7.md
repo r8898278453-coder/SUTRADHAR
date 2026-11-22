@@ -3,7 +3,7 @@
 **Date:** 19 November 2026 (Asia/Kolkata)  
 **Status:** Draft PR #1 source-only; **no production approval, Hostinger deploy, Windows signed release or physical-PC acceptance**.
 
-This is a traceable engineering response to the 19 November real-world audit. It documents implemented source changes **and deliberately unresolved dependencies**. Keep the audit's full incident/failure taxonomy as the decision contract.
+This is a traceable engineering response to the 19 November real-world audit. It documents implemented source changes **and deliberately unresolved dependencies**. Keep the audit's full incident/failure taxonomy as the decision contract. **Historical status note (22 November):** Several `Still missing`/`Known gap` statements below describe earlier phases and have been partly superseded by later packaged OS-vault submit, QA evidence/Owner review, crash-journal recovery and Git publisher commits. Use the updated [README](../README.md), current [Worker restart runbook](WORKER_RESTART_PREFLIGHT_V7.md), and [Owner release gate handoff](OWNER_RELEASE_GATE_HANDOFF_2026-11-17.md) for present capabilities; all real-environment gates remain HOLD.
 
 ## RWA-001 — One Master recovery validator for both node implementations
 
