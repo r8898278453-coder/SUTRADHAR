@@ -12,6 +12,7 @@ import {ID_RE,SHA_RE,safeScope,validTaskBranch} from './rules.ts';
 import {verifyWorkerResume} from './worker_resume_validation.ts';
 import {getOrCreateClaimIntent,hasPendingClaim,verifyClaimReceipt,closeClaimIntent} from './worker_claim_journal.ts';
 import {getOrCreateRenewIntent,verifyRenewReceipt,closeRenewIntent} from './worker_lease_journal.ts';
+import {getOrCreateCheckpointIntent,verifyCheckpointReceipt,closeCheckpointIntent} from './worker_checkpoint_journal.ts';
 const home=process.env.SUTRADHAR_NODE_DIR||path.join(os.homedir(),'.sutradhar','v7');
 const identityFile=path.join(home,'identity.json');
 if(!fs.existsSync(identityFile))throw new Error('Run the node agent first; identity missing');
@@ -201,11 +202,26 @@ async function checkpoint(id:string){
   const summaryFile=process.argv[5],next=process.argv[6];
   if(!summaryFile||!next)throw new Error('checkpoint <agent> <ticket> <summary-file> <next-action>');
   const summary=fs.readFileSync(summaryFile,'utf8');
-  if(summary.length>8000||!summary.trim())throw new Error('Checkpoint length out of bounds');
-  const result=await request('/v7/tasks/checkpoint',{request_id:'checkpoint_'+token(),
+  if(summary.length>8000||!summary.trim()||next.length>500||!next.trim())
+    throw new Error('Checkpoint length or next-action out of bounds');
+  // Fresh signed read-only lease/epoch/Git proof before any new intent.
+  await resume(id,true);
+  const pending=getOrCreateCheckpointIntent({dir:taskDir,agent_id:agentId,
+    ticket_id:id,lease_id:local.lease_id,epoch:local.epoch,
+    summary,next_action:next});
+  // Preserve the exact request ID across lost HTTP responses and manual retry.
+  const accepted=await request('/v7/tasks/checkpoint',pending.body);
+  const receipt=verifyCheckpointReceipt(pending.body,accepted);
+  const proof=await request('/v7/tasks/resume-check',{
     agent_id:agentId,ticket_id:id,lease_id:local.lease_id,
-    expected_master_epoch:local.epoch,summary,next_action:next.slice(0,500)});
-  console.log(JSON.stringify(result,null,2));
+    expected_master_epoch:local.epoch});
+  const checked=verifyWorkerResume(local,proof,agentId,id);
+  if(checked.latest_checkpoint_generation!==receipt.generation||
+     proof.latest_checkpoint?.content_sha256!==receipt.content_sha256)
+    throw Error('CHECKPOINT_REMOTE_PROOF_MISMATCH');
+  // Only after durable Central proof can the local pending retry be retired.
+  closeCheckpointIntent(pending.file,pending.body);
+  console.log(JSON.stringify({...accepted,manual_only:true},null,2));
 }
 async function submit(id:string){
   const local=read(id),remote=await request('/v7/tasks/detail/'+id,undefined,'GET');
