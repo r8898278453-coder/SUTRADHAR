@@ -481,6 +481,44 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
         if(Number(unresolved.n)===0)await c.query('UPDATE v7_tickets SET status="READY",version=version+1 WHERE ticket_id=?',[ticketRow.ticket_id]);
       }
       result={proposal_id:id,state,ticket_id:ticketRow?.ticket_id||null};
+    }else if(command==='QUARANTINE_EXPIRED_WORKER'){
+      // Explicit Owner command only: do not silently reassign an uncertain
+      // worktree, delete its reservation, or grant a new worker authority.
+      const id=requireId(payload.ticket_id),reason=requireStr(payload.reason,500);
+      if(reason.trim().length<20)fault('WORKER_QUARANTINE_REASON_REQUIRED',400);
+      if(typeof payload.expected_master_epoch!=='number'||
+         !Number.isSafeInteger(payload.expected_master_epoch)||
+         Number(ld.epoch)!==payload.expected_master_epoch)
+        fault('WORKER_QUARANTINE_STALE_EPOCH',409);
+      if(ld.phase!=='READY'||Boolean(ld.paused)||!(await approvedMasterLease(c,ld)))
+        fault('WORKER_QUARANTINE_MASTER_NOT_LIVE',423);
+      // Same lock order as workerLease(): cluster -> lease -> ticket.
+      const lease=await one(c,'SELECT * FROM v7_leases WHERE ticket_id=? FOR UPDATE',[id]);
+      if(!lease||Boolean(lease.revoked)||Number(lease.epoch)!==Number(ld.epoch))
+        fault('WORKER_QUARANTINE_LEASE_NOT_CURRENT',409);
+      const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[id]);
+      if(!t||t.worker_agent_id!==lease.agent_id||
+         !['CLAIMED','CHECKPOINTED','RUNNING'].includes(t.status)||
+         t.candidate_head_sha||t.candidate_tree_sha)
+        fault('WORKER_QUARANTINE_TASK_STATE_DENIED',409);
+      const expiresAt=typeof lease.expires_at==='string'?
+        Date.parse(lease.expires_at.replace(' ','T')+'Z'):NaN;
+      if(!Number.isFinite(expiresAt))fault('WORKER_QUARANTINE_LEASE_CLOCK_INVALID',409);
+      if(expiresAt>await dbNow(c))fault('WORKER_LEASE_NOT_EXPIRED',409);
+      const [revoked]:any=await c.query(
+        'UPDATE v7_leases SET revoked=1 WHERE ticket_id=? AND lease_id=? AND revoked=0',
+        [id,lease.lease_id]);
+      if(revoked.affectedRows!==1)fault('WORKER_QUARANTINE_LEASE_CHANGED',409);
+      await c.query('UPDATE v7_tickets SET status="RECONCILIATION_REQUIRED",'+
+        'version=version+1,updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',[id]);
+      await event(c,'WORKER_LEASE_EXPIRED_OWNER_QUARANTINED',actor,Number(ld.epoch),id,
+        {worker_agent_id:lease.agent_id,prior_status:t.status,
+          prior_version:Number(t.version),reason_sha256:digest(reason)});
+      result={ticket_id:id,status:'RECONCILIATION_REQUIRED',
+        old_lease_revoked:true,checkpoint_preserved:true,
+        scope_reservation_preserved:true,owner_remote_review_required:true,
+        automatic_reassignment_allowed:false,version:Number(t.version)+1,
+        epoch:Number(ld.epoch)};
     }else if(command==='RECONCILE_TICKET'){
       const id=requireId(payload.ticket_id),reason=requireStr(payload.reason,500);
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[id]);
@@ -936,6 +974,41 @@ app.get('/v7/cluster',jsonRoute(async req=>{
 }));
 // Owner-facing read-only safety explanation. Unlike evaluate(), this endpoint
 // never promotes, extends leases, revokes workers or authorizes recovery.
+// Owner-only and strictly READ-ONLY: expired task leases are not a license
+// to duplicate in-progress external work. This endpoint never runs election,
+// changes a lease, revokes a worker, or releases a scope reservation.
+app.get('/v7/owner/worker-expiry',jsonRoute(async req=>{
+  admin(req);
+  return transaction(async c=>{
+    const ld=await leader(c,false),now=await dbNow(c);
+    const masterLive=ld.phase==='READY'&&!Boolean(ld.paused)&&
+      await approvedMasterLease(c,ld);
+    const expired=await rows(c,'SELECT l.ticket_id,l.agent_id,l.epoch,l.expires_at,'+
+      't.status,t.version,t.worker_agent_id,t.project_id '+
+      'FROM v7_leases l JOIN v7_tickets t ON t.ticket_id=l.ticket_id '+
+      'WHERE l.revoked=0 AND l.expires_at<=UTC_TIMESTAMP(3) '+
+      'AND t.status IN ("CLAIMED","CHECKPOINTED","RUNNING") '+
+      'ORDER BY l.expires_at,l.ticket_id LIMIT 51');
+    return {mode:'OWNER_READ_ONLY_EXPIRED_WORKER_LEASES',
+      server_time_utc:new Date(now).toISOString(),
+      epoch:Number(ld.epoch),master_live:masterLive,
+      tickets:expired.slice(0,50).map(t=>{
+        const expiry=typeof t.expires_at==='string'?
+          Date.parse(t.expires_at.replace(' ','T')+'Z'):NaN;
+        return {ticket_id:t.ticket_id,project_id:t.project_id,
+          worker_agent_id:t.agent_id,status:t.status,
+          version:Number(t.version),lease_epoch:Number(t.epoch),
+          expired_seconds:Number.isFinite(expiry)?
+            Math.max(0,Math.floor((now-expiry)/1000)):null,
+          manual_quarantine_eligible:Boolean(masterLive&&
+            Number(t.epoch)===Number(ld.epoch)&&
+            t.worker_agent_id===t.agent_id&&Number.isFinite(expiry))};
+      }),
+      truncated:expired.length>50,read_only:true,
+      automatic_reassignment_allowed:false,
+      worker_lease_revoked:false,production_release_authorized:false};
+  });
+}));
 app.get('/v7/owner/leadership-safety',jsonRoute(async req=>{
   admin(req);
   return transaction(async c=>{

@@ -599,6 +599,130 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(completedDrain.state.installer_execution_allowed,false);
     const releaseAgain=await owner('CANCEL_PC_UPDATE',{plan_id:activePlanId});
     assert.equal(releaseAgain.state.previously_fenced,true);
+    // Expired WORKER lease while Master remains healthy: report through
+    // Owner read-only GET, then quarantine explicitly without reassigning.
+    const expirePlan=await a.signed('/v7/tasks/plan',{
+      request_id:'exp_worker_plan_'+(++count),agent_id:a.agent_id,
+      expected_master_epoch:Number(status.epoch),
+      ticket_id:'ticket_owner_worker_expiry',project_id:'project_integration',
+      baseline_sha:'a'.repeat(40),branch_name:'ai/ticket_owner_worker_expiry',
+      title:'Bounded expired worker recovery',description:'Owner review after worker lease expires',
+      risk:'LOW',write_scopes:['src/worker-expiry.ts'],
+      acceptance_criteria:['Task cannot be reassigned before manual reconciliation']});
+    assert.equal(expirePlan.code,200,JSON.stringify(expirePlan.body));
+    const expLease=await d.signed('/v7/tasks/claim',{
+      request_id:'exp_worker_claim_'+(++count),agent_id:d.agent_id,
+      ticket_id:'ticket_owner_worker_expiry',expected_master_epoch:Number(status.epoch)});
+    assert.equal(expLease.code,200,JSON.stringify(expLease.body));
+    const expCheckpointBody={
+      request_id:'exp_worker_checkpoint_'+(++count),agent_id:d.agent_id,
+      ticket_id:'ticket_owner_worker_expiry',lease_id:expLease.body.lease_id,
+      expected_master_epoch:Number(status.epoch),
+      summary:'Evidence retained for Owner after lease expiry',
+      next_action:'Do not reassign until externally reviewed'};
+    const expCheckpoint=await d.signed('/v7/tasks/checkpoint',expCheckpointBody);
+    assert.equal(expCheckpoint.code,200,JSON.stringify(expCheckpoint.body));
+    const unauthorizedExpired=await fetch(base+'/v7/owner/worker-expiry');
+    assert.equal(unauthorizedExpired.status,401);
+    const currentExpired=await fetch(base+'/v7/owner/worker-expiry',{
+      headers:{authorization:'Bearer '+admin}});
+    assert.equal(currentExpired.status,200);
+    const currentView=await currentExpired.json() as any;
+    assert.equal(currentView.read_only,true);
+    assert.equal(currentView.automatic_reassignment_allowed,false);
+    assert.equal(currentView.tickets.some((t:any)=>
+      t.ticket_id==='ticket_owner_worker_expiry'),false);
+    const prematureQuarantine=await post('/v7/owner/command',{
+      request_id:'exp_worker_premature_'+(++count),
+      command:'QUARANTINE_EXPIRED_WORKER',payload:{
+        ticket_id:'ticket_owner_worker_expiry',
+        expected_master_epoch:Number(status.epoch),
+        reason:'Owner attempted quarantine before worker lease expired'}},admin);
+    assert.equal(prematureQuarantine.code,409,JSON.stringify(prematureQuarantine.body));
+    assert.equal(prematureQuarantine.body.error_code,'WORKER_LEASE_NOT_EXPIRED');
+    const expiryDb=await mysql.createConnection({host:'127.0.0.1',
+      port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,
+      password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+    try{
+      await expiryDb.query('UPDATE v7_leases '+
+        'SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 2 SECOND) '+
+        'WHERE ticket_id=?',['ticket_owner_worker_expiry']);
+      const observed=await fetch(base+'/v7/owner/worker-expiry',{
+        headers:{authorization:'Bearer '+admin}});
+      assert.equal(observed.status,200);
+      const snapshot=await observed.json() as any;
+      assert.equal(snapshot.master_live,true);
+      const candidate=snapshot.tickets.find((t:any)=>
+        t.ticket_id==='ticket_owner_worker_expiry');
+      assert.ok(candidate,'Expired worker must be visible to Owner');
+      assert.equal(candidate.manual_quarantine_eligible,true);
+      assert.equal(candidate.status,'CHECKPOINTED');
+      const [unchanged]:any=await expiryDb.query(
+        'SELECT status,version FROM v7_tickets WHERE ticket_id=?',
+        ['ticket_owner_worker_expiry']);
+      assert.equal(unchanged[0].status,'CHECKPOINTED');
+      assert.equal(Number(unchanged[0].version),Number(expCheckpoint.body.version),
+        'Read-only Owner GET cannot change task status or version');
+      const oldWorkerDenied=await d.signed('/v7/tasks/checkpoint',expCheckpointBody);
+      assert.equal(oldWorkerDenied.code,409);
+      assert.equal(oldWorkerDenied.body.error_code,'WORKER_LEASE_EXPIRED');
+      const incorrectEpoch=await post('/v7/owner/command',{
+        request_id:'exp_worker_wrong_epoch_'+(++count),
+        command:'QUARANTINE_EXPIRED_WORKER',payload:{
+          ticket_id:'ticket_owner_worker_expiry',
+          expected_master_epoch:Number(status.epoch)+1,
+          reason:'Owner must refuse a stale or invented Master epoch'}},admin);
+      assert.equal(incorrectEpoch.code,409);
+      assert.equal(incorrectEpoch.body.error_code,'WORKER_QUARANTINE_STALE_EPOCH');
+      const quarantinePayload={
+        ticket_id:'ticket_owner_worker_expiry',
+        expected_master_epoch:Number(status.epoch),
+        reason:'Owner reviewed expiry, retained checkpoint and queued external Git proof'};
+      const quarantineRequest={
+        request_id:'exp_worker_quarantine_'+(++count),
+        command:'QUARANTINE_EXPIRED_WORKER',payload:quarantinePayload};
+      const quarantined=await post('/v7/owner/command',quarantineRequest,admin);
+      assert.equal(quarantined.code,200,JSON.stringify(quarantined.body));
+      assert.equal(quarantined.body.state.status,'RECONCILIATION_REQUIRED');
+      assert.equal(quarantined.body.state.old_lease_revoked,true);
+      assert.equal(quarantined.body.state.checkpoint_preserved,true);
+      assert.equal(quarantined.body.state.automatic_reassignment_allowed,false);
+      const repeatedQuarantine=await post('/v7/owner/command',quarantineRequest,admin);
+      assert.deepEqual(repeatedQuarantine,quarantined,
+        'Lost Owner response returns exact original idempotent quarantine receipt');
+      const [quarantineRows]:any=await expiryDb.query(
+        'SELECT t.status,t.version,l.revoked FROM v7_tickets t '+
+        'JOIN v7_leases l ON l.ticket_id=t.ticket_id WHERE t.ticket_id=?',
+        ['ticket_owner_worker_expiry']);
+      assert.equal(quarantineRows[0].status,'RECONCILIATION_REQUIRED');
+      assert.equal(Number(quarantineRows[0].revoked),1);
+      assert.equal(Number(quarantineRows[0].version),
+        Number(expCheckpoint.body.version)+1);
+      const [checkpointRows]:any=await expiryDb.query(
+        'SELECT COUNT(*) n FROM v7_checkpoints WHERE ticket_id=?',
+        ['ticket_owner_worker_expiry']);
+      assert.equal(Number(checkpointRows[0].n),1,'Checkpoint evidence retained');
+      const refusedRequeue=await post('/v7/owner/command',{
+        request_id:'exp_worker_no_remote_proof_'+(++count),
+        command:'RECONCILE_TICKET',payload:{ticket_id:'ticket_owner_worker_expiry',
+          reason:'Owner must verify remote Git side effects before reopening',
+          remote_checked:false}},admin);
+      assert.equal(refusedRequeue.code,409,JSON.stringify(refusedRequeue.body));
+      assert.equal(refusedRequeue.body.error_code,'REMOTE_RECONCILIATION_REQUIRED');
+      const replayAfterQuarantine=await d.signed('/v7/tasks/checkpoint',expCheckpointBody);
+      assert.notEqual(replayAfterQuarantine.code,200,
+        'Old worker cannot reuse a saved checkpoint ACK after Owner quarantine');
+      const reviewedRequeue=await owner('RECONCILE_TICKET',{
+        ticket_id:'ticket_owner_worker_expiry',
+        reason:'Disposable CI: manually reviewed original lease and external Git side effects',
+        remote_checked:true});
+      assert.equal(reviewedRequeue.state.status,'READY');
+      const expAfter=await fetch(base+'/v7/owner/worker-expiry',{
+        headers:{authorization:'Bearer '+admin}});
+      const afterView=await expAfter.json() as any;
+      assert.equal(afterView.tickets.some((t:any)=>
+        t.ticket_id==='ticket_owner_worker_expiry'),false);
+    }finally{await expiryDb.end();}
     const claimPayload={request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'};
     const claim=await b.signed('/v7/tasks/claim',claimPayload);
