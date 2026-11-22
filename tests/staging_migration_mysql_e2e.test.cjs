@@ -6,6 +6,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {rehearsal}=require('../scripts/ops/staging-migration-rehearsal.cjs');
+const {verifyPostV8}=require('../scripts/ops/staging-v8-postcheck.cjs');
 const {hash}=require('../scripts/ops/versioned-migration-plan.cjs');
 const enabled=process.env.SUTRADHAR_RUN_STAGING_MIGRATION_E2E==='1';
 const sentinel=process.env.SUTRADHAR_STAGING_REHEARSAL_TEST_SENTINEL==='disposable-only';
@@ -62,6 +63,15 @@ test('REAL MySQL 8: staging-only v8 rehearsal persists non-retryable audit after
     assert.equal(payload.status,'DDL_COMPLETE_UNVERIFIED');
     await assert.rejects(rehearsal({db:staging,schemaText,manifest,intent,
       readFile:()=>sql}),/REQUIRES_EXACT_V7_BASELINE/);
+    const postcheckIntent={target:DB,source:process.env.DB_NAME,approved:'yes',
+      confirmTarget:DB,expectedMigrationSha:sha};
+    const proof=await verifyPostV8({db:staging,manifest,schemaText,
+      intent:postcheckIntent,readFile:()=>sql});
+    assert.equal(proof.accepted,true);
+    assert.equal(proof.production_approved,false);
+    await staging.query('DROP INDEX idx_nonce_received_at ON v7_nonces');
+    await assert.rejects(verifyPostV8({db:staging,manifest,schemaText,
+      intent:postcheckIntent,readFile:()=>sql}),/STAGING_V8_INDEX_DRIFT/);
     const [after]=await staging.query('SELECT COUNT(*) AS n FROM v7_migration_audit');
     assert.equal(Number(after[0].n),1);
   }finally{

@@ -295,3 +295,27 @@ Beyond worker claims and election, new QA receipts, Git reservations, change pro
 ## 22 November 2026 — Protected signer handoff parity (code-only)
 
 Release workflow and production packager now share all four required distinct Owner-managed Ed25519 public trust roots; static CI tests refuse workflow omissions or accidental signer reuse. No production signing was performed. G3 remains BLOCKED until real Authenticode certificate, protected GitHub environment, immutable reviewed stable tag and independent installer evidence are supplied; G6 remains BLOCKED until physical update/rollback acceptance.
+
+## 23 November 2026 — Independent read-only v8 migration metadata postcheck
+
+A narrow, **read-only** operator postcheck now checks the exact reviewed manifest SHA,
+v7 baseline source hash, connected staging DB name, complete `[7,8]` version history,
+the non-retryable v8 migration audit STARTED/DDL_COMPLETE_UNVERIFIED pair, and the
+actual nonunique `v7_nonces.idx_nonce_received_at(received_at)` index metadata.
+This closes the gap where a successful DDL rehearsal alone could be confused with
+independent inspection of its index. It does **not** verify stored data, index query
+plan/performance, backup receipt authenticity, production compatibility or recovery.
+
+On a trusted operator workstation with an independently provisioned **read-only**
+staging MySQL login, set `DB_NAME` to the separate source DB name, set
+`SUTRADHAR_STAGING_DB_NAME` to the exact dedicated staging DB,
+`SUTRADHAR_STAGING_V8_POSTCHECK_APPROVED=yes`,
+`SUTRADHAR_STAGING_V8_POSTCHECK_CONFIRM_DB` to the same staging name,
+and `SUTRADHAR_EXPECTED_V8_MIGRATION_SHA256` to the independently reviewed
+64-character migration hash. Supply `DB_HOST`, `DB_PORT`, `DB_USER`,
+`DB_PASSWORD` through a private credentials manager and run
+`npm run ops:verify-staging-v8`. A passing read-only check is a metadata
+snapshot only, never a go-live or migration authorization. Do not operate it on
+production. Disposable real-MySQL CI now validates an intact v8 index and rejects
+a deliberately removed index; separate pure tests reject version, audit, identity
+and index drift. Real Hostinger migration/restore and G0–G7 remain **HOLD**.
