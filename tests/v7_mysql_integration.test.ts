@@ -1340,6 +1340,94 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(candidateRows[0].status,'RECONCILIATION_REQUIRED');
       assert.equal(candidateRows[0].candidate_head_sha,'b'.repeat(40));
       assert.equal(candidateRows[0].candidate_tree_sha,'c'.repeat(40));
+      // After failover, a frozen candidate cannot be requeued as fresh work.
+      // Independent QA can upload device-signed proof, but a SECOND Owner
+      // recovery review is required after ordinary QA evidence approval.
+      const unsafeQaProof=c.signedQaPackage({
+        ticketId:'ticket_qa_test',workerAgentId:b.agent_id,
+        baseline:'a'.repeat(40),head:'b'.repeat(40),tree:'c'.repeat(40)});
+      const gitUnsafeQa=await c.signed('/v7/tasks/qa-evidence',unsafeQaProof);
+      assert.equal(gitUnsafeQa.code,423);
+      assert.equal(gitUnsafeQa.body.error_code,
+        'GIT_PUBLICATION_REQUIRES_SEPARATE_RECOVERY');
+      const recoveryQaProof=c.signedQaPackage({
+        ticketId:'ticket_drain_inflight',workerAgentId:d.agent_id,
+        baseline:'a'.repeat(40),head:'b'.repeat(40),tree:'c'.repeat(40)});
+      const uploaded=await c.signed('/v7/tasks/qa-evidence',recoveryQaProof);
+      assert.equal(uploaded.code,200,JSON.stringify(uploaded.body));
+      assert.equal(uploaded.body.qa_approved,false);
+      assert.equal(uploaded.body.qa_receipt_submitted,false);
+      const qaReviewId=uploaded.body.review_proposal_id;
+      const unsignedRecovery=await post('/v7/owner/command',{
+        request_id:'restqa_missing_approval_'+(++count),
+        command:'RESTORE_QA_CANDIDATE',payload:{
+          ticket_id:'ticket_drain_inflight',review_proposal_id:qaReviewId,
+          expected_master_epoch:Number(fallback.body.epoch),
+          candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40),
+          owner_confirmed_recovery_review:true,
+          reason:'Do not restore until independent Owner review has approved QA'}},admin);
+      assert.equal(unsignedRecovery.code,403,JSON.stringify(unsignedRecovery.body));
+      assert.equal(unsignedRecovery.body.error_code,'QA_RECOVERY_REVIEW_NOT_APPROVED');
+      const qaOwnerReview=await owner('APPROVE_QA_EVIDENCE',{
+        review_proposal_id:qaReviewId,
+        review_note:'Independently checked signed QA candidate after failover',
+        device_identity_confirmed:true,runner_provenance_reviewed:true,
+        test_evidence_reviewed:true,independence_verified:true});
+      assert.equal(qaOwnerReview.state.state,'APPROVED');
+      const qaRecoveryObservation=await c.signed(
+        '/v7/tasks/qa-review/'+qaReviewId,undefined,'GET');
+      assert.equal(qaRecoveryObservation.code,200,
+        JSON.stringify(qaRecoveryObservation.body));
+      assert.equal(qaRecoveryObservation.body.task_status,'RECONCILIATION_REQUIRED');
+      assert.equal(qaRecoveryObservation.body.manual_next_action,
+        'OWNER_RESTORE_QA_CANDIDATE_BEFORE_RECEIPT');
+      const beforeRestoreReceipt=await c.signed('/v7/tasks/qa-receipt',{
+        request_id:'qa_receipt_blocked_restore_'+(++count),
+        agent_id:c.agent_id,ticket_id:'ticket_drain_inflight',
+        candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40),
+        review_proposal_id:qaReviewId,
+        evidence_sha256:uploaded.body.evidence_sha256,
+        evidence_ref:'sha256:'+uploaded.body.evidence_sha256,passed:true});
+      assert.equal(beforeRestoreReceipt.code,409);
+      const recoveryPayload={ticket_id:'ticket_drain_inflight',
+        review_proposal_id:qaReviewId,
+        expected_master_epoch:Number(fallback.body.epoch),
+        candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40),
+        owner_confirmed_recovery_review:true,
+        reason:'Owner independently reviewed exact immutable QA proof and Master recovery'};
+      const wrongCandidate=await post('/v7/owner/command',{
+        request_id:'restqa_wrong_candidate_'+(++count),
+        command:'RESTORE_QA_CANDIDATE',
+        payload:{...recoveryPayload,candidate_head_sha:'f'.repeat(40)}},admin);
+      assert.equal(wrongCandidate.code,409);
+      assert.equal(wrongCandidate.body.error_code,'QA_RECOVERY_CANDIDATE_CHANGED');
+      const recoveryCommand={request_id:'restqa_original_intent_'+(++count),
+        command:'RESTORE_QA_CANDIDATE',payload:recoveryPayload};
+      const restored=await post('/v7/owner/command',recoveryCommand,admin);
+      assert.equal(restored.code,200,JSON.stringify(restored.body));
+      assert.equal(restored.body.state.status,'SUBMITTED_FOR_REVIEW');
+      assert.equal(restored.body.state.old_worker_lease_restored,false);
+      assert.equal(restored.body.state.qa_receipt_submitted,false);
+      assert.equal(restored.body.state.git_published,false);
+      assert.equal(restored.body.state.owner_recovery_ack_sent,false);
+      const replayRestored=await post('/v7/owner/command',recoveryCommand,admin);
+      assert.deepEqual(replayRestored,restored,
+        'Lost Owner reply must return original receipt, no duplicate restoration');
+      const recoveredQaReceipt=await c.signed('/v7/tasks/qa-receipt',{
+        request_id:'qa_receipt_after_restore_'+(++count),
+        agent_id:c.agent_id,ticket_id:'ticket_drain_inflight',
+        candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40),
+        review_proposal_id:qaReviewId,
+        evidence_sha256:uploaded.body.evidence_sha256,
+        evidence_ref:'sha256:'+uploaded.body.evidence_sha256,passed:true});
+      assert.equal(recoveredQaReceipt.code,200,JSON.stringify(recoveredQaReceipt.body));
+      assert.equal(recoveredQaReceipt.body.status,'INTEGRATING');
+      const restoredDetail=await c.signed('/v7/tasks/detail/ticket_drain_inflight',
+        undefined,'GET');
+      assert.equal(restoredDetail.code,200);
+      assert.equal(restoredDetail.body.status,'INTEGRATING');
+      assert.equal(restoredDetail.body.candidate_head_sha,'b'.repeat(40));
+      assert.equal(restoredDetail.body.candidate_tree_sha,'c'.repeat(40));
       // Ordinary Owner ticket reconciliation must NEVER silently requeue a
       // job with uncertain external Git effects.
       const unsafeReset=await post('/v7/owner/command',{
