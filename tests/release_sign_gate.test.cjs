@@ -26,3 +26,30 @@ test('release signing verifies Authenticode with trusted absolute OS binary and 
   assert.match(text,/-EncodedCommand/);
   assert.doesNotMatch(text,/cp\.spawnSync\('powershell\.exe'/);
 });
+
+test('protected signing workflow supplies every required independent trust root',()=>{
+  const fs=require('node:fs');
+  const workflow=fs.readFileSync(path.resolve(__dirname,
+    '../.github/workflows/owner-desktop-sign.yml'),'utf8');
+  const packer=fs.readFileSync(script,'utf8');
+  const expected=[
+    'SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64',
+    'SUTRADHAR_INSTALL_EXECUTION_PUBLIC_KEY_PEM_B64',
+    'SUTRADHAR_MAINTENANCE_RELEASE_PUBLIC_KEY_PEM_B64',
+    'SUTRADHAR_FAILURE_REVIEW_PUBLIC_KEY_PEM_B64'];
+  for(const name of expected){
+    assert.match(packer,new RegExp("required\\('"+name+"'\\)"));
+    assert.ok(workflow.includes(name+': $'+'{{ vars.'+name+' }}'),
+      'Owner-controlled protected variable must reach pack:release: '+name);
+    assert.ok(!workflow.includes(name+': $'+'{{ secrets.'+name+' }}'),
+      'Public trust roots are protected reviewed variables, never private signing secrets');
+  }
+  assert.match(packer,/trustRoots\.has\(fingerprint\)/);
+  assert.match(packer,/trustRoots\.add\(fingerprint\)/);
+  assert.ok(workflow.includes('environment:'));
+  assert.ok(workflow.includes('name: sutradhar-desktop-signing'));
+  assert.ok(workflow.includes("Only the reviewed main workflow may sign"));
+  assert.ok(workflow.includes("READY_BY_OWNER"));
+  assert.ok(workflow.includes("APPROVE SIGNING WITHOUT PUBLISHING"));
+  assert.doesNotMatch(workflow,/actions\/upload-artifact|--publish[ =]always/i);
+});

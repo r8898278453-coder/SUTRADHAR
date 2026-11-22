@@ -45,6 +45,7 @@ function main(){
   let trustKey;
   try{trustKey=crypto.createPublicKey(trustPem);}catch{fail('Owner Ed25519 update verification public key invalid');}
   if(trustKey.asymmetricKeyType!=='ed25519')fail('Owner update signing public key must be Ed25519');
+  const trustRoots=new Set([trustKey.export({format:'der',type:'spki'}).toString('hex')]);
   // Separate public trust roots for interactive installation and post-maintenance
   // release. No private Ed25519 key is ever included in the Desktop package.
   const installerExecutionPem=Buffer.from(
@@ -62,6 +63,10 @@ function main(){
     }
     if(publicKey.asymmetricKeyType!=='ed25519')
       fail('Owner '+name+' public key must be Ed25519');
+    const fingerprint=publicKey.export({format:'der',type:'spki'}).toString('hex');
+    if(trustRoots.has(fingerprint))
+      fail('Owner '+name+' must use a distinct Ed25519 signing trust root');
+    trustRoots.add(fingerprint);
   }
   const cert=process.env.WIN_CSC_LINK||process.env.CSC_LINK;
   const password=process.env.WIN_CSC_KEY_PASSWORD||process.env.CSC_KEY_PASSWORD;
