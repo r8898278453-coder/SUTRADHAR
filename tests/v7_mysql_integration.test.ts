@@ -756,7 +756,12 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       undefined,'GET');
     assert.notEqual(otherNodeReview.code,200,'Other device cannot inspect QA review');
     const unsignedReview=await fetch(base+'/v7/tasks/qa-review/'+reviewedId);
-    assert.equal(unsignedReview.status,401);
+    // Missing x-sutradhar-node is rejected by requireId() before signature
+    // verification; the API uses HTTP 400 for this malformed request.
+    assert.equal(unsignedReview.status,400);
+    const unsignedResult=await unsignedReview.json() as any;
+    assert.notEqual(unsignedResult.review_proposal_id,reviewedId,
+      'Unauthenticated response must not expose QA review evidence');
     const anonQaQueue=await fetch(base+'/v7/owner/qa-reviews');
     assert.equal(anonQaQueue.status,401,'QA review queue is Owner-only');
     const ownerQaQueue=await fetch(base+'/v7/owner/qa-reviews',{
