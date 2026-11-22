@@ -1578,6 +1578,20 @@ app.get('/v7/owner/qa-reviews',jsonRoute(async req=>{
       'SELECT proposal_id,ticket_id,justification,created_at '+
       'FROM v7_approvals WHERE kind="QA_EVIDENCE_REVIEW" '+
       'AND state="PENDING" ORDER BY created_at ASC LIMIT 50');
+    // Approved frozen candidates remain visible after leaving the pending
+    // queue. This is metadata only; NEVER return a pass/release or a guessed
+    // restore preflight. The transactional Owner command rechecks every
+    // Git/lease/checkpoint/device grant independently before any mutation.
+    const approved=await rows(c,'SELECT a.proposal_id,a.ticket_id,'+
+      'a.justification,t.worker_agent_id,t.baseline_sha,t.candidate_head_sha,'+
+      't.candidate_tree_sha FROM v7_approvals a '+
+      'JOIN v7_tickets t ON t.ticket_id=a.ticket_id '+
+      'WHERE a.kind="QA_EVIDENCE_REVIEW" AND a.state="APPROVED" '+
+      'AND t.status="RECONCILIATION_REQUIRED" '+
+      'ORDER BY a.resolved_at DESC,a.proposal_id LIMIT 25');
+    const ld=await leader(c,false);
+    const recoveryMasterLive=ld.phase==='RECOVERING'&&!Boolean(ld.paused)&&
+      await approvedMasterLease(c,ld);
     return {reviews:reviews.map(row=>{
       const p=storedQaProof(row.justification,'QA_REVIEW_PROOF_CORRUPT');
       if(qaEvidenceProposalId(p)!==row.proposal_id||p.ticket_id!==row.ticket_id)
@@ -1589,7 +1603,28 @@ app.get('/v7/owner/qa-reviews',jsonRoute(async req=>{
         baseline_sha:p.baseline_sha,evidence_sha256:p.evidence_sha256,
         image_sha256:p.image_sha256,passed:p.passed,
         state:'PENDING',owner_review_required:true};
-    }),qa_approved_automatically:false,integration_performed:false};
+    }),frozen_recovery_reviews:approved.map(row=>{
+      const p=storedQaProof(row.justification,'QA_RECOVERY_LIST_PROOF_CORRUPT');
+      if(qaEvidenceProposalId(p)!==row.proposal_id||
+         p.ticket_id!==row.ticket_id||
+         p.developer_agent_id!==row.worker_agent_id||
+         p.baseline_sha!==row.baseline_sha||
+         p.candidate_head_sha!==row.candidate_head_sha||
+         p.candidate_tree_sha!==row.candidate_tree_sha)
+        fault('QA_RECOVERY_LIST_PROOF_CORRUPT',409);
+      return {review_proposal_id:row.proposal_id,ticket_id:p.ticket_id,
+        qa_agent_id:p.qa_agent_id,developer_agent_id:p.developer_agent_id,
+        node_id:p.node_id,baseline_sha:p.baseline_sha,
+        candidate_head_sha:p.candidate_head_sha,
+        candidate_tree_sha:p.candidate_tree_sha,
+        evidence_sha256:p.evidence_sha256,passed:p.passed,
+        owner_review_state:'APPROVED',task_status:'RECONCILIATION_REQUIRED',
+        owner_restoration_needed:true,restore_preflight_verified:false,
+        automatic_qa_receipt_allowed:false,git_published_verified:false};
+    }),epoch:Number(ld.epoch),phase:ld.phase,
+      recovering_master_live:recoveryMasterLive,read_only:true,
+      qa_approved_automatically:false,automatic_restoration_allowed:false,
+      integration_performed:false};
   });
 }));
 // Signed, device-scoped READ-ONLY view for recovering an uncertain QA upload

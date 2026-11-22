@@ -1448,6 +1448,26 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         device_identity_confirmed:true,runner_provenance_reviewed:true,
         test_evidence_reviewed:true,independence_verified:true});
       assert.equal(qaOwnerReview.state.state,'APPROVED');
+      const anonFrozenQueue=await fetch(base+'/v7/owner/qa-reviews');
+      assert.equal(anonFrozenQueue.status,401,
+        'Frozen device evidence is not exposed without Owner authorization');
+      const pendingRestoreSnapshot=await fetch(base+'/v7/owner/qa-reviews',{
+        headers:{authorization:'Bearer '+admin}});
+      assert.equal(pendingRestoreSnapshot.status,200);
+      const frozenQueue=await pendingRestoreSnapshot.json() as any;
+      assert.equal(frozenQueue.read_only,true);
+      assert.equal(frozenQueue.automatic_restoration_allowed,false);
+      assert.equal(frozenQueue.recovering_master_live,true);
+      assert.equal(frozenQueue.epoch,Number(fallback.body.epoch));
+      const exactFrozen=frozenQueue.frozen_recovery_reviews.find((x:any)=>
+        x.review_proposal_id===qaReviewId);
+      assert.ok(exactFrozen,'Owner queue retains separately approved frozen evidence');
+      assert.equal(exactFrozen.ticket_id,'ticket_drain_inflight');
+      assert.equal(exactFrozen.candidate_head_sha,'b'.repeat(40));
+      assert.equal(exactFrozen.candidate_tree_sha,'c'.repeat(40));
+      assert.equal(exactFrozen.restore_preflight_verified,false,
+        'Dashboard metadata is not restoration approval');
+      assert.equal(exactFrozen.automatic_qa_receipt_allowed,false);
       const qaRecoveryObservation=await c.signed(
         '/v7/tasks/qa-review/'+qaReviewId,undefined,'GET');
       assert.equal(qaRecoveryObservation.code,200,
@@ -1484,6 +1504,13 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(restored.body.state.qa_receipt_submitted,false);
       assert.equal(restored.body.state.git_published,false);
       assert.equal(restored.body.state.owner_recovery_ack_sent,false);
+      const afterOwnerRestoreQueue=await fetch(base+'/v7/owner/qa-reviews',{
+        headers:{authorization:'Bearer '+admin}});
+      assert.equal(afterOwnerRestoreQueue.status,200);
+      const approvedQueueAfter=await afterOwnerRestoreQueue.json() as any;
+      assert.equal(approvedQueueAfter.frozen_recovery_reviews.some((x:any)=>
+        x.review_proposal_id===qaReviewId),false,
+        'An Owner-restored candidate must leave the frozen queue');
       const replayRestored=await post('/v7/owner/command',recoveryCommand,admin);
       assert.deepEqual(replayRestored,restored,
         'Lost Owner reply must return original receipt, no duplicate restoration');
