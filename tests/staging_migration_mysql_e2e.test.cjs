@@ -19,10 +19,13 @@ test('REAL MySQL 8: staging-only v8 rehearsal persists non-retryable audit after
   const admin=await mysql.createConnection(config);
   let staging=null;
   const schemaText=fs.readFileSync(path.resolve(__dirname,'../v7/schema.sql'),'utf8');
-  const sql='ALTER TABLE v7_nodes ADD COLUMN ci_rehearsal_note VARCHAR(80) NULL;\n';
-  const sha=hash(sql),file='v8__ci_rehearsal_note.sql';
-  const root=require('../migrations/manifest.json');
-  const manifest={...root,migrations:[{from_version:7,to_version:8,file,sha256:sha}]};
+  const file='v8__nonce_received_at.sql';
+  const sql=fs.readFileSync(path.resolve(__dirname,'../migrations',file),'utf8');
+  const sha=hash(sql);
+  const manifest=require('../migrations/manifest.json');
+  assert.equal(manifest.migrations.length,1);
+  assert.equal(manifest.migrations[0].file,file);
+  assert.equal(manifest.migrations[0].sha256,sha);
   const intent={target:DB,source:process.env.DB_NAME,approved:'yes',confirmTarget:DB,
     backupReceiptSha:'c'.repeat(64),expectedVersion:8};
   try{
@@ -42,10 +45,13 @@ test('REAL MySQL 8: staging-only v8 rehearsal persists non-retryable audit after
     assert.equal(result.restore_verified,false);
     const [versions]=await staging.query('SELECT version FROM v7_schema_versions ORDER BY version');
     assert.deepEqual(versions.map(x=>Number(x.version)),[7,8]);
-    const [columns]=await staging.query(
-      'SELECT column_name FROM information_schema.columns WHERE table_schema=? AND table_name=? AND column_name=?',
-      [DB,'v7_nodes','ci_rehearsal_note']);
-    assert.equal(columns.length,1);
+    const [indexes]=await staging.query(
+      'SELECT index_name,column_name,non_unique FROM information_schema.statistics '+
+      'WHERE table_schema=? AND table_name=? AND index_name=?',
+      [DB,'v7_nonces','idx_nonce_received_at']);
+    assert.equal(indexes.length,1);
+    assert.equal(indexes[0].column_name,'received_at');
+    assert.equal(Number(indexes[0].non_unique),1);
     const [audit]=await staging.query(
       'SELECT source_sha256,record_counts,destination_counts FROM v7_migration_audit WHERE migration_id=?',
       ['schema_version_8']);

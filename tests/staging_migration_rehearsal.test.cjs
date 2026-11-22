@@ -36,8 +36,11 @@ test('missing reviewed v8 migration cannot change database even with operator in
     if(sql.startsWith('SELECT RELEASE_LOCK'))return [[{released:1}]];
     throw Error('Unexpected mutation '+sql);
   }};
-  await assert.rejects(rehearsal({db,manifest,readFile:()=>'',schemaText:schema,intent}),
-    /MIGRATION_TARGET_NOT_EXPLICIT/);
+  // The committed v8 migration exists, but an operator targeting a manifest
+  // with NO explicitly reviewed v8 approval remains forbidden to mutate.
+  const unreviewed={...manifest,migrations:[]};
+  await assert.rejects(rehearsal({db,manifest:unreviewed,
+    readFile:()=>'',schemaText:schema,intent}),/MIGRATION_TARGET_NOT_EXPLICIT/);
   assert.equal(touched.some(x=>/^(?:ALTER|CREATE|INSERT|UPDATE|DELETE)/.test(x)),false);
   assert.equal(touched.some(x=>x.startsWith('SELECT RELEASE_LOCK')),true);
 });
