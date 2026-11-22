@@ -37,7 +37,11 @@ function classifyObservedAgentExit({
   }
   // A shutdown request is only evidence after kill() returned true for
   // THIS tracked child and its actual exit callback was observed.
-  if(shuttingDown&&appStopRequested&&matchingStopObserved)return applicationResult;
+  // No CLEAN_EXIT fallback while shutdown is in progress or an app-stop
+  // request was claimed. A zero exit could race an unconfirmed quit.
+  if(shuttingDown||appStopRequested)
+    return shuttingDown&&appStopRequested&&matchingStopObserved?
+      applicationResult:holdResult;
   // A child terminating naturally with exit 0 and no signal is observed.
   if(exitCode===0&&signal===null)return cleanResult;
   return holdResult;
