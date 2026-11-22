@@ -640,11 +640,11 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         reason:'Owner attempted quarantine before worker lease expired'}},admin);
     assert.equal(prematureQuarantine.code,409,JSON.stringify(prematureQuarantine.body));
     assert.equal(prematureQuarantine.body.error_code,'WORKER_LEASE_NOT_EXPIRED');
-    const expiryDb=await mysql.createConnection({host:'127.0.0.1',
+    const ownerExpiryDb=await mysql.createConnection({host:'127.0.0.1',
       port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,
       password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
     try{
-      await expiryDb.query('UPDATE v7_leases '+
+      await ownerExpiryDb.query('UPDATE v7_leases '+
         'SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 2 SECOND) '+
         'WHERE ticket_id=?',['ticket_owner_worker_expiry']);
       const observed=await fetch(base+'/v7/owner/worker-expiry',{
@@ -657,7 +657,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.ok(candidate,'Expired worker must be visible to Owner');
       assert.equal(candidate.manual_quarantine_eligible,true);
       assert.equal(candidate.status,'CHECKPOINTED');
-      const [unchanged]:any=await expiryDb.query(
+      const [unchanged]:any=await ownerExpiryDb.query(
         'SELECT status,version FROM v7_tickets WHERE ticket_id=?',
         ['ticket_owner_worker_expiry']);
       assert.equal(unchanged[0].status,'CHECKPOINTED');
@@ -690,7 +690,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       const repeatedQuarantine=await post('/v7/owner/command',quarantineRequest,admin);
       assert.deepEqual(repeatedQuarantine,quarantined,
         'Lost Owner response returns exact original idempotent quarantine receipt');
-      const [quarantineRows]:any=await expiryDb.query(
+      const [quarantineRows]:any=await ownerExpiryDb.query(
         'SELECT t.status,t.version,l.revoked FROM v7_tickets t '+
         'JOIN v7_leases l ON l.ticket_id=t.ticket_id WHERE t.ticket_id=?',
         ['ticket_owner_worker_expiry']);
@@ -698,7 +698,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(Number(quarantineRows[0].revoked),1);
       assert.equal(Number(quarantineRows[0].version),
         Number(expCheckpoint.body.version)+1);
-      const [checkpointRows]:any=await expiryDb.query(
+      const [checkpointRows]:any=await ownerExpiryDb.query(
         'SELECT COUNT(*) n FROM v7_checkpoints WHERE ticket_id=?',
         ['ticket_owner_worker_expiry']);
       assert.equal(Number(checkpointRows[0].n),1,'Checkpoint evidence retained');
@@ -722,7 +722,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       const afterView=await expAfter.json() as any;
       assert.equal(afterView.tickets.some((t:any)=>
         t.ticket_id==='ticket_owner_worker_expiry'),false);
-    }finally{await expiryDb.end();}
+    }finally{await ownerExpiryDb.end();}
     const claimPayload={request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'};
     const claim=await b.signed('/v7/tasks/claim',claimPayload);
