@@ -11,6 +11,11 @@ const H=/^[0-9a-f]{64}$/;
 const S=/^[0-9a-f]{40}$/;
 const NODE=/^node_[0-9a-f]{32}$/;
 const WAVE=/^wave_[a-z0-9][a-z0-9_-]{2,59}$/;
+const SIG=/^[A-Za-z0-9+/]{86}==$/;
+const OFFER_FIELDS=['application','channel','expires_ms','filename','installer_bytes',
+  'installer_sha256','issued_ms','protocol','publisher_subject','rollout',
+  'schema','source_sha','type','version'];
+const ROLLBACK_FIELDS=[...OFFER_FIELDS,'owner_emergency_rollback_approved'].sort();
 function parseVersion(value){
   if(typeof value!=='string'||!V.test(value)||value.length>24)
     throw Error('UPDATE_STABLE_VERSION_REQUIRED');
@@ -71,9 +76,18 @@ function verifyOffer({envelope,pinnedPublicKeyPem,installerPath,currentVersion,
     if(key.asymmetricKeyType!=='ed25519')return deny('UPDATE_SIGNING_KEY_INVALID');
     const body=envelope?.signed;
     const sig=envelope?.signature_base64;
-    if(!body||typeof body!=='object'||Array.isArray(body)||typeof sig!=='string'||
-      sig.length>256||!crypto.verify(null,Buffer.from(JSON.stringify(body)),
-        key,Buffer.from(sig,'base64')))return deny('UPDATE_SIGNATURE_INVALID');
+    if(!envelope||typeof envelope!=='object'||Array.isArray(envelope)||
+       Object.keys(envelope).sort().join('|')!=='signature_base64|signed'||
+       !body||typeof body!=='object'||Array.isArray(body)||
+       typeof sig!=='string'||!SIG.test(sig)||
+       Buffer.from(sig,'base64').toString('base64')!==sig||
+       !crypto.verify(null,Buffer.from(JSON.stringify(body)),
+         key,Buffer.from(sig,'base64')))return deny('UPDATE_SIGNATURE_INVALID');
+    // An Owner-signed update may not carry an emergency rollback approval
+    // flag or any future action with ambiguous cross-parser interpretation.
+    const allowedFields=kind==='rollback'?ROLLBACK_FIELDS:OFFER_FIELDS;
+    if(Object.keys(body).sort().join('|')!==allowedFields.join('|'))
+      return deny('UPDATE_SIGNED_FIELDS_INVALID');
     // v1 offers lacked recipient scoping and must never authorize a production PC.
     if(body.schema!==2||body.application!=='desktop'||body.channel!=='stable'||
       body.type!==kind||typeof body.version!=='string'||

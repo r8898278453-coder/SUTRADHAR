@@ -36,6 +36,14 @@ test('Owner-signed update offer rejects forged, expired, wrong protocol and alte
     const envelope=wrap(signed);
     assert.equal(check(envelope).accepted,true);
     assert.equal(check(envelope).wave_id,'wave_pilot01');
+    assert.equal(check({...envelope,signature_base64:
+      envelope.signature_base64.slice(0,-2)+'==='.slice(0,3)}).error_code,
+      'UPDATE_SIGNATURE_INVALID','malformed padding must never be normalized');
+    assert.equal(check({...envelope,extra:true}).error_code,'UPDATE_SIGNATURE_INVALID');
+    assert.equal(check(wrap({...signed,automatic_install:true})).error_code,
+      'UPDATE_SIGNED_FIELDS_INVALID');
+    assert.equal(check(wrap({...signed,owner_emergency_rollback_approved:true})).error_code,
+      'UPDATE_SIGNED_FIELDS_INVALID');
     assert.equal(check(envelope,{nodeId:'node_'+('b'.repeat(32))}).error_code,
       'UPDATE_DEVICE_NOT_IN_OWNER_WAVE');
     assert.equal(check(envelope,{nodeId:null}).error_code,
@@ -85,6 +93,11 @@ test('rollback is separately signed, cannot be forced by normal update offer',()
       protocol:7,publisherSubject:'CN=SUTRADHAR Verified',
       now,rolloutApproved:true,kind:'rollback'};
     assert.equal(verifyOffer(opts).accepted,true);
+    const extra={...s,unknown_delivery_instruction:'execute now'};
+    assert.equal(verifyOffer({...opts,envelope:{signed:extra,
+      signature_base64:crypto.sign(null,Buffer.from(JSON.stringify(extra)),
+        keys.privateKey).toString('base64')}}).error_code,
+      'UPDATE_SIGNED_FIELDS_INVALID');
     assert.equal(verifyOffer({...opts,nodeId:'node_'+('a'.repeat(32))}).error_code,
       'UPDATE_DEVICE_NOT_IN_OWNER_WAVE');
     assert.equal(verifyOffer({...opts,envelope:{...envelope,
