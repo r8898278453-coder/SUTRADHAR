@@ -82,6 +82,45 @@ async function signedPost({origin,agentId,operation,body,signer,fetcher}){
   }
   return result;
 }
+// Signed, bounded, read-only Owner QA decision and exact Central receipt
+// observation. A local journal and/or successful POST is NOT sufficient proof.
+async function readOwnerReview({origin,agentId,ticketId,signer,fetcher,context}){
+  const uri='/v7/tasks/qa-review/'+context.review_proposal_id;
+  if(!/^\/v7\/tasks\/qa-review\/qaev_[a-f0-9]{64}$/.test(uri)||
+     typeof signer.signWorkerReadOnly!=='function')
+    fail('QA_RECEIPT_READONLY_SIGNER_UNAVAILABLE');
+  const headers=signer.signWorkerReadOnly({method:'GET',uri,agent_id:agentId});
+  const response=await fetcher(origin+uri,{
+    method:'GET',headers:{...headers,Accept:'application/json'},
+    redirect:'error',credentials:'omit',cache:'no-store',
+    signal:AbortSignal.timeout(12000)});
+  const p=await boundedJson(response);
+  if(!response.ok)fail('QA_RECEIPT_REVIEW_UNAVAILABLE');
+  if(!p||p.review_proposal_id!==context.review_proposal_id||
+     p.ticket_id!==ticketId||p.qa_agent_id!==agentId||
+     p.candidate_head_sha!==context.candidate_head_sha||
+     p.candidate_tree_sha!==context.candidate_tree_sha||
+     p.evidence_sha256!==context.evidence_sha256||
+     !['PENDING','APPROVED','DENIED'].includes(p.owner_review_state)||
+     typeof p.qa_receipt_recorded!=='boolean'||
+     p.owner_review_required!==true||
+     p.automatic_qa_approval_allowed!==false||
+     p.automatic_qa_receipt_allowed!==false||p.git_published!==false)
+    fail('QA_RECEIPT_REVIEW_PROOF_MISMATCH');
+  if(p.qa_receipt_recorded){
+    if(p.owner_review_state!=='APPROVED'||
+       !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(p.qa_receipt_id||'')||
+       p.task_status!==(context.passed?'INTEGRATING':'TEST_FAILED')||
+       p.manual_next_action!=='RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY')
+      fail('QA_RECEIPT_REVIEW_PROOF_MISMATCH');
+  }else if(p.qa_receipt_id!==null||
+    p.task_status!=='SUBMITTED_FOR_REVIEW'||
+    p.manual_next_action!==(p.owner_review_state==='PENDING'?
+      'WAIT_FOR_OWNER_REVIEW':p.owner_review_state==='DENIED'?
+      'STOP_OWNER_REVIEW_DENIED':'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE'))
+    fail('QA_RECEIPT_REVIEW_PROOF_MISMATCH');
+  return p;
+}
 async function verifiedLocal({origin,agentId,ticketId,signer,dir,fetcher,
   allowReceiptReplay=false}){
   const raw=readFile(path.join(dir,'qa_result_'+ticketId+'.json'),16*1024);
@@ -208,12 +247,16 @@ async function submitOwnerReviewedQaReceipt({origin,agentId,ticketId,signer,
      !ID.test(uploaded.body.request_id||'')||
      !uploaded.body.request_id.startsWith('qaevidence_'))
     fail('QA_RECEIPT_PREVIOUS_UPLOAD_REQUIRED');
+  // A human Owner's decision is independent of a durable QA receipt.
+  // Reject pending or denied review BEFORE inventing a receipt request ID.
+  const review=await readOwnerReview({origin,agentId,ticketId,signer,
+    fetcher,context:v.context});
+  if(review.owner_review_state==='PENDING')
+    fail('QA_RECEIPT_OWNER_REVIEW_PENDING');
+  if(review.owner_review_state==='DENIED')
+    fail('QA_RECEIPT_OWNER_REVIEW_DENIED');
   const prefix='qa_central_receipt_'+ticketId;
   const pending=path.join(dir,prefix+'_pending.json');
-  if(v.remote.status!=='SUBMITTED_FOR_REVIEW'&&
-     !fs.existsSync(pending)&&
-     !fs.existsSync(path.join(dir,prefix+'_receipt.json')))
-    fail('QA_RECEIPT_CENTRAL_ALREADY_CHANGED');
   const completed=path.join(dir,prefix+'_receipt.json');
   const known=fs.existsSync(pending)?pending:
     fs.existsSync(completed)?completed:null;
@@ -231,11 +274,21 @@ async function submitOwnerReviewedQaReceipt({origin,agentId,ticketId,signer,
     evidence_ref:'sha256:'+v.evidenceSha,
     passed:v.report.test_passed,review_proposal_id:v.proposalId};
   const journalBody={request_id:requestId};
+  if(review.qa_receipt_recorded){
+    // A lost ACK after Central commit is UNKNOWN locally. Require an existing
+    // durable local intent and reconcile via GET, with ZERO repeated POSTs.
+    if(!known)fail('QA_RECEIPT_CENTRAL_RECORDED_WITHOUT_LOCAL_INTENT');
+    const j=journal(dir,ticketId,'receipt',v.context,journalBody);
+    if(!j.already)complete(j,v.context,journalBody);
+    return {accepted:true,already_submitted:true,reconciled_from_central:true,
+      receipt_id:review.qa_receipt_id,ticket_id:ticketId,
+      status:review.task_status,qa_receipt_submitted:true,
+      qa_approved_by_owner_required:true,git_published:false};
+  }
+  if(v.remote.status!=='SUBMITTED_FOR_REVIEW')
+    fail('QA_RECEIPT_CENTRAL_ALREADY_CHANGED');
   const j=journal(dir,ticketId,'receipt',v.context,journalBody);
-  if(j.already)return {accepted:true,already_submitted:true,
-    ticket_id:ticketId,qa_receipt_submitted:true,
-    status:v.report.test_passed?'INTEGRATING':'TEST_FAILED',
-    qa_approved_by_owner_required:true,git_published:false};
+  if(j.already)fail('QA_RECEIPT_LOCAL_RECEIPT_REMOTE_UNCONFIRMED');
   const result=await signedPost({origin,agentId,operation:'qa-receipt',body,
     signer,fetcher});
   if(result.accepted!==true||result.ticket_id!==ticketId||
@@ -244,6 +297,13 @@ async function submitOwnerReviewedQaReceipt({origin,agentId,ticketId,signer,
      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(result.receipt_id)||
      result.evidence_level!=='AGENT_ATTESTED')
     fail('QA_RECEIPT_CENTRAL_RESPONSE_INVALID');
+  // A prior idempotent ACK is not by itself a live Central proof. The exact
+  // persisted receipt ID and state must be observed independently.
+  const after=await readOwnerReview({origin,agentId,ticketId,signer,
+    fetcher,context:v.context});
+  if(!after.qa_receipt_recorded||after.qa_receipt_id!==result.receipt_id||
+     after.task_status!==result.status)
+    fail('QA_RECEIPT_CENTRAL_RECONCILIATION_REQUIRED');
   complete(j,v.context,journalBody);
   return {...result,qa_receipt_submitted:true,
     owner_review_proposal_id:v.proposalId,
