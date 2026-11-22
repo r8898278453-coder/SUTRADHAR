@@ -481,6 +481,154 @@ $('worker-expiry-clear').onclick=async()=>{
   clearWorkerExpiryIntent();
   try{await refresh();}catch(e){message('Fresh Owner snapshot unavailable: '+e.message,true);}
 };
+// Owner-only QA review: an untrusted queue is never proof of independent
+// physical QA, a valid receipt or a release grant. No code path POSTs on GET.
+const qaId=/^qaev_[a-f0-9]{64}$/,qaSha=/^[a-f0-9]{40}$/;
+const qaTicket=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
+let qaOwnerSnapshot=null,qaOwnerAttempt=null;
+function renderQaOwnerQueue(data){
+  const valid=Boolean(data&&data.read_only===true&&
+    data.qa_approved_automatically===false&&
+    data.automatic_restoration_allowed===false&&
+    data.integration_performed===false&&
+    Number.isSafeInteger(data.epoch)&&data.epoch>=0&&
+    typeof data.phase==='string'&&typeof data.recovering_master_live==='boolean'&&
+    Array.isArray(data.reviews)&&data.reviews.length<=50&&
+    Array.isArray(data.frozen_recovery_reviews)&&data.frozen_recovery_reviews.length<=25&&
+    data.reviews.every(p=>p&&qaId.test(p.review_proposal_id)&&
+      qaTicket.test(p.ticket_id)&&p.state==='PENDING'&&
+      qaSha.test(p.candidate_head_sha)&&qaSha.test(p.candidate_tree_sha)&&
+      /^[a-f0-9]{64}$/.test(p.evidence_sha256)&&
+      p.owner_review_required===true)&&
+    data.frozen_recovery_reviews.every(p=>p&&qaId.test(p.review_proposal_id)&&
+      qaTicket.test(p.ticket_id)&&p.owner_review_state==='APPROVED'&&
+      p.task_status==='RECONCILIATION_REQUIRED'&&
+      qaSha.test(p.candidate_head_sha)&&qaSha.test(p.candidate_tree_sha)&&
+      p.owner_restoration_needed===true&&p.restore_preflight_verified===false&&
+      p.automatic_qa_receipt_allowed===false&&p.git_published_verified===false));
+  qaOwnerSnapshot=valid?data:null;
+  rows('qa-owner-pending',valid?data.reviews.map(p=>[
+    p.review_proposal_id,p.ticket_id,p.node_id,p.candidate_head_sha,
+    p.evidence_sha256,p.passed===true?'Reported PASS — verify':'Reported FAIL / unproven']):[]);
+  rows('qa-owner-frozen',valid?data.frozen_recovery_reviews.map(p=>[
+    p.review_proposal_id,p.ticket_id,p.candidate_head_sha,p.candidate_tree_sha,
+    'HOLD — separate Owner restoration']):[]);
+  value('qa-owner-status',valid?
+    'Pending '+data.reviews.length+' · frozen approved '+data.frozen_recovery_reviews.length+
+    ' · epoch '+data.epoch:'UNKNOWN — no approval or restore permitted');
+  $('qa-owner-approve').disabled=!valid||(!qaOwnerAttempt&&!data.reviews.length);
+  $('qa-owner-deny').disabled=!valid||(!qaOwnerAttempt&&!data.reviews.length);
+  $('qa-owner-restore').disabled=!valid||(!qaOwnerAttempt&&
+    !(data.phase==='RECOVERING'&&data.recovering_master_live&&
+      data.frozen_recovery_reviews.length));
+}
+function clearQaOwnerAttempt(){
+  qaOwnerAttempt=null;qaOwnerSnapshot=null;
+  for(const id of ['qa-review-id','qa-review-note','qa-restore-id',
+    'qa-restore-ticket','qa-restore-head','qa-restore-reason'])
+    $(id).value='';
+  for(const id of ['qa-checked-device','qa-checked-runner','qa-checked-evidence',
+    'qa-checked-independent','qa-restore-consent'])$(id).checked=false;
+  for(const id of ['qa-owner-approve','qa-owner-deny','qa-owner-restore'])$(id).disabled=true;
+  value('qa-owner-action-status',
+    'Local retry cleared. Independently inspect the Central command/audit and external QA evidence.');
+}
+async function submitOwnerQaCommand(command,payload,verify,label){
+  const same=(x,y)=>JSON.stringify(x)===JSON.stringify(y);
+  let attempt=qaOwnerAttempt;
+  if(attempt){
+    if(attempt.command!==command||!same(attempt.payload,payload)){
+      value('qa-owner-action-status','HOLD — existing uncertain action must be retried with the SAME exact inputs and request ID.');return;
+    }
+  }else{
+    if(!confirm('Manual Owner action: '+command+'? Independently verify the ORIGINAL'+
+      ' physical device, Docker runner, full test report, Git state and exact SHAs'+
+      ' outside Central. This never issues a QA receipt, Git write or release.'))return;
+    attempt={request_id:'qaown_'+crypto.randomUUID().replaceAll('-',''),
+      command,payload};
+    qaOwnerAttempt=attempt;
+  }
+  const session=ownerSessionVersion,originalKey=key;
+  value('qa-owner-action-status','Owner command attempted. If response is uncertain, retry ONLY this exact request.');
+  try{
+    const receipt=await request('/v7/owner/command',{
+      method:'POST',body:JSON.stringify(attempt)});
+    requireLiveOwnerSession(session,originalKey);
+    if(receipt?.accepted!==true||receipt.receipt_id!==attempt.request_id||
+      !verify(receipt.state))throw Error('OWNER_QA_RECEIPT_UNVERIFIED');
+    qaOwnerAttempt=null;
+    value('qa-owner-action-status',label+
+      '. This does not constitute a QA receipt, Git publication or production release.');
+    await refresh();
+  }catch(e){
+    if(ownerSessionVersion!==session||key!==originalKey)return;
+    value('qa-owner-action-status','HOLD — '+e.message+
+      '. Original request ID held in this tab. Manually retry unchanged fields'+
+      ' after reviewing Central audit; never create a new command blindly.');
+  }
+}
+async function reviewQaEvidence(approve){
+  const snapshot=qaOwnerSnapshot;
+  if(!snapshot){value('qa-owner-action-status','HOLD — fresh valid QA Owner queue required.');return;}
+  const id=$('qa-review-id').value.trim();
+  const note=$('qa-review-note').value.trim();
+  if(!qaId.test(id)||note.length<20||note.length>500||
+     !snapshot.reviews.some(p=>p.review_proposal_id===id)&&!qaOwnerAttempt){
+    value('qa-owner-action-status','HOLD — select exact pending QA proof and meaningful Owner rationale.');return;
+  }
+  const verified=['qa-checked-device','qa-checked-runner','qa-checked-evidence',
+    'qa-checked-independent'].every(id=>$(id).checked===true);
+  if(approve&&!verified){value('qa-owner-action-status',
+    'HOLD — approval requires FOUR independent physical/device/runner/evidence verifications.');return;}
+  const payload={review_proposal_id:id,review_note:note};
+  if(approve)Object.assign(payload,{
+    device_identity_confirmed:true,runner_provenance_reviewed:true,
+    test_evidence_reviewed:true,independence_verified:true});
+  const command=approve?'APPROVE_QA_EVIDENCE':'REJECT_QA_EVIDENCE';
+  await submitOwnerQaCommand(command,payload,x=>x?.review_proposal_id===id&&
+    x.state===(approve?'APPROVED':'DENIED')&&x.qa_receipt_submitted===false&&
+    x.integration_performed===false,
+    approve?'Owner evidence decision APPROVED only':'Owner evidence decision DENIED');
+}
+$('qa-owner-approve').onclick=()=>reviewQaEvidence(true);
+$('qa-owner-deny').onclick=()=>reviewQaEvidence(false);
+$('qa-owner-restore').onclick=async()=>{
+  const q=qaOwnerSnapshot;
+  if(!q){value('qa-owner-action-status','HOLD — fresh frozen QA review required.');return;}
+  const id=$('qa-restore-id').value.trim(),ticket=$('qa-restore-ticket').value.trim(),
+    head=$('qa-restore-head').value.trim(),reason=$('qa-restore-reason').value.trim();
+  const entry=q.frozen_recovery_reviews.find(p=>p.review_proposal_id===id&&
+    p.ticket_id===ticket&&p.candidate_head_sha===head);
+  if(!qaId.test(id)||!qaTicket.test(ticket)||!qaSha.test(head)||
+     reason.length<20||reason.length>500||!$('qa-restore-consent').checked||
+     (!qaOwnerAttempt&&(!q.recovering_master_live||q.phase!=='RECOVERING'||!entry))){
+    value('qa-owner-action-status','HOLD — exact approved frozen proof, retyped candidate HEAD, live RECOVERING Master and separate Owner consent required.');return;
+  }
+  // Existing uncertain attempt retains its *original* tree/epoch even if
+  // the refreshed UI queue no longer has this restored candidate.
+  const source=qaOwnerAttempt?.command==='RESTORE_QA_CANDIDATE'?
+    qaOwnerAttempt.payload:entry;
+  const payload={
+    ticket_id:ticket,review_proposal_id:id,
+    candidate_head_sha:head,candidate_tree_sha:source?.candidate_tree_sha,
+    expected_master_epoch:qaOwnerAttempt?.command==='RESTORE_QA_CANDIDATE'?
+      qaOwnerAttempt.payload.expected_master_epoch:q.epoch,
+    reason,owner_confirmed_recovery_review:true};
+  await submitOwnerQaCommand('RESTORE_QA_CANDIDATE',payload,
+    x=>x?.ticket_id===ticket&&x?.status==='SUBMITTED_FOR_REVIEW'&&
+      x.epoch===payload.expected_master_epoch&&
+      x.old_worker_lease_restored===false&&x.qa_receipt_submitted===false&&
+      x.git_published===false&&x.automatic_reassignment_allowed===false&&
+      x.owner_recovery_ack_sent===false,
+    'Exact candidate returned to SUBMITTED_FOR_REVIEW for separate QA receipt');
+};
+$('qa-owner-clear').onclick=async()=>{
+  if(!confirm('Clear the original uncertain Owner request ID from this tab?'+
+    ' Review Central ticket, command audit and original QA/Git evidence FIRST.'+
+    ' Clearing never undoes a committed operation.'))return;
+  clearQaOwnerAttempt();
+  try{await refresh();}catch(e){message('Fresh Owner QA queue unavailable: '+e.message,true);}
+};
 function renderLeadershipSafety(data){
   // Never infer safe-to-restart or safe-to-elect from an API/transport error.
   const valid=Boolean(data&&data.mode==='OWNER_READ_ONLY_LEADERSHIP_SAFETY'&&
@@ -566,6 +714,10 @@ async function refresh(){
   try{prQueue=await request('/v7/owner/pr-recovery');}catch{}
   current();
   renderPrRecovery(prQueue);
+  let qaOwnerQueue=null;
+  try{qaOwnerQueue=await request('/v7/owner/qa-reviews');}catch{}
+  current();
+  renderQaOwnerQueue(qaOwnerQueue);
   $('maintenance-epoch').value=String(c.epoch);
   value('master',c.master_agent_id||'No Master');value('epoch',c.epoch);
   value('phase',c.phase);value('backup1',c.backup1||'None');value('backup2','Backup 2: '+(c.backup2||'None'));
@@ -590,7 +742,7 @@ $('connect').onclick=async()=>{
   $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
   $('dashboard').hidden=true;
   clearPrCreation();clearPrRecovery();clearGitRecoveryReview();
-  clearWorkerExpiryIntent();
+  clearWorkerExpiryIntent();clearQaOwnerAttempt();
   key=$('key').value;$('key').value='';
   try{
     await refresh();
@@ -611,7 +763,7 @@ $('connect').onclick=async()=>{
 $('disconnect').onclick=()=>{
   ownerSessionVersion++;ownerRefreshVersion++;
   key='';clearPrCreation();clearPrRecovery();clearGitRecoveryReview();
-  clearWorkerExpiryIntent();
+  clearWorkerExpiryIntent();clearQaOwnerAttempt();
   gitRecoverySnapshot=null;
   $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
   invalidateOwnerRecoveryDisplay(

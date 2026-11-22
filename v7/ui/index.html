@@ -100,6 +100,36 @@ I independently confirmed GitHub merged the exact PR; verify remotely and mark t
 <div><label>Proposal ID</label><input id="proposal-id" placeholder="proposal_...">
 <div class="flex"><button data-command="APPROVE_PROPOSAL">Approve proposal</button><button data-command="DENY_PROPOSAL" class="danger">Deny</button></div></div>
 </div></section>
+<section class="panel owner" aria-labelledby="qa-owner-title">
+<div class="panelhead"><h2 id="qa-owner-title">Independent QA evidence — Owner manual review &amp; frozen candidate recovery</h2><strong id="qa-owner-status" role="status">Not inspected</strong></div>
+<p>Device signature acceptance is NOT evidence that the Docker image, actual independent PC, original report and test output were verified by you. Obtain original QA result, attestation, runner digest and independently pinned device key outside this page. Nothing is approved or restored by refreshing these tables.</p>
+<div class="scroll"><table><thead><tr><th>Pending review ID</th><th>Ticket</th><th>QA PC</th><th>Candidate HEAD</th><th>Evidence SHA-256</th><th>Test result</th></tr></thead><tbody id="qa-owner-pending"></tbody></table></div>
+<div class="formgrid"><div>
+<label for="qa-review-id">Exact pending qaev_ review ID</label><input id="qa-review-id" maxlength="69" spellcheck="false" autocomplete="off">
+<label for="qa-review-note">External Owner review rationale (20–500 characters)</label><textarea id="qa-review-note" rows="3" maxlength="500" spellcheck="false" autocomplete="off"></textarea>
+</div><div>
+<label class="inline" for="qa-checked-device"><input type="checkbox" id="qa-checked-device"> Independently verified enrolled physical PC and device key</label>
+<label class="inline" for="qa-checked-runner"><input type="checkbox" id="qa-checked-runner"> Independently verified pinned offline Docker runner provenance</label>
+<label class="inline" for="qa-checked-evidence"><input type="checkbox" id="qa-checked-evidence"> Independently inspected original QA report and test evidence</label>
+<label class="inline" for="qa-checked-independent"><input type="checkbox" id="qa-checked-independent"> Verified QA and developer ran on separate physical machines</label>
+</div></div>
+<div class="flex"><button id="qa-owner-approve" type="button" disabled>Approve EXACT verified evidence (not a receipt)</button><button id="qa-owner-deny" class="danger" type="button" disabled>Deny exact QA evidence</button></div>
+<p>Approval is a separate manual attestation; it does not submit the QA receipt or unfreeze the candidate. Denial also requires your reason.</p>
+<h3>Approved but frozen — separate Owner restoration</h3>
+<div class="scroll"><table><thead><tr><th>Review ID</th><th>Ticket</th><th>Original candidate HEAD</th><th>Original tree</th><th>State</th></tr></thead><tbody id="qa-owner-frozen"></tbody></table></div>
+<div class="formgrid"><div>
+<label for="qa-restore-id">Exact approved frozen qaev_ review ID</label><input id="qa-restore-id" maxlength="69" spellcheck="false" autocomplete="off">
+<label for="qa-restore-ticket">Exact ticket ID</label><input id="qa-restore-ticket" maxlength="100" spellcheck="false" autocomplete="off">
+<label for="qa-restore-head">Retype complete original 40-character candidate HEAD</label><input id="qa-restore-head" maxlength="40" spellcheck="false" autocomplete="off">
+</div><div>
+<label for="qa-restore-reason">Separate Owner recovery rationale (20–500 characters)</label><textarea id="qa-restore-reason" rows="3" maxlength="500" spellcheck="false" autocomplete="off"></textarea>
+<label class="inline" for="qa-restore-consent"><input type="checkbox" id="qa-restore-consent"> I independently reviewed the exact original candidate and attest that Central must separately recheck Git jobs, checkpoint, QA evidence, lease and epoch. This restores ONLY SUBMITTED_FOR_REVIEW.</label>
+</div></div>
+<div class="flex"><button id="qa-owner-restore" type="button" disabled>Request EXACT frozen candidate restoration ONLY</button>
+<button id="qa-owner-clear" class="outline" type="button">Clear this-tab uncertain retry after review</button></div>
+<p id="qa-owner-action-status" role="status">No action attempted. Pending and frozen state remain HOLD until separately Owner reviewed.</p>
+<small>An uncertain Owner POST may already be committed. Retry unchanged inputs with the SAME in-tab request ID; do not invent a second command. Clearing local retry does not undo Central. No automatic QA receipt, Git publication, protected merge, installer or deployment is performed here.</small>
+</section>
 <section class="panel owner" aria-labelledby="pr-recovery-title">
 <div class="panelhead"><h2 id="pr-recovery-title">Uncertain Draft PR creation — Owner read-only recovery</h2>
 <span id="pr-recovery-count" role="status">Not loaded</span></div>
