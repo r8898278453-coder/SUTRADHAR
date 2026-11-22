@@ -7,6 +7,7 @@ import {once} from 'node:events';
 import {app,shutdownV7ForTests} from '../v7/central.ts';
 import {verifyRecoverySnapshot} from '../v7/recovery_validation.ts';
 import {verifyExistingAgentOnOwnNode} from '../v7/agent_restart_authority.ts';
+import {REVIEWED_V8_MIGRATION_SHA256} from '../v7/schema_compatibility.ts';
 // Run only against disposable MySQL database. No mocking SQL, no production credentials.
 const enabled=process.env.SUTRADHAR_RUN_V7_MYSQL_TEST==='1';
 test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover and QA gates',{skip:!enabled},async()=>{
@@ -808,30 +809,38 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       // Neither a fake version nor an index alone suffices for cleanup.
       await nonceDb.query('INSERT INTO v7_schema_versions(version) VALUES(8)');
       try{
-        for(let n=0;n<5;n++){
-          const observed=await b.heartbeat(Number(status.epoch));
-          assert.equal(observed.code,200,JSON.stringify(observed.body));
-        }
-        const [withoutIndex]:any=await nonceDb.query(
-          'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND nonce=?',
-          [b.node_id,oldNonce]);
-        assert.equal(Number(withoutIndex[0].n),1,
-          'Schema version alone never authorizes unindexed cleanup');
+        const missingIndex=await b.heartbeat(Number(status.epoch));
+        assert.equal(missingIndex.code,503,
+          'Central refuses incomplete v8 schema before mutation');
+        assert.equal(missingIndex.body.error_code,'SCHEMA_V8_MIGRATION_INCOMPLETE');
         await nonceDb.query('CREATE INDEX idx_nonce_received_at ON v7_nonces (received_at)');
         try{
-          for(let n=0;n<5;n++){
-            const observed=await b.heartbeat(Number(status.epoch));
-            assert.equal(observed.code,200,JSON.stringify(observed.body));
+          const missingAudit=await b.heartbeat(Number(status.epoch));
+          assert.equal(missingAudit.code,503,
+            'Physical index alone is not migration review evidence');
+          await nonceDb.query(
+            'INSERT INTO v7_migration_audit(migration_id,source_sha256,record_counts,destination_counts) '+
+            'VALUES(?,?,?,?)',['schema_version_8',REVIEWED_V8_MIGRATION_SHA256,
+              JSON.stringify({status:'STARTED',backup_receipt_sha256:'b'.repeat(64)}),
+              JSON.stringify({status:'DDL_COMPLETE_UNVERIFIED',statements:1})]);
+          try{
+            for(let n=0;n<5;n++){
+              const observed=await b.heartbeat(Number(status.epoch));
+              assert.equal(observed.code,200,JSON.stringify(observed.body));
+            }
+            const [after]:any=await nonceDb.query(
+              'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND nonce=?',
+              [b.node_id,oldNonce]);
+            assert.equal(Number(after[0].n),0,
+              'Reviewed-shape indexed v8 heartbeat reclaims stale nonce');
+            const [fresh]:any=await nonceDb.query(
+              'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND '+
+              'received_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE)',[b.node_id]);
+            assert.ok(Number(fresh[0].n)>=1,'Recent replay-protection records survive');
+          }finally{
+            await nonceDb.query('DELETE FROM v7_migration_audit WHERE migration_id=?',
+              ['schema_version_8']);
           }
-          const [after]:any=await nonceDb.query(
-            'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND nonce=?',
-            [b.node_id,oldNonce]);
-          assert.equal(Number(after[0].n),0,'Indexed v8 heartbeat reclaims stale nonce');
-          const [fresh]:any=await nonceDb.query(
-            'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND '+
-            'received_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE)',[b.node_id]);
-          assert.ok(Number(fresh[0].n)>=1,
-            'Recent signed replay-protection records survive');
         }finally{
           await nonceDb.query('DROP INDEX idx_nonce_received_at ON v7_nonces');
         }

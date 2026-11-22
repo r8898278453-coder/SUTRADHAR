@@ -341,3 +341,23 @@ version-plus-index v8 prunes stale nonces and keeps new replay protection.
 until a separately reviewed staging migration; do not run v7 indefinitely at
 scale. This is source/CI logic, NOT authorization for Hostinger v8 DDL, real
 provider automation, production update or release.
+
+
+## 23 November 2026 — Central runtime exact schema compatibility gate
+
+Central now checks bounded, **database-authoritative** schema versions at the
+start of every transactional signed API/health operation (not just in a separate
+operator checker). Exactly v7 baseline or `[7,8]` is accepted; unknown/gapped
+histories fail with 503 before side effects. v8 additionally requires the
+physical nonunique nonce-age index plus the exact pinned migration SHA and
+a completed staging-style migration audit record. A forged v8 version alone,
+or a physical index without matching audit, cannot make Central report READY.
+Empty DB initialization remains a separately authorized bootstrap path.
+Pure unit tests pin the migration digest to the manifest, and disposable
+MySQL tests assert incomplete v8 heartbeat rejection and successful v8
+after index + audit, then restore v7 fixture state.
+
+**Important evidence limit:** An existing audit record is not an independent
+Owner/DBA signed approval or data-compatibility test; the runtime only checks
+DB shape/claims and cannot prove full production migration. G0–G7 remain
+HOLD until the real environment and independent acceptance are demonstrated.

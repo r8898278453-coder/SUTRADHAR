@@ -20,6 +20,7 @@ import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
 import {permitSignedHeartbeatPilotRecord} from './pilot_heartbeat_window.ts';
 import {validSignedHeartbeat} from './heartbeat_validation.ts';
 import {shouldPruneNonces,hasIndexedNoncePrunePrerequisite} from './nonce_retention.ts';
+import {supportedSchemaVersion,validReviewedV8Schema} from './schema_compatibility.ts';
 import {inspectLastRetainedPilotHeartbeat} from './pilot_signed_packet_recheck.ts';
 import {inspectLeadershipSafety} from './leadership_diagnostic.ts';
 import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,QaEvidenceError} from './qa_evidence.ts';
@@ -76,6 +77,26 @@ function getPool(){if(!pool)fault('CONTROL_UNAVAILABLE',503);return pool!;}
 async function transaction<T>(fn:(c:PoolConnection)=>Promise<T>):Promise<T>{
   const c=await getPool().getConnection();
   try{await c.query("SET time_zone = '+00:00'");await c.beginTransaction();
+    // Every signed read/write and health preflight fails closed on unknown
+    // schema history, or a version-8 DDL claim lacking real index/audit proof.
+    // Empty database bootstrap uses a separate, explicitly approved route.
+    const [versions]=await c.query(
+      'SELECT version FROM v7_schema_versions ORDER BY version ASC LIMIT 3');
+    const schemaVersion=supportedSchemaVersion(versions);
+    if(schemaVersion===null)fault('SCHEMA_VERSION_UNSUPPORTED',503);
+    if(schemaVersion===8){
+      const [indexRows]=await c.query(
+        'SELECT index_name AS index_name,seq_in_index AS seq_in_index,'+
+        'column_name AS column_name,non_unique AS non_unique '+
+        'FROM information_schema.statistics WHERE table_schema=DATABASE() '+
+        'AND table_name=? AND index_name=?',
+        ['v7_nonces','idx_nonce_received_at']);
+      const [auditRows]=await c.query(
+        'SELECT source_sha256,record_counts,destination_counts '+
+        'FROM v7_migration_audit WHERE migration_id=?',['schema_version_8']);
+      if(!validReviewedV8Schema(versions,indexRows,auditRows))
+        fault('SCHEMA_V8_MIGRATION_INCOMPLETE',503);
+    }
     const out=await fn(c);await c.commit();return out;
   }catch(e){await c.rollback();throw e;}finally{c.release();}
 }
