@@ -46,7 +46,8 @@ test('REAL MySQL 8: staging-only v8 rehearsal persists non-retryable audit after
     const [versions]=await staging.query('SELECT version FROM v7_schema_versions ORDER BY version');
     assert.deepEqual(versions.map(x=>Number(x.version)),[7,8]);
     const [indexes]=await staging.query(
-      'SELECT index_name,column_name,non_unique FROM information_schema.statistics '+
+      'SELECT INDEX_NAME AS index_name,COLUMN_NAME AS column_name,'+
+      'NON_UNIQUE AS non_unique FROM information_schema.statistics '+
       'WHERE table_schema=? AND table_name=? AND index_name=?',
       [DB,'v7_nonces','idx_nonce_received_at']);
     assert.equal(indexes.length,1);
