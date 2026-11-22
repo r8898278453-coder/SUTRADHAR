@@ -465,3 +465,7 @@ Owner dashboard now supports an **explicit-click, allowlisted, read-only crash e
 ## 22 November 2026 — External Git/QA effects evidence worksheet
 
 Added offline \`scripts/ops/crash-external-effects.cjs\` to bind a short-lived verified Owner crash-review signature to a local inventory of selected external Git/QA/worker/physical witness attachment hashes. Its required categories are derived from Central history counts, and the report never treats matching file hashes or self-reported reviewer roles as proof of GitHub state, QA independence or Windows shutdown. It reports missing evidence categories and remains \`OWNER_REVIEW_REQUIRED\` with all restart/marker/installer/release grants false. No live GitHub API, Central mutation, OS-vault access or physical validation is performed.
+
+## 22 November 2026 — Exact matching child signal and launch error fence
+
+Intentional maintenance-stop/app-quit marker retirement now requires observed SIGTERM with null exit code for the exact tracked child, not merely an accepted kill request followed by any crash/signal. Synchronous pre-spawn session/log/child-launch failures and unknown exit context revoke the Main signer, preserving durable Owner review. Physical Windows signal semantics and real multi-PC acceptance remain release-blocking; no crash recovery grant/marker delete/release exception added.

@@ -24,15 +24,20 @@ function classifyObservedAgentExit({
        signal.length<40)))
     throw Error('AGENT_SESSION_OBSERVED_EXIT_STATUS_INVALID');
   if(!vaultHealthy||!holdInspectionHealthy)return holdResult;
+  // A kill('SIGTERM') acknowledgement only proves request acceptance.
+  // A separate crash/signal can race and must NOT retire the session.
+  // Platform variants with different observed signal semantics stay HOLD
+  // until real Windows acceptance establishes safe evidence.
+  const matchingStopObserved=exitCode===null&&signal==='SIGTERM';
   // The mere existence of a maintenance hold is not a stop request.
   // A clean exit while a hold exists is also ambiguous unless the exact
   // child was explicitly selected for isolation and its exit observed.
   if(ownerHold){
-    return ownerStopRequested?maintenanceResult:holdResult;
+    return ownerStopRequested&&matchingStopObserved?maintenanceResult:holdResult;
   }
   // A shutdown request is only evidence after kill() returned true for
   // THIS tracked child and its actual exit callback was observed.
-  if(shuttingDown&&appStopRequested)return applicationResult;
+  if(shuttingDown&&appStopRequested&&matchingStopObserved)return applicationResult;
   // A child terminating naturally with exit 0 and no signal is observed.
   if(exitCode===0&&signal===null)return cleanResult;
   return holdResult;

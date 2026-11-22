@@ -28,6 +28,13 @@ test('explicit Owner isolation for exact child can retire only after observed ex
     ownerHold:true,ownerStopRequested:true});
   assert.deepEqual(observed,
     {retire:true,reason:'OBSERVED_OWNER_MAINTENANCE_STOP'});
+  for(const [exitCode,signal] of [[1,null],[0,null],[null,'SIGKILL'],
+    [0,'SIGTERM'],[2,'SIGTERM'],[null,'SIGINT'],[null,null]]){
+    assert.equal(call({exitCode,signal,ownerHold:true,
+      ownerStopRequested:true}).retire,false,
+      'an accepted stop cannot legitimize unrelated exit '+
+      JSON.stringify([exitCode,signal]));
+  }
   assert.equal(call({exitCode:1,ownerStopRequested:true}).retire,false,
     'request without verified Owner hold does not grant retirement');
 });
@@ -37,6 +44,12 @@ test('shutdown requires matching accepted stop request and running quit context'
   assert.deepEqual(call({exitCode:null,signal:'SIGTERM',
     shuttingDown:true,appStopRequested:true}),
     {retire:true,reason:'OBSERVED_APP_SHUTDOWN'});
+  for(const [exitCode,signal] of [[1,null],[0,null],[null,'SIGKILL'],
+    [0,'SIGTERM'],[null,'SIGINT'],[null,null]]){
+    assert.equal(call({exitCode,signal,shuttingDown:true,
+      appStopRequested:true}).retire,false,
+      'app quit cannot treat unrelated child death as a confirmed stop');
+  }
   assert.equal(call({exitCode:1,ownerHold:true,shuttingDown:true,
     appStopRequested:true}).retire,false,
     'unrequested maintenance hold must not be bypassed by generic app quit');
@@ -81,4 +94,18 @@ test('packaged Main binds maintenance/shutdown retire paths to exact child event
   assert.match(main,/OS_VAULT_AGENT_SESSION_UNRECONCILED_OWNER_REVIEW/);
   assert.doesNotMatch(main,/ownerStop=ownerHold&&!holdInspectionFailed;/);
   assert.doesNotMatch(main,/clean\|\|ownerStop\|\|appStop/);
+});
+
+test('packaged Main fail-closes signer for pre-spawn/descriptor/invalid-exit failures',()=>{
+  const main=fs.readFileSync(path.resolve(__dirname,
+    '../apps/desktop/main.cjs'),'utf8');
+  for(const code of [
+    'OS_VAULT_AGENT_LAUNCH_UNCERTAIN_OWNER_REVIEW',
+    'OS_VAULT_AGENT_LOG_CLOSE_UNCERTAIN_OWNER_REVIEW',
+    'OS_VAULT_AGENT_EXIT_STATUS_UNTRUSTED_OWNER_REVIEW'
+  ])assert.ok(main.includes(code),code);
+  assert.ok(main.includes('decision={retire:false,reason:null}'));
+  assert.ok(main.includes('session=beginAgentSession({dir:nodeDir()});'));
+  assert.ok(main.includes('signer=null;'));
+  assert.match(main,/catch\s*\{\s*\/\/ Malformed\/unknown child status cannot retire/);
 });

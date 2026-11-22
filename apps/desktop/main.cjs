@@ -218,14 +218,30 @@ function startAgent({manualOwnerRestart=false}={}){
   fs.mkdirSync(nodeDir(),{recursive:true,mode:0o700});
   // A child session is durably recorded BEFORE spawn. An interrupted Main,
   // power loss or unobserved exit cannot silently resume signing at login.
-  const session=beginAgentSession({dir:nodeDir()});
-  agentSession=session;
-  const fd=fs.openSync(path.join(home(),'edge-agent.log'),'a',0o600);
+  let session,fd;
   try{
+    session=beginAgentSession({dir:nodeDir()});
+    agentSession=session;
+    fd=fs.openSync(path.join(home(),'edge-agent.log'),'a',0o600);
     agent=spawn(process.execPath,[script],{
       env,stdio:['ignore',fd,fd,'ipc'],windowsHide:true
     });
-  }finally{fs.closeSync(fd);}
+  }catch{
+    // Any failure here may have left the session marker on disk.
+    // The interactive Main signer must be revoked even for a sync failure.
+    vaultError='OS_VAULT_AGENT_LAUNCH_UNCERTAIN_OWNER_REVIEW';
+    signer=null;
+    throw Error(vaultError);
+  }finally{
+    if(fd!==undefined){
+      try{fs.closeSync(fd);}
+      catch{
+        // If spawned, child handlers below still attach, but no signing.
+        vaultError='OS_VAULT_AGENT_LOG_CLOSE_UNCERTAIN_OWNER_REVIEW';
+        signer=null;
+      }
+    }
+  }
 
   const spawnedAgent=agent;
   spawnedAgent.on('message',async msg=>{
@@ -297,12 +313,20 @@ function startAgent({manualOwnerRestart=false}={}){
       expectedMaintenanceStopChild===spawnedAgent;
     const appStop=shuttingDown&&expectedQuitChild===spawnedAgent;
     const clean=exitCode===0&&!signal;
-    const decision=classifyObservedAgentExit({
-      exitCode,signal:signal||null,ownerHold,
-      ownerStopRequested:ownerStop,appStopRequested:appStop,
-      shuttingDown,vaultHealthy:!vaultError,
-      holdInspectionHealthy:!holdInspectionFailed
-    });
+    let decision;
+    try{
+      decision=classifyObservedAgentExit({
+        exitCode,signal:signal||null,ownerHold,
+        ownerStopRequested:ownerStop,appStopRequested:appStop,
+        shuttingDown,vaultHealthy:!vaultError,
+        holdInspectionHealthy:!holdInspectionFailed
+      });
+    }catch{
+      // Malformed/unknown child status cannot retire a durable crash marker.
+      vaultError='OS_VAULT_AGENT_EXIT_STATUS_UNTRUSTED_OWNER_REVIEW';
+      signer=null;
+      decision={retire:false,reason:null};
+    }
     if(decision.retire){
       try{
         finishObservedSession({dir:nodeDir(),session_id:session.session_id,
