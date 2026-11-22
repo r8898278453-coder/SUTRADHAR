@@ -8,11 +8,38 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const {createReviewManifest,evidenceInputFromEnv,canonical,SIGN_DOMAIN}=
   require('../ops/crash-owner-review.cjs');
 function fail(code){throw Error('CRASH_REVIEW_SIGN_'+code);}
+function normalizedPath(value){
+  let s=path.normalize(value);
+  if(process.platform==='win32'){
+    const extended=String.fromCharCode(92,92,63,92);
+    if(s.startsWith(extended))s=s.slice(extended.length);
+    s=s.toLowerCase();
+  }
+  return s;
+}
 function externalPath(file){
+  // Node accepts absolute paths that still contain '..'; compare resolved
+  // paths and the *physical* parent, not the original spelling.
   const repo=path.resolve(__dirname,'../..');
-  if(typeof file!=='string'||!path.isAbsolute(file)||
-     file===repo||file.startsWith(repo+path.sep))fail('EXTERNAL_PATH_REQUIRED');
-  return file;
+  if(typeof file!=='string'||file.length>2048||!path.isAbsolute(file))
+    fail('EXTERNAL_PATH_REQUIRED');
+  const output=path.resolve(file),repoReal=fs.realpathSync.native(repo);
+  const underRepo=value=>{
+    const x=normalizedPath(value),root=normalizedPath(repoReal);
+    return x===root||x.startsWith(root+path.sep);
+  };
+  const parent=path.dirname(output);
+  const parentReal=fs.realpathSync.native(parent);
+  if(underRepo(output)||underRepo(parentReal))
+    fail('EXTERNAL_PATH_REQUIRED');
+  // Reject symlink/junction parent redirection. This protects the Owner key
+  // and output from being silently redirected through an alias.
+  if(normalizedPath(parentReal)!==normalizedPath(parent))
+    fail('EXTERNAL_PARENT_REDIRECTED');
+  const st=fs.lstatSync(parent);
+  if(!st.isDirectory()||st.isSymbolicLink())
+    fail('EXTERNAL_PARENT_UNSAFE');
+  return output;
 }
 function main(){
   if(process.env.SUTRADHAR_OWNER_CRASH_EVIDENCE_REVIEW_APPROVED!=='yes')
@@ -57,4 +84,4 @@ function main(){
 if(require.main===module)try{main();}catch(e){
   console.error(String(e.message||e));process.exitCode=1;
 }
-module.exports={main};
+module.exports={main,externalPath};

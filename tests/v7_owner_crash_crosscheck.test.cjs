@@ -702,3 +702,26 @@ test('external-effects tool cannot execute Git, maintenance or agent actions',()
   assert.match(source,/production_release_authorized:false/);
   assert.match(source,/agent_restart_allowed:false/);
 });
+
+test('Owner crash review signer refuses normalized repo traversal and symlinked parent',()=>{
+  const os=require('node:os');
+  const {externalPath}=require('../scripts/release/sign-crash-owner-review.cjs');
+  const repo=path.resolve(__dirname,'..');
+  const inside=path.join(repo,'docs','..','owner-private.pem');
+  assert.throws(()=>externalPath(inside),/EXTERNAL_PATH_REQUIRED/);
+  assert.throws(()=>externalPath('relative-private.pem'),/EXTERNAL_PATH_REQUIRED/);
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-review-signer-path-'));
+  try{
+    const normal=path.join(dir,'owner-review-output.json');
+    assert.equal(externalPath(normal),normal);
+    const alias=path.join(dir,'alias-to-repo');
+    fs.symlinkSync(repo,alias,'dir');
+    assert.throws(()=>externalPath(path.join(alias,'not-real-owner-key.pem')),
+      /EXTERNAL_PATH_REQUIRED|EXTERNAL_PARENT_REDIRECTED/);
+    const aliasOut=path.join(dir,'alias-output-dir'),
+      realDir=path.join(dir,'real-output-dir');
+    fs.mkdirSync(realDir);fs.symlinkSync(realDir,aliasOut,'dir');
+    assert.throws(()=>externalPath(path.join(aliasOut,'review.json')),
+      /EXTERNAL_PARENT_REDIRECTED/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
