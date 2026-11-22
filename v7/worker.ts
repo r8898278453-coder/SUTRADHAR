@@ -12,7 +12,8 @@ import {ID_RE,SHA_RE,safeScope,validTaskBranch} from './rules.ts';
 import {verifyWorkerResume} from './worker_resume_validation.ts';
 import {getOrCreateClaimIntent,hasPendingClaim,verifyClaimReceipt,closeClaimIntent} from './worker_claim_journal.ts';
 import {getOrCreateRenewIntent,verifyRenewReceipt,closeRenewIntent} from './worker_lease_journal.ts';
-import {getOrCreateCheckpointIntent,verifyCheckpointReceipt,closeCheckpointIntent} from './worker_checkpoint_journal.ts';
+import {getOrCreateCheckpointIntent,verifyCheckpointReceipt,closeCheckpointIntent,checkpointIntentPath} from './worker_checkpoint_journal.ts';
+import {getOrCreateSubmitIntent,hasPendingSubmit,verifySubmitReceipt,verifySubmitObservation,closeSubmitIntent} from './worker_submit_journal.ts';
 const home=process.env.SUTRADHAR_NODE_DIR||path.join(os.homedir(),'.sutradhar','v7');
 const identityFile=path.join(home,'identity.json');
 if(!fs.existsSync(identityFile))throw new Error('Run the node agent first; identity missing');
@@ -225,20 +226,52 @@ async function checkpoint(id:string){
 }
 async function submit(id:string){
   const local=read(id),remote=await request('/v7/tasks/detail/'+id,undefined,'GET');
-  if(remote.status!=='CHECKPOINTED'&&remote.status!=='TEST_FAILED')throw new Error('Checkpoint before submit');
-  if(remote.branch_name!==local.branch_name||remote.baseline_sha!==local.baseline_sha)
-    throw new Error('Task immutable branch/baseline mismatch');
-  const root=local.worktree;
-  if(git(root,'branch','--show-current')!==local.branch_name)throw new Error('Wrong branch');
+  // An unresolved checkpoint intent may already have reached Central.
+  // Never submit while its acknowledgement is still ambiguous.
+  if(fs.existsSync(checkpointIntentPath(taskDir,id)))
+    throw Error('CHECKPOINT_PENDING_RECONCILIATION_REQUIRED');
+  const pendingBefore=hasPendingSubmit(taskDir,id);
+  if(!['CHECKPOINTED','TEST_FAILED'].includes(remote.status)&&
+     !(pendingBefore&&remote.status==='SUBMITTED_FOR_REVIEW'))
+    throw Error('SUBMIT_REMOTE_STATE_REQUIRES_OWNER_RECONCILIATION');
+  if(remote.ticket_id!==id||remote.worker_agent_id!==agentId||
+     remote.project_id!==local.project_id||remote.repository!==local.repository||
+     remote.branch_name!==local.branch_name||remote.baseline_sha!==local.baseline_sha||
+     JSON.stringify(array(remote.write_scopes).sort())!==JSON.stringify([...local.scope].sort()))
+    throw Error('SUBMIT_TASK_IMMUTABLE_MISMATCH');
+  // Initial submission must pass live, signed lease and worktree preflight.
+  // A received-but-unacknowledged submission will already be SUBMITTED_FOR_REVIEW,
+  // so only that exact pending request may be replayed, after Central re-fences it.
+  if(!pendingBefore)await resume(id,true);
+  ensureRepository(remote);
+  const trustedRoot=process.env.SUTRADHAR_WORKTREES_ROOT;
+  if(!trustedRoot||!path.isAbsolute(trustedRoot))
+    throw Error('SUBMIT_WORKTREE_ROOT_INVALID');
+  const expected=path.join(trustedRoot,id),root=local.worktree;
+  if(root!==expected||!fs.existsSync(root)||fs.lstatSync(root).isSymbolicLink()||
+     fs.realpathSync(git(root,'rev-parse','--show-toplevel'))!==fs.realpathSync(root))
+    throw Error('SUBMIT_WORKTREE_IDENTITY_MISMATCH');
+  if(git(root,'branch','--show-current')!==local.branch_name||
+     git(root,'merge-base','HEAD',local.baseline_sha)!==local.baseline_sha)
+    throw Error('SUBMIT_BRANCH_OR_BASELINE_MISMATCH');
   pathsAllowed(root,local.baseline_sha,local.scope);
   const head=git(root,'rev-parse','HEAD'),tree=git(root,'rev-parse','HEAD^{tree}');
-  if(!SHA_RE.test(head)||!SHA_RE.test(tree))throw new Error('Invalid Git SHA');
-  // Publishing a Git branch is separate and requires existing guarded v6 operator.
-  const out=await request('/v7/tasks/submit',{request_id:'submit_'+token(),
-    agent_id:agentId,ticket_id:id,lease_id:local.lease_id,
-    expected_master_epoch:local.epoch,candidate_head_sha:head,candidate_tree_sha:tree});
-  console.log(JSON.stringify({...out,candidate_head_sha:head,candidate_tree_sha:tree,
-    note:'Branch publish and draft PR require independent authorized guarded steps.'},null,2));
+  if(!SHA_RE.test(head)||!SHA_RE.test(tree))throw Error('SUBMIT_GIT_SHA_INVALID');
+  const intent=getOrCreateSubmitIntent({dir:taskDir,agent_id:agentId,ticket_id:id,
+    lease_id:local.lease_id,epoch:local.epoch,project_id:local.project_id,
+    repository:local.repository,branch_name:local.branch_name,
+    baseline_sha:local.baseline_sha,scope:local.scope,
+    candidate_head_sha:head,candidate_tree_sha:tree});
+  // A timeout is UNKNOWN. Retain this exact Git candidate and request ID.
+  const accepted=await request('/v7/tasks/submit',intent.body);
+  const version=verifySubmitReceipt(intent.body,accepted);
+  const confirmed=await request('/v7/tasks/detail/'+id,undefined,'GET');
+  verifySubmitObservation({body:intent.body,remote:confirmed,version,
+    project_id:local.project_id,repository:local.repository,
+    branch_name:local.branch_name,baseline_sha:local.baseline_sha});
+  closeSubmitIntent(intent.file,intent.body);
+  console.log(JSON.stringify({...accepted,manual_only:true,
+    note:'Submission recorded for independent QA; no Git publication or merge authorized.'},null,2));
 }
 async function qa(id:string){
   const t=await request('/v7/tasks/detail/'+id,undefined,'GET');

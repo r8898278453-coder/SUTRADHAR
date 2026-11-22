@@ -684,6 +684,19 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40)};
     const submitted=await b.signed('/v7/tasks/submit',submittedBody);
     assert.equal(submitted.code,200,JSON.stringify(submitted.body));
+    assert.equal(submitted.body.agent_id,b.agent_id);
+    assert.equal(submitted.body.lease_id,claim.body.lease_id);
+    assert.equal(submitted.body.epoch,Number(status.epoch));
+    assert.equal(submitted.body.candidate_head_sha,'b'.repeat(40));
+    assert.equal(submitted.body.candidate_tree_sha,'c'.repeat(40));
+    assert.equal(submitted.body.automatic_execution_allowed,false);
+    assert.equal(submitted.body.status,'SUBMITTED_FOR_REVIEW');
+    assert.ok(Number.isSafeInteger(submitted.body.version));
+    const submittedDetail=await b.signed('/v7/tasks/detail/ticket_qa_test',undefined,'GET');
+    assert.equal(submittedDetail.code,200,JSON.stringify(submittedDetail.body));
+    assert.equal(submittedDetail.body.version,submitted.body.version);
+    assert.equal(submittedDetail.body.candidate_head_sha,submitted.body.candidate_head_sha);
+    assert.equal(submittedDetail.body.candidate_tree_sha,submitted.body.candidate_tree_sha);
     const submittedReplay=await b.signed('/v7/tasks/submit',submittedBody);
     assert.equal(submittedReplay.code,200,JSON.stringify(submittedReplay.body));
     assert.deepEqual(submittedReplay.body,submitted.body,

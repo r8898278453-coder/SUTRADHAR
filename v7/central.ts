@@ -1342,7 +1342,10 @@ app.post('/v7/tasks/submit',jsonRoute(async req=>{
     await c.query('UPDATE v7_tickets SET status="SUBMITTED_FOR_REVIEW",candidate_head_sha=?,candidate_tree_sha=?,version=version+1 WHERE ticket_id=?',
       [head,tree,ticket]);
     await event(c,'TASK_SUBMITTED',id,Number(d.expected_master_epoch),ticket,{head,tree});
-    return {accepted:true,ticket_id:ticket,status:'SUBMITTED_FOR_REVIEW'};
+    return {accepted:true,ticket_id:ticket,status:'SUBMITTED_FOR_REVIEW',
+      agent_id:id,lease_id:leaseId,epoch:Number(d.expected_master_epoch),
+      automatic_execution_allowed:false,version:Number(t.version)+1,
+      candidate_head_sha:head,candidate_tree_sha:tree};
     });
   });
 }));
