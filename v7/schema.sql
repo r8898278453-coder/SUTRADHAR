@@ -38,7 +38,9 @@ CREATE TABLE IF NOT EXISTS v7_arrivals (
 CREATE TABLE IF NOT EXISTS v7_nonces (
   node_id VARCHAR(100) NOT NULL, nonce VARCHAR(100) NOT NULL,
   received_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (node_id,nonce), FOREIGN KEY (node_id) REFERENCES v7_nodes(node_id)
+  PRIMARY KEY (node_id,nonce),
+  INDEX idx_nonce_received_at(received_at),
+  FOREIGN KEY (node_id) REFERENCES v7_nodes(node_id)
 ) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS v7_events (
   event_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

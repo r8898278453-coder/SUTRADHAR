@@ -19,6 +19,7 @@ import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
 import {permitSignedHeartbeatPilotRecord} from './pilot_heartbeat_window.ts';
 import {validSignedHeartbeat} from './heartbeat_validation.ts';
+import {shouldPruneNonces} from './nonce_retention.ts';
 import {inspectLastRetainedPilotHeartbeat} from './pilot_signed_packet_recheck.ts';
 import {inspectLeadershipSafety} from './leadership_diagnostic.ts';
 import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,QaEvidenceError} from './qa_evidence.ts';
@@ -802,6 +803,14 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
       await c.query('UPDATE v7_cluster SET lease_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 180 SECOND) WHERE singleton=1');
     }
     const elected=await evaluate(c,'heartbeat');
+    // Retain at least 30 minutes of durable nonce replay protection (signed
+    // request clock tolerance is +/-120s). A bounded delete runs on every
+    // 5th successfully accepted heartbeat, only if DB/app clocks agree.
+    // Failed heartbeats and every GET never trigger cleanup.
+    if(shouldPruneNonces(sequence,Date.now(),clock))
+      await c.query('DELETE FROM v7_nonces '+
+        'WHERE received_at<DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 30 MINUTE) '+
+        'ORDER BY received_at LIMIT 128');
     // Alpha pilot audit is OFF without an explicit Owner-staged UTC start/end
     // window (maximum one hour). Even a forgotten enable flag cannot write
     // after expiry or after 64 lifetime records per approved node.

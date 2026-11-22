@@ -757,6 +757,35 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.deepEqual(recoveredClaim.body,claim.body);
     // Packaged heartbeats report ONLINE. Central must use authoritative
     // lease/ticket state, never allow ONLINE to erase an active assignment.
+    // Disposable MySQL proof: signed GETs preserve stale nonces; only an
+    // accepted and clock-aligned heartbeat can perform bounded cleanup.
+    const nonceDb=await mysql.createConnection({host:'127.0.0.1',
+      port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,
+      password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+    try{
+      const oldNonce='nonce_ci_two_hours_old';
+      await nonceDb.query('INSERT INTO v7_nonces(node_id,nonce,received_at) '+
+        'VALUES(?,?,DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 2 HOUR))',
+        [b.node_id,oldNonce]);
+      const readOnly=await b.signed('/v7/cluster/state',undefined,'GET');
+      assert.equal(readOnly.code,200,JSON.stringify(readOnly.body));
+      const [before]:any=await nonceDb.query(
+        'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND nonce=?',
+        [b.node_id,oldNonce]);
+      assert.equal(Number(before[0].n),1,'Signed GET must not prune any nonce');
+      for(let n=0;n<5;n++){
+        const observed=await b.heartbeat(Number(status.epoch));
+        assert.equal(observed.code,200,JSON.stringify(observed.body));
+      }
+      const [after]:any=await nonceDb.query(
+        'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND nonce=?',
+        [b.node_id,oldNonce]);
+      assert.equal(Number(after[0].n),0,'Accepted heartbeat reclaims stale nonce');
+      const [fresh]:any=await nonceDb.query(
+        'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND '+
+        'received_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE)',[b.node_id]);
+      assert.ok(Number(fresh[0].n)>=1,'Recent signed replay-protection records survive');
+    }finally{await nonceDb.end();}
     const busyPulse=await b.heartbeat(Number(status.epoch));
     assert.equal(busyPulse.code,200,JSON.stringify(busyPulse.body));
     const busyNode=await b.signed('/v7/nodes/me',undefined,'GET');
