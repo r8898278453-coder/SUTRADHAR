@@ -97,20 +97,20 @@ $('node-recovery-crosscheck').addEventListener('click',async()=>{
     return;
   }
   btn.disabled=true;
+  const initialKey=key;
+  const initialSessionVersion=ownerSessionVersion;
+  const initialRecoveryVersion=ownerRecoveryVersion;
+  const sameInputs=()=>key===initialKey&&key.length>0&&
+    ownerSessionVersion===initialSessionVersion&&
+    ownerRecoveryVersion===initialRecoveryVersion&&
+    !$('dashboard').hidden&&
+    $('node-recovery-input').value.trim()===nodeId&&
+    $('node-recovery-pin').value.trim()===pin&&
+    $('node-recovery-local-json').value===raw;
   try{
     const local=JSON.parse(raw);
     // Two independent GETs catch moving Central counters, epoch, roles,
     // maintenance and Git/worker state. Neither ever uploads local JSON/pin.
-    const initialKey=key;
-    const initialSessionVersion=ownerSessionVersion;
-    const initialRecoveryVersion=ownerRecoveryVersion;
-    const sameInputs=()=>key===initialKey&&key.length>0&&
-      ownerSessionVersion===initialSessionVersion&&
-      ownerRecoveryVersion===initialRecoveryVersion&&
-      !$('dashboard').hidden&&
-      $('node-recovery-input').value.trim()===nodeId&&
-      $('node-recovery-pin').value.trim()===pin&&
-      $('node-recovery-local-json').value===raw;
     const centralBefore=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));
     if(!sameInputs())throw Error('OWNER_CRASH_CROSSCHECK_INPUT_CHANGED');
     const centralAfter=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));

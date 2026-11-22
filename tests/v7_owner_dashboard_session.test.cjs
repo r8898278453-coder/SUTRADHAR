@@ -106,9 +106,14 @@ test('Owner recovery UI remains GET-only; no local diagnostic or pin transmitted
   e('node-recovery-local-json').value='{"schema":1,"secret_marker":"local-only"}';
   const run=e('node-recovery-crosscheck').listeners.click();
   complete(b.pending.shift(),snapshot());
-  await b.flush();
-  if(b.pending.length)complete(b.pending.shift(),snapshot());
+  // A request has multiple await boundaries (fetch + res.json).
+  // Drain any subsequently scheduled GET deterministically.
+  for(let i=0;i<10;i++){
+    await b.flush();
+    for(const pending of b.pending.splice(0))complete(pending,snapshot());
+  }
   await run;
+  assert.equal(b.queries.length,2,'dual Owner comparison performs exactly two GETs');
   assert.ok(b.queries.every(q=>!q.url.includes('secret_marker')));
   assert.ok(b.queries.every(q=>q.options.body===undefined));
   assert.ok(b.queries.every(q=>q.options.method===undefined));
