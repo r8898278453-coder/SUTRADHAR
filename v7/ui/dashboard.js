@@ -1,4 +1,10 @@
 let key='',timer=null;
+let ownerSessionVersion=0,ownerRecoveryVersion=0,ownerRefreshVersion=0;
+function requireLiveOwnerSession(version,originalKey,refreshVersion=null){
+  if(!originalKey||key!==originalKey||ownerSessionVersion!==version||
+      (refreshVersion!==null&&ownerRefreshVersion!==refreshVersion))
+    throw Error('STALE_OWNER_SESSION');
+}
 const $=id=>document.getElementById(id);
 function message(text,error=false){$('message').textContent=text;$('message').className=error?'message error':'message';}
 async function request(path,options={}){
@@ -16,6 +22,11 @@ function rows(id,values){const body=$(id);body.replaceChildren();for(const row o
 function date(raw){if(!raw)return '—';const d=new Date(raw.endsWith('Z')?raw:raw+'Z');return isNaN(d.getTime())?'—':d.toLocaleString();}
 
 const nodeRecoveryResults=$('node-recovery-results');
+function invalidateOwnerRecoveryDisplay(reason){
+  ownerRecoveryVersion++;
+  nodeRecoveryResults.textContent=reason;
+  crosscheckOutput.textContent=reason;
+}
 $('node-recovery-inspect').addEventListener('click',async()=>{
   const btn=$('node-recovery-inspect');
   const nodeId=$('node-recovery-input').value.trim();
@@ -24,9 +35,16 @@ $('node-recovery-inspect').addEventListener('click',async()=>{
     return;
   }
   btn.disabled=true;
+  const selectedSession=ownerSessionVersion,selectedRevision=ownerRecoveryVersion;
+  const selectedKey=key;
+  const stillCurrent=()=>ownerRecoveryVersion===selectedRevision&&
+    $('node-recovery-input').value.trim()===nodeId&&
+    !$('dashboard').hidden&&
+    key===selectedKey&&key.length>0&&ownerSessionVersion===selectedSession;
   nodeRecoveryResults.textContent='Inspecting Central MySQL read-only snapshot…';
   try{
     const result=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));
+    if(!stillCurrent())return; // Never expose an earlier Owner session's data.
     if(result?.schema!==1||result.mode!=='OWNER_CENTRAL_NODE_CRASH_RECOVERY_OBSERVATION'||
        result.node_id!==nodeId||result.read_only!==true||
        result.central_state_modified!==false||
@@ -59,7 +77,8 @@ $('node-recovery-inspect').addEventListener('click',async()=>{
       'Restart, marker removal, installation, production release: NOT AUTHORIZED.'
     ].join('\n');
   }catch(e){
-    nodeRecoveryResults.textContent='OWNER RECOVERY OBSERVATION UNAVAILABLE: '+
+    if(stillCurrent())nodeRecoveryResults.textContent=
+      'OWNER RECOVERY OBSERVATION UNAVAILABLE: '+
       String(e?.message||e)+'. No authorization implied; preserve original device evidence.';
   }finally{btn.disabled=false;}
 });
@@ -83,7 +102,12 @@ $('node-recovery-crosscheck').addEventListener('click',async()=>{
     // Two independent GETs catch moving Central counters, epoch, roles,
     // maintenance and Git/worker state. Neither ever uploads local JSON/pin.
     const initialKey=key;
-    const sameInputs=()=>key===initialKey&&
+    const initialSessionVersion=ownerSessionVersion;
+    const initialRecoveryVersion=ownerRecoveryVersion;
+    const sameInputs=()=>key===initialKey&&key.length>0&&
+      ownerSessionVersion===initialSessionVersion&&
+      ownerRecoveryVersion===initialRecoveryVersion&&
+      !$('dashboard').hidden&&
       $('node-recovery-input').value.trim()===nodeId&&
       $('node-recovery-pin').value.trim()===pin&&
       $('node-recovery-local-json').value===raw;
@@ -116,9 +140,15 @@ $('node-recovery-crosscheck').addEventListener('click',async()=>{
       'No marker deletion, agent restart, installer launch, Git replay or production release.'
     ].join('\n');
   }catch{
-    crosscheckOutput.textContent='HOLD — local/remote data is invalid, tampered or unavailable. No recovery authorized; preserve original PC and evidence.';
+    if(sameInputs())crosscheckOutput.textContent=
+      'HOLD — local/remote data is invalid, tampered or unavailable. No recovery authorized; preserve original PC and evidence.';
   }finally{btn.disabled=false;}
 });
+for(const id of ['node-recovery-input','node-recovery-pin',
+  'node-recovery-local-json']){
+  $(id).addEventListener('input',()=>invalidateOwnerRecoveryDisplay(
+    'HOLD — recovery inputs changed. Inspect fresh Central evidence again; no authorization.'));
+}
 
 let gitRecoverySnapshot=null,gitRecoverySelection=null,gitRecoveryPending=null;
 
@@ -360,19 +390,25 @@ function renderLeadershipSafety(data){
 }
 
 async function refresh(){
+  const currentSession=ownerSessionVersion,originalKey=key;
+  const currentRefresh=++ownerRefreshVersion;
+  const current=()=>requireLiveOwnerSession(currentSession,originalKey,currentRefresh);
   const [cluster,projects,tasks,audit]=await Promise.all([
     request('/v7/cluster'),request('/v7/projects'),request('/v7/tasks'),request('/v7/audit')]);
+  current();
   const c=cluster.cluster;
   // New Owner diagnostic is optional for older staging builds; unavailable
   // never displays a green/safe-to-continue state.
   let leadershipSafety=null;
   try{leadershipSafety=await request('/v7/owner/leadership-safety');}catch{}
+  current();
   renderLeadershipSafety(leadershipSafety);
   // Optional migration-sensitive Owner maintenance surface. Keep the core
   // dashboard readable if the new staging schema is not yet provisioned,
   // but disable planning until the server returns valid authoritative rows.
   let maintenance=null;
   try{maintenance=await request('/v7/owner/maintenance');}catch{}
+  current();
   const maintenanceReady=Array.isArray(maintenance);
   $('plan-maintenance').disabled=!maintenanceReady;
   $('start-pc-drain').disabled=!maintenanceReady;
@@ -388,9 +424,11 @@ async function refresh(){
   // Optional read-only Owner queue. Fail closed if API/schema is unavailable.
   let gitRecovery=null;
   try{gitRecovery=await request('/v7/owner/git-recovery');}catch{}
+  current();
   renderGitRecoveryQueue(gitRecovery);
   let prQueue=null;
   try{prQueue=await request('/v7/owner/pr-recovery');}catch{}
+  current();
   renderPrRecovery(prQueue);
   $('maintenance-epoch').value=String(c.epoch);
   value('master',c.master_agent_id||'No Master');value('epoch',c.epoch);
@@ -408,17 +446,45 @@ async function refresh(){
   value('auditCount',audit.length+' recent');rows('audit',audit.map(a=>[date(a.created_at),a.event_type,a.actor]));
   value('connection','Authenticated · live');$('dashboard').hidden=false;
 }
-$('connect').onclick=async()=>{clearPrCreation();clearPrRecovery();clearGitRecoveryReview();key=$('key').value;$('key').value='';try{await refresh();message('Authenticated. Data refreshed.');}
-  catch(e){key='';$('dashboard').hidden=true;value('connection','Disconnected');message(e.message,true);}
-  if(timer)clearInterval(timer);
-  if(key)timer=setInterval(()=>refresh().catch(e=>message(e.message,true)),20000);
-};
-$('disconnect').onclick=()=>{key='';clearPrCreation();clearPrRecovery();clearGitRecoveryReview();gitRecoverySnapshot=null;
+$('connect').onclick=async()=>{
+  ownerSessionVersion++;ownerRefreshVersion++;
+  const thisSession=ownerSessionVersion;
+  if(timer){clearInterval(timer);timer=null;}
+  invalidateOwnerRecoveryDisplay('HOLD — Owner session changed; fresh evidence required.');
   $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
-  crosscheckOutput.textContent='Disconnected — pasted local evidence cleared; no authorization.';
+  $('dashboard').hidden=true;
+  clearPrCreation();clearPrRecovery();clearGitRecoveryReview();
+  key=$('key').value;$('key').value='';
+  try{
+    await refresh();
+    if(ownerSessionVersion!==thisSession)return;
+    message('Authenticated. Data refreshed.');
+  }catch(e){
+    if(ownerSessionVersion!==thisSession)return;
+    key='';ownerSessionVersion++;ownerRefreshVersion++;
+    $('dashboard').hidden=true;value('connection','Disconnected');
+    message(e.message,true);
+  }
+  if(key&&ownerSessionVersion===thisSession)
+    timer=setInterval(()=>refresh().catch(e=>{
+      if(e?.message!=='STALE_OWNER_SESSION'&&key&&
+         ownerSessionVersion===thisSession)message(e.message,true);
+    }),20000);
+};
+$('disconnect').onclick=()=>{
+  ownerSessionVersion++;ownerRefreshVersion++;
+  key='';clearPrCreation();clearPrRecovery();clearGitRecoveryReview();
+  gitRecoverySnapshot=null;
+  $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
+  invalidateOwnerRecoveryDisplay(
+    'Disconnected — pasted local evidence cleared; no authorization.');
   $('dashboard').hidden=true;value('connection','Disconnected');
-  if(timer)clearInterval(timer);message('Disconnected. Credentials cleared from memory.');};
-$('refresh').onclick=()=>refresh().catch(e=>message(e.message,true));
+  if(timer){clearInterval(timer);timer=null;}
+  message('Disconnected. Credentials cleared from memory.');
+};
+$('refresh').onclick=()=>refresh().catch(e=>{
+  if(e?.message!=='STALE_OWNER_SESSION'&&key)message(e.message,true);
+});
 document.querySelectorAll('[data-command]').forEach(button=>button.addEventListener('click',async()=>{
   const command=button.dataset.command;
   const payload={};

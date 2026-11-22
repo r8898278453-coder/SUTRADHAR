@@ -290,6 +290,8 @@ test('Owner HTML comparison is GET-only and uses textContent, not hidden POST up
   assert.match(dashboard,/centralBefore=await request/);
   assert.match(dashboard,/centralAfter=await request/);
   assert.match(dashboard,/const sameInputs=\(\)=>key===initialKey/);
+  assert.match(dashboard,/ownerSessionVersion===initialSessionVersion/);
+  assert.match(dashboard,/ownerRecoveryVersion===initialRecoveryVersion/);
   assert.match(dashboard,/if\(!sameInputs\(\)\)throw Error\('OWNER_CRASH_CROSSCHECK_INPUT_CHANGED'\)/);
   assert.match(dashboard,/request\('\/v7\/owner\/node-recovery\/'\+encodeURIComponent\(nodeId\)\)/);
   assert.match(dashboard,/crosscheckOutput\.textContent/);

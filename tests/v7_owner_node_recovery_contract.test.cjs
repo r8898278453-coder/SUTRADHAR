@@ -37,5 +37,8 @@ test('Owner dashboard shows read-only node recovery snapshot without auto-restar
   assert.match(dashboard,/result\.agent_restart_allowed!==false/);
   assert.match(dashboard,/result\.marker_removal_allowed!==false/);
   assert.match(dashboard,/nodeRecoveryResults\.textContent/);
+  assert.match(dashboard,/if\(!stillCurrent\(\)\)return/);
+  assert.match(dashboard,/const selectedSession=ownerSessionVersion/);
+  assert.match(dashboard,/ownerRefreshVersion===refreshVersion/);
   assert.doesNotMatch(dashboard,/nodeRecoveryResults\.innerHTML\s*=/);
 });
