@@ -15,3 +15,18 @@ test('nonce pruning is bounded, throttled and fail closed on clock skew',()=>{
     [Number.MAX_SAFE_INTEGER+1,now,now]])
     assert.equal(shouldPruneNonces(...args),false,JSON.stringify(args));
 });
+
+test('nonce maintenance is post-commit and cannot roll back accepted heartbeat',()=>{
+  const fs=require('node:fs'),path=require('node:path');
+  const source=fs.readFileSync(path.join(__dirname,'../v7/central.ts'),'utf8');
+  const route=source.split("app.post('/v7/nodes/heartbeat'")[1].split(
+    '// Owner-only, bounded GET export of committed accepted heartbeat packet rows.')[0];
+  assert.match(route,/const accepted=await transaction\(async c=>\{/);
+  assert.match(route,/if\(shouldPruneNonces\(sequence,Date\.now\(\),Date\.parse\(accepted\.server_received_at\)\)\)/);
+  const commitBoundary=route.indexOf('  // The heartbeat has COMMITTED.');
+  const heartbeatReturn=route.indexOf('return {accepted:true,server_received_at:');
+  const cleanup=route.indexOf("await c.query('DELETE FROM v7_nonces");
+  assert.ok(heartbeatReturn>=0&&commitBoundary>heartbeatReturn&&cleanup>commitBoundary);
+  assert.match(route,/catch\{ \/\* best-effort housekeeping failure: preserve accepted heartbeat \*\/ \}/);
+  assert.match(route,/return accepted;/);
+});

@@ -755,7 +755,7 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
   // agent packets BEFORE acquiring the MySQL leader lock or updating counters.
   if(!validSignedHeartbeat(data))fault('INVALID_HEARTBEAT',400);
   const sequence=data.sequence,bootId=requireId(data.boot_id);
-  return transaction(async c=>{
+  const accepted=await transaction(async c=>{
     // All worker/Owner/heartbeat writes take the leader lock FIRST, avoiding
     // cross-order deadlocks with task admission and persistent drain fencing.
     const ld=await leader(c);
@@ -803,14 +803,9 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
       await c.query('UPDATE v7_cluster SET lease_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 180 SECOND) WHERE singleton=1');
     }
     const elected=await evaluate(c,'heartbeat');
-    // Retain at least 30 minutes of durable nonce replay protection (signed
-    // request clock tolerance is +/-120s). A bounded delete runs on every
-    // 5th successfully accepted heartbeat, only if DB/app clocks agree.
-    // Failed heartbeats and every GET never trigger cleanup.
-    if(shouldPruneNonces(sequence,Date.now(),clock))
-      await c.query('DELETE FROM v7_nonces '+
-        'WHERE received_at<DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 30 MINUTE) '+
-        'ORDER BY received_at LIMIT 128');
+    // Nonce maintenance MUST NOT be inside the authoritative heartbeat,
+    // election and worker-ledger transaction. It runs separately after
+    // commit and cannot revoke an already accepted heartbeat on failure.
     // Alpha pilot audit is OFF without an explicit Owner-staged UTC start/end
     // window (maximum one hour). Even a forgotten enable flag cannot write
     // after expiry or after 64 lifetime records per approved node.
@@ -843,6 +838,20 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
       backups:[elected.backup1,elected.backup2],paused:Boolean(elected.paused),
       heartbeat_interval_seconds:60};
   });
+  // The heartbeat has COMMITTED. A transient lock/permission/cleanup failure
+  // cannot roll back its signed sequence, lease extension or Master promotion.
+  // Max 128 nonces older than 30 minutes, every fifth accepted heartbeat,
+  // and only with tightly aligned MySQL/app clocks. No process timer.
+  if(shouldPruneNonces(sequence,Date.now(),Date.parse(accepted.server_received_at))){
+    try{
+      await transaction(async c=>{
+        await c.query('DELETE FROM v7_nonces '+
+          'WHERE received_at<DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 30 MINUTE) '+
+          'ORDER BY received_at LIMIT 128');
+      });
+    }catch{ /* best-effort housekeeping failure: preserve accepted heartbeat */ }
+  }
+  return accepted;
 }));
 // Owner-only, bounded GET export of committed accepted heartbeat packet rows.
 app.get('/v7/owner/heartbeat-evidence/:nodeId',jsonRoute(async req=>{
