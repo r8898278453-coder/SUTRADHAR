@@ -19,7 +19,7 @@ import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
 import {permitSignedHeartbeatPilotRecord} from './pilot_heartbeat_window.ts';
 import {validSignedHeartbeat} from './heartbeat_validation.ts';
-import {shouldPruneNonces} from './nonce_retention.ts';
+import {shouldPruneNonces,hasIndexedNoncePrunePrerequisite} from './nonce_retention.ts';
 import {inspectLastRetainedPilotHeartbeat} from './pilot_signed_packet_recheck.ts';
 import {inspectLeadershipSafety} from './leadership_diagnostic.ts';
 import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,QaEvidenceError} from './qa_evidence.ts';
@@ -840,11 +840,22 @@ app.post('/v7/nodes/heartbeat',jsonRoute(async req=>{
   });
   // The heartbeat has COMMITTED. A transient lock/permission/cleanup failure
   // cannot roll back its signed sequence, lease extension or Master promotion.
-  // Max 128 nonces older than 30 minutes, every fifth accepted heartbeat,
-  // and only with tightly aligned MySQL/app clocks. No process timer.
+  // Max 128 nonces older than 30 minutes, every fifth accepted heartbeat.
+  // No full-table cleanup on unindexed v7 baseline or incomplete v8 DDL:
+  // require exact [7,8] history AND the reviewed nonce received_at index.
+  // A transient metadata/cleanup failure must not undo a committed heartbeat.
   if(shouldPruneNonces(sequence,Date.now(),Date.parse(accepted.server_received_at))){
     try{
       await transaction(async c=>{
+        const [versions]=await c.query(
+          'SELECT version FROM v7_schema_versions ORDER BY version ASC LIMIT 3');
+        const [indexRows]=await c.query(
+          'SELECT index_name AS index_name,seq_in_index AS seq_in_index,'+
+          'column_name AS column_name,non_unique AS non_unique '+
+          'FROM information_schema.statistics WHERE table_schema=DATABASE() '+
+          'AND table_name=? AND index_name=?',
+          ['v7_nonces','idx_nonce_received_at']);
+        if(!hasIndexedNoncePrunePrerequisite(versions,indexRows))return;
         await c.query('DELETE FROM v7_nonces '+
           'WHERE received_at<DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 30 MINUTE) '+
           'ORDER BY received_at LIMIT 128');

@@ -323,3 +323,21 @@ and index drift. Real Hostinger migration/restore and G0–G7 remain **HOLD**.
 ## 23 November 2026 — v8 independent full-baseline structural drift check
 
 The read-only v8 postcheck now **also** checks every pinned v7 baseline table, column name/type/nullability, declared index and foreign-key relation using the existing reviewed inventory, while requiring exact schema version history `[7,8]` (never accepting v9 implicitly). The v8 nonce-age index is checked separately. A valid index plus tampered baseline table no longer produces accepted metadata. Pure tests cover missing/extra column, missing FK/index, unexpected table and unreviewed version; disposable real MySQL rehearsal now deliberately adds an unexpected column and verifies fail-closed rejection. This is **not** a data-row validation, default/collation/implicit-index review, DDL atomicity proof or Hostinger live acceptance. Owner G0–G7 remain HOLD.
+
+
+## 23 November 2026 — Indexed-only nonce housekeeping safety
+
+The 30-minute replay-nonce prune now runs only after a committed, clock-aligned
+every-fifth accepted heartbeat **and** a fresh DB metadata check for the exact
+`[7,8]` schema history and physical nonunique
+`v7_nonces.idx_nonce_received_at(received_at)` index. Until both exist,
+cleanup skips silently: no unindexed whole-table DELETE on v7; a partial v8
+migration also cannot enable that path. Failures are best-effort and never
+roll back an accepted signed heartbeat or enable read-side election. Pure
+tests reject forged/incomplete metadata. Disposable real-MySQL integration
+proves a v7 baseline and version-only v8 skip cleanup, while complete
+version-plus-index v8 prunes stale nonces and keeps new replay protection.
+**Operational tradeoff:** v7-only alpha installations retain stale nonce rows
+until a separately reviewed staging migration; do not run v7 indefinitely at
+scale. This is source/CI logic, NOT authorization for Hostinger v8 DDL, real
+provider automation, production update or release.

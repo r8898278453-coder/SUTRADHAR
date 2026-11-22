@@ -779,8 +779,8 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.deepEqual(recoveredClaim.body,claim.body);
     // Packaged heartbeats report ONLINE. Central must use authoritative
     // lease/ticket state, never allow ONLINE to erase an active assignment.
-    // Disposable MySQL proof: signed GETs preserve stale nonces; only an
-    // accepted and clock-aligned heartbeat can perform bounded cleanup.
+    // Disposable MySQL proof: GETs preserve stale nonces; a healthy accepted
+    // heartbeat prunes ONLY after reviewed v8 version and physical index exist.
     const nonceDb=await mysql.createConnection({host:'127.0.0.1',
       port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,
       password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
@@ -799,14 +799,45 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         const observed=await b.heartbeat(Number(status.epoch));
         assert.equal(observed.code,200,JSON.stringify(observed.body));
       }
-      const [after]:any=await nonceDb.query(
+      const [beforeMigration]:any=await nonceDb.query(
         'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND nonce=?',
         [b.node_id,oldNonce]);
-      assert.equal(Number(after[0].n),0,'Accepted heartbeat reclaims stale nonce');
-      const [fresh]:any=await nonceDb.query(
-        'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND '+
-        'received_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE)',[b.node_id]);
-      assert.ok(Number(fresh[0].n)>=1,'Recent signed replay-protection records survive');
+      assert.equal(Number(beforeMigration[0].n),1,
+        'Unindexed v7 baseline refuses full-table nonce pruning');
+      // Disposable MySQL ONLY: simulate the reviewed v8 nonce-age index.
+      // Neither a fake version nor an index alone suffices for cleanup.
+      await nonceDb.query('INSERT INTO v7_schema_versions(version) VALUES(8)');
+      try{
+        for(let n=0;n<5;n++){
+          const observed=await b.heartbeat(Number(status.epoch));
+          assert.equal(observed.code,200,JSON.stringify(observed.body));
+        }
+        const [withoutIndex]:any=await nonceDb.query(
+          'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND nonce=?',
+          [b.node_id,oldNonce]);
+        assert.equal(Number(withoutIndex[0].n),1,
+          'Schema version alone never authorizes unindexed cleanup');
+        await nonceDb.query('CREATE INDEX idx_nonce_received_at ON v7_nonces (received_at)');
+        try{
+          for(let n=0;n<5;n++){
+            const observed=await b.heartbeat(Number(status.epoch));
+            assert.equal(observed.code,200,JSON.stringify(observed.body));
+          }
+          const [after]:any=await nonceDb.query(
+            'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND nonce=?',
+            [b.node_id,oldNonce]);
+          assert.equal(Number(after[0].n),0,'Indexed v8 heartbeat reclaims stale nonce');
+          const [fresh]:any=await nonceDb.query(
+            'SELECT COUNT(*) n FROM v7_nonces WHERE node_id=? AND '+
+            'received_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE)',[b.node_id]);
+          assert.ok(Number(fresh[0].n)>=1,
+            'Recent signed replay-protection records survive');
+        }finally{
+          await nonceDb.query('DROP INDEX idx_nonce_received_at ON v7_nonces');
+        }
+      }finally{
+        await nonceDb.query('DELETE FROM v7_schema_versions WHERE version=8');
+      }
     }finally{await nonceDb.end();}
     const busyPulse=await b.heartbeat(Number(status.epoch));
     assert.equal(busyPulse.code,200,JSON.stringify(busyPulse.body));
