@@ -530,10 +530,27 @@ test('device-signed QA upload makes pending Owner review before receipt and pres
       const {signer}=qaSigningFixture(f);
       await attestIndependentQa({...f.opts,agentId:'agent_qa',signer,evidenceDir});
       const requests=[],receipts=new Map(),processed=new Map();
-      let approved=false;
+      let approved=false,recorded=false,proposalId=null,evidenceHash=null;
+      const qaReceiptId='12345678-1234-4234-8234-123456789abc';
       const fetcher=async(url,opts)=>{
         const uri=new URL(url).pathname;
         if(uri.startsWith('/v7/tasks/detail/'))return f.fetcher(url,opts);
+        if(uri.startsWith('/v7/tasks/qa-review/')){
+          assert.equal(opts.method,'GET');
+          assert.equal(uri,'/v7/tasks/qa-review/'+proposalId);
+          assert.equal(opts.headers['x-sutradhar-agent'],'agent_qa');
+          const data={review_proposal_id:proposalId,ticket_id:'ticket_abc',
+            qa_agent_id:'agent_qa',owner_review_state:approved?'APPROVED':'PENDING',
+            task_status:recorded?'INTEGRATING':'SUBMITTED_FOR_REVIEW',
+            candidate_head_sha:f.head,candidate_tree_sha:f.tree,
+            evidence_sha256:evidenceHash,qa_receipt_recorded:recorded,
+            qa_receipt_id:recorded?qaReceiptId:null,
+            owner_review_required:true,automatic_qa_approval_allowed:false,
+            automatic_qa_receipt_allowed:false,git_published:false,
+            manual_next_action:recorded?'RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY':
+              approved?'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE':'WAIT_FOR_OWNER_REVIEW'};
+          return new Response(JSON.stringify(data),{status:200});
+        }
         assert.equal(opts.method,'POST');
         assert.equal(opts.headers['x-sutradhar-agent'],'agent_qa');
         const body=JSON.parse(opts.body);
@@ -547,6 +564,8 @@ test('device-signed QA upload makes pending Owner review before receipt and pres
             'ticket_abc','agent_qa',signer.snapshot().node_id,f.head,f.tree,
             body.attestation.message.evidence_sha256,hash,'PASS'
           ].join('\n')).digest('hex');
+          proposalId=proposal;
+          evidenceHash=body.attestation.message.evidence_sha256;
           const result={accepted:true,review_proposal_id:proposal,
             status:'PENDING_OWNER_REVIEW',
             evidence_sha256:body.attestation.message.evidence_sha256,
@@ -558,13 +577,16 @@ test('device-signed QA upload makes pending Owner review before receipt and pres
           return new Response(JSON.stringify(result),{status:200});
         }
         if(uri==='/v7/tasks/qa-receipt'){
-          const result=approved?{accepted:true,ticket_id:'ticket_abc',
-            receipt_id:'12345678-1234-4234-8234-123456789abc',
-            status:'INTEGRATING',evidence_level:'AGENT_ATTESTED'}:
-            {error_code:'QA_VERIFIED_OWNER_REVIEW_REQUIRED'};
+          assert.equal(approved,true,'Owner must approve before POST');
+          assert.equal(recorded,false,'Receipt must not be submitted twice');
+          recorded=true;
+          f.updateTask({...f.task(),status:'INTEGRATING',version:4});
+          const result={accepted:true,ticket_id:'ticket_abc',
+            receipt_id:qaReceiptId,status:'INTEGRATING',
+            evidence_level:'AGENT_ATTESTED'};
           if(processed.has(body.request_id))assert.deepEqual(processed.get(body.request_id),body);
           processed.set(body.request_id,body);
-          return new Response(JSON.stringify(result),{status:approved?200:403});
+          return new Response(JSON.stringify(result),{status:200});
         }
         throw Error('Unexpected Central QA request '+uri);
       };
@@ -577,19 +599,20 @@ test('device-signed QA upload makes pending Owner review before receipt and pres
       assert.equal(upload2.already_submitted,true);
       assert.equal(requests.filter(z=>z.uri==='/v7/tasks/qa-evidence').length,1);
       await assert.rejects(submitOwnerReviewedQaReceipt(opts),
-        /QA_UPLOAD_QA_VERIFIED_OWNER_REVIEW_REQUIRED/);
-      const pending=JSON.parse(fs.readFileSync(path.join(evidenceDir,
-        'qa_central_receipt_ticket_abc_pending.json'),'utf8'));
-      assert.equal(pending.body.request_id,requests.at(-1).body.request_id);
+        /QA_RECEIPT_OWNER_REVIEW_PENDING/);
+      assert.equal(fs.existsSync(path.join(evidenceDir,
+        'qa_central_receipt_ticket_abc_pending.json')),false);
       approved=true;
       const accepted=await submitOwnerReviewedQaReceipt(opts);
       assert.equal(accepted.status,'INTEGRATING');
       assert.equal(accepted.git_published,false);
       assert.equal(accepted.qa_receipt_submitted,true);
-      assert.equal(requests.at(-1).body.request_id,pending.body.request_id);
+      assert.equal(accepted.read_only_central_reconciled,true);
       const again=await submitOwnerReviewedQaReceipt(opts);
       assert.equal(again.already_submitted,true);
-      assert.equal(requests.filter(z=>z.uri==='/v7/tasks/qa-receipt').length,2);
+      assert.equal(again.reconciled_from_central,true);
+      assert.equal(again.receipt_id,qaReceiptId);
+      assert.equal(requests.filter(z=>z.uri==='/v7/tasks/qa-receipt').length,1);
       assert.ok(fs.existsSync(path.join(evidenceDir,
         'qa_central_receipt_ticket_abc_receipt.json')));
       assert.equal(cmd(f.qaRepo,'rev-parse','HEAD'),f.baseline);

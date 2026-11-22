@@ -271,3 +271,7 @@ npm run edge:worker -- qa-review QA_AGENT_ID TICKET_ID qaev_<64-lowercase-hex>
 ```
 
 The command verifies the signed Central response and displays a **manual-only** next step. It cannot approve the review, submit a QA receipt or publish code. The developer-only CLI key is not a substitute for Windows vault custody; real physical Windows QA remains HOLD.
+
+## 22 November — Packaged Windows QA receipt lost-ACK reconciliation
+
+The existing OS-vault QA client now checks exact Owner approval through a fixed, signed, read-only Central QA-review URL before sending any receipt and after its POST response. A PENDING/DENIED Owner decision refuses locally without creating a new QA receipt journal. A successful POST response does not by itself erase the pending intent; Central must independently show the exact receipt UUID, original candidate hashes, QA agent, evidence SHA-256 and matching task state. If an acknowledgement is lost, a later **manual** invocation may reconcile an exact existing intent with the Central receipt **without resending the mutation**. An existing local completed journal is not accepted as evidence without fresh Central proof. No renderer signing oracle, QA approval, Git publication or installer action is added. CI simulation does not replace real physical Windows/Hostinger staging acceptance; production remains HOLD.
