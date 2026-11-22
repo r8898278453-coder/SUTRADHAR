@@ -105,7 +105,9 @@ test('packaged Main durably fences sessions before spawn and blocks orphaned sig
   const pkg=require('../apps/desktop/package.json');
   assert.ok(pkg.build.files.includes('agent-session-fence.cjs'));
   assert.match(main,/requireNoAgentSession\(\{dir:nodeDir\(\)\}\)/);
-  assert.match(main,/const session=beginAgentSession\(\{dir:nodeDir\(\)\}\);[\s\S]*?agent=spawn\(/);
+  assert.match(main,/session=beginAgentSession\(\{dir:nodeDir\(\)\}\);[\s\S]*?agent=spawn\(/);
+  assert.match(main,/OS_VAULT_AGENT_LAUNCH_UNCERTAIN_OWNER_REVIEW/);
+  assert.match(main,/catch\{[\s\S]*?signer=null;[\s\S]*?throw Error\(vaultError\)/);
   assert.match(main,/finishObservedSession\(\{dir:nodeDir\(\),session_id:session\.session_id,/);
   assert.match(main,/if\(!clean\)\{[\s\S]*?vaultError='OS_VAULT_AGENT_CRASH_OWNER_REVIEW_REQUIRED'/);
   assert.match(main,/if\(shuttingDown\|\|vaultError\)return/);
