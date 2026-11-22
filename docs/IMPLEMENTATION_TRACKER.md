@@ -319,3 +319,7 @@ snapshot only, never a go-live or migration authorization. Do not operate it on
 production. Disposable real-MySQL CI now validates an intact v8 index and rejects
 a deliberately removed index; separate pure tests reject version, audit, identity
 and index drift. Real Hostinger migration/restore and G0–G7 remain **HOLD**.
+
+## 23 November 2026 — v8 independent full-baseline structural drift check
+
+The read-only v8 postcheck now **also** checks every pinned v7 baseline table, column name/type/nullability, declared index and foreign-key relation using the existing reviewed inventory, while requiring exact schema version history `[7,8]` (never accepting v9 implicitly). The v8 nonce-age index is checked separately. A valid index plus tampered baseline table no longer produces accepted metadata. Pure tests cover missing/extra column, missing FK/index, unexpected table and unreviewed version; disposable real MySQL rehearsal now deliberately adds an unexpected column and verifies fail-closed rejection. This is **not** a data-row validation, default/collation/implicit-index review, DDL atomicity proof or Hostinger live acceptance. Owner G0–G7 remain HOLD.

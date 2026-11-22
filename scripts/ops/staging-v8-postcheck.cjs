@@ -6,6 +6,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path');
 const {validateManifest,hash}=require('./versioned-migration-plan.cjs');
+const {inspect}=require('./staging-schema-inspect.cjs');
 const NAME=/^[A-Za-z0-9_]{1,64}$/,HEX=/^[a-f0-9]{64}$/;
 function fail(code){throw Error(code);}
 function validatePostcheckIntent(intent,manifest,readFile,schemaText){
@@ -66,11 +67,22 @@ async function verifyPostV8({db,manifest,readFile,schemaText,intent}){
      Number(indexes[0]?.seq_in_index)!==1||
      Number(indexes[0]?.non_unique)!==1)
     fail('STAGING_V8_INDEX_DRIFT');
+  // A valid new index cannot conceal baseline table/column/type/declared-index
+  // or foreign-key drift. Reuse the independently reviewed v7 inventory,
+  // allowing ONLY the exact v7->v8 schema-version sequence.
+  const structural=await inspect({target:intent.target,source:intent.source,
+    approved:'yes',expectedSha:hash(schemaText),schemaText,expectedVersion:8,
+    query:(sql,args)=>db.query(sql,args)});
+  if(!structural.accepted)fail('STAGING_V8_BASELINE_STRUCTURE_DRIFT');
   const [after]=await db.query('SELECT version FROM v7_schema_versions ORDER BY version ASC');
   if(!exactVersions(after))fail('STAGING_V8_VERSION_HISTORY_CHANGED');
   return {accepted:true,status:'READ_ONLY_V8_METADATA_POSTCHECK',
     database:intent.target,source_migration_sha256:migration.sha256,
     schema_versions:[7,8],index:'v7_nonces.idx_nonce_received_at(received_at)',
+    baseline_structure_checked:true,
+    baseline_table_count:structural.observed_table_count,
+    baseline_column_count:structural.structure_inventory.checked_column_type_count,
+    baseline_foreign_key_count:structural.foreign_key_inventory.observed_fk_count,
     backup_receipt_self_reported:true,
     sql_writes_performed:false,migration_execution_allowed:false,
     real_hostinger_accepted:false,restore_verified:false,

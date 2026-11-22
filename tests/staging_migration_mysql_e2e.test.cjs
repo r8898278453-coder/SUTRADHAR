@@ -72,6 +72,12 @@ test('REAL MySQL 8: staging-only v8 rehearsal persists non-retryable audit after
     await staging.query('DROP INDEX idx_nonce_received_at ON v7_nonces');
     await assert.rejects(verifyPostV8({db:staging,manifest,schemaText,
       intent:postcheckIntent,readFile:()=>sql}),/STAGING_V8_INDEX_DRIFT/);
+    // Restore the reviewed index, then prove a tampered baseline table
+    // cannot pass just because the v8 migration audit/index still look valid.
+    await staging.query('CREATE INDEX idx_nonce_received_at ON v7_nonces (received_at)');
+    await staging.query('ALTER TABLE v7_nonces ADD COLUMN unexpected_ci VARCHAR(30) NULL');
+    await assert.rejects(verifyPostV8({db:staging,manifest,schemaText,
+      intent:postcheckIntent,readFile:()=>sql}),/STAGING_V8_BASELINE_STRUCTURE_DRIFT/);
     const [after]=await staging.query('SELECT COUNT(*) AS n FROM v7_migration_audit');
     assert.equal(Number(after[0].n),1);
   }finally{

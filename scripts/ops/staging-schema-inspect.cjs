@@ -26,7 +26,11 @@ function validateTarget({target,source,approved,expectedSha,schemaText}){
   if(actual!==expectedSha)throw Error('STAGING_SCHEMA_SOURCE_SHA_MISMATCH');
   return expectedTables(schemaText);
 }
-async function inspect({target,source,approved,expectedSha,schemaText,query}){
+async function inspect({target,source,approved,expectedSha,schemaText,query,expectedVersion=7}){
+  // Only v7 baseline and the separately reviewed additive v8 are supported.
+  // A future v9 must add a reviewed migration contract, never be auto-accepted.
+  if(expectedVersion!==7&&expectedVersion!==8)
+    throw Error('STAGING_SCHEMA_EXPECTED_VERSION_INVALID');
   const tables=validateTarget({target,source,approved,expectedSha,schemaText});
   if(typeof query!=='function')throw Error('STAGING_SCHEMA_DB_READER_UNAVAILABLE');
   const [rows]=await query('SELECT table_name AS table_name,engine AS engine FROM information_schema.tables WHERE table_schema=? AND table_type=?',
@@ -56,18 +60,26 @@ async function inspect({target,source,approved,expectedSha,schemaText,query}){
     'SELECT k.table_name AS table_name,k.constraint_name AS constraint_name,k.column_name AS column_name,k.ordinal_position AS ordinal_position,k.referenced_table_schema AS referenced_table_schema,k.referenced_table_name AS referenced_table_name,k.referenced_column_name AS referenced_column_name,r.delete_rule AS delete_rule,r.update_rule AS update_rule FROM information_schema.key_column_usage k JOIN information_schema.referential_constraints r ON r.constraint_schema=k.constraint_schema AND r.constraint_name=k.constraint_name AND r.table_name=k.table_name WHERE k.table_schema=? AND k.referenced_table_name IS NOT NULL ORDER BY k.table_name,k.constraint_name,k.ordinal_position',
     [target]);
   const foreignKeys=compareForeignKeys(expectedForeignKeys(schemaText),foreignKeyRows,target);
-  let schemaVersion=null;
+  let schemaVersion=null,schemaVersions=[];
   if(!missing.includes('v7_schema_versions')){
-    const [v]=await query('SELECT version FROM v7_schema_versions ORDER BY version DESC LIMIT 2',[]);
-    if(!Array.isArray(v)||v.length!==1||!Number.isSafeInteger(Number(v[0].version)))
+    // A three-row bounded read rejects unexpected history beyond reviewed v8.
+    const [v]=await query('SELECT version FROM v7_schema_versions ORDER BY version ASC LIMIT 3',[]);
+    if(!Array.isArray(v)||v.length>2||
+       v.some(row=>!Number.isSafeInteger(Number(row?.version))||
+         Number(row?.version)<7||Number(row?.version)>8))
       throw Error('STAGING_SCHEMA_VERSION_INVALID');
-    schemaVersion=Number(v[0].version);
+    schemaVersions=v.map(row=>Number(row.version));
+    schemaVersion=schemaVersions.at(-1)||null;
   }
-  return {accepted:missing.length===0&&extra.length===0&&schemaVersion===7&&columns.accepted&&structure.accepted&&foreignKeys.accepted,
+  const expectedHistory=expectedVersion===7?[7]:[7,8];
+  const historyValid=schemaVersions.length===expectedHistory.length&&
+    schemaVersions.every((v,i)=>v===expectedHistory[i]);
+  return {accepted:missing.length===0&&extra.length===0&&historyValid&&columns.accepted&&structure.accepted&&foreignKeys.accepted,
     status:'STAGING_SCHEMA_READ_ONLY_INVENTORY',source_sha256:expectedSha,
     column_inventory:columns,structure_inventory:structure,foreign_key_inventory:foreignKeys,
     expected_table_count:tables.length,observed_table_count:observed.size,
-    missing,extra,schema_version:schemaVersion,production_accepted:false,
+    missing,extra,schema_version:schemaVersion,schema_versions:schemaVersions,
+    expected_version:expectedVersion,production_accepted:false,
     migration_executed:false,restore_proven:false};
 }
 async function main(){

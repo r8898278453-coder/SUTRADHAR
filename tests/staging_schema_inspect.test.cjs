@@ -61,3 +61,18 @@ test('missing and unexpected columns reject otherwise matching staging tables',a
   assert.equal(extra.accepted,false);
   assert.ok(extra.column_inventory.extra.includes(all[0]+'.unexpected'));
 });
+
+test('reviewed v8 inventory requires exact [7,8] history and unchanged v7 structure',async()=>{
+  const version8=async sql=>sql.includes('v7_schema_versions')?
+    [[{version:7},{version:8}]]:fake(sql);
+  const v8=await inspect({...base,query:version8,expectedVersion:8});
+  assert.equal(v8.accepted,true);
+  assert.deepEqual(v8.schema_versions,[7,8]);
+  assert.equal((await inspect({...base,query:version8})).accepted,false);
+  const invalid=async sql=>sql.includes('v7_schema_versions')?
+    [[{version:7},{version:8},{version:9}]]:fake(sql);
+  await assert.rejects(inspect({...base,query:invalid,expectedVersion:8}),
+    /STAGING_SCHEMA_VERSION_INVALID/);
+  await assert.rejects(inspect({...base,query:version8,expectedVersion:9}),
+    /STAGING_SCHEMA_EXPECTED_VERSION_INVALID/);
+});
