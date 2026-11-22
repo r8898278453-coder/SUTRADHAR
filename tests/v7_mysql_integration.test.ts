@@ -953,6 +953,37 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const db=await mysql.createConnection({host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
       user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
     try {
+      // Inject fault conditions into disposable MySQL: a completed/failed
+      // ticket can retain an old lease after worker submission. A Master
+      // promotion must never corrupt terminal state or bump its version.
+      const synthetic=[
+        {ticket:'ticket_done_failover_hold',state:'DONE'},
+        {ticket:'ticket_failed_failover_hold',state:'TEST_FAILED'},
+        {ticket:'ticket_reconciling_failover_hold',state:'RECONCILIATION_REQUIRED'},
+        {ticket:'ticket_submitted_failover_hold',state:'SUBMITTED_FOR_REVIEW',candidate:true},
+        {ticket:'ticket_checkpoint_failover_hold',state:'CHECKPOINTED'}
+      ];
+      for(let idx=0;idx<synthetic.length;idx++){
+        const row=synthetic[idx];
+        const fingerprint=crypto.createHash('sha256').update(row.ticket).digest('hex');
+        await db.query('INSERT INTO v7_tickets '+
+          '(ticket_id,project_id,creator_agent_id,fingerprint,created_epoch,title,'+
+          'description,baseline_sha,branch_name,risk,scopes_json,criteria_json,'+
+          'status,worker_agent_id,candidate_head_sha,candidate_tree_sha) '+
+          'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [row.ticket,'project_integration',a.agent_id,fingerprint,Number(status.epoch),
+            'Failover state regression '+idx,'Disposable terminal/active lease fixture',
+            'a'.repeat(40),'ai/'+row.ticket,'LOW',
+            JSON.stringify(['src/failover-fixture-'+idx+'.ts']),
+            JSON.stringify(['must preserve correct recovery state']),row.state,
+            d.agent_id,row.candidate?'b'.repeat(40):null,
+            row.candidate?'c'.repeat(40):null]);
+        await db.query('INSERT INTO v7_leases '+
+          '(ticket_id,agent_id,epoch,lease_id,expires_at,revoked) '+
+          'VALUES(?,?,?,?,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 600 SECOND),0)',
+          [row.ticket,d.agent_id,Number(status.epoch),
+            'deadbeef-0000-4000-8000-'+String(idx).padStart(12,'0')]);
+      }
       await db.query('UPDATE v7_cluster SET lease_until=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE singleton=1');
       await db.query('UPDATE v7_agents SET last_seen=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 400 SECOND) WHERE agent_id=?',
         [a.agent_id]);
@@ -1035,6 +1066,30 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         assert.equal(received.body.phase,'RECOVERING');
         assert.equal(Number(received.body.epoch),Number(status.epoch)+1);
       }
+      const [failoverTicketRows]:any=await db.query(
+        'SELECT ticket_id,status,version FROM v7_tickets '+
+        'WHERE ticket_id LIKE "ticket_%_failover_hold" ORDER BY ticket_id');
+      assert.equal(failoverTicketRows.length,5);
+      const states=Object.fromEntries(failoverTicketRows.map((item:any)=>
+        [item.ticket_id,{status:item.status,version:Number(item.version)}]));
+      for(const [ticket,state] of [
+        ['ticket_done_failover_hold','DONE'],
+        ['ticket_failed_failover_hold','TEST_FAILED'],
+        ['ticket_reconciling_failover_hold','RECONCILIATION_REQUIRED']
+      ] as const){
+        assert.equal(states[ticket]?.status,state,
+          'Promotion cannot revive or rewrite terminal/previous recovery state: '+ticket);
+        assert.equal(states[ticket]?.version,1,'Terminal/recovery version immutable: '+ticket);
+      }
+      for(const ticket of [
+        'ticket_submitted_failover_hold','ticket_checkpoint_failover_hold']){
+        assert.equal(states[ticket]?.status,'RECONCILIATION_REQUIRED');
+        assert.equal(states[ticket]?.version,2);
+      }
+      const [fencedLeases]:any=await db.query('SELECT COUNT(*) n FROM v7_leases '+
+        'WHERE ticket_id LIKE "ticket_%_failover_hold" AND revoked=1');
+      assert.equal(Number(fencedLeases[0].n),5,
+        'Every old-epoch worker lease is fenced, even if its task is terminal');
       const [promotionRows]:any=await db.query(
         'SELECT COUNT(*) AS n FROM v7_events '+
         'WHERE event_type="MASTER_PROMOTED" AND epoch=? AND resource_id=?',
@@ -1146,6 +1201,21 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(fallback.code,200,JSON.stringify(fallback.body));
       assert.equal(fallback.body.master_agent_id,c.agent_id);
       assert.equal(Number(fallback.body.epoch),Number(promoted.body.epoch)+1);
+      // A submitted candidate without a Git job is still not fresh work.
+      // Human "remote_checked" cannot erase its SHA/QA evidence and requeue.
+      const candidateReset=await post('/v7/owner/command',{
+        request_id:'owner_candidate_requeue_'+(++count),command:'RECONCILE_TICKET',
+        payload:{ticket_id:'ticket_submitted_failover_hold',
+          reason:'must preserve immutable candidate',remote_checked:true}},admin);
+      assert.equal(candidateReset.code,423,JSON.stringify(candidateReset.body));
+      assert.equal(candidateReset.body.error_code,
+        'CANDIDATE_REQUIRES_INDEPENDENT_QA_RECONCILIATION');
+      const [candidateRows]:any=await db.query('SELECT status,candidate_head_sha,'+
+        'candidate_tree_sha FROM v7_tickets WHERE ticket_id=?',
+        ['ticket_submitted_failover_hold']);
+      assert.equal(candidateRows[0].status,'RECONCILIATION_REQUIRED');
+      assert.equal(candidateRows[0].candidate_head_sha,'b'.repeat(40));
+      assert.equal(candidateRows[0].candidate_tree_sha,'c'.repeat(40));
       // Ordinary Owner ticket reconciliation must NEVER silently requeue a
       // job with uncertain external Git effects.
       const unsafeReset=await post('/v7/owner/command',{

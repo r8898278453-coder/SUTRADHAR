@@ -253,7 +253,15 @@ async function evaluate(c:PoolConnection,reason='heartbeat'){
     if(next){
       epoch++;phase='RECOVERING';
       // All old-epoch worker leases are fenced; no unfinished work is claimed complete.
-      await c.query('UPDATE v7_tickets t JOIN v7_leases w ON w.ticket_id=t.ticket_id SET t.status="RECONCILIATION_REQUIRED",t.version=t.version+1 WHERE w.revoked=0');
+      // Only unfinished, nonterminal tickets can enter recovery. A lease
+      // remains non-revoked after a fast DONE or failed QA result until its
+      // expiry; changing a terminal ticket corrupts downstream dependencies.
+      // A ticket already under reconciliation also must not be version-bumped
+      // again on a later promotion.
+      await c.query('UPDATE v7_tickets t JOIN v7_leases w ON w.ticket_id=t.ticket_id '+
+        'SET t.status="RECONCILIATION_REQUIRED",t.version=t.version+1 '+
+        'WHERE w.revoked=0 AND t.status IN '+
+        '("CLAIMED","CHECKPOINTED","SUBMITTED_FOR_REVIEW","INTEGRATING")');
       await c.query('UPDATE v7_leases SET revoked=1 WHERE revoked=0');
       await c.query('UPDATE v7_cluster SET epoch=?,bootstrapped_at=COALESCE(bootstrapped_at,UTC_TIMESTAMP(3)),master_agent_id=?,elected_at=UTC_TIMESTAMP(3),lease_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 180 SECOND),phase=?,version=version+1 WHERE singleton=1',
         [epoch,next,phase]);
@@ -481,6 +489,17 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any){
       // protocol; treating it as fresh READY work could duplicate remote effects.
       if(await one(c,'SELECT ticket_id FROM v7_git_jobs WHERE ticket_id=?',[id]))
         fault('GIT_PUBLICATION_REQUIRES_SEPARATE_RECOVERY',423);
+      // A committed candidate or QA artifact cannot be reclassified as an
+      // untouched development ticket, even if a human checked a remote ref.
+      // Distinct QA and Owner review must reconcile those frozen artifacts.
+      if(t.candidate_head_sha||t.candidate_tree_sha||
+         await one(c,'SELECT receipt_id FROM v7_qa_receipts WHERE ticket_id=? LIMIT 1',[id])||
+         await one(c,'SELECT proposal_id FROM v7_approvals '+
+           'WHERE ticket_id=? AND kind="QA_EVIDENCE_REVIEW" LIMIT 1',[id]))
+        fault('CANDIDATE_REQUIRES_INDEPENDENT_QA_RECONCILIATION',423);
+      const oldLease=await one(c,'SELECT ticket_id FROM v7_leases '+
+        'WHERE ticket_id=? AND revoked=0 LIMIT 1',[id]);
+      if(oldLease)fault('TASK_PREVIOUS_LEASE_NOT_REVOKED',423);
       // A human must externally reconcile uncertain Git effects before authorizing retry.
       if(payload.remote_checked!==true)fault('REMOTE_RECONCILIATION_REQUIRED',409);
       await c.query('UPDATE v7_tickets SET status="READY",worker_agent_id=NULL,version=version+1 WHERE ticket_id=?',[id]);

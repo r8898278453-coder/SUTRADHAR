@@ -49,3 +49,7 @@ A previously unsuccessful or unobserved Git publication still requires an Owner-
 - Exact-commit CI and security audit must still pass; these tests are not physical-PC, provider or live GitHub acceptance.
 
 **Outstanding:** pagination for more than 300 simultaneous active tasks/unresolved Git jobs; live authenticated GitHub recovery acceptance and Owner incident resolution; stable cross-host recovery and crash-injection tests; production Hostinger staging and backup/restore; Windows-signed release and physical 2/3/8–10-PC pilot. The full dependency vulnerability audit remains a release gate.
+
+## 23 November 2026 — terminal state preservation and candidate requeue fence
+
+When a new Master is promoted, Central revokes all prior worker leases but moves only in-flight `CLAIMED`, `CHECKPOINTED`, `SUBMITTED_FOR_REVIEW`, and `INTEGRATING` tickets into `RECONCILIATION_REQUIRED`. Previously `DONE`, `TEST_FAILED`, and already-reconciling tickets remain unchanged, including their version, even when an old lease still exists. A separate Owner `RECONCILE_TICKET` action no longer resets a ticket with an immutable candidate, signed QA receipts, or QA review proposals into fresh `READY` work; these require independently reviewed exact artifacts. An unrevoked old lease also blocks Owner requeue. Disposable MySQL signed-HTTP and forced-failover tests cover terminal-state immutability, old lease revocation and denied candidate requeue. No live Master failover, physical PC or production approval was performed.
