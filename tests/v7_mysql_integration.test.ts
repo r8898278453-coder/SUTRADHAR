@@ -459,6 +459,39 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       title:'Implement scoped change',description:'Change a file',risk:'LOW',
       write_scopes:['src/example.ts'],acceptance_criteria:['observable behavior']});
     assert.equal(plan.code,200,JSON.stringify(plan.body));
+    // One Git repository can have separate projects with different base
+    // branches, but its ai/* branch namespace must NEVER be duplicated.
+    const collisionInProject=await a.signed('/v7/tasks/plan',{
+      request_id:'plan_same_repo_branch_'+(++count),agent_id:a.agent_id,
+      expected_master_epoch:Number(status.epoch),
+      ticket_id:'ticket_branch_conflict_local',project_id:'project_integration',
+      baseline_sha:'a'.repeat(40),branch_name:'ai/ticket_qa_test',
+      title:'Different work cannot steal an existing Git branch',
+      description:'Independent task with a conflicting branch and separate scope',
+      risk:'LOW',write_scopes:['src/separate.ts'],acceptance_criteria:['must not reserve branch']});
+    assert.equal(collisionInProject.code,409,JSON.stringify(collisionInProject.body));
+    assert.equal(collisionInProject.body.error_code,'TASK_REPOSITORY_BRANCH_ALREADY_RESERVED');
+    const duplicateIntent=await a.signed('/v7/tasks/plan',{
+      request_id:'plan_same_fingerprint_'+(++count),agent_id:a.agent_id,
+      expected_master_epoch:Number(status.epoch),
+      ticket_id:'ticket_intent_duplicate',project_id:'project_integration',
+      baseline_sha:'a'.repeat(40),branch_name:'ai/unique_but_duplicate_intent',
+      title:'Implement scoped change',description:'Change a file',risk:'LOW',
+      write_scopes:['src/example.ts'],acceptance_criteria:['observable behavior']});
+    assert.equal(duplicateIntent.code,409,JSON.stringify(duplicateIntent.body));
+    assert.equal(duplicateIntent.body.error_code,'TASK_INTENT_DUPLICATE');
+    await owner('CREATE_PROJECT',{project_id:'project_other_base',
+      display_name:'Same Repo, Different Base',repository:'example/repo',
+      base_branch:'develop'});
+    const crossProjectBranch=await a.signed('/v7/tasks/plan',{
+      request_id:'plan_same_repo_otherbase_'+(++count),agent_id:a.agent_id,
+      expected_master_epoch:Number(status.epoch),
+      ticket_id:'ticket_branch_conflict_crossbase',project_id:'project_other_base',
+      baseline_sha:'a'.repeat(40),branch_name:'ai/ticket_qa_test',
+      title:'Cross-base publication collision',description:'Must not reuse remote branch',
+      risk:'LOW',write_scopes:['src/another.ts'],acceptance_criteria:['deny conflicting branch']});
+    assert.equal(crossProjectBranch.code,409,JSON.stringify(crossProjectBranch.body));
+    assert.equal(crossProjectBranch.body.error_code,'TASK_REPOSITORY_BRANCH_ALREADY_RESERVED');
     const invalidBranch=await a.signed('/v7/tasks/plan',{
       request_id:'invalid_branch_'+(++count),agent_id:a.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_unpublishable',

@@ -1149,8 +1149,23 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
   return transaction(async c=>{
     const ld=await readyMaster(c,node.node_id,agentId,d.expected_master_epoch);
     return idem(c,agentId,d.request_id,'TASK_PLAN',d,async()=>{
+      // A Git branch belongs to a REPOSITORY, not to a (repository, base)
+      // project configuration. Serialize planning across every project using
+      // the same repository before checking task/branch uniqueness. Acquire
+      // project locks in deterministic order to prevent opposite-base races.
+      const registry=await one(c,'SELECT repository FROM v7_projects WHERE project_id=?',[projectId]);
+      if(!registry)fault('PROJECT_NOT_FOUND',404);
+      await rows(c,'SELECT project_id FROM v7_projects WHERE repository=? ORDER BY project_id FOR UPDATE',
+        [registry.repository]);
       const project=await one(c,'SELECT * FROM v7_projects WHERE project_id=? AND status="ACTIVE" FOR UPDATE',[projectId]);
-      if(!project)fault('PROJECT_NOT_FOUND',404);
+      if(!project||project.repository!==registry.repository)fault('PROJECT_NOT_FOUND',404);
+      const branchTaken=await one(c,'SELECT t.ticket_id FROM v7_tickets t JOIN v7_projects p '+
+        'ON p.project_id=t.project_id WHERE p.repository=? AND t.branch_name=? LIMIT 1',
+        [project.repository,branch]);
+      if(branchTaken)fault('TASK_REPOSITORY_BRANCH_ALREADY_RESERVED',409);
+      const intentTaken=await one(c,'SELECT ticket_id FROM v7_tickets WHERE project_id=? AND fingerprint=? LIMIT 1',
+        [projectId,fingerprint]);
+      if(intentTaken)fault('TASK_INTENT_DUPLICATE',409);
       const sensitive=scope.some(isProtectedScope);
       const approvalNeeded=risk==='CORE'||risk==='HIGH'||sensitive;
       let approved=false;
