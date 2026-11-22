@@ -44,12 +44,37 @@ test('protected signing workflow supplies every required independent trust root'
     assert.ok(!workflow.includes(name+': $'+'{{ secrets.'+name+' }}'),
       'Public trust roots are protected reviewed variables, never private signing secrets');
   }
-  assert.match(packer,/trustRoots\.has\(fingerprint\)/);
-  assert.match(packer,/trustRoots\.add\(fingerprint\)/);
+  assert.match(packer,/validateOwnerPublicRoots/);
   assert.ok(workflow.includes('environment:'));
   assert.ok(workflow.includes('name: sutradhar-desktop-signing'));
   assert.ok(workflow.includes("Only the reviewed main workflow may sign"));
   assert.ok(workflow.includes("READY_BY_OWNER"));
   assert.ok(workflow.includes("APPROVE SIGNING WITHOUT PUBLISHING"));
   assert.doesNotMatch(workflow,/actions\/upload-artifact|--publish[ =]always/i);
+});
+
+test('four independent Ed25519 public keys are required and private or malformed keys are rejected',()=>{
+  const crypto=require('node:crypto');
+  const {NAMES,validateOwnerPublicRoots}=
+    require('../apps/desktop/release-key-policy.cjs');
+  const encode=pub=>Buffer.from(pub).toString('base64');
+  const pub=()=>crypto.generateKeyPairSync('ed25519').publicKey
+    .export({format:'pem',type:'spki'}).toString('utf8');
+  const correct=Object.fromEntries(NAMES.map(k=>[k,encode(pub())]));
+  const result=validateOwnerPublicRoots(correct);
+  assert.equal(Object.keys(result).length,4);
+  assert.equal(new Set(Object.values(result).map(x=>x.fingerprint_sha256)).size,4);
+  assert.ok(Object.values(result).every(x=>/BEGIN PUBLIC KEY/.test(x.pem)));
+  for(const change of [
+    {[NAMES[1]]:correct[NAMES[0]]},
+    {[NAMES[2]]:Buffer.from('-----BEGIN PRIVATE KEY-----\n...').toString('base64')},
+    {[NAMES[3]]:'@@invalid@@'},
+    {[NAMES[0]]:correct[NAMES[0]]+'='},
+    {[NAMES[2]]:encode(crypto.generateKeyPairSync('ec',
+      {namedCurve:'prime256v1'}).publicKey.export({format:'pem',type:'spki'}))},
+    {[NAMES[3]]:undefined}
+  ])assert.throws(()=>validateOwnerPublicRoots({...correct,...change}),
+    /RELEASE_TRUST_BLOCKED/);
+  const extra={...correct,UNAPPROVED_EXTRA:correct[NAMES[0]]};
+  assert.throws(()=>validateOwnerPublicRoots(extra),/EXACT_FOUR_PUBLIC_KEYS_REQUIRED/);
 });

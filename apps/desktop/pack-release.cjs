@@ -11,6 +11,7 @@ const cwd=__dirname,root=path.resolve(__dirname,'../..');
 const pkg=JSON.parse(fs.readFileSync(path.join(cwd,'package.json'),'utf8'));
 const {verifyRuntime}=require('./runtime-policy.cjs');
 const {psLiteral,trustedWindowsPowerShell}=require('./windows-authenticode.cjs');
+const {validateOwnerPublicRoots}=require('./release-key-policy.cjs');
 const version=pkg.version;
 const sha=/^[a-f0-9]{40}$/;
 function fail(reason){throw Error('RELEASE_BLOCKED: '+reason);}
@@ -41,33 +42,22 @@ function main(){
   if(tagCommit!==expected)fail('tag does not point to the approved release SHA');
   const signed=required('SUTRADHAR_WINDOWS_PUBLISHER_NAME');
   if(!/^CN=.+/.test(signed)||signed.length>250)fail('publisher must equal certificate Distinguished Name');
-  const trustPem=Buffer.from(required('SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
-  let trustKey;
-  try{trustKey=crypto.createPublicKey(trustPem);}catch{fail('Owner Ed25519 update verification public key invalid');}
-  if(trustKey.asymmetricKeyType!=='ed25519')fail('Owner update signing public key must be Ed25519');
-  const trustRoots=new Set([trustKey.export({format:'der',type:'spki'}).toString('hex')]);
-  // Separate public trust roots for interactive installation and post-maintenance
-  // release. No private Ed25519 key is ever included in the Desktop package.
-  const installerExecutionPem=Buffer.from(
-    required('SUTRADHAR_INSTALL_EXECUTION_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
-  const maintenanceReleasePem=Buffer.from(
-    required('SUTRADHAR_MAINTENANCE_RELEASE_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
-  const failureReviewPem=Buffer.from(
-    required('SUTRADHAR_FAILURE_REVIEW_PUBLIC_KEY_PEM_B64'),'base64').toString('utf8');
-  for(const [name,pem] of [['installer execution',installerExecutionPem],
-    ['maintenance release',maintenanceReleasePem],
-    ['failed-install Owner review',failureReviewPem]]){
-    let publicKey;
-    try{publicKey=crypto.createPublicKey(pem);}catch{
-      fail('Owner '+name+' public key invalid');
-    }
-    if(publicKey.asymmetricKeyType!=='ed25519')
-      fail('Owner '+name+' public key must be Ed25519');
-    const fingerprint=publicKey.export({format:'der',type:'spki'}).toString('hex');
-    if(trustRoots.has(fingerprint))
-      fail('Owner '+name+' must use a distinct Ed25519 signing trust root');
-    trustRoots.add(fingerprint);
-  }
+  // Strict PUBLIC PEM decoding and four distinct Ed25519 trust roots.
+  // Private keys never enter the release bundle or renderer.
+  const publicRoots=validateOwnerPublicRoots({
+    SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64:
+      required('SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64'),
+    SUTRADHAR_INSTALL_EXECUTION_PUBLIC_KEY_PEM_B64:
+      required('SUTRADHAR_INSTALL_EXECUTION_PUBLIC_KEY_PEM_B64'),
+    SUTRADHAR_MAINTENANCE_RELEASE_PUBLIC_KEY_PEM_B64:
+      required('SUTRADHAR_MAINTENANCE_RELEASE_PUBLIC_KEY_PEM_B64'),
+    SUTRADHAR_FAILURE_REVIEW_PUBLIC_KEY_PEM_B64:
+      required('SUTRADHAR_FAILURE_REVIEW_PUBLIC_KEY_PEM_B64')
+  });
+  const trustPem=publicRoots.SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64.pem,
+    installerExecutionPem=publicRoots.SUTRADHAR_INSTALL_EXECUTION_PUBLIC_KEY_PEM_B64.pem,
+    maintenanceReleasePem=publicRoots.SUTRADHAR_MAINTENANCE_RELEASE_PUBLIC_KEY_PEM_B64.pem,
+    failureReviewPem=publicRoots.SUTRADHAR_FAILURE_REVIEW_PUBLIC_KEY_PEM_B64.pem;
   const cert=process.env.WIN_CSC_LINK||process.env.CSC_LINK;
   const password=process.env.WIN_CSC_KEY_PASSWORD||process.env.CSC_KEY_PASSWORD;
   if(!cert||!password)fail('approved Authenticode certificate and private signing secret required');
