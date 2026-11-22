@@ -23,6 +23,17 @@ test('PENDING, APPROVED, DENIED and RECEIPT_RECORDED are distinct manual-only st
   assert.equal(verifyQaReviewStatus(expected,{...proof(),owner_review_state:'APPROVED',
     task_status:'INTEGRATING',qa_receipt_recorded:true,
     manual_next_action:'RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY'}).qa_receipt_recorded,true);
+  const frozen={...proof(),task_status:'RECONCILIATION_REQUIRED'};
+  assert.equal(verifyQaReviewStatus(expected,frozen).manual_next_action,
+    'WAIT_FOR_OWNER_REVIEW');
+  assert.equal(verifyQaReviewStatus(expected,{...frozen,
+    owner_review_state:'DENIED',
+    manual_next_action:'STOP_OWNER_REVIEW_DENIED'}).manual_next_action,
+    'STOP_OWNER_REVIEW_DENIED');
+  assert.equal(verifyQaReviewStatus(expected,{...frozen,
+    owner_review_state:'APPROVED',
+    manual_next_action:'OWNER_RESTORE_QA_CANDIDATE_BEFORE_RECEIPT'})
+      .qa_receipt_recorded,false);
   assert.equal(validQaReviewId(expected.review_proposal_id),true);
   assert.equal(validQaReviewId('qaev_invalid'),false);
 });
@@ -34,7 +45,12 @@ test('QA review cannot elevate permissions or mistake advanced task for unrecord
     {automatic_qa_receipt_allowed:true},{automatic_qa_approval_allowed:true},
     {owner_review_required:false},{git_published:true},
     {task_status:'INTEGRATING'},{manual_next_action:'AUTO_ACCEPT'},
-    {qa_receipt_recorded:true}])
+    {qa_receipt_recorded:true},
+    {task_status:'RECONCILIATION_REQUIRED',
+      manual_next_action:'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE'},
+    {task_status:'RECONCILIATION_REQUIRED',qa_receipt_recorded:true,
+      owner_review_state:'APPROVED',
+      manual_next_action:'RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY'}])
     assert.throws(()=>verifyQaReviewStatus(expected,{...proof(),...change}),
       /QA_REVIEW_STATUS_INVALID/);
   assert.throws(()=>verifyQaReviewStatus(expected,null),/QA_REVIEW_STATUS_INVALID/);

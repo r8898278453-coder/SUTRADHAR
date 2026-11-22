@@ -114,10 +114,12 @@ async function readOwnerReview({origin,agentId,ticketId,signer,fetcher,context})
        p.manual_next_action!=='RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY')
       fail('QA_RECEIPT_REVIEW_PROOF_MISMATCH');
   }else if(p.qa_receipt_id!==null||
-    p.task_status!=='SUBMITTED_FOR_REVIEW'||
+    !['SUBMITTED_FOR_REVIEW','RECONCILIATION_REQUIRED'].includes(p.task_status)||
     p.manual_next_action!==(p.owner_review_state==='PENDING'?
       'WAIT_FOR_OWNER_REVIEW':p.owner_review_state==='DENIED'?
-      'STOP_OWNER_REVIEW_DENIED':'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE'))
+      'STOP_OWNER_REVIEW_DENIED':p.task_status==='RECONCILIATION_REQUIRED'?
+      'OWNER_RESTORE_QA_CANDIDATE_BEFORE_RECEIPT':
+      'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE'))
     fail('QA_RECEIPT_REVIEW_PROOF_MISMATCH');
   return p;
 }

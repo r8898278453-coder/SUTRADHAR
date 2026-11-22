@@ -287,3 +287,7 @@ Use Central Dashboard → **Expired worker — Owner recovery**. The queue is re
 ### Frozen QA candidate recovery after failover
 
 Do not delete a submitted worker's local journal or attempt a new claim. After Master promotion, the independent QA PC may report device-signed evidence for the same frozen candidate while Central is RECOVERING; existing unresolved Git jobs prevent that path. The Owner must review and approve the QA evidence first, then **separately** execute `RESTORE_QA_CANDIDATE` for its exact original head/tree and current epoch. Only `SUBMITTED_FOR_REVIEW` is restored; a QA receipt and a later Git/Owner merge decision are still independent. If a candidate, QA identity, checkpoint, lease or Git job cannot be verified, keep the ticket HOLD for manual security review. No automatic retry or reassignment is authorized.
+
+### 23 November 2026 — frozen QA review read-only response
+
+A signed QA Owner-review snapshot can legitimately return `RECONCILIATION_REQUIRED` before an explicit Owner candidate restoration. QA clients distinguish `OWNER_RESTORE_QA_CANDIDATE_BEFORE_RECEIPT` from `OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE`; a frozen candidate never grants receipt, Git or work replay. A valid review decision is a separate prerequisite, not a receipt or release grant.

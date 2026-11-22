@@ -19,7 +19,7 @@ export function verifyQaReviewStatus(expected:{
   if(p.review_proposal_id!==expected.review_proposal_id||
      p.ticket_id!==expected.ticket_id||p.qa_agent_id!==expected.agent_id||
      !['PENDING','APPROVED','DENIED'].includes(String(p.owner_review_state))||
-     !['SUBMITTED_FOR_REVIEW','INTEGRATING','TEST_FAILED'].includes(String(p.task_status))||
+     !['SUBMITTED_FOR_REVIEW','RECONCILIATION_REQUIRED','INTEGRATING','TEST_FAILED'].includes(String(p.task_status))||
      typeof p.candidate_head_sha!=='string'||!SHA_RE.test(p.candidate_head_sha)||
      typeof p.candidate_tree_sha!=='string'||!SHA_RE.test(p.candidate_tree_sha)||
      typeof p.evidence_sha256!=='string'||!hashRe.test(p.evidence_sha256)||
@@ -32,11 +32,14 @@ export function verifyQaReviewStatus(expected:{
   const next=p.qa_receipt_recorded?'RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY':
     p.owner_review_state==='PENDING'?'WAIT_FOR_OWNER_REVIEW':
     p.owner_review_state==='DENIED'?'STOP_OWNER_REVIEW_DENIED':
-    'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE';
+    p.task_status==='RECONCILIATION_REQUIRED'?
+      'OWNER_RESTORE_QA_CANDIDATE_BEFORE_RECEIPT':
+      'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE';
   if(p.manual_next_action!==next||
      (p.qa_receipt_recorded&&(
        p.owner_review_state!=='APPROVED'||!['INTEGRATING','TEST_FAILED'].includes(String(p.task_status))))||
-     (!p.qa_receipt_recorded&&p.task_status!=='SUBMITTED_FOR_REVIEW'))
+     (!p.qa_receipt_recorded&&
+       !['SUBMITTED_FOR_REVIEW','RECONCILIATION_REQUIRED'].includes(String(p.task_status))))
     fail('QA_REVIEW_STATUS_INVALID');
   return {review_proposal_id:p.review_proposal_id,ticket_id:p.ticket_id,
     owner_review_state:p.owner_review_state,qa_receipt_recorded:p.qa_receipt_recorded,
