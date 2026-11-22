@@ -750,6 +750,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(pendingReview.code,200,JSON.stringify(pendingReview.body));
     assert.equal(pendingReview.body.owner_review_state,'PENDING');
     assert.equal(pendingReview.body.qa_receipt_recorded,false);
+    assert.equal(pendingReview.body.qa_receipt_id,null);
     assert.equal(pendingReview.body.manual_next_action,'WAIT_FOR_OWNER_REVIEW');
     assert.equal(pendingReview.body.automatic_qa_receipt_allowed,false);
     const otherNodeReview=await b.signed('/v7/tasks/qa-review/'+reviewedId,
@@ -821,6 +822,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(approvedReview.code,200,JSON.stringify(approvedReview.body));
     assert.equal(approvedReview.body.owner_review_state,'APPROVED');
     assert.equal(approvedReview.body.qa_receipt_recorded,false);
+    assert.equal(approvedReview.body.qa_receipt_id,null);
     assert.equal(approvedReview.body.manual_next_action,
       'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE');
     const wrongEvidenceReceipt=await c.signed('/v7/tasks/qa-receipt',{
@@ -836,6 +838,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       undefined,'GET');
     assert.equal(recordedReview.code,200,JSON.stringify(recordedReview.body));
     assert.equal(recordedReview.body.qa_receipt_recorded,true);
+    assert.equal(recordedReview.body.qa_receipt_id,qa.body.receipt_id);
     assert.equal(recordedReview.body.task_status,'INTEGRATING');
     assert.equal(recordedReview.body.manual_next_action,
       'RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY');

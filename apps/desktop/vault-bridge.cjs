@@ -164,6 +164,7 @@ function createSignerBridge(vault){
       !v.agents.some(a=>a.id===agent_id)||
       !(uri==='/v7/tasks/available'||
         /^\/v7\/tasks\/detail\/[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(uri)||
+        /^\/v7\/tasks\/qa-review\/qaev_[a-f0-9]{64}$/.test(uri)||
         /^\/v7\/git\/preflight\/[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(uri)))
       fail('VAULT_WORKER_READONLY_REQUEST_DENIED');
     const key=crypto.createPrivateKey(v.private_key_pem);

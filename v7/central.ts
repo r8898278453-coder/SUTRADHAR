@@ -1425,6 +1425,7 @@ app.get('/v7/tasks/qa-review/:proposalId',jsonRoute(async req=>{
       candidate_head_sha:proof.candidate_head_sha,
       candidate_tree_sha:proof.candidate_tree_sha,
       evidence_sha256:proof.evidence_sha256,qa_receipt_recorded:recorded,
+      qa_receipt_id:recorded?receipt.receipt_id:null,
       manual_next_action:manualNext,owner_review_required:true,
       automatic_qa_approval_allowed:false,automatic_qa_receipt_allowed:false,
       git_published:false};
