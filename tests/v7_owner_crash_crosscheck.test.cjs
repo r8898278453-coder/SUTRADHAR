@@ -593,3 +593,112 @@ test('offline CLI accepts a single Owner browser bundle and rejects mixed or tam
     assert.match(r.stderr,/BUNDLE_NOT_ALLOWLISTED/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+
+const {evaluateCrashEffects,worksheet,hashLocalEvidence,EVIDENCE_KIND}=
+  require('../scripts/ops/crash-external-effects.cjs');
+test('offline QA/Git worksheet binds exact signed Owner review, never clears external effects',()=>{
+  const x=samples(),signed=ownerSigned(x);
+  const r=evaluateCrashEffects({input:x,envelope:signed,
+    pinnedOwnerReviewPublicKeyPem:ownerPublic,now:x.observedAtClientMs});
+  assert.equal(r.state,'OWNER_REVIEW_REQUIRED');
+  assert.equal(r.attachment_hashes_verified,false);
+  assert.equal(r.external_git_qa_effects_cleared,false);
+  assert.equal(r.original_pc_physical_shutdown_verified,false);
+  assert.equal(r.agent_restart_allowed,false);
+  assert.deepEqual(Array.from(r.required_evidence_categories),
+    ['ORIGINAL_PC_PHYSICAL_WITNESS']);
+  assert.deepEqual(Array.from(r.missing_evidence_categories),
+    ['ORIGINAL_PC_PHYSICAL_WITNESS']);
+});
+test('historical QA, Git, worker and pending queue counts require independent categories',()=>{
+  const x=samples(),h=x.second.historical_effects;
+  x.first.historical_effects.qa_receipts_created_by_this_pc_count=2;
+  h.qa_receipts_created_by_this_pc_count=2;
+  x.first.historical_effects.centrally_confirmed_git_jobs_involving_this_pc_count=1;
+  h.centrally_confirmed_git_jobs_involving_this_pc_count=1;
+  x.first.historical_effects.pending_qa_owner_reviews_global_count=4;
+  h.pending_qa_owner_reviews_global_count=4;
+  x.first.historical_effects.local_agent_checkpoint_record_count=3;
+  h.local_agent_checkpoint_record_count=3;
+  x.first.active_worker_lease_count=1;x.second.active_worker_lease_count=1;
+  x.first.unresolved_git_job_count=1;x.second.unresolved_git_job_count=1;
+  const categories=Array.from(worksheet(x).required);
+  for(const category of EVIDENCE_KIND)assert.ok(categories.includes(category),
+    category);
+  const r=evaluateCrashEffects({input:x,envelope:ownerSigned(x),
+    pinnedOwnerReviewPublicKeyPem:ownerPublic,now:x.observedAtClientMs});
+  assert.equal(r.missing_evidence_categories.length,6);
+  assert.equal(r.external_git_qa_effects_cleared,false);
+});
+test('indexed bytes match submitted evidence, not independent GitHub or QA authenticity',()=>{
+  const os=require('node:os');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-crash-effects-'));
+  try{
+    const x=samples(),m=createReviewManifest(x),signed=ownerSigned(x),
+      file=path.join(dir,'witness.txt');
+    const raw=Buffer.from('Owner personally recorded this local Windows device review as unverified.');
+    fs.writeFileSync(file,raw,{mode:0o600});
+    const hash=crypto.createHash('sha256').update(raw).digest('hex');
+    const index={schema:1,kind:'SUTRADHAR_CRASH_EXTERNAL_EFFECTS_INDEX_V1',
+      node_id:x.nodeId,manifest_sha256:m.manifest_sha256,
+      owner_review_id:signed.signed.review_id,
+      central_epoch_decimal:m.central_epoch_decimal,
+      central_audit_watermark_decimal:
+        m.central_global_audit_event_high_watermark_decimal,
+      agent_restart_allowed:false,marker_removal_allowed:false,
+      production_release_authorized:false,
+      evidence:[{category:'ORIGINAL_PC_PHYSICAL_WITNESS',
+        path:file,sha256:hash,captured_at_ms:x.observedAtClientMs,
+        reviewer_role:'PHYSICAL_WITNESS',
+        source_description:'Manually collected witness notes; physical facts unverified'}]};
+    const params={input:x,envelope:signed,index,
+      pinnedOwnerReviewPublicKeyPem:ownerPublic,now:x.observedAtClientMs};
+    const r=evaluateCrashEffects(params);
+    assert.equal(r.attachment_hashes_verified,true);
+    assert.equal(r.hash_checked_attachments.length,1);
+    assert.deepEqual(Array.from(r.missing_evidence_categories),[]);
+    assert.equal(r.original_pc_physical_shutdown_verified,false);
+    assert.equal(r.external_git_qa_effects_cleared,false);
+    assert.equal(r.owner_reconciliation_complete,false);
+    assert.equal(r.marker_removal_allowed,false);
+    assert.equal(JSON.stringify(r).includes(file),false,'private path never output');
+    assert.equal(JSON.stringify(r).includes('Manually collected'),false,
+      'untrusted source prose never output');
+    fs.writeFileSync(file,Buffer.from('TAMPERED '+raw.toString()));
+    assert.throws(()=>evaluateCrashEffects(params),
+      /ATTACHMENT_SHA256_MISMATCH/);
+    const restore=Buffer.from(raw);fs.writeFileSync(file,restore);
+    for(const mutate of [
+      o=>{o.node_id='node_'+'f'.repeat(32);},
+      o=>{o.central_epoch_decimal='999';},
+      o=>{o.central_audit_watermark_decimal='99';},
+      o=>{o.owner_review_id='f'.repeat(64);},
+      o=>{o.production_release_authorized=true;},
+      o=>{o.evidence[0].category='NOT_ALLOWED';},
+      o=>{o.evidence[0].sha256='f'.repeat(64);},
+      o=>{o.evidence[0].reviewer_role='APPROVED';},
+      o=>{o.evidence[0].private_key_pem='UNSAFE_EXTRA';}
+    ]){
+      const altered=JSON.parse(JSON.stringify(index));mutate(altered);
+      assert.throws(()=>evaluateCrashEffects({...params,index:altered}),
+        /CRASH_EXTERNAL_EFFECTS_/);
+    }
+    const duplicate=JSON.parse(JSON.stringify(index));
+    duplicate.evidence.push({...duplicate.evidence[0]});
+    assert.throws(()=>evaluateCrashEffects({...params,index:duplicate}),
+      /INDEX_ENTRY_INVALID/);
+    const symlink=path.join(dir,'linked-notes.txt');
+    fs.symlinkSync(file,symlink);
+    assert.throws(()=>hashLocalEvidence(symlink),/EVIDENCE_FILE_UNSAFE|REDIRECTED/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('external-effects tool cannot execute Git, maintenance or agent actions',()=>{
+  const source=fs.readFileSync(path.resolve(__dirname,
+    '../scripts/ops/crash-external-effects.cjs'),'utf8');
+  assert.doesNotMatch(source,
+    /spawnSync|execSync|child_process|fetch[(]|https[.]request|http[.]request|unlinkSync|renameSync|[.]kill[(]|[.]post[(]/);
+  assert.match(source,/external_git_qa_effects_cleared:false/);
+  assert.match(source,/production_release_authorized:false/);
+  assert.match(source,/agent_restart_allowed:false/);
+});
