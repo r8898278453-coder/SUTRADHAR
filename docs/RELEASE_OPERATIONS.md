@@ -184,3 +184,7 @@ Read [Windows PC maintenance preflight](DESKTOP_MAINTENANCE_PREFLIGHT_V7.md) bef
 Central now separates five-minute INTENT_ONLY from durable Owner-initiated DRAINING/DRAINED states. MySQL leader-row serialization ensures a claim cannot be granted after START commits, and election excludes actively fenced nodes. Existing leases finish/checkpoint or require reconciliation; nothing is forcibly revoked. FINALIZE requires idle/clean Central evidence and does **not** grant OS install permission. Only explicit Owner cancellation releases a fence; no automatic five-minute timeout can reopen work.
 
 No signed installer runner, identity-preserving rollback or physical Windows acceptance is included. See [Owner drain-fence runbook](PC_DRAIN_FENCE_V7.md).
+
+### 22 November 2026 — Offline Owner offer signer hardening
+
+The manual `release:sign-offer` script now reuses the trusted absolute Windows PowerShell and single-quoted path-escaping Authenticode verifier; it no longer interpolates double-quoted file paths into a `powershell.exe -Command` call. The signer also refuses symlink/oversized evidence and private key files, checks the real signer key path is outside the Git repository, and fsyncs the exclusively created signed-offer file before reporting success. A failed/partial output is preserved and must be reconciled by the Owner, never overwritten. The script remains Windows-only, Owner-approved, offline/no publication and requires a genuinely certificate-signed installer; this CI test is not evidence that a production offer was issued.

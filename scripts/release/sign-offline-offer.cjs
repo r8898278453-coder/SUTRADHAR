@@ -5,7 +5,7 @@
  */
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
-const cp=require('node:child_process');
+const {verifyWindowsPublisher}=require('../../apps/desktop/windows-authenticode.cjs');
 const {sha256File}=require('../../apps/desktop/update-policy.cjs');
 function requireEnv(n){const x=process.env[n];if(!x||!x.trim())throw Error('OWNER_OFFER_BLOCKED: missing '+n);return x.trim();}
 function refuse(s){throw Error('OWNER_OFFER_BLOCKED: '+s);}
@@ -36,6 +36,10 @@ function main(){
   if(!path.isAbsolute(file)||!/^SUTRADHAR[-_ A-Za-z0-9.()]+\.exe$/.test(path.basename(file)))
     refuse('trusted absolute installer path required');
   const evidenceFile=path.join(path.dirname(file),'signed-release-evidence.json');
+  const evidenceStat=fs.lstatSync(evidenceFile);
+  if(!evidenceStat.isFile()||evidenceStat.isSymbolicLink()||
+     evidenceStat.size<20||evidenceStat.size>65536)
+    refuse('local signing evidence file untrusted');
   const evidence=JSON.parse(fs.readFileSync(evidenceFile,'utf8'));
   const stats=fs.lstatSync(file);
   if(!stats.isFile()||stats.isSymbolicLink()||
@@ -47,18 +51,28 @@ function main(){
     !evidence.installers.some(x=>x.filename===path.basename(file)&&
       x.sha256===hash&&x.signer===signer&&x.verified===true))
     refuse('signed installer local evidence mismatch');
-  const powershell='$s=Get-AuthenticodeSignature -LiteralPath '+JSON.stringify(file)+
-    ';if($s.Status -ne "Valid" -or $null -eq $s.SignerCertificate){exit 41};'+
-    'if($s.SignerCertificate.Subject -cne '+JSON.stringify(signer)+'){exit 42}';
-  const check=cp.spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',powershell],
-    {timeout:30000,encoding:'utf8',windowsHide:true});
-  if(check.error||check.status!==0)refuse('Windows signature/publisher verification failed');
+  // Use the same pinned absolute Windows system binary, escaped PowerShell
+  // literal and before/after bytes checks as the Desktop installer verifier.
+  // JSON.stringify() double-quoted paths were unsafe for PowerShell $().
+  try{
+    const verified=verifyWindowsPublisher({
+      installerPath:file,publisherSubject:signer,expectedSha256:hash
+    });
+    if(verified.verified!==true||verified.file_sha256!==hash||
+       verified.installer_execution_allowed!==false)
+      refuse('Windows signature/publisher verification incomplete');
+  }catch{refuse('Windows signature/publisher verification failed');}
   if(sha256File(file)!==hash)
     refuse('installer bytes changed during Authenticode verification');
   const keyPath=requireEnv('SUTRADHAR_RELEASE_SIGNING_KEY_FILE');
   if(!path.isAbsolute(keyPath))refuse('Owner signer key must use an absolute path');
   const repoRoot=path.resolve(__dirname,'../..');
-  const insideRepo=keyPath===repoRoot||path.resolve(keyPath).startsWith(repoRoot+path.sep);
+  const keyStat=fs.lstatSync(keyPath);
+  if(!keyStat.isFile()||keyStat.isSymbolicLink()||
+     keyStat.size<100||keyStat.size>16384)
+    refuse('Owner signing key file untrusted');
+  const realKey=fs.realpathSync(keyPath);
+  const insideRepo=realKey===repoRoot||realKey.startsWith(repoRoot+path.sep);
   if(insideRepo)refuse('Owner signing private key MUST be outside Git repository');
   const privateKey=crypto.createPrivateKey(fs.readFileSync(keyPath));
   if(privateKey.asymmetricKeyType!=='ed25519')refuse('Owner release signing key must be Ed25519');
@@ -74,7 +88,13 @@ function main(){
   const envelope={signed:body,signature_base64};
   const destination=path.join(path.dirname(file),'SUTRADHAR Desktop.offer.json');
   if(fs.existsSync(destination))refuse('existing signed offer cannot be overwritten');
-  fs.writeFileSync(destination,JSON.stringify(envelope,null,2)+'\n',{flag:'wx',mode:0o600});
+  // An interrupted write is UNKNOWN: leave any partial file in place for
+  // explicit Owner review. Never regenerate a new signed offer over it.
+  const fd=fs.openSync(destination,'wx',0o600);
+  try{
+    fs.writeFileSync(fd,JSON.stringify(envelope,null,2)+'\n');
+    fs.fsyncSync(fd);
+  }finally{fs.closeSync(fd);}
   console.log(JSON.stringify({offer:destination,sha256:hash,type:kind,version,
     wave_id:waveId,target_node_count:targets.length,published:false,automatic_update:false}));
 }

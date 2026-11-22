@@ -78,3 +78,23 @@ test('four independent Ed25519 public keys are required and private or malformed
   const extra={...correct,UNAPPROVED_EXTRA:correct[NAMES[0]]};
   assert.throws(()=>validateOwnerPublicRoots(extra),/EXACT_FOUR_PUBLIC_KEYS_REQUIRED/);
 });
+
+test('offline update offer signer shares hardened Authenticode trust and fsynced one-shot output',()=>{
+  const fs=require('node:fs');
+  const p=path.resolve(__dirname,'../scripts/release/sign-offline-offer.cjs');
+  const body=fs.readFileSync(p,'utf8');
+  assert.match(body,/verifyWindowsPublisher/);
+  assert.match(body,/installerPath:file,publisherSubject:signer,expectedSha256:hash/);
+  assert.match(body,/verified\.installer_execution_allowed!==false/);
+  assert.match(body,/fs\.openSync\(destination,'wx',0o600\)/);
+  assert.match(body,/fs\.fsyncSync\(fd\)/);
+  assert.match(body,/fs\.realpathSync\(keyPath\)/);
+  assert.doesNotMatch(body,/spawnSync\('powershell\.exe'|-Command.*powershell|JSON\.stringify\(file\)/);
+  const forbidden=cp.spawnSync(process.execPath,[p],{
+    encoding:'utf8',timeout:10000,
+    env:{PATH:process.env.PATH,HOME:process.env.HOME,
+      SUTRADHAR_OWNER_ROLLOUT_APPROVED:'yes',SUTRADHAR_UPDATE_KIND:'update'}
+  });
+  assert.notEqual(forbidden.status,0);
+  assert.match(forbidden.stderr,/OWNER_OFFER_BLOCKED/);
+});
