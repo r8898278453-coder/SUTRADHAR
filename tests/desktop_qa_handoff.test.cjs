@@ -984,3 +984,136 @@ test('Git publication Desktop MAIN only, without credentials or raw command acce
   assert.match(setup,/get\('workerGitPublish'\)\.addEventListener/);
   assert.doesNotMatch(preload,/git_exe|credential_mode|private_key_pem|request_id|force-with-lease/);
 });
+
+test('frozen Master-failover QA requires explicit sandbox recovery and separate Owner restore before receipt',
+  {skip:!available},async()=>{
+  const f=fixture();
+  try{
+    // Developer exported the ORIGINAL exact bundle before Master failover.
+    await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+    f.updateTask({...f.task(),status:'RECONCILIATION_REQUIRED',version:4});
+    const d=fakeDocker(f),evidenceDir=path.join(f.temp,'qa-recovery');
+    await assert.rejects(inspectQAHandoff({...f.opts,agentId:'agent_qa',
+      repoDir:f.qaRepo}),/HANDOFF_CENTRAL_TASK_NOT_AUTHORIZED/);
+    assert.equal((await inspectQAHandoff({...f.opts,agentId:'agent_qa',
+      repoDir:f.qaRepo,recoveryReviewOnly:true})).verified,true);
+    await assert.rejects(runIndependentQa({...f.opts,agentId:'agent_qa',
+      repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner}),
+      /HANDOFF_CENTRAL_TASK_NOT_AUTHORIZED/);
+    assert.equal(d.seen.some(z=>z.args[0]==='create'),false,
+      'Normal QA button cannot execute a frozen candidate');
+    await assert.rejects(inspectQAHandoff({...f.opts,agentId:'agent_qa',
+      repoDir:f.qaRepo,recoveryReviewOnly:true,mode:'PUBLISH'}),
+      /HANDOFF_QA_MODE_INVALID/);
+    const tested=await runIndependentQa({...f.opts,agentId:'agent_qa',
+      repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner,
+      recoveryReviewOnly:true});
+    assert.equal(tested.test_passed,true);
+    assert.equal(tested.qa_receipt_submitted,false);
+    assert.equal(tested.git_published,false);
+    assert.equal(d.seen.filter(z=>z.args[0]==='create').length,1);
+    const {signer}=qaSigningFixture(f);
+    await assert.rejects(attestIndependentQa({...f.opts,agentId:'agent_qa',
+      signer,evidenceDir}),/QA_EVIDENCE_CENTRAL_CHANGED_OWNER_REVIEW/);
+    const attested=await attestIndependentQa({...f.opts,agentId:'agent_qa',
+      signer,evidenceDir,recoveryReviewOnly:true});
+    assert.equal(attested.qa_approved,false);
+    let proposal=null,evidenceHash=null,approved=false,restored=false,recorded=false;
+    let evidencePosts=0,receiptPosts=0;
+    const receiptId='12345678-1234-4234-8234-123456789abc';
+    const fetcher=async(url,opts)=>{
+      const uri=new URL(url).pathname;
+      if(uri.startsWith('/v7/tasks/detail/'))return f.fetcher(url,opts);
+      if(uri.startsWith('/v7/tasks/qa-review/')){
+        assert.equal(uri,'/v7/tasks/qa-review/'+proposal);
+        const status=recorded?'INTEGRATING':
+          restored?'SUBMITTED_FOR_REVIEW':'RECONCILIATION_REQUIRED';
+        return new Response(JSON.stringify({
+          review_proposal_id:proposal,ticket_id:'ticket_abc',
+          qa_agent_id:'agent_qa',owner_review_state:approved?'APPROVED':'PENDING',
+          task_status:status,candidate_head_sha:f.head,candidate_tree_sha:f.tree,
+          evidence_sha256:evidenceHash,qa_receipt_recorded:recorded,
+          qa_receipt_id:recorded?receiptId:null,owner_review_required:true,
+          automatic_qa_approval_allowed:false,automatic_qa_receipt_allowed:false,
+          git_published:false,
+          manual_next_action:recorded?'RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY':
+            approved?(restored?'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE':
+              'OWNER_RESTORE_QA_CANDIDATE_BEFORE_RECEIPT'):'WAIT_FOR_OWNER_REVIEW'
+        }),{status:200});
+      }
+      assert.equal(opts.method,'POST');
+      const body=JSON.parse(opts.body);
+      if(uri==='/v7/tasks/qa-evidence'){
+        evidencePosts++;
+        evidenceHash=body.attestation.message.evidence_sha256;
+        proposal='qaev_'+crypto.createHash('sha256').update([
+          'ticket_abc','agent_qa',signer.snapshot().node_id,
+          f.head,f.tree,evidenceHash,
+          hex(Buffer.from(body.attestation.signature,'base64')),'PASS'
+        ].join('\n')).digest('hex');
+        return new Response(JSON.stringify({
+          accepted:true,review_proposal_id:proposal,status:'PENDING_OWNER_REVIEW',
+          evidence_sha256:evidenceHash,device_signature_verified:true,
+          qa_approved:false,qa_receipt_submitted:false,integration_performed:false,
+          git_published:false
+        }),{status:200});
+      }
+      if(uri==='/v7/tasks/qa-receipt'){
+        receiptPosts++;
+        assert.equal(approved,true);
+        assert.equal(restored,true,'Owner must separately restore the exact candidate');
+        assert.equal(recorded,false);
+        recorded=true;
+        f.updateTask({...f.task(),status:'INTEGRATING',version:6});
+        return new Response(JSON.stringify({
+          accepted:true,ticket_id:'ticket_abc',receipt_id:receiptId,
+          status:'INTEGRATING',evidence_level:'AGENT_ATTESTED'
+        }),{status:200});
+      }
+      throw Error('Unexpected QA request '+uri);
+    };
+    const opts={...f.opts,agentId:'agent_qa',evidenceDir,signer,fetcher};
+    await assert.rejects(submitQaEvidenceForOwner(opts),
+      /QA_UPLOAD_CENTRAL_CANDIDATE_CHANGED/);
+    assert.equal(evidencePosts,0);
+    const upload=await submitQaEvidenceForOwner({...opts,recoveryReviewOnly:true});
+    assert.equal(upload.device_signature_verified,true);
+    assert.equal(upload.qa_receipt_submitted,false);
+    assert.equal(evidencePosts,1);
+    await assert.rejects(submitOwnerReviewedQaReceipt(opts),
+      /QA_RECEIPT_OWNER_REVIEW_PENDING/);
+    approved=true; // simulated *separate* Owner approval
+    await assert.rejects(submitOwnerReviewedQaReceipt(opts),
+      /QA_RECEIPT_OWNER_RESTORE_CANDIDATE_REQUIRED/);
+    assert.equal(receiptPosts,0);
+    assert.equal(fs.existsSync(path.join(evidenceDir,
+      'qa_central_receipt_ticket_abc_pending.json')),false);
+    // Simulate separate Owner RESTORE_QA_CANDIDATE (server's real
+    // signed/Owner MySQL contract has its own integration assertions).
+    restored=true;
+    f.updateTask({...f.task(),status:'SUBMITTED_FOR_REVIEW',version:5});
+    const accepted=await submitOwnerReviewedQaReceipt(opts);
+    assert.equal(accepted.status,'INTEGRATING');
+    assert.equal(accepted.git_published,false);
+    assert.equal(receiptPosts,1);
+    const again=await submitOwnerReviewedQaReceipt(opts);
+    assert.equal(again.reconciled_from_central,true);
+    assert.equal(receiptPosts,1,'Never send a duplicate receipt after recorded proof');
+    assert.equal(cmd(f.qaRepo,'rev-parse','HEAD'),f.baseline);
+  }finally{f.close();}
+});
+test('Frozen QA UI has dedicated explicit action, no arbitrary commands or receipt bypass',()=>{
+  const root=path.resolve(__dirname,'../apps/desktop');
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const html=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  const js=fs.readFileSync(path.join(root,'setup.js'),'utf8');
+  assert.match(html,/id="workerQARecover"/);
+  assert.match(js,/get\('workerQARecover'\)\.addEventListener/);
+  assert.match(preload,/runFrozenQaRecovery:\(agentId,ticketId\)/);
+  assert.match(preload,/sutradhar:runIndependentQa',agentId,ticketId,true/);
+  assert.match(main,/QA_RECOVERY_REQUIRES_FROZEN_CANDIDATE/);
+  assert.match(main,/frozenQaReviewStage/);
+  assert.match(main,/QA_RECOVERY_MODE_INVALID/);
+  assert.doesNotMatch(preload,/recoveryReviewOnly:|owner_confirmed_recovery_review|signWorkerAction|evidence_base64/);
+});
