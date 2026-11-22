@@ -114,3 +114,7 @@ The upgraded pure policy requires 2–10 unique nodes, exactly one intentional o
 ### Owner key material quality (release-only)
 
 All four protected signing *variables* must contain canonical base64-encoded PEM **public** Ed25519 keys, with each trust role derived from a **different** private/public key pair. The release signing policy rejects malformed encodings, accidentally supplied private PEMs, non-Ed25519 keys, duplicate trust roots and unexpected keys. Owner private keys must remain in separate protected signers; running this validation does not grant release approval or produce a signed installer.
+
+### Staging HTTPS DNS rebinding defense (read-only)
+
+The operator's real `ops:hostinger-preflight` command now validates every resolved public DNS A/AAAA result and connects to **one pinned reviewed public IP** instead of letting a second DNS lookup redirect requests to localhost/private services. HTTPS `servername` remains the exact Owner-registered staging hostname, TLS certificate validation stays enabled, redirects and non-GET paths are forbidden, and responses stay bounded. No request is made if the pinned endpoint fails. This narrow network defense does not replace Owner-managed egress firewall/DNS controls, Hostinger staging ownership verification, staging MySQL backup/restore or real production acceptance. CI simulated HTTP checks explicitly report `https_address_pinned:false`; production CLI uses the pinning path.

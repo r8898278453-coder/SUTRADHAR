@@ -3,13 +3,16 @@
  *
  * SECURITY: Never accept a workflow-dispatch URL as authorization. An Owner
  * must first pin its EXACT staging hostname in a protected repository variable.
- * DNS observations are checked before GETs, but a DNS rebinding/egress firewall
- * is still a separate infrastructure responsibility (see Owner runbook).
+ * DNS observations are checked before GETs. A single validated public IP is
+ * then pinned to the TLS connection; SNI and certificate hostname validation
+ * still target the Owner-pinned staging domain. Network egress controls remain
+ * an independent infrastructure responsibility (see Owner runbook).
  * This module NEVER deploys, migrates, restores, or invokes credentials.
  */
 'use strict';
 const dns=require('node:dns').promises;
 const net=require('node:net');
+const {createPinnedFetcher}=require('./staging-pinned-https.cjs');
 const SHA=/^[a-f0-9]{40}$/;
 const HOST=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 const MAX_BYTES=100*1024;
@@ -81,7 +84,8 @@ async function readBounded(response){
   return Buffer.concat(chunks,bytes).toString('utf8');
 }
 async function preflight({origin,expectedSha,allowedHostname,
-  fetcher=fetch,resolveHost=async host=>dns.lookup(host,{all:true})}){
+  fetcher=null,resolveHost=async host=>dns.lookup(host,{all:true}),
+  pinnedFetcherFactory=createPinnedFetcher}){
   const verified=target(origin,expectedSha,allowedHostname);
   if(verified.error)return {accepted:false,issues:[verified.error],
     production_accepted:false};
@@ -96,10 +100,16 @@ async function preflight({origin,expectedSha,allowedHostname,
        !publicAddress(item.address)))
     return {accepted:false,issues:['STAGING_DNS_PRIVATE_OR_UNVERIFIED'],
       production_accepted:false};
+  // Production uses the validated first public IP without a second DNS
+  // lookup. Tests can inject a fetcher; their result is NOT transport proof.
+  const actualFetcher=fetcher||pinnedFetcherFactory({
+    origin:url.origin,hostname:url.hostname,
+    address:addresses[0].address,family:addresses[0].family
+  });
   const issues=[];
   const flag=code=>issues.push(code);
   async function get(path){
-    const response=await fetcher(url.origin+path,{
+    const response=await actualFetcher(url.origin+path,{
       method:'GET',redirect:'error',credentials:'omit',cache:'no-store',
       headers:{Accept:path==='/'?'text/html':'application/json'},
       signal:AbortSignal.timeout(12000)
@@ -131,6 +141,7 @@ async function preflight({origin,expectedSha,allowedHostname,
     observed_commit:manifest?.source_sha||null,
     observed_protocol:health?.api_protocol||null,
     owner_hostname_pinned:true,public_dns_prechecked:true,
+    https_address_pinned:fetcher===null,
     production_accepted:false,staging_readonly_only:true,
     required_manual_evidence:[
       'Hostinger deployment log','MySQL encrypted backup and empty staging restore',

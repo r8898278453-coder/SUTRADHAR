@@ -131,3 +131,65 @@ test('redirects, exposed Express fingerprint and missing health proof fail close
   assert.equal(fingerprint.accepted,false);
   assert.ok(fingerprint.issues.includes('EXPRESS_FINGERPRINT_EXPOSED'));
 });
+
+test('production HTTPS preflight pins one validated IP, preserves SNI and refuses redirects',async()=>{
+  const {createPinnedFetcher}=require('../scripts/ops/staging-pinned-https.cjs');
+  const {Readable}=require('node:stream');
+  const {EventEmitter}=require('node:events');
+  const seen=[],responder=(url,options,callback)=>{
+    seen.push({url:url.toString(),options});
+    const req=new EventEmitter();
+    req.end=()=>{
+      const text=url.pathname==='/v7/health'?JSON.stringify({
+        service:'sutradhar-v7',ready:true,authority:'mysql',api_protocol:7}):
+        url.pathname==='/release-manifest.json'?JSON.stringify({
+          application:'central',source_sha:sha,api_protocol:7,
+          mysql_schema_version:7,bundle_sha256:'c'.repeat(64)}):
+        'SUTRADHAR CENTRAL';
+      const response=Readable.from([Buffer.from(text)]);
+      response.statusCode=200;
+      response.headers={'content-type':url.pathname==='/'?'text/html':'application/json'};
+      queueMicrotask(()=>callback(response));
+    };
+    req.destroy=error=>req.emit('error',error);
+    return req;
+  };
+  const result=await preflight({
+    origin,expectedSha:sha,allowedHostname:host,resolveHost:publicDns,
+    pinnedFetcherFactory:args=>createPinnedFetcher({...args,requester:responder})
+  });
+  assert.equal(result.accepted,true,JSON.stringify(result));
+  assert.equal(result.https_address_pinned,true);
+  assert.equal(seen.length,3);
+  for(const call of seen){
+    assert.equal(new URL(call.url).hostname,host);
+    assert.equal(call.options.servername,host);
+    assert.equal(call.options.rejectUnauthorized,true);
+    assert.equal(call.options.agent,false);
+    assert.equal(call.options.method,'GET');
+    assert.equal(call.options.timeout,12000);
+    assert.equal(typeof call.options.lookup,'function');
+    const lookedUp=await new Promise((resolve,reject)=>
+      call.options.lookup(host,{},(error,address,family)=>
+        error?reject(error):resolve({address,family})));
+    assert.deepEqual(lookedUp,{address:'8.8.8.8',family:4});
+    const changedHost=await new Promise(resolve=>
+      call.options.lookup('internal.local',{},error=>resolve(error)));
+    assert.match(changedHost.message,/STAGING_PINNED_HOSTNAME_CHANGED/);
+  }
+  const transport=createPinnedFetcher({
+    origin,hostname:host,address:'8.8.8.8',family:4,requester:responder});
+  for(const unsafe of [
+    [origin+'/admin',{method:'GET',redirect:'error',credentials:'omit'}],
+    [origin+'/v7/health?admin=1',{method:'GET',redirect:'error',credentials:'omit'}],
+    ['https://evil.example.com/v7/health',{method:'GET',redirect:'error',credentials:'omit'}],
+    [origin+'/v7/health',{method:'POST',redirect:'error',credentials:'omit'}],
+    [origin+'/v7/health',{method:'GET',redirect:'follow',credentials:'omit'}]
+  ])await assert.rejects(transport(...unsafe),/STAGING_PINNED_HTTPS_METHOD_OR_PATH_DENIED/);
+  assert.equal(seen.length,3,'unsafe paths must not reach transport');
+});
+test('mock preflight cannot claim real HTTPS address pinning',async()=>{
+  const result=await preflight(allowed());
+  assert.equal(result.accepted,true);
+  assert.equal(result.https_address_pinned,false);
+});
