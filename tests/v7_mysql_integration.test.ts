@@ -515,6 +515,16 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       risk:'LOW',write_scopes:['src/another.ts'],acceptance_criteria:['deny conflicting branch']});
     assert.equal(crossProjectBranch.code,409,JSON.stringify(crossProjectBranch.body));
     assert.equal(crossProjectBranch.body.error_code,'TASK_REPOSITORY_BRANCH_ALREADY_RESERVED');
+    const crossBaseOverlap=await a.signed('/v7/tasks/plan',{
+      request_id:'plan_crossbase_scope_'+(++count),agent_id:a.agent_id,
+      expected_master_epoch:Number(status.epoch),
+      ticket_id:'ticket_crossbase_scope',project_id:'project_other_base',
+      baseline_sha:'a'.repeat(40),branch_name:'ai/ticket_crossbase_scope',
+      title:'Second base overlapping source',description:'Must not claim source on same repo concurrently',
+      risk:'LOW',write_scopes:['src'],
+      acceptance_criteria:['Cannot claim while original repository holds overlapping reservation']});
+    assert.equal(crossBaseOverlap.code,200,JSON.stringify(crossBaseOverlap.body));
+    assert.equal(crossBaseOverlap.body.status,'READY');
     const invalidBranch=await a.signed('/v7/tasks/plan',{
       request_id:'invalid_branch_'+(++count),agent_id:a.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_unpublishable',
@@ -539,6 +549,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:b.agent_id,can_develop:true});
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:c.agent_id,can_qa:true});
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:d.agent_id,can_develop:true});
+    await owner('GRANT_PROJECT_AGENT',{project_id:'project_other_base',agent_id:d.agent_id,can_develop:true});
     // Actual MySQL fencing: a formerly eligible idle PC cannot obtain
     // a new task lease, while normal unrelated agents keep operating.
     const blockedAvailability=await d.signed('/v7/tasks/available',undefined,'GET');
@@ -750,6 +761,17 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'};
     const claim=await b.signed('/v7/tasks/claim',claimPayload);
     assert.equal(claim.code,200,JSON.stringify(claim.body));
+    const crossBaseDenied=await d.signed('/v7/tasks/claim',{
+      request_id:'crossbase_claim_denied_'+(++count),agent_id:d.agent_id,
+      expected_master_epoch:Number(status.epoch),
+      ticket_id:'ticket_crossbase_scope'});
+    assert.equal(crossBaseDenied.code,409,JSON.stringify(crossBaseDenied.body));
+    assert.equal(crossBaseDenied.body.error_code,'SCOPE_CONFLICT',
+      'Different base branches in the same repo cannot claim nested/overlapping source');
+    const originalStillLive=await b.signed('/v7/tasks/detail/ticket_qa_test',undefined,'GET');
+    assert.equal(originalStillLive.code,200);
+    assert.equal(originalStillLive.body.status,'CLAIMED',
+      'Rejected cross-base claim does not mutate the first worker ticket');
     // Replaying the identical durable claim after a lost HTTP reply MUST
     // return the original lease, never create another lease or worktree.
     const recoveredClaim=await b.signed('/v7/tasks/claim',claimPayload);

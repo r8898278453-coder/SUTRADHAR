@@ -1385,7 +1385,15 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
       // Project row serializes all overlapping path reservations.
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
       if(!t)fault('TASK_NOT_FOUND',404);
-      await one(c,'SELECT project_id FROM v7_projects WHERE project_id=? FOR UPDATE',[t.project_id]);
+      // A Git repository is the isolation boundary. Different projects
+      // using different base branches can still publish conflicting edits
+      // into the same repository. Acquire all project locks in stable order
+      // to serialize cross-base reservations with task planning.
+      const project=await one(c,'SELECT repository FROM v7_projects WHERE project_id=?',
+        [t.project_id]);
+      if(!project)fault('PROJECT_NOT_FOUND',404);
+      await rows(c,'SELECT project_id FROM v7_projects '+
+        'WHERE repository=? ORDER BY project_id FOR UPDATE',[project.repository]);
       const locked=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
       if(locked.status!=='READY'||(d.expected_version!==undefined&&Number(d.expected_version)!==Number(locked.version)))
         fault('TASK_NOT_READY',409);
@@ -1398,8 +1406,13 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
         [t.project_id,agentId]);
       if(!access?.can_develop)fault('PROJECT_ACCESS_DENIED',403);
       const scope=typeof locked.scopes_json==='string'?JSON.parse(locked.scopes_json):locked.scopes_json;
-      const reserved=await rows(c,'SELECT scope,ticket_id FROM v7_reservations WHERE project_id=? FOR UPDATE',[t.project_id]);
-      for(const s of scope)if(reserved.some(x=>scopesOverlap(s,x.scope)))fault('SCOPE_CONFLICT',409);
+      const reserved=await rows(c,
+        'SELECT r.scope,r.ticket_id FROM v7_reservations r '+
+        'JOIN v7_projects p ON p.project_id=r.project_id '+
+        'WHERE p.repository=? ORDER BY r.project_id,r.scope FOR UPDATE',
+        [project.repository]);
+      for(const s of scope)if(reserved.some(x=>scopesOverlap(s,x.scope)))
+        fault('SCOPE_CONFLICT',409);
       for(const s of scope)await c.query('INSERT INTO v7_reservations(project_id,scope,ticket_id) VALUES(?,?,?)',[t.project_id,s,ticketId]);
       const leaseId=crypto.randomUUID();
       await c.query('INSERT INTO v7_leases(ticket_id,agent_id,epoch,lease_id,expires_at,revoked) VALUES(?,?,?,?,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 600 SECOND),0) ON DUPLICATE KEY UPDATE agent_id=VALUES(agent_id),epoch=VALUES(epoch),lease_id=VALUES(lease_id),expires_at=VALUES(expires_at),revoked=0',
