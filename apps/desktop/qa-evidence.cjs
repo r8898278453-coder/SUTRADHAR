@@ -140,8 +140,9 @@ function exclusiveWrite(file,data){
   finally{fs.closeSync(fd);}
 }
 async function attestIndependentQa({origin,agentId,ticketId,signer,
-  evidenceDir,fetcher=fetch}){
+  evidenceDir,fetcher=fetch,recoveryReviewOnly=false}){
   if(!ID.test(agentId||'')||!ID.test(ticketId||'')||
+     typeof recoveryReviewOnly!=='boolean'||
      !signer||typeof signer.signQaEvidence!=='function'||
      typeof evidenceDir!=='string'||!path.isAbsolute(evidenceDir))
     fail('QA_EVIDENCE_INPUT_INVALID');
@@ -159,7 +160,7 @@ async function attestIndependentQa({origin,agentId,ticketId,signer,
     fail('QA_EVIDENCE_WRONG_AGENT_OR_TICKET');
   const t=(await inspectWorkerTasks({origin,agentId,ticketId,
     signer,fetcher})).task;
-  if(t.status!=='SUBMITTED_FOR_REVIEW'||
+  if(t.status!==(recoveryReviewOnly?'RECONCILIATION_REQUIRED':'SUBMITTED_FOR_REVIEW')||
      t.ticket_id!==e.ticket_id||
      t.worker_agent_id!==e.developer_agent_id||
      t.candidate_head_sha!==e.candidate_head_sha||

@@ -151,8 +151,9 @@ function runContainer({p,image,archive,runner}){
 }
 async function runIndependentQa({origin,agentId,ticketId,signer,bundlePath,
   repoDir,evidenceDir,fetcher=fetch,policy=policyDefault,
-  dockerRunner=spawnSync}){
-  if(!ID.test(agentId||'')||!ID.test(ticketId||''))
+  dockerRunner=spawnSync,recoveryReviewOnly=false}){
+  if(!ID.test(agentId||'')||!ID.test(ticketId||'')||
+     typeof recoveryReviewOnly!=='boolean')
     fail('QA_EXECUTION_INPUT_INVALID');
   const p=validPolicy(policy),image=dockerPreflight(p,dockerRunner);
   const dir=privateDir(evidenceDir);
@@ -161,7 +162,7 @@ async function runIndependentQa({origin,agentId,ticketId,signer,bundlePath,
   if(fs.existsSync(intentFile)||fs.existsSync(evidenceFile))
     fail('QA_EXECUTION_PREVIOUS_ATTEMPT_OWNER_REVIEW');
   return inspectQAHandoff({origin,agentId,ticketId,signer,
-    bundlePath,repoDir,fetcher,
+    bundlePath,repoDir,fetcher,recoveryReviewOnly,
     onVerifiedBare:async({bare,task,bundle_sha256})=>{
       const archive=candidateArchive(bare,task.candidate_head_sha);
       // Durable exclusive execution intent BEFORE first possible Docker create.
@@ -176,7 +177,7 @@ async function runIndependentQa({origin,agentId,ticketId,signer,bundlePath,
       const result=runContainer({p,image,archive,runner:dockerRunner});
       const latest=(await inspectWorkerTasks({origin,agentId,ticketId,
         signer,fetcher})).task;
-      if(latest.status!=='SUBMITTED_FOR_REVIEW'||
+      if(latest.status!==task.status||
          latest.candidate_head_sha!==task.candidate_head_sha||
          latest.candidate_tree_sha!==task.candidate_tree_sha||
          latest.worker_agent_id!==task.worker_agent_id||

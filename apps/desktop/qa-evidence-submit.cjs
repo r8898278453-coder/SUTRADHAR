@@ -124,7 +124,8 @@ async function readOwnerReview({origin,agentId,ticketId,signer,fetcher,context})
   return p;
 }
 async function verifiedLocal({origin,agentId,ticketId,signer,dir,fetcher,
-  allowReceiptReplay=false}){
+  allowReceiptReplay=false,recoveryReviewOnly=false,
+  allowFrozenReceiptObservation=false}){
   const raw=readFile(path.join(dir,'qa_result_'+ticketId+'.json'),16*1024);
   let report,attestation,intent;
   try{
@@ -143,7 +144,10 @@ async function verifiedLocal({origin,agentId,ticketId,signer,dir,fetcher,
     expectedTicketId:ticketId,expectedHead:report.candidate_head_sha,
     expectedTree:report.candidate_tree_sha});
   const remote=(await inspectWorkerTasks({origin,agentId,ticketId,signer,fetcher})).task;
-  if(!['SUBMITTED_FOR_REVIEW',...(allowReceiptReplay?['INTEGRATING','TEST_FAILED']:[])].includes(remote.status)||
+  const permitted=recoveryReviewOnly?['RECONCILIATION_REQUIRED']:
+    ['SUBMITTED_FOR_REVIEW',...(allowReceiptReplay?['INTEGRATING','TEST_FAILED']:[]),
+      ...(allowFrozenReceiptObservation?['RECONCILIATION_REQUIRED']:[])];
+  if(!permitted.includes(remote.status)||
      remote.worker_agent_id!==report.developer_agent_id||
      remote.worker_agent_id===agentId||
      remote.baseline_sha!==report.baseline_sha||
@@ -196,9 +200,11 @@ function checkInputs({origin,agentId,ticketId,signer,dir}){
   return evidenceDir(dir);
 }
 async function submitQaEvidenceForOwner({origin,agentId,ticketId,signer,
-  evidenceDir:dir,fetcher=fetch}){
+  evidenceDir:dir,fetcher=fetch,recoveryReviewOnly=false}){
+  if(typeof recoveryReviewOnly!=='boolean')fail('QA_UPLOAD_RECOVERY_MODE_INVALID');
   dir=checkInputs({origin,agentId,ticketId,signer,dir});
-  const v=await verifiedLocal({origin,agentId,ticketId,signer,dir,fetcher});
+  const v=await verifiedLocal({origin,agentId,ticketId,signer,dir,fetcher,
+    recoveryReviewOnly});
   const pendingPath=path.join(dir,'qa_central_evidence_'+ticketId+'_pending.json');
   const receiptPath=path.join(dir,'qa_central_evidence_'+ticketId+'_receipt.json');
   const knownPath=fs.existsSync(pendingPath)?pendingPath:
@@ -242,7 +248,7 @@ async function submitOwnerReviewedQaReceipt({origin,agentId,ticketId,signer,
   evidenceDir:dir,fetcher=fetch}){
   dir=checkInputs({origin,agentId,ticketId,signer,dir});
   const v=await verifiedLocal({origin,agentId,ticketId,signer,dir,fetcher,
-    allowReceiptReplay:true});
+    allowReceiptReplay:true,allowFrozenReceiptObservation:true});
   const uploadFile=path.join(dir,'qa_central_evidence_'+ticketId+'_receipt.json');
   const uploaded=readRecord(uploadFile);
   if(JSON.stringify(uploaded.context)!==JSON.stringify(v.context)||
@@ -257,6 +263,9 @@ async function submitOwnerReviewedQaReceipt({origin,agentId,ticketId,signer,
     fail('QA_RECEIPT_OWNER_REVIEW_PENDING');
   if(review.owner_review_state==='DENIED')
     fail('QA_RECEIPT_OWNER_REVIEW_DENIED');
+  if(review.task_status==='RECONCILIATION_REQUIRED'||
+     v.remote.status==='RECONCILIATION_REQUIRED')
+    fail('QA_RECEIPT_OWNER_RESTORE_CANDIDATE_REQUIRED');
   const prefix='qa_central_receipt_'+ticketId;
   const pending=path.join(dir,prefix+'_pending.json');
   const completed=path.join(dir,prefix+'_receipt.json');

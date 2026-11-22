@@ -63,14 +63,16 @@ function git(dir,...args){
   return p.stdout;
 }
 function text(dir,...args){return git(dir,...args).toString('utf8').trim();}
-function checkedTask(task,agentId,ticketId,role){
+function checkedTask(task,agentId,ticketId,role,recoveryReviewOnly=false){
+  const requiredStatus=role==='PUBLISH'?'INTEGRATING':
+    (role==='QA'&&recoveryReviewOnly?'RECONCILIATION_REQUIRED':'SUBMITTED_FOR_REVIEW');
   if(!task||task.ticket_id!==ticketId||!ID.test(ticketId||'')||
      !ID.test(agentId||'')||!ID.test(task.worker_agent_id||'')||
      !ID.test(task.project_id||'')||!REPO.test(task.repository||'')||
      !/^ai\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(task.branch_name||'')||
      !SHA.test(task.baseline_sha||'')||!SHA.test(task.candidate_head_sha||'')||
      !SHA.test(task.candidate_tree_sha||'')||
-     task.status!==(role==='PUBLISH'?'INTEGRATING':'SUBMITTED_FOR_REVIEW')||
+     task.status!==requiredStatus||
      (role==='EXPORT'?task.worker_agent_id!==agentId:task.worker_agent_id===agentId)||
      !Array.isArray(task.write_scopes)||task.write_scopes.length<1||
      task.write_scopes.length>30||
@@ -243,10 +245,13 @@ function verifyHistory(bare,t){
   }
 }
 async function inspectQAHandoff({origin,agentId,ticketId,signer,
-  bundlePath,repoDir,fetcher=fetch,onVerifiedBare=null,mode='QA'}){
-  if(!['QA','PUBLISH'].includes(mode))fail('HANDOFF_QA_MODE_INVALID');
+  bundlePath,repoDir,fetcher=fetch,onVerifiedBare=null,mode='QA',
+  recoveryReviewOnly=false}){
+  if(!['QA','PUBLISH'].includes(mode)||typeof recoveryReviewOnly!=='boolean'||
+     (recoveryReviewOnly&&mode!=='QA'))fail('HANDOFF_QA_MODE_INVALID');
+  // This explicit recovery path cannot export developer work or publish Git.
   const t=checkedTask(await centralTask({origin,agentId,ticketId,signer,fetcher}),
-    agentId,ticketId,mode);
+    agentId,ticketId,mode,recoveryReviewOnly);
   if(typeof bundlePath!=='string'||!path.isAbsolute(bundlePath)||
      !bundlePath.endsWith('.bundle'))fail('HANDOFF_BUNDLE_PATH_INVALID');
   const manifestPath=bundlePath+'.json';
