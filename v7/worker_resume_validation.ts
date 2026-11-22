@@ -9,13 +9,17 @@ function scopes(value:unknown):string[]{
   return [...data].sort();
 }
 export function verifyWorkerResume(local:unknown,remote:unknown,agentId:string,ticketId:string){
-  if(!local||typeof local!=='object'||!remote||typeof remote!=='object'||
+  if(!local||typeof local!=='object'||Array.isArray(local)||
+    !remote||typeof remote!=='object'||Array.isArray(remote)||
     !ID_RE.test(agentId)||!ID_RE.test(ticketId))throw Error('INVALID_RESUME_RECORD');
   const l=local as Record<string,any>,r=remote as Record<string,any>;
-  if(r.resume_allowed!==true||r.ticket_id!==ticketId||r.agent_id!==agentId||
+  if(r.resume_allowed!==true||r.automatic_execution_allowed!==false||
+    r.ticket_id!==ticketId||r.agent_id!==agentId||
     l.ticket_id!==ticketId||l.agent_id!==agentId||
     !Number.isSafeInteger(l.epoch)||l.epoch<1||l.epoch!==r.epoch||
-    typeof l.lease_id!=='string'||!/^[a-f0-9-]{36}$/.test(l.lease_id))
+    typeof l.lease_id!=='string'||
+    !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(l.lease_id)||
+    r.lease_id!==l.lease_id)
     throw Error('RESUME_LEASE_OR_IDENTITY_MISMATCH');
   if(!['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(r.status))
     throw Error('TASK_NOT_RESUMABLE');
@@ -27,14 +31,16 @@ export function verifyWorkerResume(local:unknown,remote:unknown,agentId:string,t
     throw Error('RESUME_SCOPE_MISMATCH');
   const cp=r.latest_checkpoint;
   if(cp!==null&&cp!==undefined){
-    if(!Number.isSafeInteger(Number(cp.generation))||Number(cp.generation)<1||
+    if(!cp||typeof cp!=='object'||Array.isArray(cp)||
+      !Number.isSafeInteger(cp.generation)||cp.generation<1||
       typeof cp.summary!=='string'||typeof cp.next_action!=='string'||
       typeof cp.content_sha256!=='string'||
+      !/^[a-f0-9]{64}$/.test(cp.content_sha256)||
       sha(cp.summary+'\n'+cp.next_action)!==cp.content_sha256)
       throw Error('RESUME_CHECKPOINT_DIGEST_MISMATCH');
   }
   return {ticket_id:ticketId,agent_id:agentId,status:r.status,epoch:r.epoch,
-    latest_checkpoint_generation:cp?Number(cp.generation):null,
+    latest_checkpoint_generation:cp?cp.generation:null,
     next_action:cp?cp.next_action:'Implement and checkpoint',
     resume_allowed:true,automatic_execution_allowed:false};
 }

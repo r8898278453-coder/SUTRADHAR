@@ -1293,7 +1293,8 @@ app.post('/v7/tasks/resume-check',jsonRoute(async req=>{
     if(!project)fault('PROJECT_NOT_FOUND',404);
     const latest=await one(c,'SELECT generation,summary,next_action,content_sha256 FROM v7_checkpoints WHERE ticket_id=? ORDER BY generation DESC LIMIT 1',[ticketId]);
     return {resume_allowed:true,automatic_execution_allowed:false,
-      ticket_id:ticketId,agent_id:agentId,epoch:Number(d.expected_master_epoch),
+      ticket_id:ticketId,agent_id:agentId,lease_id:d.lease_id,
+      epoch:Number(d.expected_master_epoch),
       project_id:t.project_id,repository:project.repository,baseline_sha:t.baseline_sha,
       branch_name:t.branch_name,write_scopes:t.scopes_json,status:t.status,
       latest_checkpoint:latest};

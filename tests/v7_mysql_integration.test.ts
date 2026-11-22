@@ -590,6 +590,8 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       lease_id:claim.body.lease_id,expected_master_epoch:Number(status.epoch)});
     assert.equal(resumeProof.code,200,JSON.stringify(resumeProof.body));
     assert.equal(resumeProof.body.resume_allowed,true);
+    assert.equal(resumeProof.body.lease_id,claim.body.lease_id,
+      'Central must echo the same live lease verified under MySQL lock');
     assert.equal(resumeProof.body.automatic_execution_allowed,false);
     assert.equal(resumeProof.body.status,'CLAIMED');
     const invalidResume=await b.signed('/v7/tasks/resume-check',{
