@@ -397,6 +397,90 @@ function renderGitRecoveryQueue(data){
   updateGitRecoveryAction();
 }
 
+// Owner may observe lease expiry, but automatic reassignment is forbidden.
+let workerExpiryObservation=null,workerExpiryIntent=null;
+const workerTicketPattern=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
+function renderWorkerExpiry(data){
+  const valid=Boolean(data&&data.mode==='OWNER_READ_ONLY_EXPIRED_WORKER_LEASES'&&
+    data.read_only===true&&data.worker_lease_revoked===false&&
+    data.automatic_reassignment_allowed===false&&
+    data.production_release_authorized===false&&data.truncated===false&&
+    Number.isSafeInteger(data.epoch)&&data.epoch>=0&&
+    typeof data.master_live==='boolean'&&Array.isArray(data.tickets)&&
+    data.tickets.length<=50&&data.tickets.every(t=>t&&
+      workerTicketPattern.test(t.ticket_id)&&typeof t.worker_agent_id==='string'&&
+      ['CLAIMED','CHECKPOINTED','RUNNING'].includes(t.status)&&
+      typeof t.manual_quarantine_eligible==='boolean'&&
+      Number.isSafeInteger(t.lease_epoch)&&Number.isSafeInteger(t.version)&&
+      t.version>=1));
+  workerExpiryObservation=valid?data:null;
+  rows('worker-expiry-rows',valid?data.tickets.map(t=>[
+    t.ticket_id,t.worker_agent_id,t.status,t.expired_seconds,
+    t.manual_quarantine_eligible?'Owner review eligible':'HOLD']):[]);
+  value('worker-expiry-status',valid?
+    data.tickets.length+' expired · epoch '+data.epoch+
+      (data.master_live?' · Master live':' · Master HOLD'):'UNKNOWN — no action');
+  $('worker-expiry-quarantine').disabled=!valid||
+    (!workerExpiryIntent&&(!data.master_live||
+      !data.tickets.some(t=>t.manual_quarantine_eligible)));
+}
+function clearWorkerExpiryIntent(){
+  workerExpiryIntent=null;workerExpiryObservation=null;
+  $('worker-expiry-ticket').value='';$('worker-expiry-reason').value='';
+  $('worker-expiry-quarantine').disabled=true;
+  value('worker-expiry-action-status','No retry in this tab. Recheck Central and external Git before any action.');
+}
+$('worker-expiry-quarantine').onclick=async()=>{
+  const snapshot=workerExpiryObservation;
+  if(!snapshot){value('worker-expiry-action-status','HOLD — valid fresh Owner snapshot required.');return;}
+  const ticket=$('worker-expiry-ticket').value.trim();
+  const reason=$('worker-expiry-reason').value.trim();
+  if(!workerTicketPattern.test(ticket)||reason.length<20||reason.length>500){
+    value('worker-expiry-action-status','HOLD — exact ticket and 20–500 character reason required.');return;}
+  let intent=workerExpiryIntent;
+  if(intent){
+    if(intent.payload.ticket_id!==ticket||intent.payload.reason!==reason){
+      value('worker-expiry-action-status','HOLD — uncertain request requires unchanged fields and SAME request ID.');return;}
+  }else{
+    const eligible=snapshot.tickets.find(t=>t.ticket_id===ticket&&
+      t.manual_quarantine_eligible===true&&t.lease_epoch===snapshot.epoch);
+    if(!snapshot.master_live||!eligible){
+      value('worker-expiry-action-status','HOLD — ticket not eligible at observed Master epoch.');return;}
+    if(!confirm('Owner quarantine expired worker '+ticket+'? Preserve all work and scopes.'+
+      ' NO automatic requeue, Git push or installer execution.'))return;
+    intent={request_id:'wexp_'+crypto.randomUUID().replaceAll('-',''),
+      payload:{ticket_id:ticket,expected_master_epoch:snapshot.epoch,reason}};
+    workerExpiryIntent=intent;
+  }
+  const session=ownerSessionVersion,originalKey=key;
+  value('worker-expiry-action-status','Owner request sent; uncertain reply must reuse this ID.');
+  try{
+    const receipt=await request('/v7/owner/command',{method:'POST',
+      body:JSON.stringify({request_id:intent.request_id,
+        command:'QUARANTINE_EXPIRED_WORKER',payload:intent.payload})});
+    requireLiveOwnerSession(session,originalKey);
+    if(receipt?.accepted!==true||receipt.state?.ticket_id!==ticket||
+      receipt.state?.epoch!==intent.payload.expected_master_epoch||
+      receipt.state?.status!=='RECONCILIATION_REQUIRED'||
+      receipt.state?.old_lease_revoked!==true||
+      receipt.state?.checkpoint_preserved!==true||
+      receipt.state?.automatic_reassignment_allowed!==false)
+      throw Error('QUARANTINE_RECEIPT_UNVERIFIED');
+    workerExpiryIntent=null;
+    value('worker-expiry-action-status','Owner receipt verified. Git evidence still needs separate review; not reassigned.');
+    await refresh();
+  }catch(e){
+    if(ownerSessionVersion!==session||key!==originalKey)return;
+    value('worker-expiry-action-status','HOLD — '+e.message+
+      '. Retry unchanged ticket/reason with the SAME saved request ID only.');
+  }
+};
+$('worker-expiry-clear').onclick=async()=>{
+  if(!confirm('Clear local retry only? Review Central command history and external Git FIRST.'+
+    ' This NEVER undoes a committed quarantine.'))return;
+  clearWorkerExpiryIntent();
+  try{await refresh();}catch(e){message('Fresh Owner snapshot unavailable: '+e.message,true);}
+};
 function renderLeadershipSafety(data){
   // Never infer safe-to-restart or safe-to-elect from an API/transport error.
   const valid=Boolean(data&&data.mode==='OWNER_READ_ONLY_LEADERSHIP_SAFETY'&&
@@ -451,6 +535,10 @@ async function refresh(){
   try{leadershipSafety=await request('/v7/owner/leadership-safety');}catch{}
   current();
   renderLeadershipSafety(leadershipSafety);
+  let expiredWorkers=null;
+  try{expiredWorkers=await request('/v7/owner/worker-expiry');}catch{}
+  current();
+  renderWorkerExpiry(expiredWorkers);
   // Optional migration-sensitive Owner maintenance surface. Keep the core
   // dashboard readable if the new staging schema is not yet provisioned,
   // but disable planning until the server returns valid authoritative rows.
@@ -502,6 +590,7 @@ $('connect').onclick=async()=>{
   $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
   $('dashboard').hidden=true;
   clearPrCreation();clearPrRecovery();clearGitRecoveryReview();
+  clearWorkerExpiryIntent();
   key=$('key').value;$('key').value='';
   try{
     await refresh();
@@ -522,6 +611,7 @@ $('connect').onclick=async()=>{
 $('disconnect').onclick=()=>{
   ownerSessionVersion++;ownerRefreshVersion++;
   key='';clearPrCreation();clearPrRecovery();clearGitRecoveryReview();
+  clearWorkerExpiryIntent();
   gitRecoverySnapshot=null;
   $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
   invalidateOwnerRecoveryDisplay(

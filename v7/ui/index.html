@@ -19,6 +19,15 @@
 <p id="leadership-safety-details">No recovery approval is implied. This displays Central MySQL observations only; it never elects a Master or restarts a PC.</p>
 <small>Distinct enrolled node IDs are not proof of separate physical Windows machines. Verify actual PCs, active work and Git reconciliation independently.</small>
 </section>
+<section class="panel owner" aria-labelledby="worker-expiry-title">
+<div class="panelhead"><h2 id="worker-expiry-title">Expired worker — Owner recovery</h2><strong id="worker-expiry-status" role="status">Not inspected</strong></div>
+<p>Read-only Central MySQL observations. Worker expiry does not prove external Git stopped. Quarantine preserves checkpoints and reservations; it NEVER reassigns work or starts an installer.</p>
+<div class="scroll"><table><thead><tr><th>Ticket</th><th>Worker</th><th>State</th><th>Expired seconds</th><th>Review</th></tr></thead><tbody id="worker-expiry-rows"></tbody></table></div>
+<div class="formgrid"><div><label for="worker-expiry-ticket">Exact eligible ticket ID</label><input id="worker-expiry-ticket" autocomplete="off" spellcheck="false" maxlength="100"></div>
+<div><label for="worker-expiry-reason">Owner reason (20–500 characters)</label><textarea id="worker-expiry-reason" rows="3" maxlength="500" autocomplete="off" spellcheck="false"></textarea></div></div>
+<div class="flex"><button id="worker-expiry-quarantine" type="button" class="danger" disabled>Quarantine expired worker ONLY</button><button id="worker-expiry-clear" class="outline" type="button">Clear local retry after review</button></div>
+<p id="worker-expiry-action-status" role="status">No action attempted. Separate Owner Git reconciliation is required before any requeue.</p>
+</section>
 <section class="panel" aria-labelledby="node-recovery-title">
 <div class="panelhead"><h2 id="node-recovery-title">PC crash recovery — Owner MySQL observation only</h2>
 <strong>HOLD · no restart grant</strong></div>
