@@ -361,3 +361,19 @@ after index + audit, then restore v7 fixture state.
 Owner/DBA signed approval or data-compatibility test; the runtime only checks
 DB shape/claims and cannot prove full production migration. G0–G7 remain
 HOLD until the real environment and independent acceptance are demonstrated.
+
+
+## 23 November 2026 — Post-schema-guard election consistency fix
+
+Initial exact-commit CI exposed a concurrency regression: opening a MySQL
+REPEATABLE READ transaction before schema-version SELECT can pin an older
+candidate heartbeat snapshot *before* the first serialized leader-row lock.
+That can make simultaneous Backup1/Backup2 heartbeats observe inconsistent
+Master selection even though the leader row itself is locked fresh. The
+schema compatibility guard now performs its metadata SELECTs in autocommit,
+then starts the business transaction, preserving the established leader-first
+consistent-read sequence. The runtime still rejects unknown or incomplete
+migration metadata before the signed action, but this is NOT a guarantee that
+an operator may run live DDL concurrently; the real migration requires an
+Owner-approved maintenance window and independent staging proof. Regression
+tests assert this ordering; re-run exact-head real MySQL concurrency CI.

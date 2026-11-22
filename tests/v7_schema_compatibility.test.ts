@@ -48,8 +48,11 @@ test('Central transaction blocks incompatible schema before any signed mutation'
   const tx=source.split('async function transaction<T>')[1].split('async function rows(')[0];
   const history=tx.indexOf('supportedSchemaVersion(versions)');
   const audit=tx.indexOf('validReviewedV8Schema(versions,indexRows,auditRows)');
+  const begin=tx.indexOf('await c.beginTransaction()');
   const commit=tx.indexOf('await c.commit()');
-  assert.ok(history>=0&&audit>history&&commit>audit);
+  assert.ok(history>=0&&audit>history&&begin>audit&&commit>begin,
+    'Schema inspection must not open a repeatable-read snapshot before leader lock');
+  assert.match(tx,/AUTOCOMMIT preflight/);
   assert.match(tx,/SCHEMA_VERSION_UNSUPPORTED/);
   assert.match(tx,/SCHEMA_V8_MIGRATION_INCOMPLETE/);
 });

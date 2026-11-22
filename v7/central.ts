@@ -76,7 +76,14 @@ function admin(req:Request){if(!configured)fault('CONTROL_UNAVAILABLE',503);
 function getPool(){if(!pool)fault('CONTROL_UNAVAILABLE',503);return pool!;}
 async function transaction<T>(fn:(c:PoolConnection)=>Promise<T>):Promise<T>{
   const c=await getPool().getConnection();
-  try{await c.query("SET time_zone = '+00:00'");await c.beginTransaction();
+  try{await c.query("SET time_zone = '+00:00'");
+    // AUTOCOMMIT preflight: MySQL REPEATABLE READ must NOT pin a stale
+    // MVCC snapshot before the first leader-row FOR UPDATE. That would
+    // combine a fresh locked leader with stale candidate heartbeats during
+    // concurrent Backup-1/Backup-2 takeover and violate the election fence.
+    // Never begin the business transaction until this read-only guard ends.
+    // Operator DDL requires separate downtime: this does not make live
+    // schema migration atomic with work admission.
     // Every signed read/write and health preflight fails closed on unknown
     // schema history, or a version-8 DDL claim lacking real index/audit proof.
     // Empty database bootstrap uses a separate, explicitly approved route.
@@ -97,6 +104,9 @@ async function transaction<T>(fn:(c:PoolConnection)=>Promise<T>):Promise<T>{
       if(!validReviewedV8Schema(versions,indexRows,auditRows))
         fault('SCHEMA_V8_MIGRATION_INCOMPLETE',503);
     }
+    // Begin *after* schema metadata reads; first business read may acquire
+    // the MySQL leader row before opening a consistent candidate snapshot.
+    await c.beginTransaction();
     const out=await fn(c);await c.commit();return out;
   }catch(e){await c.rollback();throw e;}finally{c.release();}
 }
