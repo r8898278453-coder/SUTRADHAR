@@ -1267,8 +1267,11 @@ app.post('/v7/tasks/renew-lease',jsonRoute(async req=>{
   const id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
   const leaseId=requireId(d.lease_id),reason=requireStr(d.reason,300);
   if(reason.length<12)fault('WORKER_RENEW_REASON_REQUIRED',400);
-  return transaction(c=>idem(c,id,d.request_id,'WORKER_RENEW_LEASE',d,async()=>{
+  return transaction(async c=>{
+    // Recheck live authority BEFORE returning an idempotent saved success.
+    // A prior acknowledgement cannot grant renewal after a Master epoch flip.
     const t=await workerLease(c,node.node_id,id,ticket,leaseId,d.expected_master_epoch);
+    return idem(c,id,d.request_id,'WORKER_RENEW_LEASE',d,async()=>{
     if(!t||!['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status))
       fault('WORKER_RENEW_STATE_INVALID',409);
     const expiry=await extendWorkerLease(c,ticket,t,'renew');
@@ -1277,7 +1280,8 @@ app.post('/v7/tasks/renew-lease',jsonRoute(async req=>{
     return {accepted:true,ticket_id:ticket,agent_id:id,
       lease_id:leaseId,epoch:Number(d.expected_master_epoch),
       ...expiry,automatic_execution_allowed:false};
-  }));
+    });
+  });
 }));
 // Read-only restart preflight: verify the local record's existing live lease.
 // No extension, re-claim, new permission or Git side-effect is performed.
@@ -1303,8 +1307,11 @@ app.post('/v7/tasks/resume-check',jsonRoute(async req=>{
 app.post('/v7/tasks/checkpoint',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{},id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
   const summary=requireStr(d.summary,8000),next=requireStr(d.next_action,500);
-  return transaction(async c=>idem(c,id,d.request_id,'CHECKPOINT',d,async()=>{
-    const t=await workerLease(c,node.node_id,id,ticket,requireId(d.lease_id),d.expected_master_epoch);
+  return transaction(async c=>{
+    const leaseId=requireId(d.lease_id);
+    // Do not replay a stored success without a STILL valid worker lease.
+    const t=await workerLease(c,node.node_id,id,ticket,leaseId,d.expected_master_epoch);
+    return idem(c,id,d.request_id,'CHECKPOINT',d,async()=>{
     if(!['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status))fault('CHECKPOINT_NOT_ALLOWED',409);
     const latest=await one(c,'SELECT COALESCE(MAX(generation),0) n FROM v7_checkpoints WHERE ticket_id=?',[ticket]);
     const generation=Number(latest.n)+1,hash=digest(summary+'\n'+next);
@@ -1315,15 +1322,20 @@ app.post('/v7/tasks/checkpoint',jsonRoute(async req=>{
     // active work, but never bypass the same bounded renewal safety budget.
     const expiry=await extendWorkerLease(c,ticket,t,'checkpoint');
     await event(c,'TASK_CHECKPOINTED',id,Number(d.expected_master_epoch),ticket,{generation,sha256:hash});
-    return {accepted:true,ticket_id:ticket,generation,content_sha256:hash,
-      version:Number(t.version)+1,...expiry};
-  }));
+    return {accepted:true,ticket_id:ticket,agent_id:id,lease_id:leaseId,
+      epoch:Number(d.expected_master_epoch),automatic_execution_allowed:false,
+      generation,content_sha256:hash,version:Number(t.version)+1,...expiry};
+    });
+  });
 }));
 app.post('/v7/tasks/submit',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{},id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
   const head=requireSha(d.candidate_head_sha),tree=requireSha(d.candidate_tree_sha);
-  return transaction(async c=>idem(c,id,d.request_id,'TASK_SUBMIT',d,async()=>{
-    const t=await workerLease(c,node.node_id,id,ticket,requireId(d.lease_id),d.expected_master_epoch);
+  return transaction(async c=>{
+    const leaseId=requireId(d.lease_id);
+    // Preserve identical retries, but never replay saved success to a stale worker.
+    const t=await workerLease(c,node.node_id,id,ticket,leaseId,d.expected_master_epoch);
+    return idem(c,id,d.request_id,'TASK_SUBMIT',d,async()=>{
     if(!['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status))fault('SUBMISSION_NOT_ALLOWED',409);
     const checkpoint=await one(c,'SELECT checkpoint_id FROM v7_checkpoints WHERE ticket_id=? LIMIT 1',[ticket]);
     if(!checkpoint)fault('CHECKPOINT_REQUIRED',409);
@@ -1331,7 +1343,8 @@ app.post('/v7/tasks/submit',jsonRoute(async req=>{
       [head,tree,ticket]);
     await event(c,'TASK_SUBMITTED',id,Number(d.expected_master_epoch),ticket,{head,tree});
     return {accepted:true,ticket_id:ticket,status:'SUBMITTED_FOR_REVIEW'};
-  }));
+    });
+  });
 }));
 // Signed node/QA-agent upload: verify the *exact report bytes* and device
 // signature against the approved node key from MySQL. This only creates a

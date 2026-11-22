@@ -668,14 +668,26 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       expected_master_epoch:Number(status.epoch),
       candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40)});
     assert.equal(attempted.body.error_code,'CHECKPOINT_REQUIRED');
-    const checkpoint=await b.signed('/v7/tasks/checkpoint',{request_id:'check_'+(++count),agent_id:b.agent_id,
+    const checkpointBody={request_id:'check_'+(++count),agent_id:b.agent_id,
       ticket_id:'ticket_qa_test',lease_id:claim.body.lease_id,expected_master_epoch:Number(status.epoch),
-      summary:'completed and review pending',next_action:'independent QA'});
+      summary:'completed and review pending',next_action:'independent QA'};
+    const checkpoint=await b.signed('/v7/tasks/checkpoint',checkpointBody);
     assert.equal(checkpoint.code,200,JSON.stringify(checkpoint.body));
-    const submitted=await b.signed('/v7/tasks/submit',{request_id:'submit2_'+(++count),agent_id:b.agent_id,
+    assert.equal(checkpoint.body.lease_id,claim.body.lease_id);
+    assert.equal(checkpoint.body.automatic_execution_allowed,false);
+    const checkpointReplay=await b.signed('/v7/tasks/checkpoint',checkpointBody);
+    assert.equal(checkpointReplay.code,200,JSON.stringify(checkpointReplay.body));
+    assert.deepEqual(checkpointReplay.body,checkpoint.body,
+      'same live lease and request ID must replay one checkpoint receipt');
+    const submittedBody={request_id:'submit2_'+(++count),agent_id:b.agent_id,
       ticket_id:'ticket_qa_test',lease_id:claim.body.lease_id,expected_master_epoch:Number(status.epoch),
-      candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40)});
+      candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40)};
+    const submitted=await b.signed('/v7/tasks/submit',submittedBody);
     assert.equal(submitted.code,200,JSON.stringify(submitted.body));
+    const submittedReplay=await b.signed('/v7/tasks/submit',submittedBody);
+    assert.equal(submittedReplay.code,200,JSON.stringify(submittedReplay.body));
+    assert.deepEqual(submittedReplay.body,submitted.body,
+      'same live lease and request ID must replay one submit receipt');
     // Two different agent IDs on the SAME physical enrolled node are NOT
     // independent QA. Central must compare approved node IDs too.
     const samePcQa='agent_qa_samepc';
@@ -1028,6 +1040,15 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         agent_id:b.agent_id,ticket_id:'ticket_qa_test',
         lease_id:claim.body.lease_id,expected_master_epoch:Number(status.epoch)});
       assert.notEqual(staleResume.code,200,'Failover must fence old restart attempts');
+      for(const [endpoint,payload] of [
+        ['/v7/tasks/renew-lease',renewBody],
+        ['/v7/tasks/checkpoint',checkpointBody],
+        ['/v7/tasks/submit',submittedBody]
+      ] as const){
+        const staleReceipt=await b.signed(endpoint,payload);
+        assert.notEqual(staleReceipt.code,200,
+          'Old committed idempotency receipt must NOT bypass current lease/epoch on '+endpoint);
+      }
       const oldClaim=await b.signed('/v7/tasks/checkpoint',{request_id:'oldlease_'+(++count),
         agent_id:b.agent_id,ticket_id:'ticket_qa_test',lease_id:claim.body.lease_id,
         expected_master_epoch:Number(status.epoch),summary:'illegal',next_action:'illegal'});
