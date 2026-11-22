@@ -618,6 +618,81 @@ test('device-signed QA upload makes pending Owner review before receipt and pres
       assert.equal(cmd(f.qaRepo,'rev-parse','HEAD'),f.baseline);
     }finally{f.close();}
   });
+test('lost QA receipt HTTP reply reconciles from signed Central GET without duplicate POST',
+  {skip:!available},async()=>{
+    const f=fixture();
+    try{
+      await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+      const d=fakeDocker(f),evidenceDir=path.join(f.temp,'qa-lost-ack');
+      await runIndependentQa({...f.opts,agentId:'agent_qa',
+        repoDir:f.qaRepo,evidenceDir,policy:d.policy,dockerRunner:d.runner});
+      const {signer}=qaSigningFixture(f);
+      await attestIndependentQa({...f.opts,agentId:'agent_qa',signer,evidenceDir});
+      let proposalId=null,evidenceHash=null,recorded=false,qaPosts=0;
+      const receiptId='11111111-2222-4333-8444-555555555555';
+      const fetcher=async(url,opts)=>{
+        const uri=new URL(url).pathname;
+        if(uri.startsWith('/v7/tasks/detail/'))return f.fetcher(url,opts);
+        if(uri.startsWith('/v7/tasks/qa-review/')){
+          const state={review_proposal_id:proposalId,ticket_id:'ticket_abc',
+            qa_agent_id:'agent_qa',owner_review_state:'APPROVED',
+            task_status:recorded?'INTEGRATING':'SUBMITTED_FOR_REVIEW',
+            candidate_head_sha:f.head,candidate_tree_sha:f.tree,
+            evidence_sha256:evidenceHash,qa_receipt_recorded:recorded,
+            qa_receipt_id:recorded?receiptId:null,
+            owner_review_required:true,automatic_qa_approval_allowed:false,
+            automatic_qa_receipt_allowed:false,git_published:false,
+            manual_next_action:recorded?'RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY':
+              'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE'};
+          return new Response(JSON.stringify(state),{status:200});
+        }
+        const body=JSON.parse(opts.body);
+        if(uri==='/v7/tasks/qa-evidence'){
+          evidenceHash=body.attestation.message.evidence_sha256;
+          proposalId='qaev_'+crypto.createHash('sha256').update([
+            'ticket_abc','agent_qa',signer.snapshot().node_id,f.head,f.tree,
+            evidenceHash,hex(Buffer.from(body.attestation.signature,'base64')),'PASS'
+          ].join('\n')).digest('hex');
+          return new Response(JSON.stringify({accepted:true,
+            review_proposal_id:proposalId,status:'PENDING_OWNER_REVIEW',
+            evidence_sha256:evidenceHash,device_signature_verified:true,
+            qa_approved:false,qa_receipt_submitted:false,
+            integration_performed:false,git_published:false}),{status:200});
+        }
+        if(uri==='/v7/tasks/qa-receipt'){
+          qaPosts++;
+          assert.equal(qaPosts,1,'ambiguous ack MUST NOT lead to second QA POST');
+          assert.equal(recorded,false);
+          recorded=true;
+          f.updateTask({...f.task(),status:'INTEGRATING',version:4});
+          throw Error('simulated reply lost AFTER Central commit');
+        }
+        throw Error('Unexpected URL '+uri);
+      };
+      const opts={...f.opts,agentId:'agent_qa',evidenceDir,signer,fetcher};
+      await submitQaEvidenceForOwner(opts);
+      await assert.rejects(submitOwnerReviewedQaReceipt(opts),
+        /simulated reply lost AFTER Central commit/);
+      const pending=path.join(evidenceDir,'qa_central_receipt_ticket_abc_pending.json');
+      assert.ok(fs.existsSync(pending));
+      const exact=JSON.parse(fs.readFileSync(pending,'utf8'));
+      assert.match(exact.body.request_id,/^qareceipt_/);
+      const reconciled=await submitOwnerReviewedQaReceipt(opts);
+      assert.equal(reconciled.reconciled_from_central,true);
+      assert.equal(reconciled.receipt_id,receiptId);
+      assert.equal(reconciled.git_published,false);
+      assert.equal(qaPosts,1,'GET-only reconciliation after crash');
+      assert.equal(fs.existsSync(pending),false);
+      assert.equal(fs.existsSync(path.join(evidenceDir,
+        'qa_central_receipt_ticket_abc_receipt.json')),true);
+      // Even if both local journal artifacts disappear, a remote receipt is
+      // not authority to fabricate a new local action or duplicate it.
+      fs.unlinkSync(path.join(evidenceDir,'qa_central_receipt_ticket_abc_receipt.json'));
+      await assert.rejects(submitOwnerReviewedQaReceipt(opts),
+        /QA_RECEIPT_CENTRAL_RECORDED_WITHOUT_LOCAL_INTENT/);
+      assert.equal(qaPosts,1);
+    }finally{f.close();}
+  });
 test('Central QA post blocks forged device signature, altered report, and unsigned original',
   {skip:!available},async()=>{
     const f=fixture();
