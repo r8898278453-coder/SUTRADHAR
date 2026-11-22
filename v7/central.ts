@@ -1376,6 +1376,60 @@ app.get('/v7/owner/qa-reviews',jsonRoute(async req=>{
     }),qa_approved_automatically:false,integration_performed:false};
   });
 }));
+// Signed, device-scoped READ-ONLY view for recovering an uncertain QA upload
+// or independently tracking Owner's evidence decision. This does NOT grant
+// QA receipt submission, QA approval, remote Git writes or task execution.
+app.get('/v7/tasks/qa-review/:proposalId',jsonRoute(async req=>{
+  const node=await nodeAuth(req);
+  const agentId=requireId(req.header('x-sutradhar-agent'));
+  const proposalId=requireId(req.params.proposalId);
+  if(!/^qaev_[a-f0-9]{64}$/.test(proposalId))fault('QA_REVIEW_ID_INVALID',400);
+  return transaction(async c=>{
+    await signedAgent(c,node.node_id,agentId,true);
+    const review=await one(c,'SELECT ticket_id,state,justification FROM v7_approvals '+
+      'WHERE proposal_id=? AND kind="QA_EVIDENCE_REVIEW"',[proposalId]);
+    if(!review)fault('QA_REVIEW_NOT_FOUND',404);
+    const proof=storedQaProof(review.justification,'QA_REVIEW_PROOF_CORRUPT');
+    if(qaEvidenceProposalId(proof)!==proposalId||
+       proof.ticket_id!==review.ticket_id)fault('QA_REVIEW_PROOF_CORRUPT',409);
+    if(proof.qa_agent_id!==agentId||proof.node_id!==node.node_id)
+      fault('QA_REVIEW_DEVICE_NOT_OWNER',403);
+    if(!['PENDING','APPROVED','DENIED'].includes(review.state))
+      fault('QA_REVIEW_STATE_INVALID',409);
+    const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[proof.ticket_id]);
+    if(!t||t.worker_agent_id!==proof.developer_agent_id||
+       t.baseline_sha!==proof.baseline_sha||
+       t.candidate_head_sha!==proof.candidate_head_sha||
+       t.candidate_tree_sha!==proof.candidate_tree_sha)
+      fault('QA_REVIEW_CANDIDATE_CHANGED',409);
+    const receipt=await one(c,'SELECT receipt_id,agent_id,head_sha,tree_sha,passed '+
+      'FROM v7_qa_receipts WHERE ticket_id=? AND evidence_sha256=?',
+      [proof.ticket_id,proof.evidence_sha256]);
+    if(receipt&&(receipt.agent_id!==agentId||
+       receipt.head_sha!==proof.candidate_head_sha||
+       receipt.tree_sha!==proof.candidate_tree_sha||
+       Boolean(Number(receipt.passed))!==proof.passed))
+      fault('QA_REVIEW_RECEIPT_MISMATCH',409);
+    const recorded=Boolean(receipt);
+    if(recorded&&(review.state!=='APPROVED'||
+       !['INTEGRATING','TEST_FAILED'].includes(t.status)))
+      fault('QA_REVIEW_RECEIPT_STATE_CONFLICT',409);
+    if(!recorded&&t.status!=='SUBMITTED_FOR_REVIEW')
+      fault('QA_REVIEW_TICKET_STATE_CHANGED',409);
+    const manualNext=recorded?'RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY':
+      review.state==='PENDING'?'WAIT_FOR_OWNER_REVIEW':
+      review.state==='DENIED'?'STOP_OWNER_REVIEW_DENIED':
+      'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE';
+    return {review_proposal_id:proposalId,ticket_id:proof.ticket_id,
+      qa_agent_id:agentId,owner_review_state:review.state,task_status:t.status,
+      candidate_head_sha:proof.candidate_head_sha,
+      candidate_tree_sha:proof.candidate_tree_sha,
+      evidence_sha256:proof.evidence_sha256,qa_receipt_recorded:recorded,
+      manual_next_action:manualNext,owner_review_required:true,
+      automatic_qa_approval_allowed:false,automatic_qa_receipt_allowed:false,
+      git_published:false};
+  });
+}));
 app.post('/v7/tasks/qa-evidence',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{};
   const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id);

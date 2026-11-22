@@ -745,6 +745,18 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(verified.body.status,'PENDING_OWNER_REVIEW');
     const reviewedId=verified.body.review_proposal_id;
     assert.match(reviewedId,/^qaev_[0-9a-f]{64}$/);
+    const pendingReview=await c.signed('/v7/tasks/qa-review/'+reviewedId,
+      undefined,'GET');
+    assert.equal(pendingReview.code,200,JSON.stringify(pendingReview.body));
+    assert.equal(pendingReview.body.owner_review_state,'PENDING');
+    assert.equal(pendingReview.body.qa_receipt_recorded,false);
+    assert.equal(pendingReview.body.manual_next_action,'WAIT_FOR_OWNER_REVIEW');
+    assert.equal(pendingReview.body.automatic_qa_receipt_allowed,false);
+    const otherNodeReview=await b.signed('/v7/tasks/qa-review/'+reviewedId,
+      undefined,'GET');
+    assert.notEqual(otherNodeReview.code,200,'Other device cannot inspect QA review');
+    const unsignedReview=await fetch(base+'/v7/tasks/qa-review/'+reviewedId);
+    assert.equal(unsignedReview.status,401);
     const anonQaQueue=await fetch(base+'/v7/owner/qa-reviews');
     assert.equal(anonQaQueue.status,401,'QA review queue is Owner-only');
     const ownerQaQueue=await fetch(base+'/v7/owner/qa-reviews',{
@@ -799,6 +811,13 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       test_evidence_reviewed:true,independence_verified:true});
     assert.equal(ownerReviewed.state.state,'APPROVED');
     assert.equal(ownerReviewed.state.integration_performed,false);
+    const approvedReview=await c.signed('/v7/tasks/qa-review/'+reviewedId,
+      undefined,'GET');
+    assert.equal(approvedReview.code,200,JSON.stringify(approvedReview.body));
+    assert.equal(approvedReview.body.owner_review_state,'APPROVED');
+    assert.equal(approvedReview.body.qa_receipt_recorded,false);
+    assert.equal(approvedReview.body.manual_next_action,
+      'OWNER_APPROVED_MANUAL_RECEIPT_SEPARATE');
     const wrongEvidenceReceipt=await c.signed('/v7/tasks/qa-receipt',{
       ...receiptBody,request_id:'qa_wrong_hash_'+(++count),
       evidence_sha256:'f'.repeat(64),evidence_ref:'sha256:'+'f'.repeat(64)});
@@ -808,6 +827,14 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(qa.code,200,JSON.stringify(qa.body));
     const qaAgain=await c.signed('/v7/tasks/qa-receipt',receiptBody);
     assert.deepEqual(qaAgain,qa,'Only identical approved QA receipt is idempotent');
+    const recordedReview=await c.signed('/v7/tasks/qa-review/'+reviewedId,
+      undefined,'GET');
+    assert.equal(recordedReview.code,200,JSON.stringify(recordedReview.body));
+    assert.equal(recordedReview.body.qa_receipt_recorded,true);
+    assert.equal(recordedReview.body.task_status,'INTEGRATING');
+    assert.equal(recordedReview.body.manual_next_action,
+      'RECEIPT_RECORDED_REVIEW_GIT_SEPARATELY');
+    assert.equal(recordedReview.body.git_published,false);
     const qaEvidenceSnapshot=await fetch(base+'/v7/owner/node-recovery/'+c.node_id,{
       headers:{authorization:'Bearer '+admin}});
     assert.equal(qaEvidenceSnapshot.status,200);
