@@ -583,5 +583,13 @@ test('offline CLI accepts a single Owner browser bundle and rejects mixed or tam
     r=run('../scripts/ops/verify-crash-owner-review.cjs');
     assert.notEqual(r.status,0,'forged authorization flag fails closed');
     assert.match(r.stderr,/BUNDLE_INVALID_OR_UNTRUSTED/);
+    // A malicious file can keep all required flags false but insert a
+    // sensitive field that a legacy shape-only comparison might ignore.
+    const extra=JSON.parse(JSON.stringify(makeReviewInputBundle(x)));
+    extra.input.first.private_key_pem='FORGED_BUNDLE_SECRET';
+    fs.writeFileSync(inputFile,JSON.stringify(extra));
+    r=run('../scripts/ops/verify-crash-owner-review.cjs');
+    assert.notEqual(r.status,0,'hidden unallowlisted data must be rejected');
+    assert.match(r.stderr,/BUNDLE_NOT_ALLOWLISTED/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
