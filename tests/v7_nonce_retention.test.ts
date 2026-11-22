@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {shouldPruneNonces,NONCE_RETENTION_MINUTES,NONCE_PRUNE_BATCH,
   NONCE_PRUNE_HEARTBEAT_PERIOD} from '../v7/nonce_retention';
 test('nonce pruning is bounded, throttled and fail closed on clock skew',()=>{
@@ -17,8 +20,8 @@ test('nonce pruning is bounded, throttled and fail closed on clock skew',()=>{
 });
 
 test('nonce maintenance is post-commit and cannot roll back accepted heartbeat',()=>{
-  const fs=require('node:fs'),path=require('node:path');
-  const source=fs.readFileSync(path.join(__dirname,'../v7/central.ts'),'utf8');
+  const dir=path.dirname(fileURLToPath(import.meta.url));
+  const source=fs.readFileSync(path.join(dir,'../v7/central.ts'),'utf8');
   const route=source.split("app.post('/v7/nodes/heartbeat'")[1].split(
     '// Owner-only, bounded GET export of committed accepted heartbeat packet rows.')[0];
   assert.match(route,/const accepted=await transaction\(async c=>\{/);
