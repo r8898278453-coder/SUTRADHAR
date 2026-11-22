@@ -4,7 +4,7 @@
 
 **Developer Edge safety:** The separate developer-only plaintext identity daemon now requires a private single-process lock and durable local heartbeat counter writes. This does not change the packaged Electron OS-vault trust boundary or authorize deployment. See [Worker restart and developer Edge recovery](docs/WORKER_RESTART_PREFLIGHT_V7.md).
 
-> **Release status — 22 November 2026:** SUTRADHAR v7 remains **alpha on Draft PR #1**; it is NOT an approved production release. Core/Windows unsigned QA packaging and disposable MySQL tests are source-CI evidence only. No production-signed Windows installer, live Hostinger deployment or staging restore, approved automatic update, or independently verified 2/3/8–10 physical-PC rollout has been completed. Never connect this fix branch to a live production website or distribute unsigned QA output as trusted software.
+> **Release status — 23 November 2026:** SUTRADHAR v7 remains **alpha on Draft PR #1**; it is NOT an approved production release. Core/Windows unsigned QA packaging and disposable MySQL tests are source-CI evidence only. No production-signed Windows installer, live Hostinger deployment or staging restore, approved automatic update, or independently verified 2/3/8–10 physical-PC rollout has been completed. Never connect this fix branch to a live production website or distribute unsigned QA output as trusted software.
 
 SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 
@@ -164,3 +164,17 @@ Before calling SUTRADHAR "one-click" or "production ready" we still need: indepe
 - [Connect Node.js to Hostinger MySQL](https://www.hostinger.com/support/connecting-a-hostinger-mysql-database-to-a-node-js-application/)
 
 These describe Hostinger platform features; **they are not proof that this application has been deployed or accepted**.
+
+
+## 23 November 2026 — Latest review checkpoints
+
+The Draft PR now has bounded (64-KiB streaming) signed Central JSON checks in
+Desktop installer execution, escrow preparation, local drain isolation, update
+readiness and cancellation preflight, with negative no-launch/no-release tests.
+This is **not** a substitute for certified Hostinger HTTPS runtime, physical
+Windows UAC/DPAPI/install proof or independent QA. The source is still
+`v7/` behind independently built `apps/central` and `apps/desktop`
+wrappers; those folders **exist**. The repository's `main` branch metadata
+currently reports **not protected**, so G0 stays unresolved. Always consult
+the exact-HEAD [GitHub PR #1](https://github.com/r8898278453-coder/SUTRADHAR/pull/1)
+and [gap register](GAP_REGISTER.md), never a historical green run.

@@ -50,7 +50,7 @@ You only manage **one repository** and **one Central website**. Each PC gets **o
 | Entry file | **apps/central/dist/server.cjs** |
 | Public verification URL | **https://YOUR-DOMAIN/v7/health** |
 
-Those are **not** the future apps/central settings. Do not select apps/central yet: the folder does not exist. The new Central-only staging bundle copies the UI and v7/schema.sql beside its server entry, and intentionally excludes PC-side bundles; **real Hostinger runtime packaging and restoration are not yet accepted**. The legacy combined npm run build still produces Desktop-side bundles and must not be used as a production Central release.
+The `apps/central` **build wrapper does exist**, but the authoritative Central source still lives under `v7/`. Do **not** set Hostinger's repository root directory to `apps/central`: the approved alpha staging build uses repository root `./` and emits `apps/central/dist/server.cjs`. This Central-only bundle copies the UI and `v7/schema.sql` and excludes PC-side bundles; **real Hostinger runtime packaging and restoration are not yet accepted**. The legacy combined npm run build still produces Desktop-side bundles and must not be used as a production Central release.
 
 **A5. Create a separate MySQL database.** In hPanel use **Websites → Manage site → Databases → Management** (exact names may vary). Create a fresh database and dedicated user with a unique long password. Record the **full Hostinger-prefixed database name/user** in your secure password manager. Do **not** import/overwrite the old SQLite database. For a Hostinger-local MySQL connection use host **127.0.0.1**, not localhost.
 
@@ -71,7 +71,7 @@ Those are **not** the future apps/central settings. Do not select apps/central y
 
 Only use database TLS settings after verifying actual Hostinger database TLS support and certificates. **No database credentials go onto Desktop PCs.** See [v7/.env.example](../v7/.env.example) for exact alpha variable names.
 
-**A7. Schema migration is currently developer-assisted.** This alpha does **not** have a safe one-click migration wizard. The initial schema bootstrap is an authenticated POST to **/v7/owner/migrate**, guarded by **SUTRADHAR_ALLOW_MIGRATIONS=true**, **SUTRADHAR_BOOTSTRAP_EMPTY_DB_APPROVED=yes** and **SUTRADHAR_BOOTSTRAP_TARGET_DB** exactly equal to the dedicated empty staging database's configured DB_NAME. It refuses any existing table, and resolves **v7/schema.sql** from the reviewed runtime bundle/repository. Do not execute from the browser address bar, leave the flag on, or run against existing production data. A developer must first validate staging packaging, review SQL, back up/restore a disposable DB, perform the authorized operation, turn the flag off and restart. Future releases will use versioned migrations with a visual, approval-gated status.
+**A7. Schema migration is currently developer-assisted.** This alpha does **not** have a safe one-click migration wizard. The initial schema bootstrap is an authenticated POST to **/v7/owner/migrate**, guarded by **SUTRADHAR_ALLOW_MIGRATIONS=true**, **SUTRADHAR_BOOTSTRAP_EMPTY_DB_APPROVED=yes** and **SUTRADHAR_BOOTSTRAP_TARGET_DB** exactly equal to the dedicated empty staging database's configured DB_NAME. It refuses any existing table, and resolves **v7/schema.sql** from the reviewed runtime bundle/repository. Do not execute from the browser address bar, leave the flag on, or run against existing production data. A developer must first validate staging packaging, review SQL, back up/restore a disposable DB, perform the authorized operation, turn the flag off and restart. A separately SHA-pinned v8 index migration, read-only postcheck and disposable-MySQL rehearsal now exist in source, but **no production migration wizard or live Hostinger migration acceptance exists**. Do not run the v8 DDL on live data without independently reviewed downtime, backup and Owner/DBA approval.
 
 **A8. Verify health without editing data.** Confirm HTTPS and open **https://YOUR-DOMAIN/v7/health**. The expected healthy response after valid config and schema is a JSON object containing **ready: true** and **authority: mysql**. An HTTP 503, blank page, auth error or database error is **NOT** success. Then open the dashboard and sign in using Owner-approved credentials through a trusted browser. Confirm the display agrees with live node/agent records.
 
@@ -175,3 +175,13 @@ After connecting to a **staging** Central dashboard using the protected Owner AP
 ## 21 November 2026 — Private location for offline pilot signed evidence
 
 For the Owner-reviewed physical-PC pilot, create a **new, private** directory on the trusted Owner reviewer machine before running the offline evidence signing command. Set `SUTRADHAR_PILOT_OWNER_SIGNED_OUTPUT_FILE` to a **new, unused absolute filename** inside it. The signer refuses an existing file and, on POSIX, a directory accessible to other users or a symlinked directory. A failed disk write/flush leaves even an incomplete file in place so a retry cannot silently overwrite an uncertain prior result. Do not manually delete or replace it as a shortcut; document the incident, review your evidence and authorize a fresh attempt separately. Successful POSIX file/directory sync does not independently prove physical PCs, real Hostinger source SHA or Windows power-loss safety. Windows reports power-loss durability unverified until Owner-controlled real tests. Production release remains HOLD.
+
+
+## 23 November 2026 — Owner-facing documentation correction
+
+The `apps/central` wrapper exists; use **repo root** for staging deployment
+rather than treating the wrapper folder as a standalone source root. Versioned
+v8 migration source exists but remains a **separately approved staging-only
+operation**, not a one-click production upgrade. The actual release
+prerequisites in GitHub issue #2 and the signed/physical G0–G7 evidence
+checklist override any historical alpha checklist wording.
