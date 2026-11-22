@@ -69,6 +69,7 @@ async function loadStatus(){
     get('workerExport').disabled=!approvedReadOnly;
     get('workerQAInspect').disabled=!approvedReadOnly;
     get('workerQARun').disabled=!approvedReadOnly||!s.qaRunnerConfigured;
+    get('workerQARecover').disabled=!approvedReadOnly||!s.qaRunnerConfigured;
     get('workerQAAttest').disabled=!approvedReadOnly;
     get('workerQAUpload').disabled=!approvedReadOnly;
     get('workerQAReceipt').disabled=!approvedReadOnly;
@@ -531,6 +532,23 @@ get('workerQARun').addEventListener('click',async()=>{
     output.textContent='QA sandbox execution blocked or uncertain: '+
       String(error?.message||error)+
       '. Do not repeat this ticket automatically. Preserve the local qa_started journal and ask the Owner to inspect Docker cleanup and exact hashes.';
+  }finally{await loadStatus();}
+});
+get('workerQARecover').addEventListener('click',async()=>{
+  const output=get('workerTasks'),button=get('workerQARecover');
+  button.disabled=true;
+  try{
+    const r=await api.runFrozenQaRecovery(get('workerAgent').value,exactWorkerTicket());
+    output.textContent=r.canceled?'Frozen QA test canceled; no Docker attempt started.':
+      'FROZEN candidate local QA evidence created for '+r.ticket_id+
+      '. Report '+r.evidence_path+'. Result '+(r.test_passed?'PASS':'FAILED')+
+      '. Now explicitly SIGN and UPLOAD the report. Owner must separately approve'+
+      ' evidence and restore the exact candidate before a QA receipt. '+
+      'No automatic Git publication, worker restart or QA approval happened.';
+  }catch(error){
+    output.textContent='Frozen QA review BLOCKED/UNCERTAIN: '+String(error?.message||error)+
+      '. Keep the original bundle, journal and Docker evidence. Do NOT repeat'+
+      ' this one-time run; request independent Owner recovery review.';
   }finally{await loadStatus();}
 });
 get('workerQAAttest').addEventListener('click',async()=>{

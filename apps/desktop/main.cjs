@@ -595,6 +595,15 @@ app.whenReady().then(()=>{
       throw Error('WORKER_OPERATION_CENTRAL_HEARTBEAT_REQUIRED');
     return current.centralUrl;
   }
+  // A frozen candidate is reviewable for exact evidence, NEVER eligible
+  // for a QA receipt until a separate Owner RESTORE_QA_CANDIDATE command.
+  // A fresh OS-vault signed GET is required on each separate manual stage.
+  async function frozenQaReviewStage(origin,agentId,ticketId){
+    const task=(await inspectWorkerTasks({origin,agentId,ticketId,signer})).task;
+    if(!task||!['SUBMITTED_FOR_REVIEW','RECONCILIATION_REQUIRED'].includes(task.status))
+      throw Error('QA_RECOVERY_CENTRAL_TASK_STATE_INVALID');
+    return task.status==='RECONCILIATION_REQUIRED';
+  }
   ipcMain.handle('sutradhar:claimWorkerTask',async(event,agentId,ticketId)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,ticketId);
@@ -762,14 +771,31 @@ app.whenReady().then(()=>{
         bundlePath:bundle.filePaths[0],repoDir:repo.filePaths[0]});
     }finally{workerClaimBusy=false;}
   });
-  ipcMain.handle('sutradhar:runIndependentQa',async(event,agentId,ticketId)=>{
+  ipcMain.handle('sutradhar:runIndependentQa',async(event,agentId,ticketId,recoveryReviewOnly=false)=>{
     verifySender(event);
+    if(typeof recoveryReviewOnly!=='boolean')throw Error('QA_RECOVERY_MODE_INVALID');
     const origin=approvedWorkerOperator(agentId,ticketId);
     // No default testing: only an Owner-pinned, locally installed image and
     // absolute trusted Docker executable are accepted by the packaged app.
     validPolicy(qaRunnerPolicy);
     workerClaimBusy=true;
     try{
+      if(recoveryReviewOnly){
+        // Explicit second authorization: this does NOT restore the ticket.
+        const frozen=await frozenQaReviewStage(origin,agentId,ticketId);
+        if(!frozen)throw Error('QA_RECOVERY_REQUIRES_FROZEN_CANDIDATE');
+        const consent=await dialog.showMessageBox(setupWindow,{
+          type:'warning',
+          buttons:['Cancel — keep frozen candidate','Inspect and test frozen evidence ONCE'],
+          defaultId:0,cancelId:0,noLink:true,
+          message:'Independent QA of a FROZEN Master-failover candidate?',
+          detail:'Central status is RECONCILIATION_REQUIRED. You must already possess the '+
+            'original exact offline bundle, approved QA baseline and Owner-pinned Docker image. '+
+            'This creates ONE irreversible local Docker attempt, not a QA receipt. '+
+            'Owner must separately review signed evidence then explicitly restore the '+
+            'candidate before the signed QA receipt is allowed. Do not redo an old attempt.'});
+        if(consent.response!==1)return {canceled:true};
+      }
       const bundle=await dialog.showOpenDialog(setupWindow,{
         title:'Choose the independently transferred QA candidate .bundle',
         properties:['openFile'],
@@ -797,7 +823,7 @@ app.whenReady().then(()=>{
       approvedWorkerOperator(agentId,ticketId,true);
       return runIndependentQa({origin,agentId,ticketId,signer,
         bundlePath:bundle.filePaths[0],repoDir:repo.filePaths[0],
-        evidenceDir:path.join(nodeDir(),'qa')});
+        evidenceDir:path.join(nodeDir(),'qa'),recoveryReviewOnly});
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:attestQaEvidence',async(event,agentId,ticketId)=>{
@@ -818,9 +844,20 @@ app.whenReady().then(()=>{
           'deployment happens; unsigned/tampered evidence is rejected.'
       });
       if(ok.response!==1)return {canceled:true};
+      const recoveryReviewOnly=await frozenQaReviewStage(origin,agentId,ticketId);
+      if(recoveryReviewOnly){
+        const consent=await dialog.showMessageBox(setupWindow,{
+          type:'warning',
+          buttons:['Cancel — keep local evidence','Sign FROZEN evidence for Owner ONLY'],
+          defaultId:0,cancelId:0,noLink:true,
+          message:'Sign frozen candidate evidence, NOT a QA pass?',
+          detail:'Independent Master failover requires separate Owner evidence review '+
+            'AND separate exact candidate restoration. Signing does not unfreeze the task.'});
+        if(consent.response!==1)return {canceled:true};
+      }
       approvedWorkerOperator(agentId,ticketId,true);
       return attestIndependentQa({origin,agentId,ticketId,signer,
-        evidenceDir:path.join(nodeDir(),'qa')});
+        evidenceDir:path.join(nodeDir(),'qa'),recoveryReviewOnly});
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:submitQaEvidenceForOwner',async(event,agentId,ticketId)=>{
@@ -841,9 +878,21 @@ app.whenReady().then(()=>{
           'If the network outcome is uncertain, retain the original request ID.'
       });
       if(ok.response!==1)return {canceled:true};
+      const recoveryReviewOnly=await frozenQaReviewStage(origin,agentId,ticketId);
+      if(recoveryReviewOnly){
+        const consent=await dialog.showMessageBox(setupWindow,{
+          type:'warning',
+          buttons:['Cancel — do not upload','Upload FROZEN evidence for Owner review'],
+          defaultId:0,cancelId:0,noLink:true,
+          message:'Upload signed QA evidence for a FROZEN task?',
+          detail:'This requests an independently reviewed QA proposal only. '+
+            'Owner must approve the report AND separately restore the exact '+
+            'candidate. It does not permit a QA receipt while frozen.'});
+        if(consent.response!==1)return {canceled:true};
+      }
       approvedWorkerOperator(agentId,ticketId,true);
       return submitQaEvidenceForOwner({origin,agentId,ticketId,signer,
-        evidenceDir:path.join(nodeDir(),'qa')});
+        evidenceDir:path.join(nodeDir(),'qa'),recoveryReviewOnly});
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:submitOwnerReviewedQaReceipt',async(event,agentId,ticketId)=>{
