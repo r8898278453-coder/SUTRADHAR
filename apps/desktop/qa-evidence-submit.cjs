@@ -307,7 +307,8 @@ async function submitOwnerReviewedQaReceipt({origin,agentId,ticketId,signer,
   complete(j,v.context,journalBody);
   return {...result,qa_receipt_submitted:true,
     owner_review_proposal_id:v.proposalId,
-    git_published:false,merge_performed:false};
+    git_published:false,merge_performed:false,
+    read_only_central_reconciled:true};
 }
 module.exports={submitQaEvidenceForOwner,submitOwnerReviewedQaReceipt,
   verifiedLocal,readRecord};
