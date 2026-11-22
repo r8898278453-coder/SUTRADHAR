@@ -22,8 +22,12 @@ function rows(id,values){const body=$(id);body.replaceChildren();for(const row o
 function date(raw){if(!raw)return '—';const d=new Date(raw.endsWith('Z')?raw:raw+'Z');return isNaN(d.getTime())?'—':d.toLocaleString();}
 
 const nodeRecoveryResults=$('node-recovery-results');
+let ownerReviewBundle=null;
 function invalidateOwnerRecoveryDisplay(reason){
   ownerRecoveryVersion++;
+  ownerReviewBundle=null;
+  $('node-recovery-save-bundle').disabled=true;
+  $('node-recovery-bundle-results').textContent=reason;
   nodeRecoveryResults.textContent=reason;
   crosscheckOutput.textContent=reason;
 }
@@ -34,6 +38,8 @@ $('node-recovery-inspect').addEventListener('click',async()=>{
     nodeRecoveryResults.textContent='INVALID NODE ID. Expected node_ followed by 32 lowercase hexadecimal characters. No request sent.';
     return;
   }
+  invalidateOwnerRecoveryDisplay(
+    'HOLD — Central snapshot inspection started; prior review bundle invalidated.');
   btn.disabled=true;
   const selectedSession=ownerSessionVersion,selectedRevision=ownerRecoveryVersion;
   const selectedKey=key;
@@ -96,6 +102,8 @@ $('node-recovery-crosscheck').addEventListener('click',async()=>{
     crosscheckOutput.textContent='HOLD — exact node ID, independently pinned original Ed25519 fingerprint and bounded local diagnostic JSON are required. No recovery authorized.';
     return;
   }
+  invalidateOwnerRecoveryDisplay(
+    'HOLD — fresh dual-snapshot comparison started; previous export invalidated.');
   btn.disabled=true;
   const initialKey=key;
   const initialSessionVersion=ownerSessionVersion;
@@ -115,15 +123,24 @@ $('node-recovery-crosscheck').addEventListener('click',async()=>{
     if(!sameInputs())throw Error('OWNER_CRASH_CROSSCHECK_INPUT_CHANGED');
     const centralAfter=await request('/v7/owner/node-recovery/'+encodeURIComponent(nodeId));
     if(!sameInputs())throw Error('OWNER_CRASH_CROSSCHECK_INPUT_CHANGED');
-    const report=window.SutradharCrashCrosscheck.inspectPair({
-      local,first:centralBefore,second:centralAfter,nodeId,
-      pinnedPublicKeySha256:pin,observedAtClientMs:Date.now()
-    });
+    const observedAtClientMs=Date.now();
+    const input={local,first:centralBefore,second:centralAfter,nodeId,
+      pinnedPublicKeySha256:pin,observedAtClientMs};
+    const report=window.SutradharCrashCrosscheck.inspectPair(input);
     if(report.state!=='OWNER_REVIEW_REQUIRED'||
        report.agent_restart_allowed!==false||
        report.marker_removal_allowed!==false||
        report.owner_reconciliation_complete!==false)
       throw Error('CROSSCHECK_UNSAFE_RESULT');
+    const bundle=window.SutradharCrashCrosscheck.makeReviewInputBundle(input);
+    if(!sameInputs())throw Error('OWNER_CRASH_CROSSCHECK_INPUT_CHANGED');
+    const bundleJson=JSON.stringify(bundle,null,2)+'\n';
+    if(bundleJson.length>180000)throw Error('OWNER_CRASH_BUNDLE_TOO_LARGE');
+    ownerReviewBundle={json:bundleJson,nodeId,
+      session:initialSessionVersion,revision:initialRecoveryVersion};
+    $('node-recovery-save-bundle').disabled=false;
+    $('node-recovery-bundle-results').textContent=
+      'Read-only input bundle ready. Explicitly click Save to download; no file has been saved or uploaded yet. NOT a grant.';
     crosscheckOutput.textContent=[
       'OWNER REVIEW REQUIRED — NOT AN AUTHORIZATION.',
       'Node ID entered by Owner: '+report.compared_node_id,
@@ -143,6 +160,37 @@ $('node-recovery-crosscheck').addEventListener('click',async()=>{
     if(sameInputs())crosscheckOutput.textContent=
       'HOLD — local/remote data is invalid, tampered or unavailable. No recovery authorized; preserve original PC and evidence.';
   }finally{btn.disabled=false;}
+});
+$('node-recovery-save-bundle').addEventListener('click',()=>{
+  const saved=ownerReviewBundle;
+  if(!saved||$('node-recovery-save-bundle').disabled||!key||
+     $('dashboard').hidden||ownerSessionVersion!==saved.session||
+     ownerRecoveryVersion!==saved.revision||
+     $('node-recovery-input').value.trim()!==saved.nodeId){
+    $('node-recovery-bundle-results').textContent=
+      'HOLD — evidence bundle expired or changed. Run a fresh dual GET crosscheck.';
+    $('node-recovery-save-bundle').disabled=true;
+    return;
+  }
+  // Explicit user click ONLY. No automatic download, server POST,
+  // clipboard write, localStorage or preview of the Owner API key.
+  let blob,url;
+  try{
+    blob=new Blob([saved.json],{type:'application/json;charset=utf-8'});
+    if(blob.size<1||blob.size>192000)throw Error('OWNER_CRASH_EXPORT_TOO_LARGE');
+    url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download='sutradhar-owner-crash-review-'+saved.nodeId+'.json';
+    a.click();
+    $('node-recovery-bundle-results').textContent=
+      'Read-only JSON download requested. Store it privately. No restart, marker deletion or production release is authorized.';
+  }catch{
+    $('node-recovery-bundle-results').textContent=
+      'HOLD — offline export unavailable. No recovery authorized.';
+  }finally{
+    if(url)setTimeout(()=>URL.revokeObjectURL(url),0);
+  }
 });
 for(const id of ['node-recovery-input','node-recovery-pin',
   'node-recovery-local-json']){

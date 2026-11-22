@@ -38,6 +38,9 @@
 </div>
 <button id="node-recovery-crosscheck" class="outline" type="button">Compare local report with fresh Central snapshot (GET only)</button>
 <pre id="node-recovery-crosscheck-results" role="status" aria-live="polite">Not compared. Independently verified enrollment key fingerprint and original PC diagnostic required. Every result remains HOLD.</pre>
+<button id="node-recovery-save-bundle" class="outline" type="button" disabled>Save exact read-only review input bundle (offline JSON)</button>
+<pre id="node-recovery-bundle-results" role="status" aria-live="polite">No export prepared. After a valid dual GET crosscheck, click to save the evidence input file locally. This is never a recovery grant.</pre>
+<small>The bundle contains selected local diagnostic hashes, original enrollment fingerprint and Central status. It does not contain your Owner API key, raw OS-vault contents or private keys. Store the downloaded JSON privately; there is no upload or automatic export.</small>
 </section>
 <div class="grid"><section class="panel"><div class="panelhead"><h2>Registered agents</h2><span id="agentCount"></span></div>
 <div class="scroll"><table><thead><tr><th>Agent</th><th>Machine</th><th>Approval</th><th>Heartbeat</th></tr></thead><tbody id="agents"></tbody></table></div></section>

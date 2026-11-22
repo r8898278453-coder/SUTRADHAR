@@ -321,7 +321,110 @@
       production_release_authorized:false
     });
   }
-  const api=Object.freeze({inspect,inspectPair});
+  // Create an intentionally allowlisted, read-only JSON artifact for the
+  // Owner's OFFLINE review signer. It is not a grant or a server upload.
+  // Unknown response fields are dropped so an accidental bearer token, key
+  // or future sensitive database column can never leak into the file.
+  function pick(x,fields){
+    if(!isObject(x))fail('OWNER_CRASH_EXPORT_SOURCE_INVALID');
+    const out={};
+    for(const k of fields)if(Object.prototype.hasOwnProperty.call(x,k))
+      out[k]=x[k];
+    return out;
+  }
+  function safeLocal(local){
+    const l=pick(local,['schema','kind','state','records',
+      'other_directory_entries_count','evidence_signed','central_verified',
+      'physical_pc_verified','agent_restart_allowed','installer_allowed',
+      'marker_removal_allowed','production_release_allowed']);
+    const records={};
+    for(const k of Object.keys(RECORDS))
+      records[k]=pick(local.records[k],['state','bytes','sha256']);
+    l.records=records;
+    return l;
+  }
+  function safeCentral(c){
+    const v=pick(c,['schema','mode','node_id','node_state',
+      'node_public_key_fingerprint_sha256','accepted_boot_id',
+      'accepted_node_sequence_decimal','heartbeat_age_seconds',
+      'agents','cluster','maintenance','active_worker_lease_count',
+      'outstanding_worker_ticket_count','unresolved_git_job_count',
+      'historical_effects','observed_at_central_ms','read_only',
+      'central_state_modified','device_signature_verified_by_this_request',
+      'local_os_vault_verified','physical_pc_verified',
+      'owner_reconciliation_complete','agent_restart_allowed',
+      'marker_removal_allowed','installer_execution_allowed',
+      'production_release_authorized']);
+    v.agents=c.agents.map(a=>pick(a,['agent_id','state',
+      'accepted_sequence_decimal','status','master_eligible',
+      'qa_eligible','heartbeat_age_seconds']));
+    v.cluster=pick(c.cluster,['epoch_decimal','phase','paused',
+      'master_agent_id','backup1','backup2',
+      'original_pc_in_cluster_roles']);
+    v.maintenance=pick(c.maintenance,['active_fence','fence_state',
+      'plan_id','expected_epoch_decimal','unresolved_intent_count']);
+    v.historical_effects=pick(c.historical_effects,[
+      'global_audit_event_high_watermark_decimal',
+      'retained_pilot_signed_heartbeat_packet_count',
+      'signed_heartbeat_history_complete',
+      'qa_receipts_created_by_this_pc_count',
+      'qa_receipts_on_worker_tickets_for_this_pc_count',
+      'pending_qa_owner_reviews_for_worker_tickets_count',
+      'pending_qa_owner_reviews_global_count',
+      'centrally_confirmed_git_jobs_involving_this_pc_count',
+      'local_agent_checkpoint_record_count',
+      'qa_effects_independently_reconciled',
+      'external_git_effects_independently_reconciled',
+      'qa_only_pc_pending_review_coverage_complete'
+    ]);
+    v.historical_effects.last_retained_pilot_heartbeat=pick(
+      c.historical_effects.last_retained_pilot_heartbeat,[
+        'record_present','last_retained_packet_signature_verified',
+        'retained_sequence_equals_current_accepted_node_counter',
+        'retained_agent_sequences_not_ahead_of_central',
+        'retained_boot_id_matches_current',
+        'last_retained_node_sequence_decimal','last_retained_accepted_at_ms',
+        'error_code','read_only','complete_signed_heartbeat_history',
+        'local_pc_possession_now_verified','physical_pc_verified',
+        'agent_restart_allowed','production_release_authorized'
+      ]);
+    return v;
+  }
+  function makeReviewInputBundle(input){
+    // Validate every original field first; then validate the precise
+    // allowlisted artifact. Snapshot timestamps and session context come
+    // ONLY from the same completed two-GET crosscheck.
+    const original=inspectPair(input);
+    if(original.read_only!==true||original.owner_reconciliation_complete!==false||
+       original.agent_restart_allowed!==false||
+       original.marker_removal_allowed!==false||
+       original.installer_execution_allowed!==false||
+       original.production_release_authorized!==false)
+      fail('OWNER_CRASH_EXPORT_UNSAFE_REPORT');
+    const safe={
+      local:safeLocal(input.local),first:safeCentral(input.first),
+      second:safeCentral(input.second),nodeId:input.nodeId,
+      pinnedPublicKeySha256:input.pinnedPublicKeySha256,
+      observedAtClientMs:input.observedAtClientMs
+    };
+    const checked=inspectPair(safe);
+    if(JSON.stringify(checked.finding_codes)!==
+       JSON.stringify(original.finding_codes)||
+       checked.central_observation_unchanged!==original.central_observation_unchanged)
+      fail('OWNER_CRASH_EXPORT_FINDINGS_CHANGED');
+    const bundle={
+      schema:1,kind:'SUTRADHAR_OWNER_CRASH_REVIEW_INPUT_BUNDLE_V1',
+      read_only:true,owner_reconciliation_complete:false,
+      agent_restart_allowed:false,marker_removal_allowed:false,
+      installer_execution_allowed:false,production_release_authorized:false,
+      input:safe
+    };
+    const text=JSON.stringify(bundle);
+    if(text.length>180000)fail('OWNER_CRASH_EXPORT_TOO_LARGE');
+    // JSON roundtrip eliminates VM/prototype aliases and mutable originals.
+    return Object.freeze(JSON.parse(text));
+  }
+  const api=Object.freeze({inspect,inspectPair,makeReviewInputBundle});
   if(typeof module==='object'&&module.exports)module.exports=api;
   if(root)root.SutradharCrashCrosscheck=api;
 })(typeof window==='object'?window:null);

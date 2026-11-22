@@ -181,6 +181,37 @@ function boundedJson(file,max=MAX_FILE){
   return JSON.parse(fs.readFileSync(file,'utf8'));
 }
 function evidenceInputFromEnv(env=process.env){
+  // Single file emitted only by an explicit Owner browser download. Never
+  // permit conflicting per-file settings to silently override the scope.
+  if(env.SUTRADHAR_CRASH_REVIEW_BUNDLE_JSON){
+    const conflicting=['SUTRADHAR_CRASH_LOCAL_JSON',
+      'SUTRADHAR_CRASH_CENTRAL_FIRST_JSON',
+      'SUTRADHAR_CRASH_CENTRAL_SECOND_JSON',
+      'SUTRADHAR_CRASH_NODE_ID',
+      'SUTRADHAR_CRASH_ENROLLMENT_FINGERPRINT',
+      'SUTRADHAR_CRASH_OBSERVED_AT_CLIENT_MS'];
+    if(conflicting.some(k=>Boolean(env[k])))fail('BUNDLE_INPUT_CONFLICT');
+    const bundle=boundedJson(env.SUTRADHAR_CRASH_REVIEW_BUNDLE_JSON,192000);
+    if(!exact(bundle,['schema','kind','read_only','input',
+      'owner_reconciliation_complete','agent_restart_allowed',
+      'marker_removal_allowed','installer_execution_allowed',
+      'production_release_authorized'])||
+      bundle.schema!==1||
+      bundle.kind!=='SUTRADHAR_OWNER_CRASH_REVIEW_INPUT_BUNDLE_V1'||
+      bundle.read_only!==true||
+      bundle.owner_reconciliation_complete!==false||
+      bundle.agent_restart_allowed!==false||
+      bundle.marker_removal_allowed!==false||
+      bundle.installer_execution_allowed!==false||
+      bundle.production_release_authorized!==false||
+      !exact(bundle.input,['local','first','second','nodeId',
+        'pinnedPublicKeySha256','observedAtClientMs']))
+      fail('BUNDLE_INVALID_OR_UNTRUSTED');
+    // The same existing independent, fail-closed snapshot validation is
+    // required BEFORE the bundle can be signed or verified.
+    createReviewManifest(bundle.input);
+    return bundle.input;
+  }
   return {
     local:boundedJson(env.SUTRADHAR_CRASH_LOCAL_JSON),
     first:boundedJson(env.SUTRADHAR_CRASH_CENTRAL_FIRST_JSON),

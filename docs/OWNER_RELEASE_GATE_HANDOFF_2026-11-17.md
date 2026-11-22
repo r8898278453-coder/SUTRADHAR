@@ -457,3 +457,7 @@ Added a deterministic offline manifest/Ed25519 review receipt binding the origin
 ## 22 November 2026 — Owner UI stale-session data prevention
 
 After reviewing the read-only Owner node-recovery flow, added independent in-memory Owner-session, recovery-input and refresh-run generation guards. They invalidate pending recovery GETs and prevent stale old-session refresh responses from re-displaying dashboard snapshots after logout/reconnect—even if the identical API key is reused. Both snapshot inspection paths remain GET-only, no original-PC local diagnostic is uploaded, and all crash recovery grants/marker deletion/production flags remain blocked. New browser VM tests simulate pending network responses across logout and input revisions.
+
+## 22 November 2026 — Owner review export gap closed
+
+Owner dashboard now supports an **explicit-click, allowlisted, read-only crash evidence input bundle** after dual GET verification. The bundle contains validated evidence inputs for the existing offline Ed25519 review signer/verifier; the browser does not export the Owner API key, unknown database columns, vault ciphertext or raw private keys. Each bundle is invalidated on new inspection, input revision and logout/reconnect, never uploaded to Central. Offline CLI accepts this single JSON path or the prior six-file/field inputs, rejecting mixed modes and re-validating the exact dual Central snapshots. It remains an evidence acknowledgement only; all physical acceptance, independently checked QA/Git effects and signing/recovery gates stay HOLD.
