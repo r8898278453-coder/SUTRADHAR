@@ -30,6 +30,10 @@ export function verifyWorkerResume(local:unknown,remote:unknown,agentId:string,t
   if(JSON.stringify(scopes(l.scope))!==JSON.stringify(scopes(r.write_scopes)))
     throw Error('RESUME_SCOPE_MISMATCH');
   const cp=r.latest_checkpoint;
+  // A checkpointed or QA-failed ticket must have an authoritative checkpoint.
+  // Missing evidence cannot be interpreted as safe-to-resume progress.
+  if((r.status==='CHECKPOINTED'||r.status==='TEST_FAILED')&&
+     (cp===null||cp===undefined))throw Error('RESUME_CHECKPOINT_REQUIRED');
   if(cp!==null&&cp!==undefined){
     if(!cp||typeof cp!=='object'||Array.isArray(cp)||
       !Number.isSafeInteger(cp.generation)||cp.generation<1||

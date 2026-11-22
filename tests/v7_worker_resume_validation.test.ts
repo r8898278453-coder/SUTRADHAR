@@ -68,8 +68,17 @@ test('checkpoint generation must be a real positive safe integer, never coerced'
 });
 test('no checkpoint remains a valid manual-only lease preflight',()=>{
  const {local,remote}=fixture();
- const output=verifyWorkerResume(local,{...remote,latest_checkpoint:null},
+ const output=verifyWorkerResume(local,{...remote,status:'CLAIMED',latest_checkpoint:null},
    'agent123','ticket123');
  assert.equal(output.latest_checkpoint_generation,null);
  assert.equal(output.automatic_execution_allowed,false);
+});
+
+test('checkpointed and QA-failed tickets cannot resume with missing checkpoint proof',()=>{
+ const {local,remote}=fixture();
+ for(const status of ['CHECKPOINTED','TEST_FAILED']){
+   for(const latest_checkpoint of [null,undefined])
+     assert.throws(()=>verifyWorkerResume(local,{...remote,status,latest_checkpoint},
+       'agent123','ticket123'),/RESUME_CHECKPOINT_REQUIRED/);
+ }
 });
