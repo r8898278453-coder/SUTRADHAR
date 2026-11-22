@@ -459,6 +459,29 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       title:'Implement scoped change',description:'Change a file',risk:'LOW',
       write_scopes:['src/example.ts'],acceptance_criteria:['observable behavior']});
     assert.equal(plan.code,200,JSON.stringify(plan.body));
+    const overlappingPlan=await a.signed('/v7/tasks/plan',{
+      request_id:'plan_overlapping_scopes_'+(++count),
+      agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
+      ticket_id:'ticket_nested_scope_denied',project_id:'project_integration',
+      baseline_sha:'a'.repeat(40),branch_name:'ai/ticket_nested_scope_denied',
+      title:'Reject nested scope authority',description:'Duplicate nested write authority',
+      risk:'LOW',write_scopes:['src','src/nested.ts'],
+      acceptance_criteria:['scope must be unambiguous']});
+    assert.equal(overlappingPlan.code,400,JSON.stringify(overlappingPlan.body));
+    assert.equal(overlappingPlan.body.error_code,
+      'TASK_PLANNING_AMBIGUOUS_SCOPE_OR_DEPENDENCIES');
+    const duplicateDependencyPlan=await a.signed('/v7/tasks/plan',{
+      request_id:'plan_duplicate_deps_'+(++count),
+      agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
+      ticket_id:'ticket_duplicate_dep_denied',project_id:'project_integration',
+      baseline_sha:'a'.repeat(40),branch_name:'ai/ticket_duplicate_dep_denied',
+      title:'Reject duplicate task dependency',description:'An existing dependency occurs twice',
+      risk:'LOW',write_scopes:['src/unambiguous.ts'],
+      dependencies:['ticket_qa_test','ticket_qa_test'],
+      acceptance_criteria:['DAG edges must not duplicate']});
+    assert.equal(duplicateDependencyPlan.code,400,JSON.stringify(duplicateDependencyPlan.body));
+    assert.equal(duplicateDependencyPlan.body.error_code,
+      'TASK_PLANNING_AMBIGUOUS_SCOPE_OR_DEPENDENCIES');
     // One Git repository can have separate projects with different base
     // branches, but its ai/* branch namespace must NEVER be duplicated.
     const collisionInProject=await a.signed('/v7/tasks/plan',{

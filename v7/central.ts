@@ -1301,6 +1301,11 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
   const scope=d.write_scopes, deps=d.dependencies||[];
   if(!Array.isArray(scope)||!scope.length||scope.length>30||!scope.every(safeScope)||new Set(scope).size!==scope.length||
     !Array.isArray(deps)||deps.length>30||deps.includes(ticketId))fault('INVALID_TASK_SCOPE',400);
+  // Overlapping scopes within ONE ticket and repeated dependencies create
+  // ambiguous reservations/acceptance DAGs. Reject before MySQL writes.
+  if(scope.some((s,i)=>scope.some((other,j)=>j>i&&scopesOverlap(s,other)))||
+     new Set(deps).size!==deps.length)
+    fault('TASK_PLANNING_AMBIGUOUS_SCOPE_OR_DEPENDENCIES',400);
   const risk=d.risk;
   if(!['LOW','MEDIUM','HIGH','CORE'].includes(risk))fault('INVALID_RISK',400);
   const criteria=d.acceptance_criteria;
