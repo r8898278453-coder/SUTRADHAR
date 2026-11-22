@@ -4,13 +4,14 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const src=fs.readFileSync(path.resolve(__dirname,'../v7/ui/dashboard.js'),'utf8');
 const nodeId='node_'+'a'.repeat(32);
 function browser(){
-  const nodes=new Map(),pending=[],queries=[];
+  const nodes=new Map(),pending=[],queries=[],downloads=[];
   function element(id){
     if(!nodes.has(id))nodes.set(id,{
       value:'',textContent:'',className:'',hidden:id==='dashboard',
       disabled:false,checked:false,listeners:{},
       addEventListener(type,cb){this.listeners[type]=cb;},
-      replaceChildren(){},append(){}
+      replaceChildren(){},append(){},
+      click(){downloads.push({href:this.href,download:this.download});}
     });
     return nodes.get(id);
   }
@@ -27,6 +28,13 @@ function browser(){
       inspectPair:()=>{throw Error('SHOULD_NOT_REACH_STALE_INSPECTOR');}
     }},
     fetch,console,Date,Error,Math,Number,JSON,Array,Object,Set,
+    Blob:class {
+      constructor(parts){this.text=parts.join('');this.size=Buffer.byteLength(this.text);}
+    },
+    URL:{createObjectURL(blob){
+      downloads.push({blobText:blob.text});return 'blob:test-only';
+    },revokeObjectURL(){}},
+    setTimeout:fn=>fn(),
     setInterval:()=>99,clearInterval:()=>{},crypto:{randomUUID:()=> 'uuid'},
     confirm:()=>false
   });
@@ -34,7 +42,7 @@ function browser(){
   vm.runInContext("key='api-key-a';ownerSessionVersion=1;",ctx);
   element('dashboard').hidden=false;
   element('node-recovery-input').value=nodeId;
-  return {element,pending,queries,ctx,flush:async()=>{await Promise.resolve();await Promise.resolve();}};
+  return {element,pending,queries,downloads,ctx,flush:async()=>{await Promise.resolve();await Promise.resolve();}};
 }
 function complete(p,data={}){
   p.resolve({ok:true,status:200,json:async()=>data});
@@ -118,4 +126,52 @@ test('Owner recovery UI remains GET-only; no local diagnostic or pin transmitted
   assert.ok(b.queries.every(q=>q.options.body===undefined));
   assert.ok(b.queries.every(q=>q.options.method===undefined));
   assert.match(e('node-recovery-crosscheck-results').textContent,/HOLD/);
+});
+
+test('explicit-click review export follows dual GET and never includes API token',async()=>{
+  const b=browser(),e=b.element;
+  e('node-recovery-pin').value='c'.repeat(64);
+  e('node-recovery-local-json').value='{"schema":1,"state":"OWNER_REVIEW_REQUIRED"}';
+  const api=b.ctx.window.SutradharCrashCrosscheck;
+  api.inspectPair=()=>({
+    state:'OWNER_REVIEW_REQUIRED',read_only:true,
+    compared_node_id:nodeId,local_session_marker_shape_valid:true,
+    central_fingerprint_matches_independent_enrollment_pin:true,
+    central_observation_unchanged:true,central_observation_window_bounded:true,
+    central_browser_clock_near_central:true,preliminary_inconsistency_count:0,
+    finding_codes:['PHYSICAL_PC_AND_WINDOWS_DPAPI_NOT_VERIFIED'],
+    agent_restart_allowed:false,marker_removal_allowed:false,
+    owner_reconciliation_complete:false,installer_execution_allowed:false,
+    production_release_authorized:false
+  });
+  api.makeReviewInputBundle=input=>({
+    schema:1,kind:'SUTRADHAR_OWNER_CRASH_REVIEW_INPUT_BUNDLE_V1',
+    read_only:true,agent_restart_allowed:false,
+    input:{nodeId:input.nodeId,observedAtClientMs:input.observedAtClientMs}
+  });
+  const run=e('node-recovery-crosscheck').listeners.click();
+  assert.equal(e('node-recovery-save-bundle').disabled,true);
+  assert.equal(b.downloads.length,0,'no automatic browser download');
+  complete(b.pending.shift(),snapshot());
+  for(let i=0;i<12;i++){
+    await b.flush();
+    for(const item of b.pending.splice(0))complete(item,snapshot());
+  }
+  await run;
+  assert.equal(b.queries.length,2);
+  assert.equal(e('node-recovery-save-bundle').disabled,false);
+  assert.equal(b.downloads.length,0,'explicit second click required');
+  e('node-recovery-save-bundle').listeners.click();
+  assert.equal(b.downloads.filter(x=>x.blobText).length,1);
+  const saved=b.downloads.find(x=>x.blobText).blobText;
+  assert.doesNotMatch(saved,/api-key-a/);
+  assert.match(saved,/OWNER_CRASH_REVIEW_INPUT_BUNDLE/);
+  assert.ok(b.queries.every(q=>q.options.body===undefined));
+  e('node-recovery-pin').listeners.input();
+  assert.equal(e('node-recovery-save-bundle').disabled,true);
+  const count=b.downloads.length;
+  e('node-recovery-save-bundle').listeners.click();
+  assert.equal(b.downloads.length,count,'input invalidation blocks stale download');
+  e('disconnect').onclick();
+  assert.equal(e('node-recovery-save-bundle').disabled,true);
 });

@@ -33,6 +33,10 @@ test('Owner dashboard shows read-only node recovery snapshot without auto-restar
   assert.match(html,/id="node-recovery-input"/);
   assert.match(html,/id="node-recovery-inspect"/);
   assert.match(html,/id="node-recovery-results"/);
+  assert.match(html,/id="node-recovery-save-bundle"/);
+  assert.match(html,/id="node-recovery-bundle-results"/);
+  assert.match(dashboard,/makeReviewInputBundle\(input\)/);
+  assert.match(dashboard,/ownerSessionVersion!==saved.session/);
   assert.match(dashboard,/request\('\/v7\/owner\/node-recovery\/'\+encodeURIComponent\(nodeId\)\)/);
   assert.match(dashboard,/result\.agent_restart_allowed!==false/);
   assert.match(dashboard,/result\.marker_removal_allowed!==false/);

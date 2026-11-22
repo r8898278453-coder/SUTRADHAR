@@ -5,7 +5,7 @@ const browser={};
 vm.runInNewContext(fs.readFileSync(path.resolve(__dirname,
   '../v7/ui/owner-crash-crosscheck.js'),'utf8'),{window:browser},
   {filename:'owner-crash-crosscheck.js'});
-const {inspect,inspectPair}=browser.SutradharCrashCrosscheck;
+const {inspect,inspectPair,makeReviewInputBundle}=browser.SutradharCrashCrosscheck;
 const NODE='node_'+'a'.repeat(32),FP='c'.repeat(64);
 const record=(state='MISSING',bytes=10)=>state==='MISSING'||state==='UNSAFE_OR_UNREADABLE'?
   {state}:{state,bytes,sha256:'b'.repeat(64)};
@@ -482,4 +482,100 @@ test('offline Owner CLI signs, verifies and detects tampered evidence with dispo
   }finally{
     fs.rmSync(dir,{recursive:true,force:true});
   }
+});
+
+test('browser exported review bundle allowlists data and remains irrevocably HOLD',()=>{
+  const input=samples();
+  input.local.private_key_pem='DO_NOT_EXPORT_PRIVATE_KEY';
+  input.local.records.encrypted_identity.vault_secret='DO_NOT_EXPORT_VAULT_SECRET';
+  input.first.node_public_key_pem='DO_NOT_EXPORT_CENTRAL_PEM';
+  input.second.agents[0].api_token='DO_NOT_EXPORT_TOKEN';
+  input.second.historical_effects.internal_session_secret='DO_NOT_EXPORT_SECRET';
+  const bundle=makeReviewInputBundle(input);
+  assert.equal(bundle.schema,1);
+  assert.equal(bundle.kind,'SUTRADHAR_OWNER_CRASH_REVIEW_INPUT_BUNDLE_V1');
+  for(const flag of ['agent_restart_allowed','marker_removal_allowed',
+    'installer_execution_allowed','production_release_authorized',
+    'owner_reconciliation_complete'])
+    assert.equal(bundle[flag],false,flag);
+  assert.equal(bundle.read_only,true);
+  assert.equal(JSON.stringify(bundle).includes('DO_NOT_EXPORT'),false);
+  const extracted=JSON.parse(JSON.stringify(bundle.input));
+  const result=inspectPair(extracted);
+  assert.equal(result.state,'OWNER_REVIEW_REQUIRED');
+  assert.equal(result.agent_restart_allowed,false);
+  const manifest=createReviewManifest(extracted);
+  assert.match(manifest.manifest_sha256,/^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(bundle).includes('private_key_pem'),false);
+  assert.equal(JSON.stringify(bundle).includes('api_token'),false);
+});
+test('browser export refuses invalid local/Central authority and counters',()=>{
+  for(const change of [
+    x=>{x.local.marker_removal_allowed=true;},
+    x=>{x.first.production_release_authorized=true;},
+    x=>{x.second.accepted_node_sequence_decimal='18446744073709551616';},
+    x=>{x.nodeId='node_'+'f'.repeat(32);}
+  ]){
+    const x=samples();change(x);
+    assert.throws(()=>makeReviewInputBundle(x));
+  }
+});
+test('offline CLI accepts a single Owner browser bundle and rejects mixed or tampered modes',()=>{
+  const os=require('node:os'),childProcess=require('node:child_process');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-crash-bundle-'));
+  const x=samples(),now=Date.now();
+  x.first.observed_at_central_ms=now-1300;
+  x.second.observed_at_central_ms=now-800;
+  x.observedAtClientMs=now-300;
+  const inputFile=path.join(dir,'owner-review-input.json'),
+    secret=path.join(dir,'owner-ed25519.pem'),
+    publicKey=path.join(dir,'owner-ed25519.pub'),
+    result=path.join(dir,'signed-review.json');
+  try{
+    fs.writeFileSync(inputFile,JSON.stringify(makeReviewInputBundle(x)));
+    const keys=crypto.generateKeyPairSync('ed25519');
+    fs.writeFileSync(secret,keys.privateKey.export({
+      type:'pkcs8',format:'pem'}),{mode:0o600});
+    fs.writeFileSync(publicKey,keys.publicKey.export({
+      type:'spki',format:'pem'}),{mode:0o600});
+    const clean={...process.env};
+    for(const name of Object.keys(clean))
+      if(name.startsWith('SUTRADHAR_CRASH_')||
+         name==='SUTRADHAR_OWNER_CRASH_EVIDENCE_REVIEW_APPROVED')
+        delete clean[name];
+    const env={...clean,
+      SUTRADHAR_CRASH_REVIEW_BUNDLE_JSON:inputFile,
+      SUTRADHAR_CRASH_OWNER_SIGNING_KEY_FILE:secret,
+      SUTRADHAR_CRASH_OWNER_REVIEW_OUTPUT:result,
+      SUTRADHAR_CRASH_OWNER_REVIEW_NOTE:
+        'Owner reviewed this ephemeral test snapshot, no process or release authority.',
+      SUTRADHAR_CRASH_OWNER_PUBLIC_KEY_FILE:publicKey,
+      SUTRADHAR_CRASH_OWNER_REVIEW_FILE:result,
+      SUTRADHAR_OWNER_CRASH_EVIDENCE_REVIEW_APPROVED:'yes'};
+    const run=(script,extra={})=>childProcess.spawnSync(
+      process.execPath,[path.resolve(__dirname,script)],
+      {env:{...env,...extra},encoding:'utf8',timeout:10000});
+    let r=run('../scripts/release/sign-crash-owner-review.cjs');
+    assert.equal(r.status,0,r.stderr);
+    r=run('../scripts/ops/verify-crash-owner-review.cjs');
+    assert.equal(r.status,0,r.stderr);
+    const verified=JSON.parse(r.stdout);
+    assert.equal(verified.owner_review_signature_valid,true);
+    assert.equal(verified.agent_restart_allowed,false);
+    assert.equal(verified.replay_prevention_enforced,false);
+    assert.notEqual(run('../scripts/ops/verify-crash-owner-review.cjs',{
+      SUTRADHAR_CRASH_LOCAL_JSON:inputFile
+    }).status,0,'mixed file modes are forbidden');
+    const tampered=JSON.parse(fs.readFileSync(inputFile,'utf8'));
+    tampered.input.second.cluster.epoch_decimal='42';
+    fs.writeFileSync(inputFile,JSON.stringify(tampered));
+    r=run('../scripts/ops/verify-crash-owner-review.cjs');
+    assert.notEqual(r.status,0,'changed evidence must not verify old signature');
+    assert.match(r.stderr,/CRASH_OWNER_REVIEW_/);
+    tampered.agent_restart_allowed=true;
+    fs.writeFileSync(inputFile,JSON.stringify(tampered));
+    r=run('../scripts/ops/verify-crash-owner-review.cjs');
+    assert.notEqual(r.status,0,'forged authorization flag fails closed');
+    assert.match(r.stderr,/BUNDLE_INVALID_OR_UNTRUSTED/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
