@@ -67,6 +67,34 @@ test('signer bridge signs only known API methods and node enrollment proof',()=>
     ])assert.throws(()=>bridge.sign(bad),/DENIED|INVALID/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+test('OS-vault QA review GET signer only permits exact digest path and bound agent',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-qa-review-sign-'));
+  try{
+    const vault=createVault({safeStorage:safeStorage(),dir,platform:'win32'});
+    const signer=createSignerBridge(vault);
+    const pub=signer.initialize({agent_ids:['agent_qa']});
+    const uri='/v7/tasks/qa-review/qaev_'+'a'.repeat(64);
+    const headers=signer.signWorkerReadOnly({method:'GET',uri,agent_id:'agent_qa'});
+    const canonical=[headers['x-sutradhar-timestamp'],headers['x-sutradhar-nonce'],
+      'GET',uri,crypto.createHash('sha256').update('').digest('hex')].join('\n');
+    assert.equal(headers['x-sutradhar-node'],pub.node_id);
+    assert.equal(crypto.verify(null,Buffer.from(canonical),
+      crypto.createPublicKey(pub.public_key_pem),
+      Buffer.from(headers['x-sutradhar-signature'],'base64')),true);
+    for(const bad of [
+      {method:'POST',uri,agent_id:'agent_qa'},
+      {method:'GET',uri,agent_id:'agent_other'},
+      {method:'GET',uri:'/v7/tasks/qa-review/qaev_'+'A'.repeat(64),agent_id:'agent_qa'},
+      {method:'GET',uri:'/v7/tasks/qa-review/qaev_'+'a'.repeat(63),agent_id:'agent_qa'},
+      {method:'GET',uri:uri+'?approve=true',agent_id:'agent_qa'},
+      {method:'GET',uri:'/v7/tasks/qa-receipt',agent_id:'agent_qa'},
+      {method:'GET',uri:'https://attacker.example/'+uri,agent_id:'agent_qa'}
+    ])assert.throws(()=>signer.signWorkerReadOnly(bad),
+      /VAULT_WORKER_READONLY_REQUEST_DENIED/);
+    assert.throws(()=>signer.sign({kind:'node_api',method:'GET',uri,body:''}),
+      /DENIED/,'supervised heartbeat child must not sign QA review requests');
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
 test('only monotonic counters, exact node and current boot ID may be saved by child',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-sign-'));
   try{
