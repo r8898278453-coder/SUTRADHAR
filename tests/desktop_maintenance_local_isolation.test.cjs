@@ -28,8 +28,9 @@ function mock({first=maintenance,last=first,roles=cluster,agents=me,offline=fals
     assert.equal(options.method,'GET');assert.equal(options.redirect,'error');
     if(offline)throw Error('offline');
     const pathname=new URL(url).pathname;
-    if(pathname.endsWith('/nodes/maintenance'))return {ok:true,json:async()=>++n===1?first:last};
-    return {ok:true,json:async()=>pathname.endsWith('/cluster/state')?roles:agents};
+    const data=pathname.endsWith('/nodes/maintenance')?(++n===1?first:last):
+      pathname.endsWith('/cluster/state')?roles:agents;
+    return new Response(JSON.stringify(data),{headers:{'content-type':'application/json'}});
   }};
 }
 const args={centralOrigin:'https://central.example.com',nodeId,agentIds:[agentId],
@@ -83,5 +84,13 @@ test('invalid local identity and signed request headers cannot write a hold',()=
     nodeId:'node_bad',fetcher:mock().fetcher}),/LOCAL_IDENTITY_INVALID/);
   await assert.rejects(isolateDrainedPc({...args,dir,
     signer:{sign:()=>({})},fetcher:mock().fetcher}),/SIGNED_IDENTITY_REQUIRED/);
+  assert.equal(inspectHold({dir,nodeId}).active,false);
+}));
+
+test('oversized Central signed response cannot activate local PC isolation hold',()=>fixture(async dir=>{
+  const oversized=async()=>new Response(JSON.stringify({data:'X'.repeat(70000)}),{
+    headers:{'content-type':'application/json'}});
+  await assert.rejects(isolateDrainedPc({...args,dir,fetcher:oversized}),
+    /MAINTENANCE_ISOLATION_RESPONSE_TOO_LARGE/);
   assert.equal(inspectHold({dir,nodeId}).active,false);
 }));

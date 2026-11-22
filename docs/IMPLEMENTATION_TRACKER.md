@@ -392,3 +392,15 @@ Desktop tests cover missing stream, invalid content-type/length, malformed JSON,
 array body and >64-KiB response plus no-launch behavior. This is code-only CI
 hardening, not physical Windows acceptance; separately bound legacy GET flows
 still need review and live Hostinger evidence is unavailable.
+
+
+## 23 November 2026 — Bounded Central evidence before escrow and local drain
+
+The same streaming-only 64-KiB JSON reader now protects the signed GET
+checks before (1) writing an installer escrow preparation attempt and
+(2) persisting a local Owner-drained PC maintenance hold. Both paths
+reject oversized/malformed Central evidence, disable network caching and
+omit ambient credentials. The negative tests verify **no new escrow
+attempt** and **no new local maintenance hold** after an oversized reply,
+without changing any Central grant or installer execution semantics.
+Further signed GET consumers remain subject to independent review.

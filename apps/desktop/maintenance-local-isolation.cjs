@@ -6,6 +6,7 @@
  */
 'use strict';
 const {validOrigin}=require('./update-readiness.cjs');
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const {createHold,inspectHold}=require('./maintenance-recovery-hold.cjs');
 const NODE=/^node_[0-9a-f]{32}$/;
 const AGENT=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
@@ -32,13 +33,17 @@ async function isolateDrainedPc({dir,centralOrigin,nodeId,agentIds,signer,
     let response;
     try{response=await fetcher(origin+uri,{method:'GET',
       headers:{...signed,Accept:'application/json'},redirect:'error',
+      cache:'no-store',credentials:'omit',
       signal:AbortSignal.timeout(12000)});}
     catch{fail('MAINTENANCE_ISOLATION_CENTRAL_UNREACHABLE');}
     if(!response?.ok)fail('MAINTENANCE_ISOLATION_CENTRAL_REJECTED');
     let data;
-    try{data=await response.json();}catch{fail('MAINTENANCE_ISOLATION_RESPONSE_INVALID');}
-    if(!data||typeof data!=='object'||Array.isArray(data))
+    try{data=await boundedCentralJson(response);}
+    catch(error){
+      if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+        fail('MAINTENANCE_ISOLATION_RESPONSE_TOO_LARGE');
       fail('MAINTENANCE_ISOLATION_RESPONSE_INVALID');
+    }
     return data;
   }
   const first=await read('/v7/nodes/maintenance');

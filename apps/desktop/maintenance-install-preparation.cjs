@@ -8,6 +8,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
 const {validOrigin}=require('./update-readiness.cjs');
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const {verifyOffer,sha256File}=require('./update-policy.cjs');
 const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
 const NODE=/^node_[0-9a-f]{32}$/;
@@ -108,12 +109,16 @@ async function prepareInstaller({dir,installerPath,envelope,node,agentIds,
     let res,data;
     try{res=await fetcher(origin+uri,{method:'GET',
       headers:{...h,Accept:'application/json'},redirect:'error',
+      cache:'no-store',credentials:'omit',
       signal:AbortSignal.timeout(12000)});}
     catch{fail('UPDATE_PREPARE_CENTRAL_UNREACHABLE');}
     if(!res?.ok)fail('UPDATE_PREPARE_CENTRAL_DENIED');
-    try{data=await res.json();}catch{fail('UPDATE_PREPARE_CENTRAL_RESPONSE_INVALID');}
-    if(!data||typeof data!=='object'||Array.isArray(data))
+    try{data=await boundedCentralJson(res);}
+    catch(error){
+      if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+        fail('UPDATE_PREPARE_CENTRAL_RESPONSE_TOO_LARGE');
       fail('UPDATE_PREPARE_CENTRAL_RESPONSE_INVALID');
+    }
     return data;
   }
   function verifyFence(data){

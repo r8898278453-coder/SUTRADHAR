@@ -61,7 +61,8 @@ function setup(dir,type='update'){
       route==='/v7/cluster/state'?responses.cluster:
       route==='/v7/nodes/me'?responses.me:null;
     if(!response)throw Error('unsupported route');
-    return {ok:true,json:async()=>typeof response==='function'?response():response};
+    return new Response(JSON.stringify(typeof response==='function'?response():response),
+      {headers:{'content-type':'application/json'}});
   };
   const authenticode=({expectedSha256,publisherSubject})=>({
     verified:true,file_sha256:expectedSha256,publisher_subject:publisherSubject,
@@ -216,4 +217,20 @@ test('escrow receipts must have valid OS-vault signatures; tamper is refused',()
   assert.throws(()=>identityEvidence({...node,
     private_key_pem:wrongKey.privateKey.export({type:'pkcs8',format:'pem'}).toString()},
     [agentId]),/KEYPAIR_MISMATCH/);
+}));
+
+test('oversized signed Central response never creates preparation attempt',()=>makeDir(async dir=>{
+  const {params,nodeDir}=setup(dir);
+  const normal=params.fetcher;
+  const oversized=async(url,opts)=>{
+    if(new URL(url).pathname==='/v7/nodes/maintenance')
+      return new Response(JSON.stringify({padding:'x'.repeat(70000)}),{
+        headers:{'content-type':'application/json'}});
+    return normal(url,opts);
+  };
+  await assert.rejects(prepareInstaller({...params,fetcher:oversized}),
+    /UPDATE_PREPARE_CENTRAL_RESPONSE_TOO_LARGE/);
+  assert.equal(fs.existsSync(path.join(nodeDir,'installer-preparation-attempt.json')),false);
+  assert.equal(fs.existsSync(path.join(nodeDir,'installer-preparation-ready.json')),false);
+  assert.equal(inspectHold({dir:nodeDir,nodeId}).active,true);
 }));
