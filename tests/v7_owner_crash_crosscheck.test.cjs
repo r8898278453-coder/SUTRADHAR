@@ -487,10 +487,16 @@ test('offline Owner CLI signs, verifies and detects tampered evidence with dispo
 test('browser exported review bundle allowlists data and remains irrevocably HOLD',()=>{
   const input=samples();
   input.local.private_key_pem='DO_NOT_EXPORT_PRIVATE_KEY';
-  input.local.records.encrypted_identity.vault_secret='DO_NOT_EXPORT_VAULT_SECRET';
   input.first.node_public_key_pem='DO_NOT_EXPORT_CENTRAL_PEM';
   input.second.agents[0].api_token='DO_NOT_EXPORT_TOKEN';
+  // Unknown historical-effect field is identical across both reads.
+  // A change between the reads must still be treated as a drift warning.
+  input.first.historical_effects.internal_session_secret='DO_NOT_EXPORT_SECRET';
   input.second.historical_effects.internal_session_secret='DO_NOT_EXPORT_SECRET';
+  const malformed=JSON.parse(JSON.stringify(input));
+  malformed.local.records.encrypted_identity.vault_secret='DO_NOT_EXPORT_VAULT_SECRET';
+  assert.throws(()=>makeReviewInputBundle(malformed),/LOCAL_CRASH_RECORD_INVALID/,
+    'unexpected fields inside hashed local records must fail closed');
   const bundle=makeReviewInputBundle(input);
   assert.equal(bundle.schema,1);
   assert.equal(bundle.kind,'SUTRADHAR_OWNER_CRASH_REVIEW_INPUT_BUNDLE_V1');
