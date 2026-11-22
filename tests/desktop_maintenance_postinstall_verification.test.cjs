@@ -255,14 +255,14 @@ test('after installer attempt Owner cannot release hold before postinstall obser
   const cancelFetcher=async url=>{
     assert.equal(new URL(url).pathname,
       '/v7/nodes/maintenance/recovery/'+planId);
-    return {ok:true,json:async()=>({
+    return new Response(JSON.stringify({
       node_id:nodeId,plan_id:planId,wave_id:waveId,
       offer_sha256:releaseEnvelope.signed.offer_sha256,
       state:'CANCELLED',cancellation_verified:true,any_active_fence:false,
       any_active_maintenance_intent:false,
       local_hold_release_allowed:false,installer_execution_allowed:false,
       recovery_requires_owner:true
-    })};
+    }),{headers:{'content-type':'application/json'}});
   };
   const releaseArgs={dir:f.nodeDir,centralOrigin:check.centralOrigin,
     nodeId,signer:check.signer,grantEnvelope:releaseEnvelope,

@@ -27,7 +27,8 @@ const evidence={node_id:nodeId,plan_id:planId,wave_id:waveId,offer_sha256:offerS
   state:'CANCELLED',cancellation_verified:true,any_active_fence:false,
   any_active_maintenance_intent:false,local_hold_release_allowed:false,
   installer_execution_allowed:false,recovery_requires_owner:true};
-const makeFetch=(e=evidence)=>async()=>({ok:true,json:async()=>e});
+const makeFetch=(e=evidence)=>async()=>new Response(JSON.stringify(e),{
+  headers:{'content-type':'application/json'}});
 function hold(dir){createHold({dir,nodeId,planId,waveId,offerSha256});}
 const base={centralOrigin:'https://central.example.com',nodeId,signer,
   pinnedPublicKeyPem:pub,agentStopped:true};

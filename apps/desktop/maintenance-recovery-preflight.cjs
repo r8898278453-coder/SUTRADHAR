@@ -6,6 +6,7 @@
 'use strict';
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {validOrigin}=require('./update-readiness.cjs');
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const NODE=/^node_[a-f0-9]{32}$/;
 const fail=code=>{throw Error(code);};
 async function checkRecovery({dir,centralOrigin,nodeId,signer,
@@ -25,11 +26,17 @@ async function checkRecovery({dir,centralOrigin,nodeId,signer,
   try{
     response=await fetcher(origin+uri,{method:'GET',
       headers:{...signed,Accept:'application/json'},redirect:'error',
+      cache:'no-store',credentials:'omit',
       signal:AbortSignal.timeout(12000)});
   }catch{fail('MAINTENANCE_RECOVERY_CENTRAL_UNREACHABLE');}
   if(!response?.ok)fail('MAINTENANCE_RECOVERY_CENTRAL_REJECTED');
   let data;
-  try{data=await response.json();}catch{fail('MAINTENANCE_RECOVERY_INVALID_EVIDENCE');}
+  try{data=await boundedCentralJson(response);}
+  catch(error){
+    if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+      fail('MAINTENANCE_RECOVERY_RESPONSE_TOO_LARGE');
+    fail('MAINTENANCE_RECOVERY_INVALID_EVIDENCE');
+  }
   if(!data||typeof data!=='object'||Array.isArray(data)||
      data.node_id!==nodeId||data.plan_id!==held.plan_id||
      data.wave_id!==held.wave_id||data.offer_sha256!==held.offer_sha256||

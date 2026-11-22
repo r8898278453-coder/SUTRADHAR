@@ -168,7 +168,8 @@ async function preparedReview(dir,options={}){
     if(state.offline)throw Error('Central unavailable');
     const p=new URL(uri).pathname;
     if(p==='/v7/nodes/maintenance/recovery/'+planId)
-      return {ok:true,json:async()=>state.cancellation};
+      return new Response(JSON.stringify(state.cancellation),
+        {headers:{'content-type':'application/json'}});
     return f.args.fetcher(uri,opts);
   };
   const context={...args,fetcher,pinnedOwnerPublicKeyPem:ownerPublicKey,

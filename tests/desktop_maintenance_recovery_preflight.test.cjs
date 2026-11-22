@@ -23,7 +23,7 @@ const signer={sign:({kind,method,uri,body})=>{
 function fetcher(value=evidence){return async(url,opts)=>{
   assert.equal(new URL(url).pathname,'/v7/nodes/maintenance/recovery/'+planId);
   assert.equal(opts.redirect,'error');
-  return {ok:true,json:async()=>value};
+  return new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});
 };}
 const args={centralOrigin:'https://central.example.com',nodeId,signer};
 test('exact signed cancellation is advisory and NEVER deletes the hold',()=>fixture(async dir=>{
@@ -54,5 +54,14 @@ test('missing hold, unsigned request and unreachable Central never recover',()=>
     fetcher:fetcher()}),/NODE_SIGNING_REQUIRED/);
   await assert.rejects(checkRecovery({...args,dir,fetcher:async()=>{throw Error('offline');}}),
     /CENTRAL_UNREACHABLE/);
+  assert.equal(inspectHold({dir,nodeId}).active,true);
+}));
+
+test('oversized cancellation response never releases existing maintenance hold',()=>fixture(async dir=>{
+  createHold({dir,nodeId,planId,waveId,offerSha256});
+  const big=async()=>new Response(JSON.stringify({padding:'z'.repeat(70000)}),{
+    headers:{'content-type':'application/json'}});
+  await assert.rejects(checkRecovery({...args,dir,fetcher:big}),
+    /MAINTENANCE_RECOVERY_RESPONSE_TOO_LARGE/);
   assert.equal(inspectHold({dir,nodeId}).active,true);
 }));

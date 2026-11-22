@@ -23,8 +23,9 @@ const makeFetch=(nodeResponse=me,clusterResponse=cluster,calls=[],
   assert.equal(opts.redirect,'error');
   assert.equal(opts.body,undefined);
   assert.equal(url.startsWith('https://stage.example.com/v7/'),true);
-  return {ok:true,json:async()=>url.endsWith('/nodes/me')?nodeResponse:
-    url.endsWith('/nodes/maintenance')?intentResponse:clusterResponse};
+  const body=url.endsWith('/nodes/me')?nodeResponse:
+    url.endsWith('/nodes/maintenance')?intentResponse:clusterResponse;
+  return new Response(JSON.stringify(body),{headers:{'content-type':'application/json'}});
 };
 const args={centralOrigin:'https://stage.example.com',nodeId,agentIds:[mine],signer};
 test('signed Central update readiness is advisory, not authorization to execute',async()=>{
@@ -117,4 +118,11 @@ test('Owner intent is shown only when signed, epoch-matching, unexpired and stil
   ])await assert.rejects(checkReadiness({...args,now,
     fetcher:makeFetch(me,cluster,[],broken)}),
     /OWNER_INTENT_RESPONSE_INVALID|OWNER_INTENT_STALE_OR_INVALID|OWNER_INTENT_EXPIRED|PC_DRAIN_FENCED/);
+});
+
+test('oversized Central body cannot yield maintenance readiness approval',async()=>{
+  const giant=async()=>new Response(JSON.stringify({padding:'z'.repeat(70000)}),{
+    headers:{'content-type':'application/json'}});
+  await assert.rejects(checkReadiness({...args,fetcher:giant}),
+    /UPDATE_READINESS_RESPONSE_TOO_LARGE/);
 });

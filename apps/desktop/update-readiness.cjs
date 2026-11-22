@@ -4,6 +4,7 @@
  * This is a moment-in-time advisory; NEVER authorizes installer execution.
  */
 'use strict';
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const NODE=/^node_[0-9a-f]{32}$/;
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 function fail(code){throw Error(code);}
@@ -37,13 +38,17 @@ async function checkReadiness({
     try{
       r=await fetcher(origin+uri,{method:'GET',
         headers:{...signed,Accept:'application/json'},
-        redirect:'error',signal:AbortSignal.timeout(12000)});
+        redirect:'error',cache:'no-store',credentials:'omit',
+        signal:AbortSignal.timeout(12000)});
     }catch{fail('UPDATE_READINESS_CENTRAL_UNREACHABLE');}
     if(!r?.ok)fail('UPDATE_READINESS_CENTRAL_AUTH_OR_HEALTH_FAILED');
     let data;
-    try{data=await r.json();}catch{fail('UPDATE_READINESS_INVALID_CENTRAL_RESPONSE');}
-    if(!data||typeof data!=='object'||Array.isArray(data))
+    try{data=await boundedCentralJson(r);}
+    catch(error){
+      if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+        fail('UPDATE_READINESS_RESPONSE_TOO_LARGE');
       fail('UPDATE_READINESS_INVALID_CENTRAL_RESPONSE');
+    }
     return data;
   }
   const me=await read('/v7/nodes/me');

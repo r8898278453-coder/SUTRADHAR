@@ -404,3 +404,16 @@ omit ambient credentials. The negative tests verify **no new escrow
 attempt** and **no new local maintenance hold** after an oversized reply,
 without changing any Central grant or installer execution semantics.
 Further signed GET consumers remain subject to independent review.
+
+
+## 23 November 2026 — Bounded readiness and cancellation evidence
+
+Advisory PC update-readiness and signed maintenance cancellation preflight
+now also use the shared 64-KiB bounded streaming JSON reader instead of
+unbounded `Response.json()`. Malformed/oversized evidence is rejected,
+responses are not cached and ambient credentials are omitted. Tests
+assert a huge readiness response cannot produce positive advisory status
+and a huge cancellation response cannot release a local maintenance hold.
+These changes do NOT create a release grant, override Owner signatures,
+or prove physical rollback; they reduce remote response memory risk before
+Owner-controlled decisions.
