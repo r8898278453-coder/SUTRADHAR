@@ -74,7 +74,7 @@ function initial(dir,{rollback=false}={}){
       p==='/v7/cluster/state'?replies.cluster:
       p==='/v7/nodes/me'?replies.me:null;
     if(!d)throw Error('unsupported path '+p);
-    return {ok:true,json:async()=>d};
+    return new Response(JSON.stringify(d),{headers:{'content-type':'application/json'}});
   };
   const authenticode=({expectedSha256,publisherSubject})=>({
     verified:true,file_sha256:expectedSha256,publisher_subject:publisherSubject,

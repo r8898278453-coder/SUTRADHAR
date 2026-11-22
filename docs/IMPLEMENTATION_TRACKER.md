@@ -377,3 +377,18 @@ migration metadata before the signed action, but this is NOT a guarantee that
 an operator may run live DDL concurrently; the real migration requires an
 Owner-approved maintenance window and independent staging proof. Regression
 tests assert this ordering; re-run exact-head real MySQL concurrency CI.
+
+
+## 23 November 2026 — Size-bounded signed Central evidence before installer launch
+
+The Windows Desktop's Owner-granted interactive installer launcher no longer
+uses unbounded `Response.json()` to consume its signed Central GET evidence.
+It requires an actual HTTP response stream and `application/json`, validates
+content-length, and caps the received stream at **64 KiB** before parsing.
+It disables HTTP caching and omits ambient credentials. Oversized/malformed
+Central responses fail **before** the one-shot installer-attempt journal and
+before any Windows EXE is started; the existing maintenance hold persists.
+Desktop tests cover missing stream, invalid content-type/length, malformed JSON,
+array body and >64-KiB response plus no-launch behavior. This is code-only CI
+hardening, not physical Windows acceptance; separately bound legacy GET flows
+still need review and live Hostinger evidence is unavailable.

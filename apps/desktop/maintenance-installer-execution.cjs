@@ -18,6 +18,7 @@ const {createDirectExitTracker}=require('./maintenance-installer-direct-exit.cjs
 const {launchPersistentObserver}=require('./maintenance-installer-persistent-observer.cjs');
 const {validOrigin}=require('./update-readiness.cjs');
 const {sha256File}=require('./update-policy.cjs');
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const HEX=/^[0-9a-f]{64}$/;
 const PREFIX='SUTRADHAR_INSTALL_EXECUTION_V1\n';
@@ -129,12 +130,16 @@ async function launchStagedInstaller({dir,node,agentIds,observedVersion,
     let response,data;
     try{response=await fetcher(origin+uri,{method:'GET',
       headers:{...headers,Accept:'application/json'},redirect:'error',
+      cache:'no-store',credentials:'omit',
       signal:AbortSignal.timeout(12000)});}
     catch{fail('UPDATE_EXECUTION_CENTRAL_UNREACHABLE');}
     if(!response?.ok)fail('UPDATE_EXECUTION_CENTRAL_REJECTED');
-    try{data=await response.json();}catch{fail('UPDATE_EXECUTION_CENTRAL_MALFORMED');}
-    if(!data||typeof data!=='object'||Array.isArray(data))
+    try{data=await boundedCentralJson(response);}
+    catch(error){
+      if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+        fail('UPDATE_EXECUTION_CENTRAL_RESPONSE_TOO_LARGE');
       fail('UPDATE_EXECUTION_CENTRAL_MALFORMED');
+    }
     return data;
   }
   function safeFence(d){

@@ -68,7 +68,7 @@ function initial(dir,{rollback=false}={}){
       p==='/v7/cluster/state'?replies.cluster:
       p==='/v7/nodes/me'?replies.me:null;
     if(!d)throw Error('unsupported path '+p);
-    return {ok:true,json:async()=>d};
+    return new Response(JSON.stringify(d),{headers:{'content-type':'application/json'}});
   };
   const authenticode=({expectedSha256,publisherSubject})=>({
     verified:true,file_sha256:expectedSha256,publisher_subject:publisherSubject,
@@ -302,5 +302,22 @@ test('unavailable detached observer never converts an already launched EXE to su
   assert.equal(result.persistent_observer_started,false);
   assert.equal(result.installed,false);
   assert.equal(result.agent_restart_allowed,false);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+}));
+
+test('oversized Central evidence never creates installer attempt or process',()=>fixtures(async dir=>{
+  const f=initial(dir);await prepareInstaller(f.prep);
+  const {runner,launches}=launcherRecorder();
+  const normal=f.args.fetcher;
+  const huge=async(url,opts)=>{
+    if(new URL(url).pathname==='/v7/nodes/maintenance')
+      return new Response(JSON.stringify({padding:'X'.repeat(70000)}),{
+        headers:{'content-type':'application/json'}});
+    return normal(url,opts);
+  };
+  await assert.rejects(launchStagedInstaller({...f.args,fetcher:huge,
+    grantEnvelope:f.grant(),runner}),/CENTRAL_RESPONSE_TOO_LARGE/);
+  assert.equal(launches.length,0);
+  assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-execution-attempt.json')),false);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
 }));
