@@ -4,7 +4,7 @@
 
 **Developer Edge safety:** The separate developer-only plaintext identity daemon now requires a private single-process lock and durable local heartbeat counter writes. This does not change the packaged Electron OS-vault trust boundary or authorize deployment. See [Worker restart and developer Edge recovery](docs/WORKER_RESTART_PREFLIGHT_V7.md).
 
-> **Release status — 12 November 2026:** SUTRADHAR v7 is an **alpha implementation on a draft pull request**, NOT an approved production release. Do not connect the draft branch to a live Hostinger site or distribute it as a trusted PC installer. No production deployment, Windows installer, automatic updates, or full 8–10-PC acceptance has been completed.
+> **Release status — 22 November 2026:** SUTRADHAR v7 remains **alpha on Draft PR #1**; it is NOT an approved production release. Core/Windows unsigned QA packaging and disposable MySQL tests are source-CI evidence only. No production-signed Windows installer, live Hostinger deployment or staging restore, approved automatic update, or independently verified 2/3/8–10 physical-PC rollout has been completed. Never connect this fix branch to a live production website or distribute unsigned QA output as trusted software.
 
 SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 
@@ -61,7 +61,21 @@ SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 4. **Updates:** approve a tested Central release separately from a tested Desktop release; see a release ID and post-update health result.
 5. **Problems:** stop rollout and use a verified recovery plan with a known-good release **and separately validated MySQL restore/migration procedure**.
 
-**Important:** This is the **target experience**, not something the current alpha can do end-to-end today. Today, Central schema setup requires a privileged authenticated API call; PCs require Node.js, environment configuration and manually started agents; the Electron shell is not a packaged installer. See the [owner guide](docs/OWNER_SETUP_AND_DEPLOYMENT.md) for an honest READY vs NOT READY checklist.
+**Important:** This is the **target experience**, not something the current alpha can do end-to-end today. Today, Central schema setup still needs privileged provisioning; PC enrollment/roles and signed QA need real independent physical verification. CI generates an **unsigned internal QA installer smoke artifact**, but a production-signed, Owner-approved installer and proven automated deployment do not yet exist. See the [Owner guide](docs/OWNER_SETUP_AND_DEPLOYMENT.md) for a READY vs NOT READY checklist.
+
+## Current remaining release gates — source work is not live acceptance
+
+| Gate | Evidence we can use now | Blocking real-world evidence |
+| --- | --- | --- |
+| G0 source and CI | Draft PR #1 source and exact-HEAD GitHub Actions checks | Independent security/PR review, Owner approval and GitHub main protections |
+| G1 Hostinger staging | Isolated Central build; Owner-hostname-pinned and TLS/IP-pinned read-only staging probe | Owner-provisioned HTTPS staging website, actual deployment receipt and dedicated MySQL |
+| G2 MySQL recovery | Disposable MySQL backup/restore CI and encrypted backup/recovery tooling | Owner-approved separate empty staging restore with independent data and timing evidence |
+| G3 trusted Windows installer | Strict four-key Ed25519 release contract, protected signing workflow and Authenticode verification code | Real certificate, restricted signing environment, reviewed stable tag and signed installer verification |
+| G4 and G5 PC identities/failover | OS-vault, signed heartbeat, sticky Master and distinct-node regression tests | Physically separate 2-PC, 3-PC and 8–10-PC acceptance with real reboots/failover |
+| G6 update/rollback | Signed offline offers, manual maintenance drain, hardened installer checks and fail-closed recovery code | Owner-reviewed physical install/update/rollback with key preservation and post-install health |
+| G7 go-live | Owner gate/evidence signature/hash verification scripts | Independent G0–G6 evidence review and separate explicit Central/Desktop production authorization |
+
+Start with [Owner provisioning](docs/OWNER_PROVISIONING_RUNBOOK.md) and [Owner release-gate handoff](docs/OWNER_RELEASE_GATE_HANDOFF_2026-11-17.md). Never paste keys, passwords, signing certificates or staging database exports into chats, PRs or issue comments. Keep Draft PR #1 unmerged and the protected production deployment ref unchanged until independent Owner evidence exists.
 
 ## Source layout: current vs target
 
