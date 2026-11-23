@@ -324,3 +324,39 @@ test('interrupted intent retirement fences a new Electron process even after ren
     assert.throws(()=>reopened.save(newer),/OS_VAULT_WRITE_INTENT_OWNER_REVIEW_REQUIRED/);
   }finally{fs.unlinkSync=unlink;fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('OS vault refuses dangling legacy plaintext identity and never silently enrolls',()=>{
+  if(process.platform==='win32')return;
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-vault-legacy-link-'));
+  try{
+    const legacy=path.join(dir,'identity.json');
+    fs.symlinkSync(path.join(dir,'missing-identity'),legacy);
+    assert.equal(fs.existsSync(legacy),false);
+    assert.throws(()=>createVault({safeStorage:testStore(),dir,platform:'linux'}),
+      /LEGACY_PLAINTEXT_IDENTITY_REQUIRES_OWNER_MIGRATION/);
+    assert.equal(fs.existsSync(path.join(dir,'identity.osvault.json')),false);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('legacy plaintext evidence appearing after vault startup blocks later read and save',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-vault-legacy-race-'));
+  try{
+    const vault=createVault({safeStorage:testStore(),dir,platform:'win32'});
+    const enrolled=identity();vault.save(enrolled);
+    const original=fs.readFileSync(vault.file);
+    fs.writeFileSync(path.join(dir,'identity.json'),'unexpected legacy identity');
+    assert.throws(()=>vault.read(),/LEGACY_PLAINTEXT_IDENTITY_REQUIRES_OWNER_MIGRATION/);
+    assert.throws(()=>vault.save(enrolled),/LEGACY_PLAINTEXT_IDENTITY_REQUIRES_OWNER_MIGRATION/);
+    assert.deepEqual(fs.readFileSync(vault.file),original);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('vault status counts a dangling encrypted identity alias as present, never absent',()=>{
+  if(process.platform==='win32')return;
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-vault-status-link-'));
+  try{
+    const vault=createVault({safeStorage:testStore(),dir,platform:'linux'});
+    assert.equal(vault.status().exists,false);
+    fs.symlinkSync(path.join(dir,'missing-encrypted-id'),vault.file);
+    assert.equal(vault.status().exists,true);
+    assert.throws(()=>vault.read(),/OS_VAULT_FILE_UNSAFE/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});

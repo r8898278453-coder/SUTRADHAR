@@ -872,3 +872,16 @@ observation. A negative regression replaces a valid signed ready journal
 between the first and second reads and demands rejection before writing
 a failure-review observation. The Owner recovery incident HOLD,
 signing and physical Windows G6 requirements remain unchanged.
+
+## 24 November 2026 — OS-vault legacy identity no-silent-rekey fence
+
+Encrypted Desktop initialization previously used follows-symlink `existsSync`
+for `identity.json`: a dangling legacy plaintext identity alias appeared absent.
+The vault now uses `lstat` entry presence, refuses unexpected inspection
+errors, and rechecks the legacy identity boundary on every subsequent read or
+save (not only once at construction). Vault status now counts a dangling
+encrypted identity alias as present rather than advertising a new identity.
+Regression tests cover dangling legacy evidence, plaintext appearing after
+startup, unchanged encrypted bytes and dangling vault-status aliases. These
+checks preserve Owner-only migration/recovery; they do not grant enrollment,
+production signing or real Windows DPAPI acceptance. G4/G6 remain HOLD.

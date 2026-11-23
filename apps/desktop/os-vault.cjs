@@ -166,9 +166,21 @@ function createVault({safeStorage,dir,platform=process.platform}){
   const legacy=path.join(dir,'identity.json');
   const intent=path.join(dir,'identity.osvault.write-intent');
   let poisoned=false;
-  if(fs.existsSync(legacy))throw Error('LEGACY_PLAINTEXT_IDENTITY_REQUIRES_OWNER_MIGRATION');
+  function refuseLegacyIdentity(){
+    // lstat counts dangling legacy aliases as evidence, unlike existsSync.
+    // Recheck on every read/save: an identity.json appearing after startup
+    // must never silently coexist with the enrolled OS-vault identity.
+    try{fs.lstatSync(legacy);}
+    catch(error){
+      if(error?.code==='ENOENT')return;
+      throw Error('LEGACY_PLAINTEXT_IDENTITY_INSPECTION_FAILED');
+    }
+    throw Error('LEGACY_PLAINTEXT_IDENTITY_REQUIRES_OWNER_MIGRATION');
+  }
+  refuseLegacyIdentity();
   function assertNotUncertain(){
     if(poisoned)throw Error('OS_VAULT_WRITE_COMMIT_UNCERTAIN_OWNER_REVIEW');
+    refuseLegacyIdentity();
     // lstat, not existsSync: a dangling symlink/partial intent also blocks.
     try{fs.lstatSync(intent);}
     catch(e){
@@ -298,8 +310,16 @@ function createVault({safeStorage,dir,platform=process.platform}){
     }
     return {node_id:x.node_id,agent_count:x.agents.length};
   }
-  function status(){return {exists:fs.existsSync(file),backend:platform==='win32'?'Windows DPAPI':
-    platform==='darwin'?'macOS Keychain':'OS credential store',encrypted:true};}
+  function status(){
+    let exists=true;
+    try{fs.lstatSync(file);}
+    catch(error){
+      if(error?.code==='ENOENT')exists=false;
+      else throw Error('OS_VAULT_STATUS_INSPECTION_FAILED');
+    }
+    return {exists,backend:platform==='win32'?'Windows DPAPI':
+      platform==='darwin'?'macOS Keychain':'OS credential store',encrypted:true};
+  }
   return {read,save,status,file};
 }
 module.exports={createVault,atomicWrite,readStableLocalFile};
