@@ -162,3 +162,48 @@ test('dangling observer witness blocks duplicate sidecar and is not reported abs
   assert.throws(()=>inspectObserverWitness({dir,node,agentIds:['agent_a1']}),
     /WITNESS_CORRUPT/);
 }));
+
+
+test('unsigned observer witness rejects same-size pathname substitution mid-read',
+  ()=>fixture(dir=>{
+    const file=path.join(dir,'installer-process-observer-unsigned.json');
+    witness(dir);
+    const bytes=fs.readFileSync(file),orig=fs.readSync;
+    let swapped=false;
+    try{
+      fs.readSync=function(fd,buffer,offset,length,position){
+        const n=orig.call(this,fd,buffer,offset,length,position);
+        if(!swapped){
+          swapped=true;
+          fs.renameSync(file,path.join(dir,'prior-observer-witness.json'));
+          fs.writeFileSync(file,bytes);
+        }
+        return n;
+      };
+      assert.throws(()=>inspectObserverWitness({dir,node,agentIds:['agent_a1']}),
+        /INSTALL_OBSERVER_WITNESS_CORRUPT/);
+      assert.equal(swapped,true);
+    }finally{fs.readSync=orig;}
+  }));
+test('unsigned observer witness rejects in-place mutation after byte-read',
+  ()=>fixture(dir=>{
+    const file=path.join(dir,'installer-process-observer-unsigned.json');
+    witness(dir);
+    const orig=fs.readSync;
+    let mutated=false;
+    try{
+      fs.readSync=function(fd,buffer,offset,length,position){
+        const n=orig.call(this,fd,buffer,offset,length,position);
+        if(!mutated){
+          mutated=true;
+          const st=fs.statSync(file);
+          fs.utimesSync(file,new Date(st.atimeMs-3000),
+            new Date(st.mtimeMs-3000));
+        }
+        return n;
+      };
+      assert.throws(()=>inspectObserverWitness({dir,node,agentIds:['agent_a1']}),
+        /INSTALL_OBSERVER_WITNESS_CORRUPT/);
+      assert.equal(mutated,true);
+    }finally{fs.readSync=orig;}
+  }));

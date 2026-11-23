@@ -5,6 +5,7 @@
 const fs=require('node:fs'),path=require('node:path');
 const {spawn}=require('node:child_process');
 const {psLiteral}=require('./windows-authenticode.cjs');
+const {readEvidenceBytes}=require('./local-evidence-file.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {identityEvidence}=require('./maintenance-install-preparation.cjs');
 const {verifySigned,jsonFile}=require('./maintenance-postinstall-verification.cjs');
@@ -167,12 +168,13 @@ function inspectObserverWitness({dir,node,agentIds}={}){
   if(!witnessEntryPresent(file))return Object.freeze({available:false,
     state:'NO_WITNESS_OUTCOME_UNKNOWN',witness_signed:false,
     installer_completion_proven:false,hold_release_allowed:false});
-  let raw,stat;
+  // This witness is unsigned and strictly diagnostic. Even so, a racing
+  // filename replacement must not silently substitute different observations.
+  // The shared bounded descriptor verifies inode, size and timestamps.
+  let raw;
   try{
-    stat=fs.lstatSync(file);
-    if(!stat.isFile()||stat.isSymbolicLink()||stat.size<100||stat.size>4096)
-      fail('INSTALL_OBSERVER_FILE_INVALID');
-    raw=JSON.parse(fs.readFileSync(file,'utf8'));
+    const bytes=readEvidenceBytes(file,{minBytes:100,maxBytes:4096});
+    raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
   }catch{fail('INSTALL_OBSERVER_WITNESS_CORRUPT');}
   if(!raw||typeof raw!=='object'||Array.isArray(raw)||
      raw.schema!==1||!STATES.includes(raw.state)||

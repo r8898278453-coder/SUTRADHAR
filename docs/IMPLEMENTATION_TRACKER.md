@@ -1069,3 +1069,13 @@ remains a pre-existing Owner-controlled **draft PR POST**, not Git push,
 merge, signing or deploy. Mocked CI exercises the same request structure
 and malformed/redirected payloads; true Owner-protected branch/review
 and external live GitHub acceptance remain HOLD.
+
+## 24 November 2026 — Unsigned installer observer stable evidence reads
+
+The detached Windows installer liveness witness remains explicitly
+**UNSIGNED DIAGNOSTIC ONLY**, never an installer-completion, update or
+hold-release proof. Its 4 KiB JSON report is now read through the same
+bounded nofollow, descriptor/path identity and timestamp checks as other
+Desktop evidence. Negative tests inject same-content path replacement
+and in-place timestamp mutations during read. Failure reports stay
+\`INSTALL_OBSERVER_WITNESS_CORRUPT\`; no update is marked successful.
