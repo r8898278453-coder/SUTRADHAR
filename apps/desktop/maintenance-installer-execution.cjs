@@ -7,6 +7,7 @@
  * Owner intervention; it must never auto-retry.
  */
 'use strict';
+const {evidenceEntryPresent}=require('./maintenance-evidence-presence.cjs');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {spawn}=require('node:child_process');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
@@ -115,7 +116,7 @@ async function launchStagedInstaller({dir,node,agentIds,observedVersion,
     pinnedPublicKeyPem:pinnedExecutionPublicKeyPem,prepared:ready,now});
   const attemptPath=path.join(dir,'installer-execution-attempt.json');
   const launchedPath=path.join(dir,'installer-execution-launch-observed.json');
-  if(fs.existsSync(attemptPath)||fs.existsSync(launchedPath))
+  if(evidenceEntryPresent(attemptPath)||evidenceEntryPresent(launchedPath))
     fail('UPDATE_EXECUTION_ATTEMPT_ALREADY_EXISTS_OWNER_REVIEW');
   // Verify actual STAGED bytes, not merely the original downloaded EXE.
   const signature=authenticode({installerPath:stagedPath,

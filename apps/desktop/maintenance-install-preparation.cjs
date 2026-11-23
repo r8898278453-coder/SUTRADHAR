@@ -4,6 +4,7 @@
  * This never runs an EXE, changes installation, restores vault or releases hold.
  */
 'use strict';
+const {evidenceEntryPresent}=require('./maintenance-evidence-presence.cjs');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
@@ -99,7 +100,7 @@ async function prepareInstaller({dir,installerPath,envelope,node,agentIds,
     fail('UPDATE_PREPARE_AUTHENTICODE_REQUIRED');
   const attemptFile=path.join(dir,'installer-preparation-attempt.json');
   const readyFile=path.join(dir,'installer-preparation-ready.json');
-  if(fs.existsSync(attemptFile)||fs.existsSync(readyFile))
+  if(evidenceEntryPresent(attemptFile)||evidenceEntryPresent(readyFile))
     fail('UPDATE_PREPARE_PREVIOUS_ATTEMPT_OWNER_REVIEW');
   async function signedRead(uri){
     const h=signer.sign({kind:'node_api',method:'GET',uri,body:''});
@@ -169,7 +170,7 @@ async function prepareInstaller({dir,installerPath,envelope,node,agentIds,
   if(Date.now()>=envelope.signed.expires_ms)
     fail('UPDATE_PREPARE_OFFER_EXPIRED_DURING_CHECK');
   const escrow=path.join(dir,'installer-escrow');
-  if(fs.existsSync(escrow)){
+  if(evidenceEntryPresent(escrow)){
     const st=fs.lstatSync(escrow);
     if(!st.isDirectory()||st.isSymbolicLink()||
        fs.readdirSync(escrow).length)

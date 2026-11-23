@@ -5,6 +5,7 @@
  * Central DRAINED / idle-worker / cluster checks. Never releases the hold.
  */
 'use strict';
+const {evidenceEntryPresent}=require('./maintenance-evidence-presence.cjs');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
@@ -173,7 +174,7 @@ async function observePostInstall({dir,node,agentIds,observedVersion,
      !Number.isSafeInteger(now)||now<0)
     fail('POSTINSTALL_WINDOWS_ENROLLED_PC_REQUIRED');
   const origin=validOrigin(centralOrigin);
-  if(fs.existsSync(path.join(dir,'installer-postinstall-observed.json')))
+  if(evidenceEntryPresent(path.join(dir,'installer-postinstall-observed.json')))
     fail('POSTINSTALL_OBSERVATION_ALREADY_RECORDED');
   const before=baseEvidence({dir,node,agentIds,observedVersion});
   if(!/^CN=.{1,220}$/.test(publisherSubject||''))
@@ -260,7 +261,7 @@ async function observePostInstall({dir,node,agentIds,observedVersion,
      lastPub.publisher_subject!==published.publisher_subject||
      lastPub.installation_success_proven!==false)
     fail('POSTINSTALL_INSTALLED_APP_CHANGED');
-  if(fs.existsSync(path.join(dir,'installer-postinstall-observed.json')))
+  if(evidenceEntryPresent(path.join(dir,'installer-postinstall-observed.json')))
     fail('POSTINSTALL_OBSERVATION_ALREADY_RECORDED');
   const payload={schema:1,state:'TARGET_VERSION_IDENTITY_CENTRAL_OBSERVED',
     node_id:node.node_id,plan_id:before.ready.plan_id,
