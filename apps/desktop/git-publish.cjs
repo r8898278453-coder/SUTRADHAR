@@ -22,6 +22,16 @@ const REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const ORIGIN=/^https:\/\/[a-z0-9.-]+(?::443)?$/i;
 const fail=code=>{throw Error(code);};
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
+function journalEntryPresent(file,{io=fs}={}){
+  if(typeof file!=='string'||!path.isAbsolute(file)||!io||
+     typeof io.lstatSync!=='function')
+    fail('GIT_PUBLISH_JOURNAL_PATH_INVALID');
+  try{io.lstatSync(file);return true;}
+  catch(error){
+    if(error?.code==='ENOENT')return false;
+    fail('GIT_PUBLISH_JOURNAL_INSPECTION_UNCERTAIN_OWNER_REVIEW');
+  }
+}
 function validatePolicy(policy){
   if(!policy||policy.schema!==1||policy.enabled!==true||
      policy.credential_mode!=='GCM_PRECONFIGURED_NONINTERACTIVE'||
@@ -198,11 +208,11 @@ async function publishReviewedCandidate({origin,agentId,ticketId,signer,
   const approved=validatePolicy(policy),dir=safeDir(evidenceDir);
   const intentPath=path.join(dir,'git_publish_'+ticketId+'_intent.json');
   const receiptPath=path.join(dir,'git_publish_'+ticketId+'_receipt.json');
-  if(fs.existsSync(intentPath)||fs.existsSync(receiptPath))
+  if(journalEntryPresent(intentPath)||journalEntryPresent(receiptPath))
     fail('GIT_PUBLISH_PREVIOUS_ATTEMPT_OWNER_RECONCILIATION');
   const v=await inspectLocalQa({origin,agentId,ticketId,signer,dir,fetcher});
   if(!v.report.test_passed||v.remote.status!=='INTEGRATING'||
-     !fs.existsSync(path.join(dir,'qa_central_receipt_'+ticketId+'_receipt.json')))
+     !journalEntryPresent(path.join(dir,'qa_central_receipt_'+ticketId+'_receipt.json')))
     fail('GIT_PUBLISH_REVIEWED_PASS_REQUIRED');
   const localReceipt=readRecord(path.join(dir,'qa_central_receipt_'+ticketId+'_receipt.json'));
   if(JSON.stringify(localReceipt.context)!==JSON.stringify(v.context))
@@ -298,4 +308,5 @@ async function publishReviewedCandidate({origin,agentId,ticketId,signer,
     }});
 }
 module.exports={publishReviewedCandidate,validatePolicy,
-  refsFor,parseRefs,publicationPushArgs,strictPreflight,verifySingleCommit};
+  refsFor,parseRefs,publicationPushArgs,strictPreflight,verifySingleCommit,
+  journalEntryPresent};

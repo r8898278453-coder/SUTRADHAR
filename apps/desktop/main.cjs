@@ -31,6 +31,7 @@ const {checkRecovery}=require('./maintenance-recovery-preflight.cjs');
 const {releaseHold,boundedFile}=require('./maintenance-release-executor.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
 const {requireNoInstallerIncident}=require('./maintenance-install-incident-barrier.cjs');
+const {summarizeMaintenanceEvidence}=require('./maintenance-status-evidence.cjs');
 const {inspectAgentSession,requireNoAgentSession,beginAgentSession,finishObservedSession}=require('./agent-session-fence.cjs');
 const {classifyObservedAgentExit}=require('./agent-session-exit-policy.cjs');
 const {inspectCrashEvidence}=require('./agent-crash-evidence.cjs');
@@ -101,44 +102,11 @@ function safeStatus(){
       if(enrollmentState==='SUBMITTED')pendingEnrollmentCode=null;
     }
   }catch(e){enrollmentState='OWNER_REVIEW_REQUIRED';enrollmentError=String(e.message||e).slice(0,100);}
-  let failedRecoveryApproval='NOT_RECORDED';
-  try{
-    if(fs.existsSync(path.join(nodeDir(),'installer-failure-exception-reviewed.json')))
-      failedRecoveryApproval='OWNER_REVIEW_RECORDED_NO_RELEASE';
-  }catch{failedRecoveryApproval='OWNER_REVIEW_REQUIRED';}
-  let failedInstallReview='NOT_RECORDED';
-  try{
-    if(fs.existsSync(path.join(nodeDir(),'installer-failure-review-observed.json')))
-      failedInstallReview='OLD_VERSION_OBSERVED_OUTCOME_UNKNOWN';
-  }catch{failedInstallReview='OWNER_REVIEW_REQUIRED';}
-  let postInstallObservation='NOT_RECORDED';
-  try{
-    if(fs.existsSync(path.join(nodeDir(),'installer-postinstall-observed.json')))
-      postInstallObservation='OBSERVATION_RECORDED_NOT_INSTALL_PROVEN';
-  }catch{postInstallObservation='OWNER_REVIEW_REQUIRED';}
-  let persistentObserver='NO_WITNESS_OUTCOME_UNKNOWN';
-  try{
-    if(fs.existsSync(path.join(nodeDir(),'installer-process-observer-unsigned.json')))
-      persistentObserver='UNTRUSTED_PROCESS_LIVENESS_WITNESS_PRESENT';
-  }catch{persistentObserver='OWNER_REVIEW_REQUIRED';}
-  let directInstallerExit='NOT_OBSERVED';
-  try{
-    if(fs.existsSync(path.join(nodeDir(),'installer-direct-exit-observed.json')))
-      directInstallerExit='UNVERIFIED_DIRECT_EXIT_RECEIPT_PRESENT';
-  }catch{directInstallerExit='OWNER_REVIEW_REQUIRED';}
-  let installerExecution='NOT_ATTEMPTED';
-  try{
-    if(fs.existsSync(path.join(nodeDir(),'installer-execution-attempt.json')))
-      installerExecution=fs.existsSync(path.join(nodeDir(),'installer-execution-launch-observed.json'))?
-        'LAUNCH_RECEIPT_PRESENT_INSTALL_UNKNOWN':'ATTEMPT_UNCERTAIN_OWNER_REVIEW';
-  }catch{installerExecution='UNKNOWN_OWNER_REVIEW';}
-  let installerPreparation='NONE';
-  try{
-    const attempt=path.join(nodeDir(),'installer-preparation-attempt.json');
-    const ready=path.join(nodeDir(),'installer-preparation-ready.json');
-    if(fs.existsSync(attempt)||fs.existsSync(ready))
-      installerPreparation=fs.existsSync(ready)?'STAGED_NOT_INSTALLED':'INTERRUPTED_OWNER_REVIEW';
-  }catch{installerPreparation='ERROR_OWNER_REVIEW';}
+  // Filename presence is a diagnostic hint only. Never display a dangling or
+  // unsigned record as a completed Owner review or installed application.
+  const {failedRecoveryApproval,failedInstallReview,postInstallObservation,
+    persistentObserver,directInstallerExit,installerExecution,
+    installerPreparation}=summarizeMaintenanceEvidence({dir:nodeDir()});
   let maintenanceHold='NONE';
   try{if(requiresReconciliation(nodeDir()))maintenanceHold='RELEASE_RECONCILIATION_REQUIRED';}
   catch{maintenanceHold='CORRUPT_OWNER_REVIEW_REQUIRED';}

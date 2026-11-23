@@ -83,6 +83,7 @@
       "maintenance-failure-owner-review.cjs",
       "failure-review-trust.json",
       "maintenance-evidence-presence.cjs",
+      "maintenance-status-evidence.cjs",
       "maintenance-install-incident-barrier.cjs",
       "agent-session-fence.cjs",
       "agent-session-exit-policy.cjs",

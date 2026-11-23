@@ -912,3 +912,22 @@ A POSIX regression swaps the parent while preserving exact file bytes and
 asserts refusal; Windows filesystem junction acceptance is an outstanding
 physical G4/G6 review, not a CI assertion. Source/CI verification never
 promotes signed evidence to real-world release authorization.
+
+## 24 November 2026 — Desktop Owner status and one-shot Git evidence visibility
+
+`maintenance-status-evidence.cjs` now provides a read-only, packaged,
+testable Desktop UI summary. Filename presence, including dangling
+symlinks, is displayed as **UNVERIFIED** evidence rather than claiming a
+completed signed Owner review, verified post-install or successful install.
+Any inspection uncertainty produces Owner-review text; no UI status grants
+installer execution, agent restart, retry or maintenance HOLD release.
+Electron Main uses this shared summary; normal staged preparation remains
+an unverified presence hint until independent signed verification.
+
+The QA-PC `git-publish.cjs` now checks prior one-shot intent/receipt by
+`lstat` entry presence (only ENOENT is absent), so a dangling interrupted
+journal blocks a new attempt **before** QA/Central preflight, not merely
+at the later exclusive write. Required QA receipt presence uses the same
+refusal semantics and is still cryptographically verified by the existing
+reader. Test-only symlink, uncertain I/O and source-contract regressions
+were added. Remote Git side effects, live releases and G4–G7 remain HOLD.
