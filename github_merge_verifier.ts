@@ -81,14 +81,19 @@ export async function verifyGitHubMergeEvidence(input: MergeVerificationInput):
     const pr = matching[0];
     const headSha = String(pr.head.sha);
     const mergeSha = String(pr.merge_commit_sha);
-    const [headCommit, mergedCommit, files, checks, reviews, ancestry] = await Promise.all([
+    const [headCommit, mergedCommit, files, checks, reviews, ancestry, baseProtection] = await Promise.all([
       getJson(`/git/commits/${headSha}`),
       getJson(`/git/commits/${mergeSha}`),
       getJson(`/pulls/${pr.number}/files?per_page=100`),
       getJson(`/commits/${headSha}/check-runs?per_page=100`),
       getJson(`/pulls/${pr.number}/reviews?per_page=100`),
-      getJson(`/compare/${mergeSha}...${encodeURIComponent(branch)}`)
+      getJson(`/compare/${mergeSha}...${encodeURIComponent(branch)}`),
+      // GitHub's branch.protected includes enabled classic protection and
+      // applicable rulesets. A missing/false read is a release evidence HOLD.
+      getJson(`/branches/${encodeURIComponent(branch)}`)
     ]);
+    if(baseProtection?.protected!==true)
+      return deny('GITHUB_BASE_BRANCH_NOT_PROTECTED');
     // Exactly one code commit built on the immutable tested Git baseline.
     if (headCommit?.sha !== headSha ||
         !Array.isArray(headCommit?.parents) || headCommit.parents.length !== 1 ||

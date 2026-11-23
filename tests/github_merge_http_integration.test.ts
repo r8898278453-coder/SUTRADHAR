@@ -85,6 +85,8 @@ test('HTTP GitHub merge approval uses signed durable lease and actual tested tre
     const body = (data: unknown) => new Response(JSON.stringify(data), {
       status: 200, headers: { 'Content-Type': 'application/json' }
     });
+    if (pathname.endsWith('/branches/main'))
+      return body({protected:true,commit:{sha:BASE}});
     if (pathname.endsWith('/pulls')) return body([{
       number: 24, commits: 1, changed_files: 1, draft: false,
       merged_at: '2026-11-06T18:30:00Z', merge_commit_sha: MERGE,

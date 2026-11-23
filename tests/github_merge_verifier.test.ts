@@ -20,6 +20,7 @@ type Fixture = {
   checkCountOverride?: number;
   onMain?: boolean;
   commits?: number;
+  protected?: boolean;
 };
 
 function input(overrides: Fixture = {}) {
@@ -27,7 +28,7 @@ function input(overrides: Fixture = {}) {
     merged: true, tree: TREE, mergedTree: TREE, parent: BASE,
     filenames: ['src/safe.ts'], checkSuccess: true,
     approve: true, reviewCommit: HEAD, changesRequested: false,
-    checkCountOverride: 1, onMain: true, commits: 1, ...overrides
+    checkCountOverride: 1, onMain: true, commits: 1, protected: true, ...overrides
   };
   const fetcher: GitHubFetcher = async (url: string) => {
     const pathname = new URL(url).pathname;
@@ -46,6 +47,8 @@ function input(overrides: Fixture = {}) {
       base: { ref: 'main', repo: { full_name: 'acme/widgets' } }
     };
     if (pathname.endsWith('/pulls')) return response([pr]);
+    if (pathname.endsWith('/branches/main'))
+      return response({protected:opts.protected,commit:{sha:BASE}});
     if (pathname.endsWith('/git/commits/' + HEAD))
       return response({ sha: HEAD, parents: [{ sha: opts.parent }], tree: { sha: opts.tree } });
     if (pathname.endsWith('/git/commits/' + MERGED))
@@ -96,6 +99,7 @@ for (const [name, options, reason] of [
   ['change request still active', { changesRequested: true }, 'GITHUB_REVIEW_CHANGES_REQUESTED'],
   ['incomplete check-run page', { checkCountOverride: 3 }, 'GITHUB_REQUIRED_CHECKS_MISSING'],
   ['merge absent on main', { onMain: false }, 'GITHUB_MERGE_NOT_ON_MAIN'],
+  ['unprotected target main', { protected: false }, 'GITHUB_BASE_BRANCH_NOT_PROTECTED'],
   ['multiple head commits', { commits: 2 }, 'GITHUB_MERGED_PR_NOT_UNAMBIGUOUS']
 ] as const) {
   test(name + ' is denied', async () => {
