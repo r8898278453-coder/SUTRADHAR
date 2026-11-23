@@ -717,3 +717,23 @@ check and unlink. The private identity directory, Electron one-instance
 owner, safe observed child-exit classification and real physical Windows
 acceptance are still mandatory. No automatic crash recovery or release
 permission is added. G4/G6 HOLD.
+
+
+## 23 November 2026 — Installer authorization local receipt read hardening
+
+The Owner-gated Windows offline update/rollback preparation and launch
+paths previously lstat-checked local signed receipts, then read those
+records again by pathname. A local symlink/file replacement during the
+read could bypass initial file-type/size/permissions checks. Both
+maintenance-install-preparation.cjs and
+maintenance-installer-execution.cjs now reuse os-vault.cjs
+readStableLocalFile (bounded 8 KiB, exact descriptor and pathname
+identity/mode checks before and after reading), with strict UTF-8
+decoding. A changed, exposed or symlinked receipt is a recovery HOLD
+rather than usable execution authorization. Tests induce a symlink swap
+after initial lstat, exposed POSIX file and source contract
+regressions. Existing Ed25519 local receipts, signed Central fence,
+Owner installer-execution grant, Authenticode, staged executable hash,
+noninteractive script limits and no automatic retry remain separate
+mandatory conditions. Windows physical installed update/rollback and
+power-loss acceptance G6 HOLD.

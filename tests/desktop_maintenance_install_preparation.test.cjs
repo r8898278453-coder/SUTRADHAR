@@ -234,3 +234,40 @@ test('oversized signed Central response never creates preparation attempt',()=>m
   assert.equal(fs.existsSync(path.join(nodeDir,'installer-preparation-ready.json')),false);
   assert.equal(inspectHold({dir:nodeDir,nodeId}).active,true);
 }));
+
+test('prepared installer evidence refuses symlink swapped after initial lstat',()=>makeDir(async dir=>{
+  if(process.platform==='win32')return;
+  const {params,nodeDir}=setup(dir);
+  await prepareInstaller(params);
+  const ready=path.join(nodeDir,'installer-preparation-ready.json');
+  const original=path.join(nodeDir,'original-ready.json');
+  let replaced=false;
+  const open=fs.openSync;
+  try{
+    fs.openSync=function(file,...args){
+      if(file===ready&&!replaced){
+        replaced=true;
+        fs.renameSync(ready,original);
+        fs.symlinkSync(original,ready);
+      }
+      return open.call(fs,file,...args);
+    };
+    assert.throws(()=>inspectPreparedIdentity({dir:nodeDir,node,
+      agentIds:[agentId],observedVersion:'7.2.0'}),
+      /UPDATE_IDENTITY_POSTCHECK_RECEIPT_CORRUPT/);
+  }finally{fs.openSync=open;}
+  assert.equal(replaced,true);
+  assert.equal(fs.lstatSync(ready).isSymbolicLink(),true);
+  assert.equal(inspectHold({dir:nodeDir,nodeId}).active,true);
+}));
+test('unsafe or exposed POSIX installer preparation evidence never passes postcheck',()=>makeDir(async dir=>{
+  if(process.platform==='win32')return;
+  const {params,nodeDir}=setup(dir);
+  await prepareInstaller(params);
+  const ready=path.join(nodeDir,'installer-preparation-ready.json');
+  fs.chmodSync(ready,0o644);
+  assert.throws(()=>inspectPreparedIdentity({dir:nodeDir,node,
+    agentIds:[agentId],observedVersion:'7.2.0'}),
+    /UPDATE_IDENTITY_POSTCHECK_RECEIPT_CORRUPT/);
+  assert.equal(fs.existsSync(ready),true,'evidence is retained for Owner review');
+}));

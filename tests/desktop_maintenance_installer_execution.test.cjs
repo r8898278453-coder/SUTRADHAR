@@ -321,3 +321,10 @@ test('oversized Central evidence never creates installer attempt or process',()=
   assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-execution-attempt.json')),false);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
 }));
+
+test('installer execution reads signed preparation ready receipt by bounded descriptor',()=>{
+  const main=fs.readFileSync(path.resolve(__dirname,
+    '../apps/desktop/maintenance-installer-execution.cjs'),'utf8');
+  assert.match(main,/readStableLocalFile\(file,\{minBytes:100,maxBytes:max\}\)/);
+  assert.doesNotMatch(main,/JSON\.parse\(fs\.readFileSync\(file,'utf8'\)\)/);
+});

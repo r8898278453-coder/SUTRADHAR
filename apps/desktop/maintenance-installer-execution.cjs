@@ -18,18 +18,17 @@ const {createDirectExitTracker}=require('./maintenance-installer-direct-exit.cjs
 const {launchPersistentObserver}=require('./maintenance-installer-persistent-observer.cjs');
 const {validOrigin}=require('./update-readiness.cjs');
 const {sha256File}=require('./update-policy.cjs');
+const {readStableLocalFile}=require('./os-vault.cjs');
 const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const HEX=/^[0-9a-f]{64}$/;
 const PREFIX='SUTRADHAR_INSTALL_EXECUTION_V1\n';
 function fail(code){throw Error(code);}
 function boundedJson(file,max=8192){
-  let stat,value;
+  let value;
   try{
-    stat=fs.lstatSync(file);
-    if(!stat.isFile()||stat.isSymbolicLink()||stat.size<100||stat.size>max)
-      fail('UPDATE_EXECUTION_JOURNAL_INVALID');
-    value=JSON.parse(fs.readFileSync(file,'utf8'));
+    value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(
+      readStableLocalFile(file,{minBytes:100,maxBytes:max})));
   }catch{fail('UPDATE_EXECUTION_JOURNAL_CORRUPT_OWNER_REVIEW');}
   if(!value||typeof value!=='object'||Array.isArray(value))
     fail('UPDATE_EXECUTION_JOURNAL_CORRUPT_OWNER_REVIEW');

@@ -11,6 +11,7 @@ const {validOrigin}=require('./update-readiness.cjs');
 const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const {verifyOffer,sha256File}=require('./update-policy.cjs');
 const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
+const {readStableLocalFile}=require('./os-vault.cjs');
 const NODE=/^node_[0-9a-f]{32}$/;
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const HEX=/^[0-9a-f]{64}$/;
@@ -219,12 +220,10 @@ function inspectPreparedIdentity({dir,node,agentIds,observedVersion}={}){
     fail('UPDATE_IDENTITY_POSTCHECK_ARGUMENTS_INVALID');
   const identity=identityEvidence(node,agentIds);
   function read(file){
-    let st,p;
+    let p;
     try{
-      st=fs.lstatSync(path.join(dir,file));
-      if(!st.isFile()||st.isSymbolicLink()||st.size<200||st.size>8192)
-        fail('UPDATE_IDENTITY_POSTCHECK_RECEIPT_INVALID');
-      p=JSON.parse(fs.readFileSync(path.join(dir,file),'utf8'));
+      p=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(
+        readStableLocalFile(path.join(dir,file),{minBytes:200,maxBytes:8192})));
     }catch{fail('UPDATE_IDENTITY_POSTCHECK_RECEIPT_CORRUPT');}
     return p;
   }

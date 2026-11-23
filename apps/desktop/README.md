@@ -415,3 +415,14 @@ the Owner-review hold instead of silently clearing uncertainty.
 A safe tracked child exit is still required, and Node cannot provide
 atomic inode-conditional unlink against hostile local processes.
 Physical multi-PC, Windows reboot and signed-update tests still HOLD.
+
+
+## 23 November 2026 — Private staged-update receipts
+
+Before any signed Windows installer can be launched, local preparation
+receipts are now read from stable bounded file descriptors and strict
+UTF-8, not an independent pathname read after lstat. Symlink or
+concurrent regular-file swaps and exposed permissions keep Owner HOLD.
+This does not authorize download, unattended install, restart,
+rollback, or production release; actual signed installed and rebooted
+Windows device acceptance is still outstanding.
