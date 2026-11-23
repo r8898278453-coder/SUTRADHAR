@@ -75,3 +75,28 @@ still demands actual DB credentials and exact staging-target Owner approval,
 validated before decrypting the archive. Plaintext is zeroed best-effort
 after verify or restore, but JS copies and child-memory cannot be guaranteed
 erased. Code/CI proof does not replace real Hostinger G2 acceptance.
+
+
+## 23 November 2026 — Descriptor-safe archive reads, no path-switch window
+
+Both `ops:verify-backup`/`ops:restore-staging` and
+`ops:verify-staging-restore` formerly did a safe-looking `lstatSync`
+and then **read by pathname again**, creating a file/symlink swap window.
+They now share `scripts/ops/backup-safe-read.cjs`: open the exact
+archive as a read-only OS file descriptor, request O_NOFOLLOW where
+supported, compare initial lstat with opened fstat, perform an exact
+bounded positional read, then verify both the still-open descriptor
+and on-disk pathname identify the same unchanged regular file. The
+maximum encrypted archive remains `2 * 80 MiB`; no unbounded
+`readFileSync` fallback is permitted. Negative tests deliberately
+replace the archive with a symlink between lstat and open, replace
+a regular file while reading, and simulate premature EOF. Any such
+uncertainty blocks offline authentication/staging verification before
+decrypting or connecting to MySQL. AES-GCM authentication and Owner
+staging target approval remain separately mandatory.
+
+This protects a single operator-process read against the described
+path swap, **not** against arbitrary privileged file changes after
+verification, a malicious operator host, or historical source mutations.
+Real encrypted off-host backup/restore on Owner-provisioned Hostinger
+staging is still G2 HOLD.

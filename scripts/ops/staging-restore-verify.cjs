@@ -5,8 +5,9 @@
  * establish source quiescence, backup timing and production authorization.
  */
 'use strict';
-const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
-const {decryptDump,MAX_DUMP_BYTES}=require('./backup-crypto.cjs');
+const path=require('node:path'),crypto=require('node:crypto');
+const {readEncryptedArchive}=require('./backup-safe-read.cjs');
+const {decryptDump}=require('./backup-crypto.cjs');
 const DB=/^[A-Za-z0-9_]{1,64}$/,HEX=/^[0-9a-f]{64}$/;
 const PAGE=256,MAX_TABLES=128,MAX_PER_TABLE=100000,MAX_TOTAL=500000;
 const MAX_ROW=1024*1024,MAX_DATA=256*1024*1024;
@@ -157,10 +158,9 @@ async function main(){
   validate(args);
   const file=process.env.SUTRADHAR_ENCRYPTED_BACKUP_PATH||'';
   if(!path.isAbsolute(file))abort('RESTORE_VERIFY_BACKUP_ABSOLUTE_PATH_REQUIRED');
-  const st=fs.lstatSync(file);
-  if(!st.isFile()||st.isSymbolicLink()||st.size<1||
-     st.size>MAX_DUMP_BYTES*2)abort('RESTORE_VERIFY_BACKUP_FILE_UNSAFE');
-  const encrypted=fs.readFileSync(file);
+  let encrypted;
+  try{encrypted=readEncryptedArchive(file);}
+  catch{abort('RESTORE_VERIFY_BACKUP_FILE_UNSAFE');}
   if(hash(encrypted)!==args.expectedBackupSha)
     abort('RESTORE_VERIFY_BACKUP_SHA_MISMATCH');
   const key=process.env.SUTRADHAR_BACKUP_KEY_BASE64||'';

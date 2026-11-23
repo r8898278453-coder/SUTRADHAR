@@ -604,3 +604,17 @@ includes the helper in `app.asar` with exact-file integrity checks;
 the child also bundles it. **This untrusted local UI snapshot is
 not a signed Central receipt, and cannot grant election, restart,
 QA review or release.** G4–G6 remain HOLD.
+
+
+## 23 November 2026 — Backup archive path-swap protection
+
+A common `backup-safe-read.cjs` descriptor-based bounded reader now
+protects offline encrypted archive verify, staging restore and
+independent staging source/target postcheck against archive path
+replacement between lstat and pathname read. It verifies opened
+descriptor identity, size, post-read metadata and final pathname,
+rejects symlink/swap/truncation, and retains the fixed 160 MiB
+encrypted-size ceiling. New tests simulate symlink replacement
+after lstat, regular-file replacement mid-read, premature EOF and
+normal authenticated archive. This is code/CI assurance only; real
+off-host backup and independent empty-staging MySQL restore G2 HOLD.

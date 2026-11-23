@@ -14,6 +14,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const crypto=require('node:crypto'),cp=require('node:child_process');
 const {encryptDump,decryptDump,MAX_DUMP_BYTES}=require('./backup-crypto.cjs');
 const {writeEncryptedArchive}=require('./backup-atomic-write.cjs');
+const {readEncryptedArchive}=require('./backup-safe-read.cjs');
 const action=process.argv[2];
 if(!['backup','verify','restore'].includes(action))throw Error('Usage: node mysql-ops.cjs backup|verify|restore');
 const sourceDb=process.env.DB_NAME||'';
@@ -74,10 +75,10 @@ async function main(){
     !/(?:^|_)(?:staging|disposable|test|ci)(?:_|$)/i.test(target)||
     process.env.SUTRADHAR_EXPECTED_TARGET_DB_NAME!==target))
     throw Error('STAGING_RESTORE_BLOCKED: empty staging/test DB, exact expected name and approval required');
-  const stat=fs.lstatSync(output);
-  if(!stat.isFile()||stat.isSymbolicLink()||stat.size<1||
-     stat.size>MAX_DUMP_BYTES*2)throw Error('BACKUP_FILE_UNSAFE');
-  const verified=decryptDump(fs.readFileSync(output),{
+  let archived;
+  try{archived=readEncryptedArchive(output);}
+  catch{throw Error('BACKUP_FILE_UNSAFE');}
+  const verified=decryptDump(archived,{
     keyBase64:key,expectedSourceDb:sourceDb});
   try{
     if(action==='verify'){
