@@ -14,6 +14,7 @@ const {spawn,spawnSync}=require('node:child_process');
 const {verifyOffer,sha256File}=require('./update-policy.cjs');
 const {checkReadiness}=require('./update-readiness.cjs');
 const {verifyCentralHealth}=require('./central-health.cjs');
+const {readDesktopSettings,writeDesktopSettings}=require('./settings-store.cjs');
 const {recordInspection}=require('./update-inspection-journal.cjs');
 const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
 const {prepareInstaller,inspectPreparedIdentity}=require('./maintenance-install-preparation.cjs');
@@ -81,17 +82,8 @@ function nodeDir(){return path.join(home(),'node');}
 function configFile(){return path.join(home(),'desktop-settings.json');}
 function enrollmentReceiptPath(){return path.join(nodeDir(),'enrollment-receipt.json');}
 function legacyEnrollmentMarker(){return path.join(nodeDir(),'enrollment_requested');}
-function readSettings(){
-  if(!fs.existsSync(configFile()))return null;
-  return validateSettings(JSON.parse(fs.readFileSync(configFile(),'utf8')));
-}
-function writeSettings(x){
-  fs.mkdirSync(home(),{recursive:true,mode:0o700});
-  const tmp=configFile()+'.'+process.pid+'.tmp';
-  fs.writeFileSync(tmp,JSON.stringify(x,null,2)+'\n',{mode:0o600,flag:'wx'});
-  fs.renameSync(tmp,configFile());
-  try{fs.chmodSync(configFile(),0o600);}catch{}
-}
+function readSettings(){return readDesktopSettings({file:configFile()});}
+function writeSettings(x){return writeDesktopSettings({file:configFile(),settings:x});}
 function agentScript(){
   return app.isPackaged
     ?path.join(process.resourcesPath,'secure-agent.cjs')

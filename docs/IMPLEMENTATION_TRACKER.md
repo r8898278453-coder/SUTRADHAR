@@ -528,3 +528,18 @@ wrong secure-agent bytes and leaked Central/identity material. This is
 build artifact integrity, NOT executing the NSIS installer, launching
 Electron, testing OS vault persistence, or verifying physical Windows
 code-signing: G3/G4/G6 remain pending external acceptance.
+
+
+## 23 November 2026 — Immutable bounded first-run PC settings
+
+Desktop setup's previous unbounded `desktop-settings.json` read and
+unconditional rename-based config rewrite have been replaced by
+`settings-store.cjs`. It validates only the exact Central HTTPS URL,
+friendly PC name and agent IDs, reads at most 4 KiB, refuses symlinks,
+invalid UTF-8 and unexpected secret fields, and creates the initial
+settings file with a fully fsynced temp plus an atomic exclusive hard link.
+Two competing OS processes cannot both publish or overwrite an existing
+roster; negative tests check corruption, symlinks and duplicate IDs.
+The new runtime file is included in the Windows ASAR allowlist and actual
+package integrity gate. This is local config hardening, NOT a proof of
+physical Windows encrypted vault acceptance or update/rollback. G4/G6 HOLD.

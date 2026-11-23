@@ -351,3 +351,13 @@ reviewed source, then independently verify the external secure-agent
 bundle. Static package closure alone was insufficient. Failure leaves
 the package unapproved and unpublished. A successful inspection does not
 prove a Windows installer can be executed or correctly signed.
+
+
+## One-time PC settings registration
+
+The local `desktop-settings.json` now has a maximum 4-KiB bounded
+read and a create-once write. Duplicate setup cannot overwrite an
+existing PC roster or silently change Central. Invalid or symlinked
+settings require Owner recovery, not identity deletion. This helper
+is included in actual Windows ASAR verification. No physical Windows
+installer/DPAPI acceptance is implied.
