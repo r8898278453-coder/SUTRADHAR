@@ -17,6 +17,34 @@ Encrypted backup authentication proves the archive format and AES-256-GCM tag. R
 5. Independently review that the backup and restored state relate to the same frozen source, the real Hostinger deployment log, schema migration plan, test cases, measured restore time and risk assessment. A matching row digest alone does not justify production rollout or migration.
 6. Only after separately gathering real CI, Hostinger, Windows signing and physical-PC evidence for G0–G7, produce an Owner-signed acceptance index. Run existing ops:verify-owner-acceptance for signature/format checks. Then optionally run ops:verify-owner-evidence-files with separate private local file mapping to confirm each of the eight referenced hashes matches real accessible local bytes. Both verification commands remain inspection-only and never grant production permission.
 
+## Operator-only environment for approved **empty staging restore**
+
+Use a separate MySQL **restore-only** login with privileges only on the new, EMPTY
+staging schema. Never use the Central runtime login, root/admin, a shared hosting
+superuser, or a username that can read/write the source or production database.
+Have an independent DBA check the real effective privileges/roles in MySQL,
+then store these values privately on the trusted operator machine:
+
+- DB_HOST, DB_PORT: approved reachable staging DB endpoint. Obtain connection instructions from Hostinger; never expose the DB port publicly merely to make the CLI work.
+- DB_NAME: exact name of the frozen backup's SOURCE database; this is a metadata binding, not permission to access it from the restore login.
+- DB_USER, DB_PASSWORD: dedicated STAGING restore login and its protected password.
+- SUTRADHAR_EXPECTED_RESTORE_DB_USER: the **exact same approved** staging DB_USER, entered separately by the Owner. Mismatch blocks the restore before connection.
+- SUTRADHAR_TARGET_DB_NAME: exact EMPTY, separately named staging schema. Its name must contain an approved staging/test token.
+- SUTRADHAR_EXPECTED_TARGET_DB_NAME: Owner's separate exact repeated target name.
+- SUTRADHAR_RESTORE_STAGING_APPROVED=yes: Owner approval for this one staging action, not blanket future permission.
+- SUTRADHAR_ENCRYPTED_BACKUP_PATH: absolute path to immutable encrypted archive verified separately.
+- SUTRADHAR_BACKUP_KEY_BASE64: source backup's AES-256 key, loaded from an off-repository secrets manager.
+
+Only after checking the actual server, target emptiness and restricted grants,
+run **npm run ops:restore-staging**. This command sends decrypted SQL directly
+to the local MySQL client; it does not create a plaintext SQL disk file and
+does not run on Hostinger itself. On any error, STOP: MySQL DDL can partially
+commit, so do not automatically retry or reuse the target. Archive authentication,
+SQL preflight, exact user/target binding and the empty-schema check are
+necessary safeguards, **not guarantees of total SQL safety or server permissions**.
+Do not treat a printed restore receipt as acceptance; continue with the
+independent read-only verification below.
+
 ## Operator-only environment for read-only staging restore verification
 
 Set these values privately on a trusted workstation, not in a PR, terminal recording or chat:

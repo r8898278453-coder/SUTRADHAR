@@ -24,6 +24,19 @@ This guide turns the last production prerequisites into a clear list of **accoun
 | A7 | Open https://STAGING_DOMAIN/v7/health | ready:true, authority:mysql, api_protocol:7 |
 | A8 | Set the exact Owner-controlled **GitHub repository variable** `SUTRADHAR_STAGING_ALLOWED_HOSTNAME` to your staging hostname (example: `stage.yourdomain.com`), **without** `https://`, path, port or secret. Then, only after reviewed workflow merge, run **Hostinger Staging - Verify Only** with that exact HTTPS URL and deployed 40-character SHA. | Same pinned hostname, safe public DNS answer and bounded responses confirmed; no automatic deployment |
 
+**Restore credential separation (G2):** The DB_USER in the staging website
+configuration is the Central application's runtime credential, not automatic
+permission to run a backup restore. For the independent operator restore,
+create/approve a separate login with grants **only** to the empty staging
+schema. On the trusted operator workstation, separately set
+SUTRADHAR_EXPECTED_RESTORE_DB_USER to the exact DB_USER before running
+npm run ops:restore-staging; protect its password and archive key outside
+GitHub, chat and deployment logs. The CLI refuses root/admin-style names,
+but only a DBA's actual GRANT and role inspection can prove no broader
+privileges. Follow the
+[staging restore runbook](V7_STAGING_RESTORE_INDEPENDENT_ACCEPTANCE.md)
+and require signed independent G2 evidence before production approval.
+
 **Important:** Creating a Node.js website consumes an applicable Hostinger site slot. Verify plan limits before adding. Hostinger's Node.js GitHub connection can **auto-deploy on every push to its selected branch**; don't connect an unprotected branch. This project does not use the separate PHP/HTML Advanced → Git setup.
 
 If external MySQL access is unavailable on Hostinger shared hosting, use hPanel's native backup/export feature and a separate staged restore. The project's off-host encrypted backup CLI requires a permitted MySQL client connection and must NOT be run as a continuous Hostinger background process.

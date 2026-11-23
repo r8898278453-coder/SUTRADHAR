@@ -138,7 +138,7 @@ A guarded Windows production signing tool now refuses unapproved, alpha, wrong-c
 
 For an authorized staging engineer there are three new commands:
 - npm run ops:hostinger-preflight — **read-only** staging HTTPS/MySQL/commit/UI check, only after a real site exists.
-- npm run ops:backup / ops:verify-backup / ops:restore-staging — authenticated encrypted MySQL backup and **approved empty staging-only** restore; may require off-host MySQL connection unavailable on some Hostinger shared accounts.
+- npm run ops:backup / ops:verify-backup / ops:restore-staging — authenticated encrypted MySQL backup and **approved empty staging-only** restore; may require off-host MySQL connection unavailable on some Hostinger shared accounts. Before restore, the Owner must separately set SUTRADHAR_EXPECTED_RESTORE_DB_USER to the exact DBA-reviewed staging-only DB_USER. Root/admin and any privileged cross-database login are prohibited; see the dedicated restore runbook for the complete list of protected settings.
 - npm run ops:pc-pilot — read-only before/after real PC snapshot and failover epoch check. It never simulates 2/3/8–10 physical machines.
 
 All five priorities' exact prerequisites, safe settings and acceptance steps are in the [production-readiness checklist](PRODUCTION_READINESS_V7_2026-11-12.md). **Nothing in this implementation constitutes owner permission to deploy, sign with your certificate, restore live data or take real PCs offline.**
