@@ -36,7 +36,8 @@ function fixture(fn){
       const prefix='SUTRADHAR_INSTALL_EXECUTION_V1\n';
       const signed={...value,signature_base64:crypto.sign(null,
         Buffer.from(prefix+JSON.stringify(value)),keys.privateKey).toString('base64')};
-      fs.writeFileSync(path.join(dir,name),JSON.stringify(signed));
+      // Production signed device journals are created as private mode-0600 files.
+      fs.writeFileSync(path.join(dir,name),JSON.stringify(signed),{mode:0o600});
     };
     save('installer-execution-attempt.json',attempt);
     save('installer-execution-launch-observed.json',launch);
