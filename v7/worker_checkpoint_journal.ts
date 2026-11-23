@@ -9,6 +9,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {ID_RE} from './rules.ts';
+import {journalEntryPresent,readStableJournal} from './journal_file.ts';
 
 export type CheckpointBody={
   request_id:string;agent_id:string;ticket_id:string;lease_id:string;
@@ -46,12 +47,11 @@ function validateDir(dir:string){
     fail('CHECKPOINT_INTENT_DIR_UNTRUSTED');
 }
 function read(file:string):IntentRecord{
-  const st=fs.lstatSync(file);
-  if(!st.isFile()||st.isSymbolicLink()||st.size<1||st.size>20000||
-     (process.platform!=='win32'&&(st.mode&0o077)!==0))
-    fail('CHECKPOINT_INTENT_FILE_UNTRUSTED');
+  let raw:Buffer;
+  try{raw=readStableJournal(file,{maxBytes:20000,requirePrivate:true});}
+  catch{fail('CHECKPOINT_INTENT_FILE_UNTRUSTED');}
   let data:any;
-  try{data=JSON.parse(fs.readFileSync(file,'utf8'));}
+  try{data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}
   catch{fail('CHECKPOINT_INTENT_CORRUPT');}
   if(!exactKeys(data,['schema_version','body','hash_sha256'])||
     data.schema_version!==1||!validate(data.body)||
@@ -71,7 +71,7 @@ export function getOrCreateCheckpointIntent(input:{
     summary,next_action};
   const probe={request_id:'checkpoint_'+'0'.repeat(32),...context};
   if(!validate(probe))fail('CHECKPOINT_INTENT_INPUT_INVALID');
-  if(fs.existsSync(file)){
+  if(journalEntryPresent(file)){
     const old=read(file);
     for(const key of Object.keys(context) as (keyof typeof context)[]){
       if(old.body[key]!==context[key])

@@ -1031,3 +1031,17 @@ any settings are used for OS-vault enrollment or agent startup. Tests
 simulate a same-byte rename-and-replace and in-place timestamp mutation.
 The one-time `linkSync` publication policy remains unchanged; this is not
 physical Windows directory durability or a production enrollment approval.
+
+## 24 November 2026 — Full-source audit: developer-only worker journal isolation
+
+Four separate **developer CLI-only** V7 worker journal readers (claim,
+checkpoint, renew, submit) now share an inode/time/path-bound, bounded,
+nofollow UTF-8 descriptor snapshot. Before creating new one-shot Central
+request IDs, all journal paths use \`lstat\` entry-presence rather than
+\`existsSync\`: a dangling symlink, malformed intent, changed inode/mtime,
+short read or oversized/private-mode mismatch remains a hard stop.
+The dedicated negative tests cover all four dangling intents and forced
+same-byte pathname replacement/timestamp races. This is a separate
+developer-only path; the packaged Windows OS-vault worker remains a
+separate security boundary. This does not prove hardware filesystem
+durability or authorize production.

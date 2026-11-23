@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import {ID_RE} from './rules.ts';
+import {journalEntryPresent,readStableJournal} from './journal_file.ts';
 export type RenewBody={request_id:string;agent_id:string;ticket_id:string;
   lease_id:string;expected_master_epoch:number;reason:string};
 type RecordFile={schema_version:1;body:RenewBody;hash_sha256:string};
@@ -19,11 +20,11 @@ export function renewIntentPath(dir:string,ticket:string){
   return path.join(dir,'renew_'+ticket+'.json');
 }
 function read(file:string):RecordFile{
-  const st=fs.lstatSync(file);
-  if(!st.isFile()||st.isSymbolicLink()||st.size===0||st.size>4096)
-    fail('RENEW_INTENT_FILE_UNTRUSTED');
+  let raw:Buffer;
+  try{raw=readStableJournal(file,{maxBytes:4096});}
+  catch{fail('RENEW_INTENT_FILE_UNTRUSTED');}
   let r:RecordFile|undefined;
-  try{r=JSON.parse(fs.readFileSync(file,'utf8'));}
+  try{r=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}
   catch{fail('RENEW_INTENT_CORRUPT');}
   if(!r||r.schema_version!==1||!r.body||!Object.keys(r.body).every(k=>
     ['request_id','agent_id','ticket_id','lease_id','expected_master_epoch','reason'].includes(k))||
@@ -50,7 +51,7 @@ export function getOrCreateRenewIntent(input:{
   if(!fs.existsSync(dir)||!fs.lstatSync(dir).isDirectory()||
     fs.lstatSync(dir).isSymbolicLink())
     fail('RENEW_INTENT_DIR_UNTRUSTED');
-  if(fs.existsSync(file)){
+  if(journalEntryPresent(file)){
     const r=read(file),b=r.body;
     if(b.agent_id!==agent_id||b.ticket_id!==ticket_id||
       b.lease_id!==lease_id||b.expected_master_epoch!==epoch||b.reason!==reason)

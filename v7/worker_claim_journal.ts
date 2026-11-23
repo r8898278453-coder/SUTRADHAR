@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import {ID_RE,SHA_RE,validTaskBranch,safeScope} from './rules.ts';
+import {journalEntryPresent,readStableJournal} from './journal_file.ts';
 
 type Context={agent_id:string;ticket_id:string;project_id:string;repository:string;
   branch_name:string;baseline_sha:string;scope:string[]};
@@ -25,7 +26,7 @@ export function claimIntentPath(dir:string,ticketId:string):string{
 }
 export function hasPendingClaim(dir:string,ticketId:string):boolean{
   const file=claimIntentPath(dir,ticketId);
-  if(!fs.existsSync(file))return false;
+  if(!journalEntryPresent(file))return false;
   const stat=fs.lstatSync(file);
   if(!stat.isFile()||stat.isSymbolicLink()||stat.size>8192||stat.size===0)
     die('CLAIM_JOURNAL_UNTRUSTED_FILE');
@@ -44,12 +45,12 @@ function contextOf(task:any,agentId:string,scope:string[]):Context{
     branch_name:task.branch_name,baseline_sha:task.baseline_sha,scope:[...scope]};
 }
 function read(file:string):Journal{
-  if(!fs.existsSync(file))die('CLAIM_JOURNAL_MISSING');
-  const stat=fs.lstatSync(file);
-  if(!stat.isFile()||stat.isSymbolicLink()||stat.size===0||stat.size>8192)
-    die('CLAIM_JOURNAL_UNTRUSTED_FILE');
+  if(!journalEntryPresent(file))die('CLAIM_JOURNAL_MISSING');
+  let raw:Buffer;
+  try{raw=readStableJournal(file,{maxBytes:8192});}
+  catch{die('CLAIM_JOURNAL_UNTRUSTED_FILE');}
   let record:Journal|undefined;
-  try{record=JSON.parse(fs.readFileSync(file,'utf8'));}
+  try{record=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}
   catch{die('CLAIM_JOURNAL_CORRUPT');}
   if(!record||record.schema_version!==1||!record.context||!record.body||
     !/^[a-f0-9]{64}$/.test(String(record.content_sha256||''))||

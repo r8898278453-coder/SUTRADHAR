@@ -11,6 +11,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {ID_RE,SHA_RE,validTaskBranch,safeScope} from './rules.ts';
+import {journalEntryPresent,readStableJournal} from './journal_file.ts';
 export type SubmitBody={
   request_id:string;agent_id:string;ticket_id:string;lease_id:string;
   expected_master_epoch:number;candidate_head_sha:string;candidate_tree_sha:string;
@@ -59,12 +60,12 @@ function requireDir(dir:string){
     fail('SUBMIT_INTENT_DIR_UNTRUSTED');
 }
 function read(file:string):Journal{
-  const st=fs.lstatSync(file);
-  if(!st.isFile()||st.isSymbolicLink()||st.size<1||st.size>16384||
-    (process.platform!=='win32'&&(st.mode&0o077)!==0))
-    fail('SUBMIT_INTENT_FILE_UNTRUSTED');
+  let raw:Buffer;
+  try{raw=readStableJournal(file,{maxBytes:16384,requirePrivate:true});}
+  catch{fail('SUBMIT_INTENT_FILE_UNTRUSTED');}
   let j:unknown;
-  try{j=JSON.parse(fs.readFileSync(file,'utf8'));}catch{fail('SUBMIT_INTENT_CORRUPT');}
+  try{j=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}
+  catch{fail('SUBMIT_INTENT_CORRUPT');}
   if(!exact(j,['schema_version','context','body','hash_sha256'])||
     j.schema_version!==1||!validContext(j.context)||!validBody(j.body)||
     typeof j.hash_sha256!=='string'||!/^[a-f0-9]{64}$/.test(j.hash_sha256)||
@@ -74,10 +75,9 @@ function read(file:string):Journal{
 }
 export function hasPendingSubmit(dir:string,ticketId:string):boolean{
   const file=submitIntentPath(dir,ticketId);
-  if(!fs.existsSync(file)){
-    // Broken symlinks are also untrusted, rather than an absent prior intent.
-    try{fs.lstatSync(file);}catch(e:any){if(e?.code==='ENOENT')return false;throw e;}
-  }
+  // Dangling symlinks count as occupied one-shot entries, not permission
+  // to generate a new request ID after an ambiguous Central outcome.
+  if(!journalEntryPresent(file))return false;
   read(file);
   return true;
 }
