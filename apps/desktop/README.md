@@ -341,3 +341,13 @@ requires JSON/MySQL readiness and an exact protocol match, and rejects
 redirects or unreadable streams. The module is included in the Windows
 package dependency closure. Real staging HTTPS, Windows installed-app
 startup, Owner approvals and physical PCs remain unverified.
+
+
+## Inspect real built ASAR before accepting a Windows package
+
+The QA and protected release packagers now inspect the final unpacked
+Windows `app.asar` and compare every declared module's bytes against
+reviewed source, then independently verify the external secure-agent
+bundle. Static package closure alone was insufficient. Failure leaves
+the package unapproved and unpublished. A successful inspection does not
+prove a Windows installer can be executed or correctly signed.

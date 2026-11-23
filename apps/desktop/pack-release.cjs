@@ -11,6 +11,7 @@ const cwd=__dirname,root=path.resolve(__dirname,'../..');
 const pkg=JSON.parse(fs.readFileSync(path.join(cwd,'package.json'),'utf8'));
 const {verifyRuntime}=require('./runtime-policy.cjs');
 const {verifyPackageClosure}=require('./package-closure.cjs');
+const {verifyPackagedRuntime}=require('./verify-packaged-runtime.cjs');
 const {psLiteral,trustedWindowsPowerShell}=require('./windows-authenticode.cjs');
 const {validateOwnerPublicRoots}=require('./release-key-policy.cjs');
 const version=pkg.version;
@@ -107,6 +108,8 @@ function main(){
       '--config',cfg],{cwd,env:process.env,stdio:'inherit',timeout:1200000});
     if(r.error||r.status!==0)fail('Windows signed packager failed');
     const out=path.join(cwd,'out');
+    // Verify actual app.asar modules and external child agent, not just source closure.
+    verifyPackagedRuntime({resourceDir:path.join(out,'win-unpacked','resources')});
     const installers=fs.readdirSync(out).filter(x=>x.endsWith('.exe')).map(x=>path.join(out,x));
     if(!installers.length)fail('no installer artifact');
     const receipts=[];

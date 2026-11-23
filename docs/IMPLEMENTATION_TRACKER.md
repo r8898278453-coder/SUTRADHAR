@@ -505,3 +505,26 @@ or use cached health. The new runtime module is explicitly listed in
 `build.files`, and the Desktop package closure verifies that dependency.
 A passing health check is a momentary claim, NOT an Owner enrollment grant,
 real Hostinger deployment proof or production approval.
+
+
+## 23 November 2026 — Verify actual packaged Electron ASAR contents
+
+The previous static `package-closure.cjs` checks literal local requires
+before electron-builder runs, but cannot establish that the **actual**
+Windows package contains those files. New `verify-packaged-runtime.cjs`
+inspects the generated `out/win-unpacked/resources/app.asar` with the
+committed electron-builder dependency `@electron/asar` and checks every
+explicitly listed runtime module against its source SHA-256. The
+electron-builder-normalized `package.json` must retain exact app name,
+main entry and version. It also checks the independently shipped
+`resources/secure-agent.cjs` against the Desktop build output and
+refuses Central server/schema or device identity files inside ASAR.
+
+Both unsigned internal QA packaging and the Owner-protected Windows
+release packager now **fail after packaging** if this inspection fails,
+before reporting success or producing any signing verification receipt.
+Pure tests simulate omitted/altered ASAR modules, changed app identity,
+wrong secure-agent bytes and leaked Central/identity material. This is
+build artifact integrity, NOT executing the NSIS installer, launching
+Electron, testing OS vault persistence, or verifying physical Windows
+code-signing: G3/G4/G6 remain pending external acceptance.

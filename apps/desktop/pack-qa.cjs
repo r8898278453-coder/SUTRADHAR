@@ -6,6 +6,7 @@
 const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const {verifyRuntime}=require('./runtime-policy.cjs');
 const {verifyPackageClosure}=require('./package-closure.cjs');
+const {verifyPackagedRuntime}=require('./verify-packaged-runtime.cjs');
 const pkg=JSON.parse(fs.readFileSync(path.join(__dirname,'package.json'),'utf8'));
 const runtime=verifyRuntime({electronVersion:pkg.devDependencies?.electron,
   builderVersion:pkg.devDependencies?.['electron-builder']});
@@ -23,4 +24,6 @@ const result=cp.spawnSync(process.execPath,[builder,'--win','nsis','--x64','--pu
   {cwd:__dirname,env:{...process.env,CSC_IDENTITY_AUTO_DISCOVERY:'false'},
     stdio:'inherit',timeout:600000});
 if(result.error||result.status!==0)throw Error('QA installer packaging failed. No publication performed.');
+const proof=verifyPackagedRuntime({resourceDir:path.join(__dirname,'out','win-unpacked','resources')});
+if(!proof.accepted)throw Error('QA_PACKAGE_RUNTIME_BYTES_NOT_VERIFIED');
 console.log('Unsigned internal QA build only. Never distribute as production.');
