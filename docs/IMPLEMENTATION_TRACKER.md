@@ -456,3 +456,18 @@ connection. New authenticated-archive regression tests explicitly check
 the real whitespace-regex interpretation and fail if directives could
 escape due to an accidental literal-backslash regex. This is not a
 general SQL parser, and real Hostinger recovery acceptance remains open.
+
+
+## 23 November 2026 — Windows enrollment GET/POST response bounds
+
+Initial Owner-granted node enrollment and existing-node reconciliation now
+use the same 64-KiB bounded streaming Central JSON reader as privileged
+maintenance: oversized/malformed HTTP responses cannot produce an accepted
+enrollment or promote a PREPARED receipt to SUBMITTED. HTTP requests use
+`cache:no-store`, `credentials:omit`, no redirects and a timeout.
+Signed duplicate-node reconciliation requires an explicit node ID, nonce and
+signature header before issuing the GET. Local enrollment receipt inspection
+rejects symbolic links instead of following them. New negative tests preserve
+PREPARED on overlarge reply, deny incomplete signed rechecks and symlinked
+receipts. This is source/CI hardening, not successful Windows DPAPI/physical
+Owner approval testing; G4/G5 remain HOLD.

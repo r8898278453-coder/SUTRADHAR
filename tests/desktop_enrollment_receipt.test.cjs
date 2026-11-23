@@ -91,7 +91,8 @@ test('Prepared enrollment reconciles ONLY with approved signed existing node, wi
     let calls=0;
     const signer={sign:request=>{
       assert.deepEqual(request,{kind:'node_api',method:'GET',uri:'/v7/nodes/me',body:''});
-      return {'x-sutradhar-node':identity.node_id,'x-sutradhar-signature':'signed-test-only'};
+      return {'x-sutradhar-node':identity.node_id,
+        'x-sutradhar-nonce':'nonce-test','x-sutradhar-signature':'signed-test-only'};
     }};
     const fetcher=async(url,options)=>{
       calls++;
@@ -100,13 +101,15 @@ test('Prepared enrollment reconciles ONLY with approved signed existing node, wi
       assert.equal(options.redirect,'error');
       assert.equal(options.body,undefined);
       assert.equal(options.headers.Accept,'application/json');
-      return {ok:true,json:async()=>({node_id:identity.node_id})};
+      return new Response(JSON.stringify({node_id:identity.node_id}),
+        {headers:{'content-type':'application/json'}});
     };
     await assert.rejects(reconcilePrepared({...args,signer,fetcher:async()=>({ok:false,status:403})}),
       /NOT_YET_OWNER_APPROVED/);
     assert.equal(inspect(args).state,'PREPARED');
     await assert.rejects(reconcilePrepared({...args,signer,
-      fetcher:async()=>({ok:true,json:async()=>({node_id:'node_'+('a'.repeat(32))})})}),
+      fetcher:async()=>new Response(JSON.stringify({node_id:'node_'+('a'.repeat(32))}),
+        {headers:{'content-type':'application/json'}})}),
       /NODE_MISMATCH/);
     assert.equal(inspect(args).state,'PREPARED');
     const result=await reconcilePrepared({...args,signer,fetcher});
@@ -116,4 +119,30 @@ test('Prepared enrollment reconciles ONLY with approved signed existing node, wi
     await assert.rejects(reconcilePrepared({...args,signer,fetcher}),
       /REQUIRES_PREPARED_RECEIPT/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('oversized signed reconciliation cannot change PREPARED to SUBMITTED',async()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-reconcile-large-'));
+  try{
+    const identity=node(),args={dir,node:identity,centralUrl:origin};
+    prepare(args);
+    const signer={sign:()=>({'x-sutradhar-node':identity.node_id,
+      'x-sutradhar-nonce':'nonce','x-sutradhar-signature':'signed'})};
+    const fetcher=async()=>new Response(JSON.stringify({padding:'x'.repeat(70000)}),
+      {headers:{'content-type':'application/json'}});
+    await assert.rejects(reconcilePrepared({...args,signer,fetcher}),
+      /ENROLLMENT_RECONCILIATION_RESPONSE_TOO_LARGE/);
+    assert.equal(inspect(args).state,'PREPARED');
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('symlinked enrollment receipt requires Owner review, never follows target',()=>{
+  if(process.platform==='win32')return;
+  withDir(dir=>{
+    const identity=node(),args={dir,node:identity,centralUrl:origin};
+    prepare(args);
+    const file=path.join(dir,'enrollment-receipt.json');
+    const original=path.join(dir,'receipt-original.json');
+    fs.renameSync(file,original);fs.symlinkSync(original,file);
+    assert.throws(()=>inspect(args),/ENROLLMENT_RECEIPT_INVALID/);
+  });
 });

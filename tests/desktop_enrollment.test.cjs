@@ -8,11 +8,12 @@ const calls=[];
 const signer={sign:request=>{
   if(request.kind==='enroll')return {proof:crypto.sign(null,
     Buffer.from('enroll:'+node.node_id),kp.privateKey).toString('base64')};
-  if(request.kind==='node_api')return {'x-sutradhar-node':node.node_id};
+  if(request.kind==='node_api')return {'x-sutradhar-node':node.node_id,
+    'x-sutradhar-nonce':'test-nonce','x-sutradhar-signature':'test-signature'};
   throw Error('invalid signing request');
 }};
-const response=(status,body)=>({ok:status>=200&&status<300,status,
-  json:async()=>body});
+const response=(status,body)=>new Response(JSON.stringify(body),{status,
+  headers:{'content-type':'application/json'}});
 const args={origin:'https://stage.example.com',grant,node,signer,displayName:'Office PC 01'};
 test('Owner grant is sent by Electron parent over HTTPS and never returned to child',async()=>{
   calls.length=0;
@@ -64,4 +65,30 @@ test('Redirects, rejected owner grants and mismatched server proof fail closed',
     node_id:'node_'+('b'.repeat(32)),owner_approval_required:true})}),/ENROLL_SERVER_ACK_MISMATCH/);
   await assert.rejects(enrollWithOwnerGrant({...args,fetcher:async()=>{throw Error('redirect');}}),
     /ENROLL_CENTRAL_NETWORK_UNAVAILABLE/);
+});
+
+test('oversized enrollment response fails before any accepted new identity',async()=>{
+  let calls=0;
+  const fetcher=async()=>{calls++;return new Response(JSON.stringify({
+    padding:'x'.repeat(70000)}),{headers:{'content-type':'application/json'}});};
+  await assert.rejects(enrollWithOwnerGrant({...args,fetcher}),
+    /ENROLL_CENTRAL_RESPONSE_TOO_LARGE/);
+  assert.equal(calls,1);
+});
+test('existing-node reconciliation rejects oversized Central reply and incomplete signed headers',async()=>{
+  const normal=response(409,{error_code:'NODE_ID_ALREADY_EXISTS'});
+  let n=0;
+  const fetcher=async()=>++n===1?normal:
+    new Response(JSON.stringify({padding:'x'.repeat(70000)}),
+      {headers:{'content-type':'application/json'}});
+  await assert.rejects(enrollWithOwnerGrant({...args,fetcher}),
+    /ENROLL_CENTRAL_RESPONSE_TOO_LARGE/);
+  assert.equal(n,2);
+  n=0;
+  const incomplete={sign:r=>r.kind==='enroll'?signer.sign(r):{
+    'x-sutradhar-node':node.node_id}};
+  await assert.rejects(enrollWithOwnerGrant({...args,signer:incomplete,
+    fetcher:async()=>{n++;return response(409,{error_code:'NODE_ID_ALREADY_EXISTS'});}}),
+    /ENROLL_EXISTING_IDENTITY_SIGNED_PROOF_REQUIRED/);
+  assert.equal(n,1,'an unsigned GET must never reach Central');
 });

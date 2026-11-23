@@ -5,6 +5,7 @@
  */
 'use strict';
 const {URL}=require('node:url');
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 function fail(code){throw Error(code);}
 function checkOrigin(value){
   if(typeof value!=='string')fail('ENROLL_CENTRAL_URL_INVALID');
@@ -35,10 +36,16 @@ async function enrollWithOwnerGrant({origin,grant,displayName,node,signer,fetche
     let r;
     try{
       r=await fetcher(trusted+uri,{method,headers,body:payload,redirect:'error',
+        cache:'no-store',credentials:'omit',
         signal:AbortSignal.timeout(15000)});
     }catch{fail('ENROLL_CENTRAL_NETWORK_UNAVAILABLE');}
-    let answer={};
-    try{answer=await r.json();}catch{fail('ENROLL_CENTRAL_INVALID_RESPONSE');}
+    let answer;
+    try{answer=await boundedCentralJson(r);}
+    catch(error){
+      if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+        fail('ENROLL_CENTRAL_RESPONSE_TOO_LARGE');
+      fail('ENROLL_CENTRAL_INVALID_RESPONSE');
+    }
     return {ok:r.ok,status:r.status,answer};
   }
   const submitted=await call('POST','/v7/nodes/enroll',
@@ -53,7 +60,12 @@ async function enrollWithOwnerGrant({origin,grant,displayName,node,signer,fetche
     // A previously submitted node may be reconciled only after Owner approval,
     // by proving possession of its existing OS-vault Ed25519 private key.
     const signed=signer.sign({kind:'node_api',method:'GET',uri:'/v7/nodes/me',body:''});
-    const verified=await call('GET','/v7/nodes/me',signed,undefined);
+    if(!signed||signed['x-sutradhar-node']!==node.node_id||
+       typeof signed['x-sutradhar-nonce']!=='string'||
+       typeof signed['x-sutradhar-signature']!=='string')
+      fail('ENROLL_EXISTING_IDENTITY_SIGNED_PROOF_REQUIRED');
+    const verified=await call('GET','/v7/nodes/me',
+      {...signed,Accept:'application/json'},undefined);
     if(!verified.ok||verified.answer?.node_id!==node.node_id)
       fail('ENROLL_EXISTING_IDENTITY_NOT_APPROVED');
     return {accepted:true,ownerApprovalRequired:false};

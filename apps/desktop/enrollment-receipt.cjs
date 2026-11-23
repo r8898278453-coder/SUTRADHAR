@@ -10,6 +10,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {atomicWrite}=require('./os-vault.cjs');
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const VERSION=1;
 const ID=/^node_[0-9a-f]{32}$/;
 const HASH=/^[0-9a-f]{64}$/;
@@ -38,8 +39,8 @@ function inspect({dir,node,centralUrl}){
   if(!fs.existsSync(receipt))return null;
   // Check the binding before reading attacker-modifiable metadata.
   const expected=binding(node,centralUrl);
-  const stat=fs.statSync(receipt);
-  if(!stat.isFile()||stat.size>4096||stat.size<100)
+  const stat=fs.lstatSync(receipt);
+  if(!stat.isFile()||stat.isSymbolicLink()||stat.size>4096||stat.size<100)
     fail('ENROLLMENT_RECEIPT_INVALID');
   let saved;
   try{saved=JSON.parse(fs.readFileSync(receipt,'utf8'));}
@@ -94,20 +95,26 @@ async function reconcilePrepared({dir,node,centralUrl,signer,fetcher=fetch}){
   const uri='/v7/nodes/me';
   const signed=signer.sign({kind:'node_api',method:'GET',uri,body:''});
   if(!signed||signed['x-sutradhar-node']!==node.node_id||
+    typeof signed['x-sutradhar-nonce']!=='string'||
     typeof signed['x-sutradhar-signature']!=='string')
     fail('ENROLLMENT_SIGNED_PROOF_INVALID');
   let response;
   try{
     response=await fetcher(centralUrl+uri,{
       method:'GET',headers:{...signed,Accept:'application/json'},
-      redirect:'error',signal:AbortSignal.timeout(15000)
+      redirect:'error',cache:'no-store',credentials:'omit',
+      signal:AbortSignal.timeout(15000)
     });
   }catch{fail('ENROLLMENT_RECONCILIATION_NETWORK_UNAVAILABLE');}
   if(!response?.ok)
     fail('ENROLLMENT_NOT_YET_OWNER_APPROVED');
   let answer;
-  try{answer=await response.json();}
-  catch{fail('ENROLLMENT_RECONCILIATION_RESPONSE_INVALID');}
+  try{answer=await boundedCentralJson(response);}
+  catch(error){
+    if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+      fail('ENROLLMENT_RECONCILIATION_RESPONSE_TOO_LARGE');
+    fail('ENROLLMENT_RECONCILIATION_RESPONSE_INVALID');
+  }
   if(answer?.node_id!==node.node_id)
     fail('ENROLLMENT_RECONCILIATION_NODE_MISMATCH');
   markSubmitted({dir,node,centralUrl});
