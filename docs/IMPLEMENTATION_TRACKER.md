@@ -1008,3 +1008,15 @@ both GitHub API paths because `/rules/branches/main` also ends with
 to remove repository review controls. The fixture now compares exact URLs
 and asserts two distinct read-only GET paths. Audit policy remains
 fail-closed; G0 and production promotion remain HOLD.
+
+## 24 November 2026 — Git worktree alias containment before branch writes
+
+A dangling filesystem alias at a ticket's worktree target was previously
+classified as absent by `existsSync`, allowing Git's `worktree add -b`
+mutation attempt before eventual failure. `localWorktree` now uses the
+shared entry-presence guard for its worktree root, hook root and target.
+Dangling or unreadable aliases are denied **before Git creates any
+ticket branch**, preserving local Owner recovery evidence. Targeted fixture
+tests verify no `refs/heads/ai/ticket_abc` branch is created and no
+Central claim POST occurs. This does not replace the independent physical
+Windows multi-process/cross-user file-system safety gate.

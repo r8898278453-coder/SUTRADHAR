@@ -90,8 +90,12 @@ function git(root,hooks,...args){
 function localWorktree({repoDir,t,workerDir}){
   const repo=assertDirectory(repoDir),workRoot=path.join(workerDir,'worktrees');
   const hookRoot=path.join(workerDir,'disabled-git-hooks');
-  if(!fs.existsSync(workRoot))fs.mkdirSync(workRoot,{recursive:true,mode:0o700});
-  if(!fs.existsSync(hookRoot))fs.mkdirSync(hookRoot,{recursive:true,mode:0o700});
+  // A dangling worktree/hook directory alias is historical filesystem
+  // evidence, not an empty directory. Never follow/create through it.
+  if(!evidenceEntryPresent(workRoot))
+    fs.mkdirSync(workRoot,{recursive:true,mode:0o700});
+  if(!evidenceEntryPresent(hookRoot))
+    fs.mkdirSync(hookRoot,{recursive:true,mode:0o700});
   assertDirectory(workRoot);assertDirectory(hookRoot);
   if(!sameRealDirectory(git(repo,hookRoot,'rev-parse','--show-toplevel'),repo))
     fail('WORKER_REPOSITORY_ROOT_MISMATCH');
@@ -130,7 +134,7 @@ function localWorktree({repoDir,t,workerDir}){
       fail('WORKER_ACTIVE_GIT_FILTER_REQUIRES_OWNER_REVIEW');
   }
   const target=path.join(workRoot,t.ticket_id);
-  if(fs.existsSync(target)){
+  if(evidenceEntryPresent(target)){
     const actual=assertDirectory(target);
     if(!sameRealDirectory(actual,target)||
       !sameRealDirectory(git(target,hookRoot,'rev-parse','--show-toplevel'),actual)||

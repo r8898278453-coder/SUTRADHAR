@@ -839,3 +839,37 @@ test('claim receipt write cannot replace a racing prior on-disk receipt', {skip:
     assert.equal(fs.existsSync(path.join(f.worker,'claim_ticket_abc.json')),true);
   }finally{fs.openSync=original;f.close();}
 });
+
+
+test('dangling worktree target is Owner-held before local Git branch creation',
+  {skip:!available||process.platform==='win32'},async()=>{
+    const f=fixture(),r=remote(f);
+    try{
+      const root=path.join(f.worker,'worktrees');
+      fs.mkdirSync(root);
+      const target=path.join(root,'ticket_abc');
+      fs.symlinkSync(path.join(root,'missing-previous-worktree'),target);
+      assert.equal(fs.existsSync(target),false);
+      await assert.rejects(claimApprovedTask(args(f,r.fetcher)),
+        /WORKER_LOCAL_PATH_UNTRUSTED/);
+      assert.equal(r.claims(),0);
+      const ref=cp.spawnSync('git',['-C',f.repo,'show-ref','--verify','--quiet',
+        'refs/heads/ai/ticket_abc']);
+      assert.equal(ref.status,1,'No Git branch was created before Owner recovery');
+      assert.equal(fs.lstatSync(target).isSymbolicLink(),true);
+    }finally{f.close();}
+  });
+test('dangling worker Git hook/worktree root cannot be treated as absent',
+  {skip:!available||process.platform==='win32'},async()=>{
+    for(const name of ['disabled-git-hooks','worktrees']){
+      const f=fixture(),r=remote(f);
+      try{
+        const dir=path.join(f.worker,name);
+        fs.symlinkSync(path.join(f.worker,'missing-dir'),dir);
+        await assert.rejects(claimApprovedTask(args(f,r.fetcher)),
+          /WORKER_LOCAL_PATH_UNTRUSTED/);
+        assert.equal(r.claims(),0);
+        assert.equal(fs.lstatSync(dir).isSymbolicLink(),true);
+      }finally{f.close();}
+    }
+  });
