@@ -332,3 +332,12 @@ their literal relative `require()` dependencies checked before QA or
 Owner-gated release packaging. The check prevents known missing-module
 startup defects without certifying dynamic module loading or real
 Windows installation. Full physical Windows smoke remains necessary.
+
+
+## Bounded first-run Hostinger health probe
+
+Desktop setup now bounds its HTTPS Central health response to 64 KiB,
+requires JSON/MySQL readiness and an exact protocol match, and rejects
+redirects or unreadable streams. The module is included in the Windows
+package dependency closure. Real staging HTTPS, Windows installed-app
+startup, Owner approvals and physical PCs remain unverified.

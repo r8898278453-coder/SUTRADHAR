@@ -490,3 +490,18 @@ Owner-controlled release packager **before** electron-builder executes.
 Negative tests remove a dependency from a cloned package manifest and
 assert rejection. A green static closure is **not** real Windows ASAR
 launch, UAC or DPAPI proof. G3/G4/G6 remain independently blocked.
+
+
+## 23 November 2026 — Bounded first-run Central health check
+
+The Electron main process formerly called unbounded `Response.json()`
+for the Owner-selected Central `/v7/health` endpoint before first setup.
+It now calls a separate, directly unit-tested `central-health.cjs`
+reader using the same 64 KiB streaming cap as enrollment/maintenance.
+It refuses malformed/oversize/HTML/streamless responses and requires
+service=sutradhar-v7, ready=true, authority=mysql and exact local API
+protocol. HTTPS GET cannot redirect and does not send ambient credentials
+or use cached health. The new runtime module is explicitly listed in
+`build.files`, and the Desktop package closure verifies that dependency.
+A passing health check is a momentary claim, NOT an Owner enrollment grant,
+real Hostinger deployment proof or production approval.

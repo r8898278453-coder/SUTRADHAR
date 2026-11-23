@@ -13,6 +13,7 @@ const path=require('node:path');
 const {spawn,spawnSync}=require('node:child_process');
 const {verifyOffer,sha256File}=require('./update-policy.cjs');
 const {checkReadiness}=require('./update-readiness.cjs');
+const {verifyCentralHealth}=require('./central-health.cjs');
 const {recordInspection}=require('./update-inspection-journal.cjs');
 const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
 const {prepareInstaller,inspectPreparedIdentity}=require('./maintenance-install-preparation.cjs');
@@ -426,15 +427,8 @@ function verifySender(event){
     throw Error('Local setup window authorization required');
 }
 async function checkCentral(origin){
-  const response=await fetch(origin+'/v7/health',{method:'GET',
-    headers:{Accept:'application/json'},signal:AbortSignal.timeout(12000)});
-  if(!response.ok)throw Error('Central health check failed (HTTP '+response.status+'). Ask the Owner to verify Hostinger and MySQL.');
-  const obj=await response.json();
   const local=JSON.parse(fs.readFileSync(path.join(__dirname,'contract.json'),'utf8'));
-  if(obj.service!=='sutradhar-v7'||obj.ready!==true||obj.authority!=='mysql')
-    throw Error('This is not a ready SUTRADHAR Central server');
-  if(obj.api_protocol!==local.api_protocol)
-    throw Error('Central/Desktop protocol mismatch. Update the compatible Desktop version first.');
+  return verifyCentralHealth({origin,expectedProtocol:local.api_protocol});
 }
 const primaryInstance=installSingleInstanceGuard(app,()=>showSetup());
 app.whenReady().then(()=>{

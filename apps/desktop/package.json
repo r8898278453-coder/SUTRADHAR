@@ -31,6 +31,7 @@
       "preload.cjs",
       "desktop-config.cjs",
       "bounded-central-json.cjs",
+      "central-health.cjs",
       "setup.html",
       "setup.js",
       "setup.css",
