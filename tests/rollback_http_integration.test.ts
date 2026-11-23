@@ -112,7 +112,7 @@ test('real admin HTTP rollback PR requires external review/CI evidence before co
     const answer = (data: unknown) => new Response(JSON.stringify(data), {
       status: 200, headers: { 'Content-Type': 'application/json' }
     });
-    if (pathname.endsWith('/branches/main')) return answer({ commit: { sha: MERGED } });
+    if (pathname.endsWith('/branches/main')) return answer({ protected: true, commit: { sha: MERGED } });
     if (pathname.endsWith('/branches/' + branch))
       return answer({ commit: { sha: REVERT_HEAD } });
     if (pathname.endsWith('/git/commits/' + REVERT_HEAD))

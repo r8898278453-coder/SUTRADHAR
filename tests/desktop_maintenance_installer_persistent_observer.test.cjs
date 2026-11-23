@@ -173,7 +173,10 @@ test('unsigned observer witness rejects same-size pathname substitution mid-read
     try{
       fs.readSync=function(fd,buffer,offset,length,position){
         const n=orig.call(this,fd,buffer,offset,length,position);
-        if(!swapped){
+        // trustedLaunch reads signed evidence first. Inject ONLY when
+        // the read descriptor belongs to the diagnostic observer witness.
+        const target=fs.lstatSync(file),opened=fs.fstatSync(fd);
+        if(!swapped&&opened.dev===target.dev&&opened.ino===target.ino){
           swapped=true;
           fs.renameSync(file,path.join(dir,'prior-observer-witness.json'));
           fs.writeFileSync(file,bytes);
@@ -194,11 +197,11 @@ test('unsigned observer witness rejects in-place mutation after byte-read',
     try{
       fs.readSync=function(fd,buffer,offset,length,position){
         const n=orig.call(this,fd,buffer,offset,length,position);
-        if(!mutated){
+        const target=fs.lstatSync(file),opened=fs.fstatSync(fd);
+        if(!mutated&&opened.dev===target.dev&&opened.ino===target.ino){
           mutated=true;
-          const st=fs.statSync(file);
-          fs.utimesSync(file,new Date(st.atimeMs-3000),
-            new Date(st.mtimeMs-3000));
+          fs.utimesSync(file,new Date(target.atimeMs-3000),
+            new Date(target.mtimeMs-3000));
         }
         return n;
       };
