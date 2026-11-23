@@ -12,6 +12,8 @@ function requiresReconciliation(dir){
   }
   if(!stat.isDirectory()||stat.isSymbolicLink())
     throw Error('RECOVERY_BARRIER_NODE_DIRECTORY_INVALID');
-  return fs.readdirSync(dir).some(x=>/^maintenance-release-[a-f0-9]{64}\.json$/.test(x));
+  // Even a malformed, partially written or case-altered release-like record
+  // is evidence of uncertain maintenance. Do not silently resume the agent.
+  return fs.readdirSync(dir).some(x=>/^maintenance-release-/i.test(x));
 }
 module.exports={requiresReconciliation};

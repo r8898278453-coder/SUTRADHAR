@@ -152,6 +152,49 @@ test('missing/corrupt archive and an active hold always block restart',()=>fixtu
   createHold({dir,nodeId,planId,waveId,offerSha256});
   assert.throws(()=>readReleased({dir,nodeId}),/LOCAL_HOLD_STILL_ACTIVE/);
 }));
+test('case-varied and malformed release-like files keep the restart barrier active',()=>fixture(dir=>{
+  for(const name of [
+    'MAINTENANCE-RELEASE-'+releaseId.toUpperCase()+'.JSON',
+    'maintenance-release-interrupted.tmp',
+    'maintenance-release-not-a-valid-id.json'
+  ]){
+    const file=path.join(dir,name);
+    fs.writeFileSync(file,'interrupted');
+    assert.equal(requiresReconciliation(dir),true);
+    assert.throws(()=>readReleased({dir,nodeId}),
+      /MAINTENANCE_RESTART_AMBIGUOUS_RELEASE_RECEIPTS/);
+    fs.unlinkSync(file);
+  }
+  archiveFixture(dir);
+  fs.writeFileSync(path.join(dir,'maintenance-release-incomplete.tmp'),'interrupted');
+  assert.throws(()=>readReleased({dir,nodeId}),
+    /MAINTENANCE_RESTART_AMBIGUOUS_RELEASE_RECEIPTS/);
+}));
+
+test('release receipt replacement during descriptor read requires Owner review',()=>{
+  if(process.platform==='win32')return; // physical Windows race acceptance is separate
+  return fixture(dir=>{
+    archiveFixture(dir);
+    const target=path.join(dir,'maintenance-release-'+releaseId+'.json');
+    const original=fs.readSync;
+    let replaced=false;
+    try{
+      fs.readSync=function(...args){
+        const read=original.apply(this,args);
+        if(!replaced){
+          replaced=true;
+          fs.renameSync(target,path.join(dir,'old-release-evidence.bak'));
+          fs.writeFileSync(target,'{"injected":"replacement"}');
+        }
+        return read;
+      };
+      assert.throws(()=>readReleased({dir,nodeId}),
+        /MAINTENANCE_RESTART_RECEIPT_CORRUPT_OWNER_REVIEW/);
+      assert.equal(replaced,true,'the descriptor read must be exercised');
+    }finally{fs.readSync=original;}
+  });
+});
+
 test('new local ACK requires a fresh timestamp, exact epoch, roles and identity',async()=>{
   const started=Date.now()-1000;
   const valid={node_id:nodeId,connection:'ACKNOWLEDGED',epoch:21,phase:'READY',

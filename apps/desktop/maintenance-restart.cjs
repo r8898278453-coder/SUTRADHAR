@@ -15,24 +15,48 @@ const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const HEX=/^[0-9a-f]{64}$/;
 function fail(code){throw Error(code);}
 function readRecord(file){
-  let s,data;
+  let fd;
   try{
-    s=fs.lstatSync(file);
-    if(!s.isFile()||s.isSymbolicLink()||s.size<100||s.size>8192)
-      fail('MAINTENANCE_RESTART_RECEIPT_UNSAFE');
-    data=JSON.parse(fs.readFileSync(file,'utf8'));
-  }catch{fail('MAINTENANCE_RESTART_RECEIPT_CORRUPT_OWNER_REVIEW');}
-  if(!data||typeof data!=='object'||Array.isArray(data))
+    const before=fs.lstatSync(file);
+    if(!before.isFile()||before.isSymbolicLink()||before.size<100||
+       before.size>8192)fail('MAINTENANCE_RESTART_RECEIPT_UNSAFE');
+    // Read through the originally inspected descriptor: never follow a
+    // pathname that can be replaced with a symlink between lstat and read.
+    fd=fs.openSync(file,fs.constants.O_RDONLY|(fs.constants.O_NOFOLLOW||0));
+    const opened=fs.fstatSync(fd);
+    const same=(a,b)=>a.isFile()&&b.isFile()&&
+      !a.isSymbolicLink()&&!b.isSymbolicLink()&&
+      a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&
+      a.mtimeMs===b.mtimeMs&&a.ctimeMs===b.ctimeMs;
+    if(!same(before,opened))
+      fail('MAINTENANCE_RESTART_RECEIPT_CHANGED');
+    const bytes=Buffer.alloc(opened.size);
+    let offset=0;
+    while(offset<bytes.length){
+      const n=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);
+      if(n<=0)fail('MAINTENANCE_RESTART_RECEIPT_SHORT_READ');
+      offset+=n;
+    }
+    if(!same(opened,fs.fstatSync(fd))||
+       !same(opened,fs.lstatSync(file)))
+      fail('MAINTENANCE_RESTART_RECEIPT_CHANGED');
+    const data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+    if(!data||typeof data!=='object'||Array.isArray(data))
+      fail('MAINTENANCE_RESTART_RECEIPT_INVALID');
+    return data;
+  }catch{
     fail('MAINTENANCE_RESTART_RECEIPT_CORRUPT_OWNER_REVIEW');
-  return data;
+  }finally{if(fd!==undefined)fs.closeSync(fd);}
 }
 function readReleased({dir,nodeId}){
   if(!NODE.test(nodeId||'')||!requiresReconciliation(dir))
     fail('MAINTENANCE_RESTART_RELEASE_BARRIER_REQUIRED');
   if(inspectHold({dir,nodeId}).active)
     fail('MAINTENANCE_RESTART_LOCAL_HOLD_STILL_ACTIVE');
-  const names=fs.readdirSync(dir).filter(x=>/^maintenance-release-[0-9a-f]{64}\.json$/.test(x));
-  if(names.length!==1)fail('MAINTENANCE_RESTART_AMBIGUOUS_RELEASE_RECEIPTS');
+  const candidates=fs.readdirSync(dir).filter(x=>/^maintenance-release-/i.test(x));
+  const names=candidates.filter(x=>/^maintenance-release-[0-9a-f]{64}\.json$/.test(x));
+  if(names.length!==1||candidates.length!==1)
+    fail('MAINTENANCE_RESTART_AMBIGUOUS_RELEASE_RECEIPTS');
   const releaseId=names[0].slice('maintenance-release-'.length,-'.json'.length);
   const record=readRecord(path.join(dir,names[0]));
   const archived=readRecord(path.join(dir,'maintenance-recovery-hold.released.'+releaseId+'.json'));
