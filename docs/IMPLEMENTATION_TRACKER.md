@@ -446,3 +446,13 @@ no longer requires MySQL credentials; restore refuses absent credentials and
 unapproved target before decrypting any backup. Decrypted SQL Buffer is
 cleared best-effort after use. This is source/CI testing only; G2 off-host,
 actual Hostinger restore timing and independent Owner signoff remain HOLD.
+
+
+### SQL switch guard regression assertion
+
+The operator staging restore continues to reject `USE`,
+`CREATE DATABASE` and `DROP DATABASE` directives before any MySQL
+connection. New authenticated-archive regression tests explicitly check
+the real whitespace-regex interpretation and fail if directives could
+escape due to an accidental literal-backslash regex. This is not a
+general SQL parser, and real Hostinger recovery acceptance remains open.

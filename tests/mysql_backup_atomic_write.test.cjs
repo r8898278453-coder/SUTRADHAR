@@ -72,3 +72,24 @@ test('offline verification refuses symlinked archive',()=>fixture(dir=>{
   assert.notEqual(result.status,0);
   assert.match(result.stderr,/BACKUP_FILE_UNSAFE/);
 }));
+
+test('restore rejects authenticated database-switch SQL before MySQL connection',()=>fixture(dir=>{
+  const file=path.join(dir,'switch-archive.json');
+  const key=crypto.randomBytes(32).toString('base64'),source='sut_backup_ci',target='sut_staging_ci';
+  for(const sql of ['USE', 'CREATE DATABASE', 'DROP DATABASE']){
+    const text=sql+' important_production_db;\n'+'INSERT INTO t VALUES (1);\n'.repeat(20);
+    if(fs.existsSync(file))fs.unlinkSync(file);
+    writeEncryptedArchive(file,encryptDump(Buffer.from(text),{
+      keyBase64:key,sourceDb:source}));
+    const result=cp.spawnSync(process.execPath,
+      [path.resolve(__dirname,'../scripts/ops/mysql-ops.cjs'),'restore'],
+      {encoding:'utf8',timeout:10000,env:{...process.env,DB_NAME:source,
+        DB_HOST:'127.0.0.1',DB_USER:'root',DB_PASSWORD:'test-no-connect',
+        DB_PORT:'3306',SUTRADHAR_BACKUP_KEY_BASE64:key,
+        SUTRADHAR_ENCRYPTED_BACKUP_PATH:file,SUTRADHAR_RESTORE_STAGING_APPROVED:'yes',
+        SUTRADHAR_TARGET_DB_NAME:target,SUTRADHAR_EXPECTED_TARGET_DB_NAME:target}});
+    assert.notEqual(result.status,0);
+    assert.match(result.stderr,/BACKUP_HAS_DATABASE_SWITCH_OR_DROP/,
+      'Refused before attempting connection: '+result.stderr);
+  }
+}));

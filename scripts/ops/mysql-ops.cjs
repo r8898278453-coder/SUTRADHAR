@@ -85,7 +85,7 @@ async function main(){
         created_at:verified.createdAt,plaintext_sha256:verified.sha256,
         restorable_not_proven:true}));return;
     }
-    if(/^\\s*(?:CREATE\\s+DATABASE|USE\\s+|DROP\\s+DATABASE)/im.test(
+    if(/^\s*(?:CREATE\s+DATABASE|USE\s+|DROP\s+DATABASE)/im.test(
       verified.plain.toString('utf8')))
       throw Error('BACKUP_HAS_DATABASE_SWITCH_OR_DROP');
     const mysql=require('mysql2/promise');
