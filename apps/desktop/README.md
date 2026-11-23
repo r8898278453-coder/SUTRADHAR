@@ -372,3 +372,13 @@ validated history. Invalid headers, malformed JSON, unknown API paths,
 oversize responses, redirects and ambient web cookies are rejected.
 This cannot prove live Hostinger connectivity or physical election
 acceptance; independently observe real PC heartbeats before release.
+
+
+## Local heartbeat display is not authoritative
+
+The Windows packaged child and Electron UI share a 4-KiB bounded
+`status.json` reader/writer. Damaged, symlinked or mismatched-node
+status cannot silently be shown as a valid Central ACK. The last
+accepted timestamp can remain visible during an outage but is never
+a fresh ACK or permission to restart, elect or release anything.
+Real signed Central state and physical-PC acceptance remain separate.

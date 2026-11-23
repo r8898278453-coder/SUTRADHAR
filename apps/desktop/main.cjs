@@ -41,6 +41,7 @@ const {
   validateSettings,validateEnrollmentCode
 }=require('./desktop-config.cjs');
 const {summarizeCentralReceipt}=require('./status.cjs');
+const {readNodeStatus}=require('./node-status.cjs');
 const {createVault}=require('./os-vault.cjs');
 const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
   require('./pilot-node-continuity.cjs');
@@ -157,7 +158,7 @@ function safeStatus(){
   try{if(startupSupported)startupEnabled=Boolean(app.getLoginItemSettings().openAtLogin);}catch{}
   let centralReport=null;
   try{
-    const detail=JSON.parse(fs.readFileSync(path.join(nodeDir(),'status.json'),'utf8'));
+    const detail=readNodeStatus({file:path.join(nodeDir(),'status.json'),nodeId});
     centralReport=summarizeCentralReceipt(detail,nodeId,agentProcessRunning);
   }catch{}
   return {configured:Boolean(current),centralUrl:current?.centralUrl||null,

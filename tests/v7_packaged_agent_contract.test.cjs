@@ -20,6 +20,13 @@ test('packaged child uses capped response parser, never unbounded Response.json(
   assert.doesNotMatch(packaged,/await res\.json\(\)/);
   assert.match(packaged,/body:method==='POST'\?body:undefined/);
 });
+test('packaged heartbeat status file is bounded and never an election authority',()=>{
+  const main=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/main.cjs'),'utf8');
+  assert.match(packaged,/writeNodeStatus\(/);
+  assert.match(main,/readNodeStatus\(/);
+  assert.ok(require('../apps/desktop/package.json').build.files.includes('node-status.cjs'));
+  assert.doesNotMatch(packaged,/JSON\.parse\(fs\.readFileSync\(file,'utf8'\)\)/);
+});
 test('packaged heartbeat is connectivity only and Central derives work from authoritative ledgers',()=>{
   assert.match(packaged,/status:'ONLINE'/);
   for(const match of ['AS active_ticket','AS has_work_lease','AS has_git_job',

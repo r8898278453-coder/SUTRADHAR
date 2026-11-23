@@ -8,6 +8,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+const {writeNodeStatus}=require('./node-status.cjs');
 // Bundled into the isolated child executable by esbuild (not exposed via IPC).
 const {agentCentralRequest}=require('./agent-central-http.cjs');
 import {HEARTBEAT_SECONDS,ID_RE} from '../../v7/rules.ts';
@@ -54,15 +55,12 @@ function bridge<T>(op:string,payload?:unknown):Promise<T>{
   });
 }
 function privateStatus(state:Saved,extra:Record<string,unknown>){
-  const file=path.join(home,'status.json'),tmp=file+'.'+process.pid+'.tmp';
   try{
-    let old:any=null;try{old=JSON.parse(fs.readFileSync(file,'utf8'));}catch{}
-    const last=typeof extra.last_accepted_at==='string'?extra.last_accepted_at:
-      old?.node_id===state.node_id?old.last_accepted_at:null;
-    fs.writeFileSync(tmp,JSON.stringify({node_id:state.node_id,
-      observed_at:new Date().toISOString(),last_accepted_at:last,...extra})+'\n',{mode:0o600});
-    fs.renameSync(tmp,file);
-  }catch{try{fs.unlinkSync(tmp);}catch{}}
+    writeNodeStatus({file:path.join(home,'status.json'),
+      nodeId:state.node_id,extra});
+  }catch{
+    // This local UI file does not authorize Central heartbeat or recovery.
+  }
 }
 async function main(){
   // The private key is generated and retained inside Electron main's OS vault.

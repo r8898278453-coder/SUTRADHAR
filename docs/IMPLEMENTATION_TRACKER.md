@@ -587,3 +587,20 @@ certificate ownership verification, public address assurance or
 protection against DNS rebinding. Owner must independently establish
 the genuine deployed Hostinger staging domain and manage network egress
 before any real PC enrollment. G1/G4 remain HOLD.
+
+
+## 23 November 2026 — Bounded local heartbeat dashboard status
+
+The packaged Windows child and Electron setup UI previously read
+`status.json` with unbounded `readFileSync`. The new shared
+`node-status.cjs` reads at most **4 KiB**, rejects symlinked/exposed
+or malformed JSON, unexpected fields, and a different node ID. The
+child writes only an advisory status via an fsynced, private temporary
+file and atomic rename; a bad previous status cannot be silently
+overwritten. Tests assert offline status preserves prior accepted
+timestamp without making it a fresh ACK, refuses oversized/symlinked
+files, and cannot smuggle Owner/release permission. Windows packaging
+includes the helper in `app.asar` with exact-file integrity checks;
+the child also bundles it. **This untrusted local UI snapshot is
+not a signed Central receipt, and cannot grant election, restart,
+QA review or release.** G4–G6 remain HOLD.
