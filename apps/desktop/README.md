@@ -404,3 +404,14 @@ enrollment_requested marker paths are checked with lstat, rather than
 existsSync. Any dangling or tampered marker requires Owner review
 instead of silently treating the identity as not enrolled. Existing
 PREPARED/SUBMITTED and OS-vault fail-closed behavior is unchanged.
+
+
+## 23 November 2026 — Session uncertainty marker integrity
+
+The one-shot heartbeat child session marker now retires only after
+bounded file-descriptor reading and pre-unlink path/inode checks.
+Symlink swaps, same-content replacement files and short reads retain
+the Owner-review hold instead of silently clearing uncertainty.
+A safe tracked child exit is still required, and Node cannot provide
+atomic inode-conditional unlink against hostile local processes.
+Physical multi-PC, Windows reboot and signed-update tests still HOLD.

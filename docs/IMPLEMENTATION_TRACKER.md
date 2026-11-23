@@ -694,3 +694,26 @@ and the real disposable MySQL restore still runs. SQL lexical
 containment and --binary-mode remain separately required. An
 exact username is NOT a proof of schema-scoped grants, so independent
 DBA grant review and real Hostinger G2 evidence stay required.
+
+
+## 23 November 2026 — Desktop agent session-fence descriptor reader
+
+An observed clean child exit may retire a PC's durable
+edge-agent.session-uncertain.json marker. Previously the exit handler
+checked the marker with lstat but read it again by pathname, allowing
+a local symlink/regular-file swap window. The retirement path now opens
+an exact read-only descriptor with O_NOFOLLOW where supported, compares
+the opened inode, size, mode and modification metadata with initial
+lstat, reads 60–512 bytes exactly with strict UTF-8, rechecks the open
+descriptor and current marker pathname, then performs a second path
+identity check immediately before unlink. A swapped symlink, another
+regular file with identical bytes, or partial read fails closed and
+retains an Owner session hold. Tests simulate each scenario.
+
+This is defense in depth against observed path-switch races, not an
+atomic unlink-if-inode operation: Node cannot guarantee that a hostile
+same-user/privileged process will not swap a pathname between the final
+check and unlink. The private identity directory, Electron one-instance
+owner, safe observed child-exit classification and real physical Windows
+acceptance are still mandatory. No automatic crash recovery or release
+permission is added. G4/G6 HOLD.

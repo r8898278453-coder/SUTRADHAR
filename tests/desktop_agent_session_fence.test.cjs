@@ -90,3 +90,70 @@ test('failed POSIX parent sync likewise keeps the one-shot marker',()=>fixture(d
   }finally{fs.fsyncSync=orig;}
   assert.equal(inspectAgentSession({dir}).active,true);
 }));
+
+test('a swapped symlink after descriptor open cannot retire session fence',()=>fixture(dir=>{
+  if(process.platform==='win32')return;
+  const session=beginAgentSession({dir});
+  const marker=path.join(dir,'edge-agent.session-uncertain.json');
+  const original=path.join(dir,'original.json');
+  const other=path.join(dir,'other.json');
+  const sentinel='OWNER_FORENSICS_MUST_SURVIVE';
+  fs.writeFileSync(other,sentinel,{mode:0o600});
+  const read=fs.readSync;
+  let swapped=false;
+  try{
+    fs.readSync=function(...args){
+      const n=read(...args);
+      if(!swapped){
+        swapped=true;
+        fs.renameSync(marker,original);
+        fs.symlinkSync(other,marker);
+      }
+      return n;
+    };
+    assert.throws(()=>finishObservedSession({
+      dir,session_id:session.session_id,reason:'CLEAN_EXIT'
+    }),/AGENT_SESSION_MARKER_CHANGED/);
+  }finally{fs.readSync=read;}
+  assert.equal(swapped,true);
+  assert.equal(fs.lstatSync(marker).isSymbolicLink(),true);
+  assert.equal(fs.readFileSync(other,'utf8'),sentinel);
+  assert.equal(inspectAgentSession({dir}).active,true);
+  assert.throws(()=>beginAgentSession({dir}),/OWNER_REVIEW_REQUIRED/);
+}));
+test('same bytes from another regular file cannot replace the active session inode',()=>fixture(dir=>{
+  const session=beginAgentSession({dir});
+  const marker=path.join(dir,'edge-agent.session-uncertain.json');
+  const copy=path.join(dir,'copy.json');
+  fs.writeFileSync(copy,fs.readFileSync(marker),{mode:0o600});
+  const read=fs.readSync;
+  let swapped=false;
+  try{
+    fs.readSync=function(...args){
+      const n=read(...args);
+      if(!swapped){
+        swapped=true;
+        fs.renameSync(marker,path.join(dir,'original.json'));
+        fs.renameSync(copy,marker);
+      }
+      return n;
+    };
+    assert.throws(()=>finishObservedSession({
+      dir,session_id:session.session_id,reason:'CLEAN_EXIT'
+    }),/AGENT_SESSION_MARKER_CHANGED/);
+  }finally{fs.readSync=read;}
+  assert.equal(swapped,true);
+  assert.equal(inspectAgentSession({dir}).active,true);
+  assert.throws(()=>beginAgentSession({dir}),/OWNER_REVIEW_REQUIRED/);
+}));
+test('partial read cannot retire a real session fence',()=>fixture(dir=>{
+  const session=beginAgentSession({dir});
+  const read=fs.readSync;
+  try{
+    fs.readSync=()=>0;
+    assert.throws(()=>finishObservedSession({
+      dir,session_id:session.session_id,reason:'CLEAN_EXIT'
+    }),/AGENT_SESSION_MARKER_CHANGED/);
+  }finally{fs.readSync=read;}
+  assert.equal(inspectAgentSession({dir}).active,true);
+}));

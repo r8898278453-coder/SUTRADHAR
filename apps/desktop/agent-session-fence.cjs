@@ -96,9 +96,40 @@ function finishObservedSession({dir,session_id,reason}={}){
     stat.size<60||stat.size>512||
     (process.platform!=='win32'&&(stat.mode&0o077)!==0))
     fail('AGENT_SESSION_MARKER_UNSAFE');
-  let record;
-  try{record=JSON.parse(fs.readFileSync(path.join(dir,FILE),'utf8'));}
-  catch{fail('AGENT_SESSION_MARKER_CORRUPT');}
+  // A pathname read after lstat can follow a newly swapped symlink.
+  // Read the exact initially inspected inode through a bounded descriptor
+  // instead, and re-check descriptor/path identity after the bytes are read.
+  const file=path.join(dir,FILE);
+  const same=(a,b)=>a&&b&&a.isFile()&&b.isFile()&&
+    !a.isSymbolicLink()&&!b.isSymbolicLink()&&
+    a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&
+    a.mtimeMs===b.mtimeMs&&a.ctimeMs===b.ctimeMs;
+  let record,fd;
+  try{
+    try{fd=fs.openSync(file,fs.constants.O_RDONLY|
+      (fs.constants.O_NOFOLLOW||0));}
+    catch{fail('AGENT_SESSION_MARKER_CHANGED');}
+    const opened=fs.fstatSync(fd);
+    if(!same(stat,opened)||opened.size<60||opened.size>512||
+       (process.platform!=='win32'&&(opened.mode&0o077)!==0))
+      fail('AGENT_SESSION_MARKER_CHANGED');
+    const bytes=Buffer.alloc(opened.size);
+    let pos=0;
+    while(pos<bytes.length){
+      const n=fs.readSync(fd,bytes,pos,bytes.length-pos,pos);
+      if(n<=0)fail('AGENT_SESSION_MARKER_CHANGED');
+      pos+=n;
+    }
+    const afterFd=fs.fstatSync(fd),afterPath=fs.lstatSync(file);
+    if(!same(opened,afterFd)||!same(opened,afterPath))
+      fail('AGENT_SESSION_MARKER_CHANGED');
+    try{record=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}
+    catch{fail('AGENT_SESSION_MARKER_CORRUPT');}
+  }catch(error){
+    if(/^AGENT_SESSION_MARKER_(?:CHANGED|CORRUPT)$/.test(error?.message||''))
+      throw error;
+    fail('AGENT_SESSION_MARKER_CHANGED');
+  }finally{if(fd!==undefined)fs.closeSync(fd);}
   if(!record||typeof record!=='object'||Array.isArray(record)||
     Object.keys(record).sort().join('|')!==
        'automatic_restart_allowed|schema|session_id|started_at_ms|state'||
@@ -107,8 +138,14 @@ function finishObservedSession({dir,session_id,reason}={}){
     record.session_id!==session_id||
     !Number.isSafeInteger(record.started_at_ms)||record.started_at_ms<1)
     fail('AGENT_SESSION_MARKER_MISMATCH');
-  // Only caller's observed safe exit is authority to retire this exact marker.
-  fs.unlinkSync(path.join(dir,FILE));
+  // This last check detects replacements after the read. Node.js does not
+  // expose an atomic "unlink only if inode is X" operation; directory
+  // isolation, Electron single-instance and Owner supervision remain essential.
+  let latest;
+  try{latest=fs.lstatSync(file);}
+  catch{fail('AGENT_SESSION_MARKER_CHANGED');}
+  if(!same(stat,latest))fail('AGENT_SESSION_MARKER_CHANGED');
+  fs.unlinkSync(file);
   syncDirectory(dir,folder);
   return Object.freeze({retired:true,observed_exit:reason,
     automatic_restart_allowed:false});
