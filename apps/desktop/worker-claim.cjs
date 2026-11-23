@@ -8,6 +8,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {spawnSync}=require('node:child_process');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
+const {evidenceEntryPresent}=require('./local-evidence-file.cjs');
 const {readEvidenceBytes}=require('./local-evidence-file.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const SHA=/^[a-f0-9]{40}$/;
@@ -230,9 +231,10 @@ async function claimApprovedTask({origin,agentId,ticketId,repoDir,dir,signer,fet
   const work=localWorktree({repoDir,t,workerDir:dir});
   const ctx=context(t,agentId,cluster.epoch,work);
   const file=recordFile(dir,ticketId,'claim'),receiptFile=recordFile(dir,ticketId,'receipt');
-  if(fs.existsSync(receiptFile))fail('WORKER_EXISTING_RECEIPT_REQUIRES_RESUME');
+  if(evidenceEntryPresent(receiptFile))
+    fail('WORKER_EXISTING_RECEIPT_REQUIRES_RESUME');
   let body;
-  if(fs.existsSync(file)){
+  if(evidenceEntryPresent(file)){
     const previous=readRecord(file);
     body=previous.body;
     if(JSON.stringify(previous.context)!==JSON.stringify(ctx)||
@@ -263,7 +265,10 @@ async function claimApprovedTask({origin,agentId,ticketId,repoDir,dir,signer,fet
   const local={...ctx,lease_id:result.lease_id,
     claim_request_id:body.request_id};
   const receiptCore={schema:1,context:ctx,body:local};
-  atomic(receiptFile,JSON.stringify({...receiptCore,sha256:digest(receiptCore)})+'\n');
+  // A previously created/dangling receipt is irreversible recovery evidence.
+  // Never rename-overwrite it if a second process races this earlier preflight.
+  atomic(receiptFile,JSON.stringify({...receiptCore,sha256:digest(receiptCore)})+'\n',
+    {exclusive:true});
   const proof=await signedRequest({origin,signer,method:'POST',uri:'resume-check',
     agentId,payload:{agent_id:agentId,ticket_id:ticketId,
       lease_id:local.lease_id,expected_master_epoch:ctx.epoch},fetcher});

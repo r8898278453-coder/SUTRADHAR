@@ -798,3 +798,44 @@ test('dangling candidate submit journal blocks a second Central submit POST',
       assert.equal(h.count(),0);
     }finally{f.close();}
   });
+
+
+test('dangling one-shot claim and receipt evidence block a second claim before Central write',
+  {skip:!available||process.platform==='win32'},async()=>{
+    const f=fixture(),r=remote(f);
+    try{
+      const pending=path.join(f.worker,'claim_ticket_abc.json');
+      fs.symlinkSync(path.join(f.worker,'absent-claim'),pending);
+      assert.equal(fs.existsSync(pending),false);
+      await assert.rejects(claimApprovedTask(args(f,r.fetcher)),
+        /WORKER_LOCAL_RECORD_UNTRUSTED/);
+      assert.equal(r.claims(),0);
+      fs.unlinkSync(pending);
+      const receipt=path.join(f.worker,'receipt_ticket_abc.json');
+      fs.symlinkSync(path.join(f.worker,'absent-receipt'),receipt);
+      await assert.rejects(claimApprovedTask(args(f,r.fetcher)),
+        /WORKER_EXISTING_RECEIPT_REQUIRES_RESUME/);
+      assert.equal(r.claims(),0);
+      assert.equal(fs.lstatSync(receipt).isSymbolicLink(),true);
+    }finally{f.close();}
+  });
+test('claim receipt write cannot replace a racing prior on-disk receipt', {skip:!available},async()=>{
+  const f=fixture(),r=remote(f),original=fs.openSync;
+  const receipt=path.join(f.worker,'receipt_ticket_abc.json');
+  const prior=Buffer.from('interrupted earlier receipt: requires Owner review');
+  let injected=false;
+  try{
+    fs.openSync=function(p,flags,...rest){
+      if(p===receipt&&flags==='wx'&&!injected){
+        injected=true;
+        fs.writeFileSync(receipt,prior,{mode:0o600});
+      }
+      return original.call(this,p,flags,...rest);
+    };
+    await assert.rejects(claimApprovedTask(args(f,r.fetcher)),/EEXIST/);
+    assert.equal(injected,true);
+    assert.equal(r.claims(),1,'exactly one Central claim, no second attempt');
+    assert.deepEqual(fs.readFileSync(receipt),prior);
+    assert.equal(fs.existsSync(path.join(f.worker,'claim_ticket_abc.json')),true);
+  }finally{fs.openSync=original;f.close();}
+});

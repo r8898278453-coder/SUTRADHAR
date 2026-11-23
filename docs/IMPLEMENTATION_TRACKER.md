@@ -967,3 +967,18 @@ dangling pending/receipt/progress entries, preserving the exact Central
 request ID and prohibiting a second submit POST. These checks are NOT proof
 of deployment, real GitHub remote effect, physically durable Windows files,
 or production approval. Existing Owner review and release gates stay HOLD.
+
+## 24 November 2026 — One-shot claim receipt no-replace invariant
+
+Worker claim's initial pending/receipt checks now use `lstat` entry
+presence, not follows-link `existsSync`, preventing a dangling prior
+receipt or interrupted claim journal from being treated as missing.
+More importantly, claim's successful OS-vault/Central receipt persistence
+now uses a **create-exclusive file descriptor**. A second Desktop process
+racing the initial preflight can no longer silently replace an existing
+receipt through rename-overwrite. A targeted injected filesystem race test
+creates a competing receipt at the exact write point, proving the previous
+bytes remain intact, the original pending claim remains for reconciliation,
+and no second Central claim POST occurs. Owner-only recovery and independent
+Central validation are still required; this is not a physical Windows
+power-loss or multi-process acceptance test.
