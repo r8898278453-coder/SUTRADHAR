@@ -49,7 +49,7 @@ function validateDir(dir:string){
 function read(file:string):IntentRecord{
   let raw:Buffer;
   try{raw=readStableJournal(file,{maxBytes:20000,requirePrivate:true});}
-  catch{fail('CHECKPOINT_INTENT_FILE_UNTRUSTED');}
+  catch{return fail('CHECKPOINT_INTENT_FILE_UNTRUSTED');}
   let data:any;
   try{data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}
   catch{fail('CHECKPOINT_INTENT_CORRUPT');}

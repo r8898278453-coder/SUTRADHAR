@@ -22,7 +22,7 @@ export function renewIntentPath(dir:string,ticket:string){
 function read(file:string):RecordFile{
   let raw:Buffer;
   try{raw=readStableJournal(file,{maxBytes:4096});}
-  catch{fail('RENEW_INTENT_FILE_UNTRUSTED');}
+  catch{return fail('RENEW_INTENT_FILE_UNTRUSTED');}
   let r:RecordFile|undefined;
   try{r=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}
   catch{fail('RENEW_INTENT_CORRUPT');}

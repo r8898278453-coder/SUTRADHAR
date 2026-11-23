@@ -12,7 +12,7 @@ export function journalEntryPresent(file:string,io:typeof fs=fs):boolean{
   try{io.lstatSync(file);return true;}
   catch(error:any){
     if(error?.code==='ENOENT')return false;
-    fail('JOURNAL_ENTRY_STATE_UNCERTAIN');
+    return fail('JOURNAL_ENTRY_STATE_UNCERTAIN');
   }
 }
 export function readStableJournal(file:string,{

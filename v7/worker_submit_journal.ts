@@ -62,7 +62,7 @@ function requireDir(dir:string){
 function read(file:string):Journal{
   let raw:Buffer;
   try{raw=readStableJournal(file,{maxBytes:16384,requirePrivate:true});}
-  catch{fail('SUBMIT_INTENT_FILE_UNTRUSTED');}
+  catch{return fail('SUBMIT_INTENT_FILE_UNTRUSTED');}
   let j:unknown;
   try{j=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}
   catch{fail('SUBMIT_INTENT_CORRUPT');}

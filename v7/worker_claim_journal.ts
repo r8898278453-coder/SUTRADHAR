@@ -48,7 +48,7 @@ function read(file:string):Journal{
   if(!journalEntryPresent(file))die('CLAIM_JOURNAL_MISSING');
   let raw:Buffer;
   try{raw=readStableJournal(file,{maxBytes:8192});}
-  catch{die('CLAIM_JOURNAL_UNTRUSTED_FILE');}
+  catch{return die('CLAIM_JOURNAL_UNTRUSTED_FILE');}
   let record:Journal|undefined;
   try{record=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}
   catch{die('CLAIM_JOURNAL_CORRUPT');}
