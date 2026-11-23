@@ -158,3 +158,28 @@ test('offline Owner CLI reads immutable signed inputs and never issues productio
     }
   }finally{c.close();}
 });
+
+test('evidence hash refuses parent symlink replacement even if underlying inode and bytes stay identical',()=>{
+  if(process.platform==='win32')return; // Windows open-folder rename is not portable
+  const c=setup();
+  const moved=c.dir+'.moved';
+  const originalRead=fs.readSync;
+  let swapped=false;
+  try{
+    fs.readSync=function(...args){
+      const n=originalRead.apply(this,args);
+      if(!swapped){
+        swapped=true;
+        fs.renameSync(c.dir,moved);
+        fs.symlinkSync(moved,c.dir,'dir');
+      }
+      return n;
+    };
+    assert.throws(()=>hashFile(c.artifacts[0].path),/SYMLINK_OR_REDIRECT/);
+    assert.equal(swapped,true);
+  }finally{
+    fs.readSync=originalRead;
+    if(swapped){fs.unlinkSync(c.dir);fs.renameSync(moved,c.dir);}
+    c.close();
+  }
+});

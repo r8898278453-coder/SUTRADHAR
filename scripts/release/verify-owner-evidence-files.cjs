@@ -55,8 +55,14 @@ function hashFile(file){
     if(after.size!==before.size||after.mtimeMs!==before.mtimeMs||
        after.ctimeMs!==before.ctimeMs||after.ino!==before.ino||
        after.dev!==before.dev||latest.ino!==before.ino||
-       latest.dev!==before.dev||latest.size!==before.size)
+       latest.dev!==before.dev||latest.size!==before.size||
+       latest.mtimeMs!==before.mtimeMs||latest.ctimeMs!==before.ctimeMs)
       fail('OWNER_EVIDENCE_FILE_CHANGED_DURING_HASH');
+    // Even if the opened inode and file bytes remain unchanged, a parent
+    // folder replaced with a junction/symlink during hashing is not the same
+    // trusted pathname context that was reviewed initially.
+    if(normalize(fs.realpathSync.native(resolved))!==normalize(resolved))
+      fail('OWNER_EVIDENCE_SYMLINK_OR_REDIRECT');
     return {sha256:digest.digest('hex'),bytes:read};
   }finally{fs.closeSync(fd);}
 }

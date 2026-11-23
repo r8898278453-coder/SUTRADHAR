@@ -900,3 +900,15 @@ new CLI/inode-swap/invalid-UTF-8/oversize/short-read tests run in CI.
 **Even accepted signed bytes can only verify local evidence format/hash:**
 production_release_authorized remains false, and G1–G7 still require real
 Hostinger, Windows signer, physical PC and independent Owner acceptance.
+
+## 24 November 2026 — Owner evidence path provenance after hash
+
+Offline G0–G7 evidence hashing now rechecks canonical realpath at the end of
+its bounded descriptor read, in addition to existing initial realpath and
+original/opened/final inode, size and timestamps. A parent directory that
+becomes a symlink/junction to the same original inode mid-read must not
+produce a `HASH_VERIFIED_ONLY` receipt from an unexpectedly redirected path.
+A POSIX regression swaps the parent while preserving exact file bytes and
+asserts refusal; Windows filesystem junction acceptance is an outstanding
+physical G4/G6 review, not a CI assertion. Source/CI verification never
+promotes signed evidence to real-world release authorization.
