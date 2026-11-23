@@ -6,7 +6,7 @@
 'use strict';
 const {evidenceEntryPresent}=require('./maintenance-evidence-presence.cjs');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
-const {identityEvidence,inspectPreparedIdentity}=
+const {identityEvidence,inspectPreparedIdentity,verifyLocalRecord}=
   require('./maintenance-install-preparation.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
@@ -27,7 +27,10 @@ function inspectAttempt({dir,node,agentIds,observedVersion}={}){
     fail('INSTALL_FAILURE_REVIEW_ORIGINAL_HOLD_REQUIRED');
   if(evidenceEntryPresent(path.join(dir,'installer-postinstall-observed.json')))
     fail('INSTALL_FAILURE_REVIEW_POSTINSTALL_SUCCESS_PATH_ALREADY_RECORDED');
-  const ready=jsonFile(path.join(dir,'installer-preparation-ready.json'));
+  // Reauthenticate the second independent read; prior successful
+  // inspectPreparedIdentity verification cannot authorize later bytes.
+  const ready=verifyLocalRecord(
+    jsonFile(path.join(dir,'installer-preparation-ready.json')),node);
   const attempt=verifySigned(jsonFile(path.join(dir,'installer-execution-attempt.json')),
     node,EXEC_PREFIX);
   if(prior.identity_preserved!==true||

@@ -222,3 +222,26 @@ test('dangling postinstall and launch evidence cannot be misclassified as failed
     /POSTINSTALL_RECEIPT_MISSING_OR_CORRUPT/);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
 }));
+
+test('failed-install classification reauthenticates independent second ready receipt read',()=>fixtures(async dir=>{
+  const {f,args}=await setupFailure(dir);
+  const ready=path.join(f.nodeDir,'installer-preparation-ready.json');
+  const originalStat=fs.lstatSync;
+  let observations=0,forged=false;
+  try{
+    fs.lstatSync=function(file,...options){
+      if(file===ready&&++observations===3){
+        forged=true;
+        const altered=JSON.parse(fs.readFileSync(ready,'utf8'));
+        altered.previous_version='0.0.0';
+        fs.writeFileSync(ready,JSON.stringify(altered));
+      }
+      return originalStat.call(this,file,...options);
+    };
+    await assert.rejects(observeFailedAttempt(args),
+      /UPDATE_PREPARE_RECORD_SIGNATURE_INVALID/);
+    assert.equal(forged,true,'must exercise the independently read ready receipt');
+    assert.equal(fs.existsSync(path.join(f.nodeDir,
+      'installer-failure-review-observed.json')),false);
+  }finally{fs.lstatSync=originalStat;}
+}));

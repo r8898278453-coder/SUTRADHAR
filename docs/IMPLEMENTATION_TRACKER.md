@@ -859,3 +859,16 @@ and replace signed-receipt inodes during descriptor reads; each aborts
 without a new postinstall observation or installation success claim.
 This is a local code/CI bound, not a real privileged Windows race/ACL or
 power-loss proof. G6 physical acceptance remains HOLD.
+
+## 24 November 2026 — Reauthenticate second failed-install preparation read
+
+The read-only old-version failed-install diagnosis used a prior signed
+preparation identity precheck, then independently read the
+\`installer-preparation-ready.json\` bytes without verifying the signature
+of that second snapshot. Its path now revalidates the device Ed25519
+signature on each independently read ready record using the same
+\`verifyLocalRecord\` contract as installer execution and post-install
+observation. A negative regression replaces a valid signed ready journal
+between the first and second reads and demands rejection before writing
+a failure-review observation. The Owner recovery incident HOLD,
+signing and physical Windows G6 requirements remain unchanged.
