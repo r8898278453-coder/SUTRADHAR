@@ -196,3 +196,13 @@ test('publisher mismatch, changing installed EXE and unrelated node are rejected
   }}),/EXE_CHANGED/);
   assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-failure-review-observed.json')),false);
 }));
+
+test('oversized Central evidence cannot certify a failed installation or release a hold',()=>fixtures(async dir=>{
+  const {f,args}=await setupFailure(dir);
+  const huge=async()=>new Response(JSON.stringify({padding:'X'.repeat(70000)}),{
+    headers:{'content-type':'application/json'}});
+  await assert.rejects(observeFailedAttempt({...args,fetcher:huge}),
+    /INSTALL_FAILURE_REVIEW_CENTRAL_TOO_LARGE/);
+  assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-failure-review-observed.json')),false);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+}));

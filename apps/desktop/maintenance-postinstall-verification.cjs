@@ -11,6 +11,7 @@ const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs
 const {inspectPreparedIdentity,identityEvidence}=require('./maintenance-install-preparation.cjs');
 const {verifyInstalledDesktopPublisher}=require('./windows-authenticode.cjs');
 const {validOrigin}=require('./update-readiness.cjs');
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const NODE=/^node_[0-9a-f]{32}$/;
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const HEX=/^[0-9a-f]{64}$/;
@@ -198,35 +199,13 @@ async function observePostInstall({dir,node,agentIds,observedVersion,
         signal:AbortSignal.timeout(12000)});
     }catch{fail('POSTINSTALL_CENTRAL_UNREACHABLE');}
     if(!response?.ok)fail('POSTINSTALL_CENTRAL_DENIED');
-    // Never trust an unbounded response.json() from Central, even on HTTPS.
-    // Keep response parsing bounded in bytes while streaming and fail closed.
-    const maxBytes=64*1024;
-    const declared=Number(response.headers?.get?.('content-length')||0);
-    if(!Number.isSafeInteger(declared)||declared<0||declared>maxBytes||
-       !response.body||typeof response.body.getReader!=='function')
+    // Shared 64 KiB streaming parser; remote body never buffered without a cap.
+    try{data=await boundedCentralJson(response);}
+    catch(error){
+      if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+        fail('POSTINSTALL_CENTRAL_RESPONSE_TOO_LARGE');
       fail('POSTINSTALL_CENTRAL_INVALID');
-    const reader=response.body.getReader();
-    const chunks=[];let total=0;
-    try{
-      for(;;){
-        const {done,value}=await reader.read();
-        if(done)break;
-        if(!value||!Number.isSafeInteger(value.byteLength))
-          fail('POSTINSTALL_CENTRAL_INVALID');
-        total+=value.byteLength;
-        if(total>maxBytes)fail('POSTINSTALL_CENTRAL_RESPONSE_TOO_LARGE');
-        chunks.push(Buffer.from(value));
-      }
-      data=JSON.parse(Buffer.concat(chunks,total).toString('utf8'));
-    }catch(error){
-      if(error?.message==='POSTINSTALL_CENTRAL_RESPONSE_TOO_LARGE')throw error;
-      fail('POSTINSTALL_CENTRAL_INVALID');
-    }finally{
-      try{await reader.cancel();}catch{}
-      reader.releaseLock();
     }
-    if(!data||typeof data!=='object'||Array.isArray(data))
-      fail('POSTINSTALL_CENTRAL_INVALID');
     return data;
   }
   function checkMaintenance(m){

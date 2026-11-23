@@ -73,7 +73,8 @@ function mock({cancel=recovery,roles=cluster,agents=me,secondRoles,
     else if(path.endsWith('/nodes/maintenance'))d=maintenance||
       {node_id:nodeId,intent:null,installer_execution_allowed:false,owner_maintenance_lease:false};
     else throw Error('Unexpected path '+path);
-    return {ok:true,json:async()=>d};
+    return new Response(JSON.stringify(d),{
+      headers:{'content-type':'application/json'}});
   };
   return {fetcher,calls};
 }
@@ -197,4 +198,16 @@ test('fresh Central checks after ACK reject withdrawn node or new maintenance, a
   assert.equal(recorded.recorded,true);
   assert.equal(requiresReconciliation(dir),true);
   assert.throws(()=>recordFreshAck({dir,nodeId,grantId:restartId,ack}),/EEXIST/);
+}));
+
+test('oversized Central preflight cannot create one-shot manual restart receipt',()=>fixture(async dir=>{
+  archiveFixture(dir);
+  const huge=async()=>new Response(JSON.stringify({padding:'X'.repeat(70000)}),{
+    headers:{'content-type':'application/json'}});
+  await assert.rejects(prepareManualRestart({...args,dir,
+    grantEnvelope:signedGrant(),fetcher:huge}),/MAINTENANCE_RESTART_CENTRAL_TOO_LARGE/);
+  assert.equal(fs.existsSync(path.join(dir,'maintenance-restart-attempt.json')),false);
+  assert.equal(requiresReconciliation(dir),true);
+  await assert.rejects(confirmLiveCentral({...args,epoch:21,fetcher:huge}),
+    /MAINTENANCE_RESTART_POST_ACK_RESPONSE_TOO_LARGE/);
 }));

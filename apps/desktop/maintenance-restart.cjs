@@ -6,6 +6,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path');
 const {validOrigin}=require('./update-readiness.cjs');
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
 const {verifyRestartGrant}=require('./maintenance-restart-grant.cjs');
@@ -111,12 +112,16 @@ async function prepareManualRestart({dir,nodeId,agentIds,centralOrigin,
     let res,data;
     try{res=await fetcher(origin+uri,{method:'GET',
       headers:{...headers,Accept:'application/json'},
-      redirect:'error',signal:AbortSignal.timeout(12000)});}
+      redirect:'error',cache:'no-store',credentials:'omit',
+      signal:AbortSignal.timeout(12000)});}
     catch{fail('MAINTENANCE_RESTART_CENTRAL_UNREACHABLE');}
     if(!res?.ok)fail('MAINTENANCE_RESTART_CENTRAL_DENIED');
-    try{data=await res.json();}catch{fail('MAINTENANCE_RESTART_CENTRAL_MALFORMED');}
-    if(!data||typeof data!=='object'||Array.isArray(data))
+    try{data=await boundedCentralJson(res);}
+    catch(error){
+      if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+        fail('MAINTENANCE_RESTART_CENTRAL_TOO_LARGE');
       fail('MAINTENANCE_RESTART_CENTRAL_MALFORMED');
+    }
     return data;
   }
   const first=await read(uri);
@@ -177,15 +182,17 @@ async function confirmLiveCentral({nodeId,agentIds,centralOrigin,signer,
     let response,data;
     try{response=await fetcher(origin+uri,{method:'GET',
       headers:{...headers,Accept:'application/json'},
-      redirect:'error',signal:AbortSignal.timeout(12000)});}
+      redirect:'error',cache:'no-store',credentials:'omit',
+      signal:AbortSignal.timeout(12000)});}
     catch{fail('MAINTENANCE_RESTART_POST_ACK_CENTRAL_UNREACHABLE');}
     if(!response?.ok)
       fail('MAINTENANCE_RESTART_POST_ACK_CENTRAL_DENIED');
-    try{data=await response.json();}catch{
+    try{data=await boundedCentralJson(response);}
+    catch(error){
+      if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+        fail('MAINTENANCE_RESTART_POST_ACK_RESPONSE_TOO_LARGE');
       fail('MAINTENANCE_RESTART_POST_ACK_RESPONSE_INVALID');
     }
-    if(!data||typeof data!=='object'||Array.isArray(data))
-      fail('MAINTENANCE_RESTART_POST_ACK_RESPONSE_INVALID');
     return data;
   }
   const me=await read('/v7/nodes/me');

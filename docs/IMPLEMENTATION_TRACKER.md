@@ -417,3 +417,19 @@ and a huge cancellation response cannot release a local maintenance hold.
 These changes do NOT create a release grant, override Owner signatures,
 or prove physical rollback; they reduce remote response memory risk before
 Owner-controlled decisions.
+
+
+## 23 November 2026 — Remaining privileged Windows signed GET response caps
+
+Privileged maintenance flow now reuses the same reviewed 64-KiB streaming-only
+Central JSON parser before **manual restart attempts**, **post-heartbeat
+reconciliation**, **failed-install diagnosis**, and **Owner failure-exception
+review**. Postinstall observation now delegates to that same parser rather
+than maintaining an inconsistent duplicate. No code uses unbounded
+`Response.json()` on those signed GET surfaces; requests disable cache and
+ambient credentials, and invalid or oversize responses fail closed.
+Negative tests confirm no one-shot restart receipt, no failed-install
+certificate, no Owner exception receipt and no release of the previous local
+hold after overlarge Central response. This is source/unsigned QA protection,
+not proof of physical Windows install completion, independent Owner release
+authorization, or stable production signing. G0–G7 remain HOLD.

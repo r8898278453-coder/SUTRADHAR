@@ -333,3 +333,18 @@ test('standard success-path hold release refuses ANY failed-install diagnostic, 
     /FAILED_INSTALL_REQUIRES_DISTINCT_OWNER_RESOLUTION/);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
 }));
+
+test('oversized Central cluster response never writes Owner exception review',()=>fixtures(async dir=>{
+  const {f,context}=await preparedReview(dir);
+  const normal=context.fetcher;
+  const huge=async(uri,options)=>{
+    if(new URL(uri).pathname==='/v7/cluster/state')
+      return new Response(JSON.stringify({padding:'X'.repeat(70000)}),{
+        headers:{'content-type':'application/json'}});
+    return normal(uri,options);
+  };
+  await assert.rejects(prepareFailedInstallRecoveryReview({...context,fetcher:huge}),
+    /FAILURE_EXCEPTION_CENTRAL_TOO_LARGE/);
+  assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-failure-exception-reviewed.json')),false);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+}));

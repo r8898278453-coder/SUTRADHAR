@@ -12,6 +12,7 @@ const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs
 const {verifyInstalledDesktopPublisher}=require('./windows-authenticode.cjs');
 const {verifySigned,jsonFile}=require('./maintenance-postinstall-verification.cjs');
 const {validOrigin}=require('./update-readiness.cjs');
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const HEX=/^[a-f0-9]{64}$/;
 const EXEC_PREFIX='SUTRADHAR_INSTALL_EXECUTION_V1\n';
@@ -101,12 +102,16 @@ async function observeFailedAttempt({dir,node,agentIds,observedVersion,
     try{
       response=await fetcher(origin+uri,{method:'GET',
         headers:{...headers,Accept:'application/json'},
-        redirect:'error',signal:AbortSignal.timeout(12000)});
+        redirect:'error',cache:'no-store',credentials:'omit',
+        signal:AbortSignal.timeout(12000)});
     }catch{fail('INSTALL_FAILURE_REVIEW_CENTRAL_UNREACHABLE');}
     if(!response?.ok)fail('INSTALL_FAILURE_REVIEW_CENTRAL_DENIED');
-    try{data=await response.json();}catch{fail('INSTALL_FAILURE_REVIEW_CENTRAL_INVALID');}
-    if(!data||typeof data!=='object'||Array.isArray(data))
+    try{data=await boundedCentralJson(response);}
+    catch(error){
+      if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+        fail('INSTALL_FAILURE_REVIEW_CENTRAL_TOO_LARGE');
       fail('INSTALL_FAILURE_REVIEW_CENTRAL_INVALID');
+    }
     return data;
   }
   const epoch=before.ready.expected_epoch;

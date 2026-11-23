@@ -11,6 +11,7 @@ const {verifyFailureReview}=require('./maintenance-failure-review-verifier.cjs')
 const {verifyOwnerFailureReviewGrant}=require('./maintenance-failure-owner-grant.cjs');
 const {checkRecovery}=require('./maintenance-recovery-preflight.cjs');
 const {validOrigin}=require('./update-readiness.cjs');
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const PREFIX='SUTRADHAR_FAILURE_EXCEPTION_REVIEW_V1\n';
 function fail(code){throw Error(code);}
@@ -50,12 +51,16 @@ async function prepareFailedInstallRecoveryReview({
     let res,data;
     try{res=await fetcher(origin+uri,{method:'GET',
       headers:{...headers,Accept:'application/json'},redirect:'error',
+      cache:'no-store',credentials:'omit',
       signal:AbortSignal.timeout(12000)});}
     catch{fail('FAILURE_EXCEPTION_CENTRAL_UNREACHABLE');}
     if(!res?.ok)fail('FAILURE_EXCEPTION_CENTRAL_DENIED');
-    try{data=await res.json();}catch{fail('FAILURE_EXCEPTION_CENTRAL_MALFORMED');}
-    if(!data||typeof data!=='object'||Array.isArray(data))
+    try{data=await boundedCentralJson(res);}
+    catch(error){
+      if(error?.message==='CENTRAL_JSON_TOO_LARGE')
+        fail('FAILURE_EXCEPTION_CENTRAL_TOO_LARGE');
       fail('FAILURE_EXCEPTION_CENTRAL_MALFORMED');
+    }
     return data;
   }
   function healthy(c){
