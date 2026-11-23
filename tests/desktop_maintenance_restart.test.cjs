@@ -254,3 +254,26 @@ test('oversized Central preflight cannot create one-shot manual restart receipt'
   await assert.rejects(confirmLiveCentral({...args,epoch:21,fetcher:huge}),
     /MAINTENANCE_RESTART_POST_ACK_RESPONSE_TOO_LARGE/);
 }));
+
+test('actual packaged status writer produces an ACK accepted by manual restart observer',()=>fixture(async dir=>{
+  const {writeNodeStatus}=require('../apps/desktop/node-status.cjs');
+  const now=Date.now(),timestamp=new Date(now).toISOString();
+  writeNodeStatus({file:path.join(dir,'status.json'),nodeId,now:timestamp,
+    extra:{connection:'ACKNOWLEDGED',epoch:21,phase:'READY',
+      master_agent_id:'agent_master_1',
+      backups:['agent_backup_1','agent_backup_2'],
+      agent_ids:[agentId],last_accepted_at:timestamp}});
+  const ack=await waitForFreshAck({dir,nodeId,agentIds:[agentId],epoch:21,
+    startedAtMs:now-1000,isChildActive:()=>true,timeoutMs:150,pollMs:5});
+  assert.equal(ack.confirmed,true);
+  assert.equal(ack.installer_execution_allowed,false);
+}));
+
+test('dangling status alias is corrupt evidence, never a successful restart ACK',()=>fixture(async dir=>{
+  if(process.platform==='win32')return;
+  fs.symlinkSync(path.join(dir,'missing-status'),path.join(dir,'status.json'));
+  const result=await waitForFreshAck({dir,nodeId,agentIds:[agentId],epoch:21,
+    startedAtMs:Date.now()-1000,isChildActive:()=>true,
+    timeoutMs:150,pollMs:5});
+  assert.deepEqual(result,{confirmed:false,reason:'STATUS_CORRUPT_OWNER_REVIEW'});
+}));

@@ -5,8 +5,10 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const MAX_STATUS_BYTES=4096,NODE=/^node_[a-f0-9]{32}$/;
+const AGENT=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const FIELDS=new Set(['node_id','observed_at','connection','last_accepted_at',
-  'phase','master_agent_id','epoch','error_code','last_error_at']);
+  'phase','master_agent_id','backups','agent_ids','epoch',
+  'error_code','last_error_at']);
 const EXTRA=new Set([...FIELDS].filter(x=>!['node_id','observed_at'].includes(x)));
 function fail(code){throw Error(code);}
 function validate(file,nodeId){
@@ -58,6 +60,13 @@ function writeNodeStatus({file,nodeId,extra,now=new Date().toISOString()}={}){
   if(!extra||typeof extra!=='object'||Array.isArray(extra)||
      typeof extra.connection!=='string'||extra.connection.length>80||
      Object.keys(extra).some(k=>!EXTRA.has(k))||
+     (Object.hasOwn(extra,'backups')&&
+       (!Array.isArray(extra.backups)||extra.backups.length!==2||
+        extra.backups.some(x=>x!==null&&!AGENT.test(x))))||
+     (Object.hasOwn(extra,'agent_ids')&&
+       (!Array.isArray(extra.agent_ids)||extra.agent_ids.length<1||
+        extra.agent_ids.length>4||new Set(extra.agent_ids).size!==extra.agent_ids.length||
+        extra.agent_ids.some(x=>!AGENT.test(x))))||
      typeof now!=='string'||!Number.isFinite(Date.parse(now)))
     fail('LOCAL_STATUS_FIELDS_INVALID');
   const old=readNodeStatus({file,nodeId});

@@ -145,3 +145,13 @@ test('crash diagnostics remain a read-only local Owner inspection without signer
   assert.match(diag,/marker_removal_allowed:false/);
   assert.doesNotMatch(diag,/unlinkSync|renameSync|writeFileSync|\.sign\(|fetch\(/);
 });
+
+test('packaged Heartbeat ACK saves Central backup roles and own node agent IDs',()=>{
+  const status=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/node-status.cjs'),'utf8');
+  const restart=fs.readFileSync(path.resolve(__dirname,
+    '../apps/desktop/maintenance-restart-ack.cjs'),'utf8');
+  assert.match(packaged,/backups:reply\.backups,agent_ids:state\.agents\.map\(a=>a\.id\),epoch/);
+  assert.match(status,/['"]backups['"],['"]agent_ids['"]/);
+  assert.match(restart,/readStableLocalFile\(file,\{minBytes:35,maxBytes:4096\}\)/);
+  assert.doesNotMatch(restart,/fs\.existsSync\(file\)/);
+});

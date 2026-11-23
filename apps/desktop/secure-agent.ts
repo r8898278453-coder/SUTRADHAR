@@ -134,7 +134,8 @@ async function main(){
         epoch=Number(reply.epoch);accepted=true;
         privateStatus(state,{connection:'ACKNOWLEDGED',
           last_accepted_at:reply.server_received_at,phase:reply.phase,
-          master_agent_id:reply.master_agent_id||null,epoch});
+          master_agent_id:reply.master_agent_id||null,
+          backups:reply.backups,agent_ids:state.agents.map(a=>a.id),epoch});
         if(reply.phase==='RECOVERING'&&reply.master_agent_id&&
            state.agents.some(a=>a.id===reply.master_agent_id))
           await recovery(reply.master_agent_id,epoch);

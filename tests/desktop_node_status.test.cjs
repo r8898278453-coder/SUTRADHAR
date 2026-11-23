@@ -65,3 +65,26 @@ test('malformed receipt, different node and forged Owner permission are rejected
       /FILE_UNSAFE|JSON_INVALID/);
   });
 });
+
+test('packaged heartbeat preserves validated backup and local agent IDs for manual restart ACK',()=>fixture(file=>{
+  const saved=writeNodeStatus({file,nodeId,extra:{
+    connection:'ACKNOWLEDGED',phase:'READY',epoch:17,
+    master_agent_id:'agent_master_1',
+    backups:['agent_backup_1','agent_backup_2'],
+    agent_ids:['agent_pc2_a','agent_pc2_b'],
+    last_accepted_at:new Date().toISOString()
+  }});
+  assert.equal(saved.stored,true);
+  const value=readNodeStatus({file,nodeId});
+  assert.deepEqual(value.backups,['agent_backup_1','agent_backup_2']);
+  assert.deepEqual(value.agent_ids,['agent_pc2_a','agent_pc2_b']);
+  for(const patch of [
+    {backups:['only_one']},{backups:['valid',42]},
+    {agent_ids:['duplicate','duplicate']},{agent_ids:[]},
+    {agent_ids:['one','two','three','four','five']},
+    {agent_ids:['bad id']}
+  ])assert.throws(()=>writeNodeStatus({file,nodeId,
+    extra:{connection:'ACKNOWLEDGED',...patch}}),/FIELDS_INVALID/);
+  assert.deepEqual(readNodeStatus({file,nodeId}).agent_ids,
+    ['agent_pc2_a','agent_pc2_b'],'invalid status cannot replace a valid ACK');
+}));

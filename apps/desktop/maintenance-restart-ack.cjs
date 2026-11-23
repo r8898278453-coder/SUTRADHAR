@@ -5,6 +5,7 @@
  */
 'use strict';
 const fs=require('node:fs'),path=require('node:path');
+const {readStableLocalFile}=require('./os-vault.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const NODE=/^node_[0-9a-f]{32}$/;
 function fail(code){throw Error(code);}
@@ -39,11 +40,17 @@ async function waitForFreshAck({dir,nodeId,agentIds,epoch,startedAtMs,
     fail('MAINTENANCE_RESTART_ACK_ARGUMENTS_INVALID');
   const file=path.join(dir,'status.json');
   const get=readStatus||(()=>{
-    if(!fs.existsSync(file))return null;
-    const stat=fs.lstatSync(file);
-    if(!stat.isFile()||stat.isSymbolicLink()||stat.size<20||stat.size>16384)
+    // A genuinely absent snapshot may be retried while the child starts.
+    // A dangling symlink or changed/insecure snapshot is corrupt evidence.
+    try{fs.lstatSync(file);}
+    catch(error){
+      if(error?.code==='ENOENT')return null;
       fail('MAINTENANCE_RESTART_ACK_FILE_UNSAFE');
-    return JSON.parse(fs.readFileSync(file,'utf8'));
+    }
+    try{
+      const bytes=readStableLocalFile(file,{minBytes:35,maxBytes:4096});
+      return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+    }catch{fail('MAINTENANCE_RESTART_ACK_FILE_UNSAFE');}
   });
   const deadline=Date.now()+timeoutMs;
   while(Date.now()<deadline){

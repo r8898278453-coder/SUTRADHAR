@@ -303,3 +303,20 @@ The packaged Windows app has an explicit **On QA PC: review FROZEN failover cand
 ### 23 November 2026 — Non-developer Owner QA review and separate recovery UI
 
 The authenticated Central dashboard now displays pending signed evidence reviews and separately approved-but-frozen exact candidate reviews using **read-only** `GET /v7/owner/qa-reviews`. Owner approval requires the original physical device, pinned Docker runner, full test evidence and separate PC independence to be reviewed independently and **four** explicit checkbox attestations plus a 20–500 character note. Rejection also requires a reason. Approval **does not** record a QA receipt. A second recovery section requires copying the exact approved review ID and ticket, **retyping** full candidate HEAD, a separate reason/consent and a live `RECOVERING` Master snapshot; it sends only the existing `RESTORE_QA_CANDIDATE` Owner command and then verifies the exact independent receipt. Its backend rechecks SHA/tree, QA permissions, no Git job, no old live lease and checkpoint. No refresh ever executes an Owner action. Ambiguous responses retain one original exact command ID/payload in-tab and block competing actions until it is resolved or the Owner explicitly clears the retry after independent audit. Disconnect clears local fields/attempts but **does not** undo committed Central operations. This UI remains alpha pending real physical device/Hostinger acceptance.
+
+## 24 November 2026 — Packaged post-maintenance restart ACK schema reconciliation
+
+Cross-module contract inspection found that Central's accepted signed node heartbeat
+already includes \`backups\`, and \`waitForFreshAck\` requires \`backups\` plus
+\`agent_ids\` to confirm a one-time Owner-supervised restart. The packaged
+OS-vault agent had not persisted those fields to its bounded local
+\`status.json\`, so the real packaged restart path could time out even
+after a healthy ACK. The packaged child now persists Central's backup roles
+and its own immutable configured agent IDs. The local status writer accepts
+only tightly scoped backup/agent lists; the restart reader uses a private
+bounded descriptor read and treats dangling symlinks or swapped receipts
+as corrupt rather than as missing. End-to-end source-contract and
+writer-to-reader regression tests exercise the actual shared receipt
+format. These local fields are **observations**, not Central election or
+installer authorities. A post-ACK independent signed Central reconciliation
+remains mandatory, with physical Windows G4/G6 acceptance still HOLD.
