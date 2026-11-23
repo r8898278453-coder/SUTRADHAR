@@ -16,6 +16,7 @@ const {encryptDump,decryptDump,MAX_DUMP_BYTES}=require('./backup-crypto.cjs');
 const {writeEncryptedArchive}=require('./backup-atomic-write.cjs');
 const {readEncryptedArchive}=require('./backup-safe-read.cjs');
 const {validateRestoreSql}=require('./restore-sql-guard.cjs');
+const {validateRestoreAccount}=require('./restore-account-guard.cjs');
 const action=process.argv[2];
 if(!['backup','verify','restore'].includes(action))throw Error('Usage: node mysql-ops.cjs backup|verify|restore');
 const sourceDb=process.env.DB_NAME||'';
@@ -88,6 +89,12 @@ async function main(){
         restorable_not_proven:true}));return;
     }
     validateRestoreSql(verified.plain);
+    // The Owner must pin an exact staging user, not merely a staging DB name.
+    // A disposable CI-only root fixture is intentionally not usable on live hosts.
+    validateRestoreAccount({user,
+      expectedUser:process.env.SUTRADHAR_EXPECTED_RESTORE_DB_USER,
+      host,sourceDb,targetDb:target,nodeEnv:process.env.NODE_ENV,
+      disposableSentinel:process.env.SUTRADHAR_MYSQL_RECOVERY_TEST_SENTINEL});
     const mysql=require('mysql2/promise');
     const connection=await mysql.createConnection({host,user,password,port,database:target});
     try{

@@ -136,3 +136,24 @@ ordinary expressions remain accepted. A lexical check cannot replace
 server-side database permissions or prove that all SQL is safe; use a
 single-empty-staging-schema-only login without global/production rights
 and independently inspect the real Hostinger restore. G2 stays HOLD.
+
+
+## 23 November 2026 — Exact restore-user binding (no privileged accounts)
+
+The staging restore CLI now requires an Owner-reviewed
+SUTRADHAR_EXPECTED_RESTORE_DB_USER environment variable, matching
+the actual DB_USER exactly. It refuses obvious administrative usernames
+(root, admin, administrator, superuser, dba) even when manually
+self-approved. The sole root exception is the disposable CI fixture
+with NODE_ENV=test, loopback 127.0.0.1, both exact fixed CI database
+names and the disposable-only sentinel; it is not a production option.
+The check runs after authenticated SQL preflight but before opening
+the MySQL connection or executing any DDL/DML. The new pure guard
+tests cover mismatches, privileged names and all CI exception fences,
+and the real MySQL integration test explicitly binds its disposable
+root username. This prevents a class of accidental operator
+misconfiguration but **does not inspect server-side GRANT statements
+or prove least privilege**. Owner/DBA must independently validate the
+actual staging login has no rights outside the approved, empty staging
+schema, including roles and server-level privileges. No live database
+credentials were used. G2 HOLD.

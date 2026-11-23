@@ -682,3 +682,15 @@ NEW.field references in triggers. Unit and encrypted CLI regressions
 verify unsafe dumps are rejected before MySQL connection.
 A dedicated **staging-schema-only** login, separate Owner authorization
 and real independent recovery acceptance are STILL required. G2 HOLD.
+
+
+## 23 November 2026 — Staging MySQL restore account binding
+
+Restore now demands exact Owner-reviewed
+SUTRADHAR_EXPECTED_RESTORE_DB_USER equal to DB_USER, and denies
+common administrative names outside the tightly scoped disposable
+CI loopback fixture. Tests verify wrong/missing binding fails closed
+and the real disposable MySQL restore still runs. SQL lexical
+containment and --binary-mode remain separately required. An
+exact username is NOT a proof of schema-scoped grants, so independent
+DBA grant review and real Hostinger G2 evidence stay required.

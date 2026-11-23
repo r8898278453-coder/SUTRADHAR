@@ -69,6 +69,7 @@ test('Encrypted MySQL dump restores real rows only to an explicitly empty stagin
       });
       assert.notEqual(wrongTarget.status,0,'Missing exact target approval must refuse');
       const restored=run('restore',{
+        SUTRADHAR_EXPECTED_RESTORE_DB_USER:'root',
         SUTRADHAR_RESTORE_STAGING_APPROVED:'yes',
         SUTRADHAR_TARGET_DB_NAME:targetDb,
         SUTRADHAR_EXPECTED_TARGET_DB_NAME:targetDb
@@ -116,6 +117,7 @@ test('Encrypted MySQL dump restores real rows only to an explicitly empty stagin
       assert.equal(altered.stdout.trim(),'',
         'Failed independent verification must not leak row contents');
       const second=run('restore',{
+        SUTRADHAR_EXPECTED_RESTORE_DB_USER:'root',
         SUTRADHAR_RESTORE_STAGING_APPROVED:'yes',
         SUTRADHAR_TARGET_DB_NAME:targetDb,
         SUTRADHAR_EXPECTED_TARGET_DB_NAME:targetDb
