@@ -67,6 +67,10 @@ export async function inspectGithubPrReview(input:PrReviewInput){
     ]);
     if(base?.commit?.sha!==input.baselineSha)
       return blocked('GITHUB_PR_BASELINE_MOVED_RETEST_REQUIRED');
+    // Branch protection is necessary, not sufficient for release.
+    // Missing GitHub metadata must never be represented as Owner merge-ready.
+    if(base?.protected!==true)
+      return blocked('GITHUB_PR_BASE_BRANCH_NOT_PROTECTED');
     if(commit?.sha!==input.headSha||commit?.tree?.sha!==input.treeSha||
        !Array.isArray(commit.parents)||commit.parents.length!==1||
        commit.parents[0]?.sha!==input.baselineSha||

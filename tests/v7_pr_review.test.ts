@@ -8,6 +8,7 @@ type Opt={
   tree?:string;extraFile?:boolean;approvalCommit?:string;
   changesRequested?:boolean;checksFail?:boolean;checkCount?:number;
   prAuthor?:string;prNumber?:number;prBase?:string;incompleteReviews?:boolean;
+  protected?:boolean;
 };
 function scenario(x:Opt={}){
   const calls:string[]=[];
@@ -35,7 +36,7 @@ function scenario(x:Opt={}){
       base:{ref:x.prBase||'main',repo:{full_name:'example/repo'}}
     });
     if(pathname.endsWith('/branches/main'))
-      return respond({commit:{sha:x.base||BASE}});
+      return respond({protected:x.protected??true,commit:{sha:x.base||BASE}});
     if(pathname.endsWith('/git/commits/'+HEAD))
       return respond({sha:HEAD,tree:{sha:x.tree||TREE},parents:[{sha:BASE}]});
     if(pathname.endsWith('/compare/'+BASE+'...'+HEAD))
@@ -99,6 +100,7 @@ for(const [name,opts,reason] of [
   ['different head',{head:'d'.repeat(40)},'GITHUB_PR_IDENTITY_CHANGED'],
   ['different target branch',{prBase:'dev'},'GITHUB_PR_IDENTITY_CHANGED'],
   ['base moved after QA',{base:'d'.repeat(40)},'GITHUB_PR_BASELINE_MOVED_RETEST_REQUIRED'],
+  ['unprotected main',{protected:false},'GITHUB_PR_BASE_BRANCH_NOT_PROTECTED'],
   ['tree changed',{tree:'d'.repeat(40)},'GITHUB_PR_HEAD_TREE_NOT_TESTED'],
   ['added unauthorized file',{extraFile:true},'GITHUB_PR_FILES_CHANGED']
 ] as const){

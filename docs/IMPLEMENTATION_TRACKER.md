@@ -1079,3 +1079,17 @@ bounded nofollow, descriptor/path identity and timestamp checks as other
 Desktop evidence. Negative tests inject same-content path replacement
 and in-place timestamp mutations during read. Failure reports stay
 \`INSTALL_OBSERVER_WITNESS_CORRUPT\`; no update is marked successful.
+
+## 24 November 2026 — G0 branch protection bound to PR/merge proof
+
+The Owner's read-only PR status no longer claims that a reviewed
+exact-HEAD candidate is *manually merge-ready* if GitHub's target branch
+metadata is missing or \`protected:false\`. The separate post-merge
+verifier also checks that metadata before it could mark a MySQL task
+DONE. Updated PR review unit, legacy HTTP and disposable MySQL fixtures
+to cover a protected branch, plus explicit unprotected denials. This is
+only a **necessary** safety prerequisite: metadata does not prove
+effective bypass rules, actual human review, signing environment
+protection or Owner authorization. Actual repo \`main\` still reports
+\`protected:false\`, so G0 and production release remain HOLD. No
+GitHub branch protection was modified.

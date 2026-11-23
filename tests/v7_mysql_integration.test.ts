@@ -1750,7 +1750,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
           }
           assert.equal(method,'GET');prGetCalls++;
           let result:any;
-          if(path==='branches/main')result={commit:{sha:'a'.repeat(40)}};
+          if(path==='branches/main')result={protected:true,commit:{sha:'a'.repeat(40)}};
           else if(path==='branches/ai/ticket_qa_test')
             result={commit:{sha:'b'.repeat(40)}};
           else if(path==='git/commits/'+'b'.repeat(40))
