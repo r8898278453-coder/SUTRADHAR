@@ -16,6 +16,15 @@ const VERSION=1;
 const ID=/^node_[0-9a-f]{32}$/;
 const HASH=/^[0-9a-f]{64}$/;
 function fail(code){throw Error(code);}
+// lstat (not existsSync) also sees dangling symlinks and interrupted writes.
+// Uninspectable metadata is a HOLD, never an absent enrollment receipt.
+function entryStat(file){
+  try{return fs.lstatSync(file);}
+  catch(error){
+    if(error?.code==='ENOENT')return null;
+    fail('ENROLLMENT_RECEIPT_PATH_INSPECTION_FAILED');
+  }
+}
 function paths(dir){
   if(typeof dir!=='string'||!path.isAbsolute(dir))fail('ENROLLMENT_NODE_DIR_INVALID');
   return {receipt:path.join(dir,'enrollment-receipt.json'),
@@ -40,11 +49,12 @@ function binding(node,centralUrl){
 }
 function inspect({dir,node,centralUrl}){
   const {receipt,legacy}=paths(dir);
-  if(fs.existsSync(legacy))fail('LEGACY_ENROLLMENT_RECEIPT_OWNER_REVIEW_REQUIRED');
-  if(!fs.existsSync(receipt))return null;
+  if(entryStat(legacy))
+    fail('LEGACY_ENROLLMENT_RECEIPT_OWNER_REVIEW_REQUIRED');
+  const stat=entryStat(receipt);
+  if(!stat)return null;
   // Check the binding before reading attacker-modifiable metadata.
   const expected=binding(node,centralUrl);
-  const stat=fs.lstatSync(receipt);
   if(!stat.isFile()||stat.isSymbolicLink()||stat.size>4096||stat.size<100)
     fail('ENROLLMENT_RECEIPT_INVALID');
   let saved;
@@ -67,7 +77,7 @@ function prepare({dir,node,centralUrl,at=new Date().toISOString()}){
   if(old)fail('ENROLLMENT_ALREADY_PREPARED_OR_SUBMITTED');
   const saved={version:VERSION,state:'PREPARED',...binding(node,centralUrl),prepared_at:at};
   if(!Number.isFinite(Date.parse(at)))fail('ENROLLMENT_PREPARED_AT_INVALID');
-  if(fs.existsSync(receipt))fail('ENROLLMENT_RECEIPT_CONFLICT');
+  if(entryStat(receipt))fail('ENROLLMENT_RECEIPT_CONFLICT');
   atomicWrite(receipt,JSON.stringify(saved)+'\n');
   return {state:'PREPARED'};
 }

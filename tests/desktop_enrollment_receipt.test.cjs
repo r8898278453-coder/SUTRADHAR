@@ -172,3 +172,23 @@ test('an IP/private Central origin cannot produce a PREPARED receipt',()=>{
     }
   });
 });
+
+test('dangling enrollment and legacy markers trigger Owner hold, never absent identity',()=>{
+  if(process.platform==='win32')return;
+  withDir(dir=>{
+    const identity=node(),args={dir,node:identity,centralUrl:origin};
+    const receipt=path.join(dir,'enrollment-receipt.json');
+    const legacy=path.join(dir,'enrollment_requested');
+    fs.symlinkSync(path.join(dir,'missing-receipt'),receipt);
+    assert.throws(()=>inspect(args),/ENROLLMENT_RECEIPT_INVALID/);
+    assert.throws(()=>requireSubmitted(args),/ENROLLMENT_RECEIPT_INVALID/);
+    assert.throws(()=>prepare(args),/ENROLLMENT_RECEIPT_INVALID/);
+    assert.equal(fs.lstatSync(receipt).isSymbolicLink(),true);
+    fs.unlinkSync(receipt);
+    fs.symlinkSync(path.join(dir,'missing-legacy-file'),legacy);
+    assert.throws(()=>inspect(args),/LEGACY_ENROLLMENT_RECEIPT_OWNER_REVIEW_REQUIRED/);
+    assert.throws(()=>prepare(args),/LEGACY_ENROLLMENT_RECEIPT_OWNER_REVIEW_REQUIRED/);
+    assert.equal(fs.existsSync(receipt),false);
+    assert.equal(fs.lstatSync(legacy).isSymbolicLink(),true);
+  });
+});

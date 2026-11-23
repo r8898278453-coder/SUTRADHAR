@@ -394,3 +394,13 @@ This does not rotate an existing key, remove a write-intent
 marker, auto-enroll a PREPARED node, or authorize release.
 Actual Windows DPAPI and restart/power-cut acceptance still
 need Owner-supervised physical tests.
+
+
+## 23 November 2026 — Interrupted enrollment markers
+
+Enrollment state inspection now distinguishes an absent file from
+a dangling symlink: both current enrollment-receipt.json and legacy
+enrollment_requested marker paths are checked with lstat, rather than
+existsSync. Any dangling or tampered marker requires Owner review
+instead of silently treating the identity as not enrolled. Existing
+PREPARED/SUBMITTED and OS-vault fail-closed behavior is unchanged.

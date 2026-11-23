@@ -642,3 +642,27 @@ are included in `npm run test:desktop`.
 This is local source/CI file-race protection, not a proof that an
 already compromised privileged Windows process cannot tamper with
 data, nor physical DPAPI/reboot acceptance. G4/G6 remain HOLD.
+
+
+## 23 November 2026 — Staging SQL restore client and physical receipt sentinel hardening
+
+Authenticated SQL dumps can still contain instructions outside the
+intended staging database. The new restore-sql-guard.cjs performs a
+bounded UTF-8 lexical preflight of normal mysqldump comments and MySQL
+versioned executable comments, rejects database/schema switches,
+schema/user/privilege changes, client source/shell commands and some
+global mutations before connecting to MySQL. The mysql restore client
+also receives --binary-mode to turn off most client commands for
+noninteractive input. This is intentionally not a complete MySQL
+parser nor a substitute for a dedicated staging-schema-only MySQL
+account without production/global privileges. Unit/integration
+regressions cover ordinary dumps and hidden executable comments.
+G2 remains HOLD until real Hostinger restore evidence exists.
+
+Desktop enrollment receipt inspection previously used existsSync,
+which returns false for dangling symlinks. It now uses lstatSync for
+both legacy enrollment_requested and current enrollment-receipt.json
+presence checks. Dangling or malformed markers retain an Owner
+reconciliation hold; no automatic replacement enrollment, deletion,
+new OS-vault identity or second network POST is authorized. Negative
+tests cover both dangling symlink variants. G4 stays HOLD.

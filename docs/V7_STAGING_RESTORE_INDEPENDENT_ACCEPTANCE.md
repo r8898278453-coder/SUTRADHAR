@@ -100,3 +100,26 @@ path swap, **not** against arbitrary privileged file changes after
 verification, a malicious operator host, or historical source mutations.
 Real encrypted off-host backup/restore on Owner-provisioned Hostinger
 staging is still G2 HOLD.
+
+
+## 23 November 2026 — SQL restore preflight plus binary-mode
+
+Owner-controlled encrypted backups remain authenticated by AES-GCM,
+but encrypted SQL content is not proof that every executable SQL
+instruction remains within the target schema. The staging-only restore
+now scans bounded UTF-8 SQL (including versioned executable comments)
+and rejects direct/comment-prefixed USE, CREATE/DROP/ALTER/RENAME
+DATABASE/SCHEMA, privilege/user/global commands, and client shell/source
+escapes before making any target DB connection. Ordinary mysqldump
+header/set/trigger directives and quoted data containing dangerous
+words remain supported. The mysql subprocess uses --binary-mode to
+suppress noninteractive mysql client commands except charset and
+delimiter, per the MySQL 8.4 client options manual at
+https://dev.mysql.com/doc/refman/8.4/en/mysql-command-options.html.
+
+This is defense in depth, not a complete MySQL SQL parser, not a
+cross-schema access control, and not a substitute for an account
+restricted to an initially EMPTY, isolated staging schema. The
+Owner must independently validate credential privileges, archive
+provenance, real restore result, migration and post-restore evidence.
+All G2 real-environment acceptance remains HOLD.
