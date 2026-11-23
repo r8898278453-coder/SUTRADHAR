@@ -168,3 +168,12 @@ test('backup selection excludes future-dated heartbeats just like Master electio
     candidate('healthy','n3',3,now)
   ],now),['healthy',null]);
 });
+
+test('nested ignored-file and dependency runtime controls remain protected',()=>{
+  for(const f of ['src/.gitignore','src/.yarnrc.yml','src/.pnp.cjs',
+    'src/bun.lock','src/pyproject.toml','src/setup.py']){
+    assert.equal(safeScope(f),false,f);
+    assert.equal(isProtectedScope(f),true,f);
+  }
+  assert.equal(safeScope('src/normal-feature.ts'),true);
+});

@@ -4,6 +4,7 @@
  * This is a snapshot, NOT an authorization to bypass GitHub branch protection.
  */
 import {evaluateGithubReviewPolicy} from './github_review_policy.ts';
+import {safeScope} from './rules.ts';
 import {githubApiJson} from './github_api_json.ts';
 export type PrReviewInput={
   repo:string;token:string;prNumber:number;baseBranch:string;branch:string;
@@ -32,7 +33,7 @@ export async function inspectGithubPrReview(input:PrReviewInput){
      !input.token?.trim()||!Array.isArray(input.changedFiles)||
      input.changedFiles.length<1||input.changedFiles.length>=100||
      new Set(input.changedFiles).size!==input.changedFiles.length||
-     !input.changedFiles.every(SAFE_PATH)||
+     !input.changedFiles.every(f=>SAFE_PATH(f)&&safeScope(f))||
      !Array.isArray(input.requiredChecks)||input.requiredChecks.length<1||
      !Number.isSafeInteger(input.requiredApprovals)||input.requiredApprovals<1||
      input.requiredApprovals>5)
@@ -80,6 +81,7 @@ export async function inspectGithubPrReview(input:PrReviewInput){
     const allowed=new Set(input.changedFiles);
     const exactFiles=(entries:any[])=>entries.length===allowed.size&&
       entries.length<100&&entries.every((f:any)=>SAFE_PATH(f?.filename)&&
+        safeScope(f.filename)&&
         allowed.has(f.filename)&&
         ['added','modified'].includes(f.status)&&!f.previous_filename);
     if(!Array.isArray(files)||!exactFiles(files)||

@@ -10,7 +10,7 @@ export type GitRemoteInput = {
 export type GitRemoteProof =
   | {verified:true;headSha:string;treeSha:string;baseline:string;branch:string;changedFiles:string[]}
   | {verified:false;error_code:string};
-import {validTaskBranch} from './rules.ts';
+import {validTaskBranch,safeScope} from './rules.ts';
 import {githubApiJson} from './github_api_json.ts';
 const sha=/^[0-9a-f]{40}$/,repoRe=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export async function inspectGitRemote(x:GitRemoteInput):Promise<GitRemoteProof>{
@@ -20,7 +20,8 @@ export async function inspectGitRemote(x:GitRemoteInput):Promise<GitRemoteProof>
     x.baseBranch.startsWith('/')||x.baseBranch.endsWith('/')||
     x.baseBranch.includes('..')||
     !sha.test(x.baseline)||
-    !sha.test(x.tree)||!x.token?.trim()||!x.writeScopes?.length||
+    !sha.test(x.tree)||!x.token?.trim()||!Array.isArray(x.writeScopes)||
+    !x.writeScopes.length||!x.writeScopes.every(safeScope)||
     (x.expectedHead!==undefined&&!sha.test(x.expectedHead)))return denied('REMOTE_PROOF_NOT_CONFIGURED');
   const allowed=(file:string)=>x.writeScopes.some(s=>file===s||file.startsWith(s+'/'));
   const origin='https://api.github.com/repos/'+x.repo;
@@ -53,7 +54,7 @@ export async function inspectGitRemote(x:GitRemoteInput):Promise<GitRemoteProof>
       comparison.files.length>99)return denied('REMOTE_COMMIT_TREE_BASELINE_MISMATCH');
     const changedFiles:string[]=[];
     for(const file of comparison.files){
-      if(typeof file?.filename!=='string'||!file.filename||
+      if(typeof file?.filename!=='string'||!safeScope(file.filename)||!file.filename||
         file.filename.startsWith('/')||file.filename.includes('\\')||
         file.filename.split('/').some((p:string)=>!p||p==='.'||p==='..')||
         !['added','modified'].includes(file.status)||file.previous_filename||

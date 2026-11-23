@@ -57,8 +57,10 @@ export function safeScope(s:string) {
   // Nested Git metadata, npm execution config and environment secrets
   // are not authorized simply because a parent scope is ordinary.
   const blocked=new Set(['.git','.gitattributes','.gitmodules','.lfsconfig',
-    '.npmrc','node_modules','package.json','package-lock.json',
-    'yarn.lock','pnpm-lock.yaml']);
+    '.npmrc','.gitignore','.yarnrc','.yarnrc.yml','.pnp.cjs',
+    '.pnp.loader.mjs','node_modules','package.json','package-lock.json',
+    'yarn.lock','pnpm-lock.yaml','bun.lockb','bun.lock',
+    'pyproject.toml','setup.py']);
   if(s.split('/').some(part=>blocked.has(part.toLowerCase())||
        part.toLowerCase()==='.env'||part.toLowerCase().startsWith('.env.')))
     return false;

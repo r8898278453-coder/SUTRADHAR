@@ -77,3 +77,12 @@ test('remote reference name is validated before any GitHub call',async()=>{
   assert.equal(calls,0);
 });
 
+test('broad parent scope cannot publish nested Git/npm secret-control files',async()=>{
+  for(const name of ['src/.env.production','src/package.json',
+    'src/.gitignore','src/.npmrc']){
+    const result=await inspectGitRemote({...input,writeScopes:['src'],
+      fetcher:make([{filename:name,status:'added'}])});
+    assert.deepEqual(result,{verified:false,error_code:'REMOTE_CHANGED_FILE_SCOPE_MISMATCH'},
+      name);
+  }
+});
