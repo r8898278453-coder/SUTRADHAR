@@ -740,3 +740,61 @@ test('packaged candidate UI and bundle retain Owner-confirmed bounded submission
   assert.doesNotMatch(preload,/signWorkerAction|private_key_pem/);
   assert.match(setup,/id="workerSubmit"/);
 });
+
+
+test('dangling one-shot progress journal is never treated as a new checkpoint intent',
+  {skip:!available||process.platform==='win32'},async()=>{
+    const f=fixture(),h=progressHarness(f);
+    try{
+      await claimApprovedTask(args(f,h.fetcher));
+      const marker=path.join(f.worker,'progress_ticket_abc.json');
+      fs.symlinkSync(path.join(f.worker,'missing-pending'),marker);
+      assert.equal(fs.existsSync(marker),false);
+      await assert.rejects(progressWorkerTask(progressArgs(f,h,
+        'checkpoint',checkpointContent)),/WORKER_PROGRESS_JOURNAL_UNTRUSTED/);
+      assert.equal(h.progressCount(),0,'No new checkpoint POST after ambiguous journal');
+      assert.equal(fs.lstatSync(marker).isSymbolicLink(),true);
+    }finally{f.close();}
+  });
+test('dangling previous checkpoint receipt cannot be overwritten on exact-ID retry',
+  {skip:!available||process.platform==='win32'},async()=>{
+    const f=fixture(),h=progressHarness(f,{lostOnce:true});
+    try{
+      await claimApprovedTask(args(f,h.fetcher));
+      await assert.rejects(progressWorkerTask(progressArgs(f,h,'checkpoint',
+        checkpointContent)),/SIMULATED_PROGRESS_REPLY_LOST/);
+      const pending=h.getPending();
+      const witness=path.join(f.worker,'progress_receipt_'+pending.body.request_id+'.json');
+      fs.symlinkSync(path.join(f.worker,'missing-prior-receipt'),witness);
+      await assert.rejects(progressWorkerTask(progressArgs(f,h,'checkpoint',
+        checkpointContent)),/WORKER_PROGRESS_RECEIPT_UNTRUSTED/);
+      assert.equal(h.progressCount(),2,'Existing exact request ID only');
+      assert.equal(fs.lstatSync(witness).isSymbolicLink(),true);
+    }finally{f.close();}
+  });
+
+test('dangling candidate submit journal blocks a second Central submit POST',
+  {skip:!available||process.platform==='win32'},async()=>{
+    const f=fixture(),h=candidateHarness(f);
+    try{
+      await claimApprovedTask(args(f,h.fetcher));h.ready();commitAuthorizedChange(f);
+      const pending=path.join(f.worker,'submission_pending_ticket_abc.json');
+      fs.symlinkSync(path.join(f.worker,'missing-submission'),pending);
+      assert.equal(fs.existsSync(pending),false);
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_JOURNAL_UNTRUSTED/);
+      assert.equal(h.count(),0);
+      fs.unlinkSync(pending);
+      const receipt=path.join(f.worker,'submission_receipt_ticket_abc.json');
+      fs.symlinkSync(path.join(f.worker,'missing-receipt'),receipt);
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_RECEIPT_CONFLICT_REQUIRES_OWNER_REVIEW/);
+      assert.equal(h.count(),0);
+      fs.unlinkSync(receipt);
+      const checkpoint=path.join(f.worker,'progress_ticket_abc.json');
+      fs.symlinkSync(path.join(f.worker,'missing-checkpoint'),checkpoint);
+      await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+        /SUBMIT_PENDING_PROGRESS_REQUIRES_RECONCILIATION/);
+      assert.equal(h.count(),0);
+    }finally{f.close();}
+  });

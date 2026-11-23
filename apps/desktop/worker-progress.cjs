@@ -6,6 +6,7 @@
  */
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const {readEvidenceBytes,evidenceEntryPresent}=require('./local-evidence-file.cjs');
 const {loadWorkerReceipt,resumeApprovedTask,signedRequest,confirmResume}
   =require('./worker-claim.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
@@ -33,11 +34,11 @@ function journalPath(dir,ticketId){
   return path.join(dir,'progress_'+ticketId+'.json');
 }
 function readJournal(file){
-  const st=fs.lstatSync(file);
-  if(!st.isFile()||st.isSymbolicLink()||st.size===0||st.size>12*1024)
-    fail('WORKER_PROGRESS_JOURNAL_UNTRUSTED');
+  let raw;
+  try{raw=readEvidenceBytes(file,{minBytes:1,maxBytes:12*1024});}
+  catch{fail('WORKER_PROGRESS_JOURNAL_UNTRUSTED');}
   let rec;
-  try{rec=JSON.parse(fs.readFileSync(file,'utf8'));}
+  try{rec=JSON.parse(raw.toString('utf8'));}
   catch{fail('WORKER_PROGRESS_JOURNAL_CORRUPT');}
   if(!rec||rec.schema!==1||!['checkpoint','renew-lease'].includes(rec.operation)||
     !rec.context||typeof rec.context!=='object'||
@@ -63,7 +64,7 @@ function progressContext(local){
 function pendingIntent({dir,operation,local,input}){
   const ctx=progressContext(local),file=journalPath(dir,ctx.ticket_id);
   const content=checkContent(operation,input);
-  if(fs.existsSync(file)){
+  if(evidenceEntryPresent(file)){
     const r=readJournal(file);
     if(r.operation!==operation||
       JSON.stringify(r.context)!==JSON.stringify(ctx)||
@@ -123,15 +124,15 @@ function saveReceipt(dir,body,operation,response){
   const file=path.join(dir,'progress_receipt_'+body.request_id+'.json');
   const core={schema:1,operation,request_id:body.request_id,
     ticket_id:body.ticket_id,response};
-  if(fs.existsSync(file)){
+  if(evidenceEntryPresent(file)){
     // The prior attempt may have stored a verified receipt and crashed
     // before removing the pending journal. Accept only byte-equivalent
     // verified contents and finish the original exact-ID replay.
-    const st=fs.lstatSync(file);
-    if(!st.isFile()||st.isSymbolicLink()||st.size===0||st.size>8192)
-      fail('WORKER_PROGRESS_RECEIPT_UNTRUSTED');
+    let raw;
+    try{raw=readEvidenceBytes(file,{minBytes:1,maxBytes:8192});}
+    catch{fail('WORKER_PROGRESS_RECEIPT_UNTRUSTED');}
     let saved;
-    try{saved=JSON.parse(fs.readFileSync(file,'utf8'));}
+    try{saved=JSON.parse(raw.toString('utf8'));}
     catch{fail('WORKER_PROGRESS_RECEIPT_CORRUPT');}
     if(!saved||saved.digest!==stamp(core)||
       JSON.stringify({schema:saved.schema,operation:saved.operation,

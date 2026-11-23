@@ -950,3 +950,20 @@ fails closed before a second POST. Regression tests inject same-byte inode
 swaps before open/during read, short reads, oversized files, dangling
 journals and access failures. This is source-level CI verification, not
 physical Windows concurrency, GitHub effect-proof or production approval.
+
+## 24 November 2026 — One-shot worker progress and candidate submission receipts
+
+OS-vault-signed worker checkpoint and lease-renew operations now read pending
+and previously verified receipts through packaged bounded nofollow descriptor
+reads with initial/opened/final inode and timestamp checks. All progress
+journal presence checks use lstat directory-entry semantics: an ambiguous or
+dangling previous request is **present** and blocks a fresh request ID.
+
+Human-confirmed candidate submission now uses the same safeguards for its
+pending/receipt journals. A dangling pending progress journal blocks
+submission before Central/Git preflight, and existing submission receipts
+are never mistaken for absent. Added end-to-end fixture regressions for
+dangling pending/receipt/progress entries, preserving the exact Central
+request ID and prohibiting a second submit POST. These checks are NOT proof
+of deployment, real GitHub remote effect, physically durable Windows files,
+or production approval. Existing Owner review and release gates stay HOLD.

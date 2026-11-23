@@ -13,6 +13,7 @@ const {spawnSync}=require('node:child_process');
 const {loadWorkerReceipt,localWorktree,resumeApprovedTask,signedRequest}
   =require('./worker-claim.cjs');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
+const {readEvidenceBytes,evidenceEntryPresent}=require('./local-evidence-file.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const SHA=/^[a-f0-9]{40}$/;
 const HASH=/^[a-f0-9]{64}$/;
@@ -179,11 +180,11 @@ function files(dir,ticket){
     receipt:path.join(dir,'submission_receipt_'+ticket+'.json')};
 }
 function readFile(file){
-  const st=fs.lstatSync(file);
-  if(!st.isFile()||st.isSymbolicLink()||st.size===0||st.size>16*1024)
-    fail('SUBMIT_JOURNAL_UNTRUSTED');
+  let raw;
+  try{raw=readEvidenceBytes(file,{minBytes:1,maxBytes:16*1024});}
+  catch{fail('SUBMIT_JOURNAL_UNTRUSTED');}
   let r;
-  try{r=JSON.parse(fs.readFileSync(file,'utf8'));}
+  try{r=JSON.parse(raw.toString('utf8'));}
   catch{fail('SUBMIT_JOURNAL_CORRUPT');}
   if(!r||r.schema!==1||!r.context||!r.body||!HASH.test(r.sha256||'')||
     hash({schema:1,context:r.context,body:r.body})!==r.sha256)
@@ -205,7 +206,7 @@ function context(local,snapshot){
 }
 function intent(dir,local,snapshot){
   const f=files(dir,local.ticket_id),ctx=context(local,snapshot);
-  if(fs.existsSync(f.pending)){
+  if(evidenceEntryPresent(f.pending)){
     const prior=readFile(f.pending),body=prior.body;
     if(JSON.stringify(prior.context)!==JSON.stringify(ctx)||
       Object.keys(body).length!==7||
@@ -253,7 +254,7 @@ function saveReceipt(dir,local,snapshot,pendingBody){
   const core={schema:1,context:context(local,snapshot),
     body:pendingBody};
   const record={...core,sha256:hash(core)};
-  if(fs.existsSync(f.receipt)){
+  if(evidenceEntryPresent(f.receipt)){
     const prior=readFile(f.receipt);
     if(JSON.stringify(prior)!==JSON.stringify(record))
       fail('SUBMIT_EXISTING_RECEIPT_CONFLICT');
@@ -269,12 +270,12 @@ async function submitWorkerCandidate({
     typeof dir!=='string'||!path.isAbsolute(dir)||
     !signer||typeof signer.signWorkerAction!=='function')
     fail('SUBMIT_INPUT_DENIED');
-  if(fs.existsSync(path.join(dir,'progress_'+ticketId+'.json')))
+  if(evidenceEntryPresent(path.join(dir,'progress_'+ticketId+'.json')))
     fail('SUBMIT_PENDING_PROGRESS_REQUIRES_RECONCILIATION');
   const local=loadWorkerReceipt(dir,agentId,ticketId);
   const snapshot=inspectCommittedCandidate(local,dir);
   const f=files(dir,ticketId);
-  const alreadyPending=fs.existsSync(f.pending),alreadyReceipt=fs.existsSync(f.receipt);
+  const alreadyPending=evidenceEntryPresent(f.pending),alreadyReceipt=evidenceEntryPresent(f.receipt);
   // Check authoritative Central status BEFORE writing any new claim intent.
   const prior=(await inspectWorkerTasks({
     origin,agentId,ticketId,signer,fetcher
