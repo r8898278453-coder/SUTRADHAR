@@ -8,6 +8,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {spawnSync}=require('node:child_process');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
+const {readEvidenceBytes}=require('./local-evidence-file.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const SHA=/^[a-f0-9]{40}$/;
 const LEASE=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -51,11 +52,12 @@ function recordFile(dir,ticketId,kind){
   return path.join(dir,kind+'_'+ticketId+'.json');
 }
 function readRecord(file){
-  const st=fs.lstatSync(file);
-  if(!st.isFile()||st.isSymbolicLink()||st.size<=0||st.size>8192)
-    fail('WORKER_LOCAL_RECORD_UNTRUSTED');
+  let raw;
+  try{raw=readEvidenceBytes(file,{minBytes:1,maxBytes:8192});}
+  catch{fail('WORKER_LOCAL_RECORD_UNTRUSTED');}
   let obj;
-  try{obj=JSON.parse(fs.readFileSync(file,'utf8'));}catch{fail('WORKER_LOCAL_RECORD_CORRUPT');}
+  try{obj=JSON.parse(raw.toString('utf8'));}
+  catch{fail('WORKER_LOCAL_RECORD_CORRUPT');}
   if(!obj||obj.schema!==1||!obj.context||!obj.body||
      !/^[a-f0-9]{64}$/.test(obj.sha256||'')||
      digest({schema:1,context:obj.context,body:obj.body})!==obj.sha256)

@@ -931,3 +931,22 @@ at the later exclusive write. Required QA receipt presence uses the same
 refusal semantics and is still cryptographically verified by the existing
 reader. Test-only symlink, uncertain I/O and source-contract regressions
 were added. Remote Git side effects, live releases and G4–G7 remain HOLD.
+
+## 24 November 2026 — QA, Git and worker local evidence descriptor consistency
+
+A new packaged `local-evidence-file.cjs` provides bounded, regular-file,
+non-symlink descriptor reads with original/opened/final inode/size/mtime/ctime
+checks and a fail-closed `lstat` directory-entry presence guard. It protects
+QA report/attestation upload, exact-body replay journals, independent local
+QA inspection, worker claim journals, and candidate handoff manifests from
+path replacement and unbounded reads. POSIX permissions are intentionally
+not used to establish authenticity here: candidate manifests can be public,
+while signed Central/OS-vault evidence, SHA bindings, one-shot request IDs,
+review and Git preflights retain their independent authority.
+
+QA upload pending/receipt presence now counts dangling aliases as evidence,
+so an interrupted attempt is not silently treated as new; unexpected I/O
+fails closed before a second POST. Regression tests inject same-byte inode
+swaps before open/during read, short reads, oversized files, dangling
+journals and access failures. This is source-level CI verification, not
+physical Windows concurrency, GitHub effect-proof or production approval.

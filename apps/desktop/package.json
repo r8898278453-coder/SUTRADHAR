@@ -49,6 +49,7 @@
       "worker-submit.cjs",
       "qa-handoff.cjs",
       "qa-execution.cjs",
+      "local-evidence-file.cjs",
       "qa-evidence.cjs",
       "qa-evidence-submit.cjs",
       "git-publish.cjs",

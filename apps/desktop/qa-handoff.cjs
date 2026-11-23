@@ -10,6 +10,7 @@ const crypto=require('node:crypto'),{spawnSync}=require('node:child_process');
 const {inspectCommittedCandidate}=require('./worker-submit.cjs');
 const {loadWorkerReceipt}=require('./worker-claim.cjs');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
+const {readEvidenceBytes}=require('./local-evidence-file.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const SHA=/^[a-f0-9]{40}$/,HASH=/^[a-f0-9]{64}$/;
 const REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -160,9 +161,9 @@ async function exportCandidateHandoff({origin,agentId,ticketId,dir,signer,
   }finally{fs.rmSync(tmp,{recursive:true,force:true});}
 }
 function readManifest(p){
-  regularFile(p,8192);
   let m;
-  try{m=JSON.parse(fs.readFileSync(p,'utf8'));}
+  try{m=JSON.parse(readEvidenceBytes(p,
+    {minBytes:1,maxBytes:8192}).toString('utf8'));}
   catch{fail('HANDOFF_MANIFEST_INVALID');}
   const keys=['schema','kind','ticket_id','project_id','repository','branch_name',
     'baseline_sha','candidate_head_sha','candidate_tree_sha','worker_agent_id',

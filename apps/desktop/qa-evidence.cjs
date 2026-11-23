@@ -9,6 +9,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
+const {readEvidenceBytes}=require('./local-evidence-file.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const SHA=/^[a-f0-9]{40}$/,HASH=/^[a-f0-9]{64}$/;
 const DOMAIN='SUTRADHAR_QA_EVIDENCE_V1\n';
@@ -23,11 +24,14 @@ const fields=['schema','status','ticket_id','qa_agent_id','developer_agent_id',
 const sorted=x=>[...x].sort().join('|');
 function readJson(file,maxBytes=16*1024){
   if(typeof file!=='string'||!path.isAbsolute(file))fail('QA_EVIDENCE_PATH_INVALID');
-  const st=fs.lstatSync(file);
-  if(!st.isFile()||st.isSymbolicLink()||st.size<=0||st.size>maxBytes)
+  let raw;
+  try{raw=readEvidenceBytes(file,{minBytes:1,maxBytes});}
+  catch(error){
+    if(error?.message==='LOCAL_EVIDENCE_FILE_CHANGED'||
+       error?.message==='LOCAL_EVIDENCE_READ_SHORT_OR_INVALID')
+      fail('QA_EVIDENCE_FILE_CHANGED');
     fail('QA_EVIDENCE_FILE_UNTRUSTED');
-  const raw=fs.readFileSync(file);
-  if(raw.length!==st.size)fail('QA_EVIDENCE_FILE_CHANGED');
+  }
   let value;
   try{value=JSON.parse(raw.toString('utf8'));}
   catch{fail('QA_EVIDENCE_CORRUPT');}

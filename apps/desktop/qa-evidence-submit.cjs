@@ -9,6 +9,8 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
+const {readEvidenceBytes,evidenceEntryPresent}=
+  require('./local-evidence-file.cjs');
 const {checkEvidence,checkIntent,verifyQaEvidence}=require('./qa-evidence.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const SHA=/^[0-9a-f]{40}$/,HASH=/^[0-9a-f]{64}$/;
@@ -24,10 +26,8 @@ function evidenceDir(p){
   return fs.realpathSync.native(p);
 }
 function readFile(p,max){
-  const st=fs.lstatSync(p);
-  if(!st.isFile()||st.isSymbolicLink()||st.size===0||st.size>max)
-    fail('QA_UPLOAD_FILE_UNTRUSTED');
-  return fs.readFileSync(p);
+  try{return readEvidenceBytes(p,{minBytes:1,maxBytes:max});}
+  catch{fail('QA_UPLOAD_FILE_UNTRUSTED');}
 }
 function readRecord(p){
   const raw=readFile(p,8192);
@@ -170,14 +170,14 @@ function journal(dir,ticketId,kind,context,body){
   const prefix='qa_central_'+kind+'_'+ticketId;
   const pending=path.join(dir,prefix+'_pending.json');
   const receipt=path.join(dir,prefix+'_receipt.json');
-  if(fs.existsSync(receipt)){
+  if(evidenceEntryPresent(receipt)){
     const old=readRecord(receipt);
     if(JSON.stringify(old.context)!==JSON.stringify(context)||
        JSON.stringify(old.body)!==JSON.stringify(body))
       fail('QA_UPLOAD_EXISTING_RECEIPT_CHANGED');
     return {already:true,pending,receipt};
   }
-  if(fs.existsSync(pending)){
+  if(evidenceEntryPresent(pending)){
     const old=readRecord(pending);
     if(JSON.stringify(old.context)!==JSON.stringify(context)||
        JSON.stringify(old.body)!==JSON.stringify(body))
@@ -188,7 +188,7 @@ function journal(dir,ticketId,kind,context,body){
   return {already:false,pending,receipt};
 }
 function complete(j,context,body){
-  if(!fs.existsSync(j.receipt))writeRecord(j.receipt,context,body);
+  if(!evidenceEntryPresent(j.receipt))writeRecord(j.receipt,context,body);
   fs.unlinkSync(j.pending);
 }
 function checkInputs({origin,agentId,ticketId,signer,dir}){
@@ -207,8 +207,8 @@ async function submitQaEvidenceForOwner({origin,agentId,ticketId,signer,
     recoveryReviewOnly});
   const pendingPath=path.join(dir,'qa_central_evidence_'+ticketId+'_pending.json');
   const receiptPath=path.join(dir,'qa_central_evidence_'+ticketId+'_receipt.json');
-  const knownPath=fs.existsSync(pendingPath)?pendingPath:
-    fs.existsSync(receiptPath)?receiptPath:null;
+  const knownPath=evidenceEntryPresent(pendingPath)?pendingPath:
+    evidenceEntryPresent(receiptPath)?receiptPath:null;
   const previous=knownPath?readRecord(knownPath):null;
   const requestId=previous?.body?.request_id||
     'qaevidence_'+crypto.randomUUID().replace(/-/g,'');
@@ -269,8 +269,8 @@ async function submitOwnerReviewedQaReceipt({origin,agentId,ticketId,signer,
   const prefix='qa_central_receipt_'+ticketId;
   const pending=path.join(dir,prefix+'_pending.json');
   const completed=path.join(dir,prefix+'_receipt.json');
-  const known=fs.existsSync(pending)?pending:
-    fs.existsSync(completed)?completed:null;
+  const known=evidenceEntryPresent(pending)?pending:
+    evidenceEntryPresent(completed)?completed:null;
   const old=known?readRecord(known):null;
   if(old&&JSON.stringify(old.context)!==JSON.stringify(v.context))
     fail('QA_RECEIPT_PENDING_RECONCILIATION_REQUIRED');
