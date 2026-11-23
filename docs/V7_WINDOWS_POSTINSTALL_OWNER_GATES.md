@@ -20,3 +20,23 @@ For a nonstandard OS install directory, unexpected SystemRoot/WINDIR discrepancy
 ## CI tests and explicit limits
 
 Automated tests use disposable fixture signatures, mocked Windows publisher checks and Central responses, while GitHub Windows runners package **unsigned internal-QA only** executables. They test absolute PowerShell targeting, restricted child environment, injection-safe PowerShell string literals, unauthorized system-root rejection, duplicate/forged signed receipts, oversized HTTP response denial, timestamp ordering and Central readiness. They cannot simulate true UAC elevation, verify an Owner-owned Authenticode certificate, attest installer completion, guarantee identity survives real OS reboot or prove independent multi-PC failover. Full G0–G7 acceptance and physical Windows execution remain Owner-controlled production gates; this work never merges main or deploys anything.
+
+## 24 November — restart evidence must remain unambiguous
+
+A local `maintenance-release-*` file is a restart/reconciliation warning, **including**
+an incomplete filename, interrupted write, or filename with changed capitalization.
+The packaged Desktop's reconciliation barrier must not interpret those as "no
+maintenance happened". A separately signed Owner restart grant does not authorize
+ignoring conflicting release-like evidence. Exactly one canonical release receipt
+and its matching archived maintenance hold must be verifiable; otherwise manual
+restart is denied.
+
+During inspection, the Desktop opens release/archive receipts as bounded file
+descriptors and rechecks their on-disk identity after reading. A symlink,
+replacement or raced write requires Owner review, **not deletion, renaming or
+automatic retry**. Automated tests inject malformed release records and a
+replacement during an open file read. These checks reduce local accidental/race
+bypasses, but do not prove resistance to a compromised privileged Windows user
+or power-loss durability; physical Windows and independent Owner acceptance
+remain release blockers. Nothing here authorizes unattended installation,
+automatic agent restart, Git publication or production promotion.
