@@ -5,6 +5,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
 const {verifyRuntime}=require('./runtime-policy.cjs');
+const {verifyPackageClosure}=require('./package-closure.cjs');
 const pkg=JSON.parse(fs.readFileSync(path.join(__dirname,'package.json'),'utf8'));
 const runtime=verifyRuntime({electronVersion:pkg.devDependencies?.electron,
   builderVersion:pkg.devDependencies?.['electron-builder']});
@@ -15,6 +16,7 @@ if(process.env.SUTRADHAR_ALLOW_UNSIGNED_QA_PACKAGE!=='true')
 const script=path.join(__dirname,'dist','edge-agent.cjs');
 if(!fs.existsSync(script)||!fs.existsSync(path.join(__dirname,'contract.json')))
   throw Error('Run npm run build:desktop in repository root before packaging.');
+verifyPackageClosure({checkAssets:true});
 const builder=path.join(__dirname,'node_modules','electron-builder','cli.js');
 if(!fs.existsSync(builder))throw Error('Run npm install --prefix apps/desktop first');
 const result=cp.spawnSync(process.execPath,[builder,'--win','nsis','--x64','--publish','never'],

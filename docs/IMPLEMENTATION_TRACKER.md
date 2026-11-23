@@ -471,3 +471,22 @@ rejects symbolic links instead of following them. New negative tests preserve
 PREPARED on overlarge reply, deny incomplete signed rechecks and symlinked
 receipts. This is source/CI hardening, not successful Windows DPAPI/physical
 Owner approval testing; G4/G5 remain HOLD.
+
+
+## 23 November 2026 — Electron ASAR missing-module recovery gate
+
+Real source audit exposed that `bounded-central-json.cjs` had become an
+actual runtime import of enrollment and maintenance modules, but was
+**missing from electron-builder's explicit `build.files` list**. An
+unsigned installer can still be created while the installed Electron
+main process later fails to resolve the missing module.
+
+The missing runtime file is now included. A build-only
+`package-closure.cjs` verifier statically checks every literal local
+CommonJS `require()` from every packaged `.cjs` module, failing if
+any target is absent or any package path is unsafe/duplicate. It is
+enforced by the root post-build package check, unsigned QA packager and
+Owner-controlled release packager **before** electron-builder executes.
+Negative tests remove a dependency from a cloned package manifest and
+assert rejection. A green static closure is **not** real Windows ASAR
+launch, UAC or DPAPI proof. G3/G4/G6 remain independently blocked.

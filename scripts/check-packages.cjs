@@ -77,6 +77,8 @@ assert(!secureAgentText.includes('SUTRADHAR_ENROLLMENT_CODE'),'Packaged child co
 
 assert.equal(json('apps/desktop/package.json').build.extraResources[0].to,'secure-agent.cjs');
 const dp=json('apps/desktop/package.json');
+const {verifyPackageClosure}=require('../apps/desktop/package-closure.cjs');
+assert.equal(verifyPackageClosure({dir:get('apps/desktop'),checkAssets:true}).accepted,true);
 for(const required of ['os-vault.cjs','vault-bridge.cjs','enrollment.cjs','enrollment-receipt.cjs','single-instance.cjs','update-policy.cjs','update-readiness.cjs','update-inspection-journal.cjs','update-trust.json'])
   assert(dp.build.files.includes(required),'Sensitive update/vault feature missing in packaged app: '+required);
 const trust=json('apps/desktop/update-trust.json');

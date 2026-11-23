@@ -322,3 +322,13 @@ A packaged Electron Main **now creates and flushes** `node/edge-agent.session-un
 A packaged Windows Desktop with an orphaned `edge-agent.session-uncertain.json` marker can now show an **Inspect crash / restart evidence (read-only)** button in Setup. Electron Main reads only fixed, allowlisted local evidence filenames (session intent, encrypted OS-vault record, vault write intent, enrollment receipt, last local status, maintenance hold/restart receipt and installer attempt). It checks the owner-private node directory; rejects unsafe/symlinked, oversized or changed evidence without following it; hashes bounded bytes; flags a malformed session marker; and counts unclassified entries **without revealing their names**. The renderer receives SHA-256 hashes and byte counts, **not** ciphertext contents, secret fields, token, private key, untrusted file text, any arbitrary directory path, or an authority to sign.
 
 The inspector can operate even while vault initialization is blocked by an orphaned child session. It never decrypts or alters vault data, queries Central, deletes journals, signs requests, enrolls, changes counters, closes holds, starts agents or launches installers. The UI explicitly marks this snapshot **unsigned, locally observed, Central unverified, and not an Owner release grant**. Preserve the original PC. The Owner must independently compare Central accepted node/agent sequences, current Master epoch, leases and pending Git/QA effects, original OS-vault/Windows credentials, installed executable and physical shutdown evidence. A separately approved and safe marker recovery procedure is NOT yet implemented. No production signing, Hostinger deployment or real Windows power-cut acceptance: release HOLD.
+
+
+## Windows package dependency guard — 23 November 2026
+
+The package source allowlist now explicitly includes
+`bounded-central-json.cjs`. All declared packaged CJS modules have
+their literal relative `require()` dependencies checked before QA or
+Owner-gated release packaging. The check prevents known missing-module
+startup defects without certifying dynamic module loading or real
+Windows installation. Full physical Windows smoke remains necessary.

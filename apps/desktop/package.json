@@ -30,6 +30,7 @@
       "main.cjs",
       "preload.cjs",
       "desktop-config.cjs",
+      "bounded-central-json.cjs",
       "setup.html",
       "setup.js",
       "setup.css",

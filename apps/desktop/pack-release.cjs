@@ -10,6 +10,7 @@ const cp=require('node:child_process');
 const cwd=__dirname,root=path.resolve(__dirname,'../..');
 const pkg=JSON.parse(fs.readFileSync(path.join(cwd,'package.json'),'utf8'));
 const {verifyRuntime}=require('./runtime-policy.cjs');
+const {verifyPackageClosure}=require('./package-closure.cjs');
 const {psLiteral,trustedWindowsPowerShell}=require('./windows-authenticode.cjs');
 const {validateOwnerPublicRoots}=require('./release-key-policy.cjs');
 const version=pkg.version;
@@ -64,6 +65,7 @@ function main(){
   const agent=path.join(cwd,'dist','secure-agent.cjs');
   if(!fs.existsSync(agent)||!fs.existsSync(path.join(cwd,'contract.json')))
     fail('run the reviewed Desktop build first');
+  verifyPackageClosure({checkAssets:true});
   const manifest=JSON.parse(fs.readFileSync(path.join(cwd,'dist','release-manifest.json'),'utf8'));
   if(manifest.source_sha!==expected||manifest.api_protocol!==7||
      manifest.secure_agent_sha256!==crypto.createHash('sha256').update(fs.readFileSync(agent)).digest('hex'))
