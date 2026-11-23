@@ -4,6 +4,7 @@
  * before the Electron caller can spawn a child, so crash/replay stays blocked.
  */
 'use strict';
+const {evidenceEntryPresent}=require('./maintenance-evidence-presence.cjs');
 const fs=require('node:fs'),path=require('node:path');
 const {validOrigin}=require('./update-readiness.cjs');
 const {boundedCentralJson}=require('./bounded-central-json.cjs');
@@ -124,7 +125,7 @@ async function prepareManualRestart({dir,nodeId,agentIds,centralOrigin,
   const grant=verifyRestartGrant({envelope:grantEnvelope,pinnedPublicKeyPem,
     release,now});
   const attemptFile=path.join(dir,'maintenance-restart-attempt.json');
-  if(fs.existsSync(attemptFile))
+  if(evidenceEntryPresent(attemptFile))
     fail('MAINTENANCE_RESTART_PREVIOUS_ATTEMPT_OWNER_REVIEW');
   const uri='/v7/nodes/maintenance/recovery/'+release.plan_id;
   async function read(uri){

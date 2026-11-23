@@ -7,6 +7,7 @@
  * Does not grant release, retry, rollback or agent restart authority.
  */
 'use strict';
+const {evidenceEntryPresent}=require('./maintenance-evidence-presence.cjs');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const PREFIX='SUTRADHAR_INSTALLER_DIRECT_EXIT_V1\n';
@@ -87,7 +88,7 @@ function inspectDirectExit({dir,node,scope}={}){
      node.node_id!==scope?.node_id||!validScope(scope))
     fail('INSTALL_DIRECT_EXIT_INSPECT_ARGUMENTS_INVALID');
   const file=path.join(dir,NAME);
-  if(!fs.existsSync(file))
+  if(!evidenceEntryPresent(file))
     return Object.freeze({observed:false,installer_completion_proven:false,
       owner_review_required:true});
   let raw,stat;

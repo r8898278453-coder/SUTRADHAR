@@ -206,3 +206,19 @@ test('oversized Central evidence cannot certify a failed installation or release
   assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-failure-review-observed.json')),false);
   assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
 }));
+
+test('dangling postinstall and launch evidence cannot be misclassified as failed-install success',()=>fixtures(async dir=>{
+  if(process.platform==='win32')return;
+  const {f,args}=await setupFailure(dir);
+  const post=path.join(f.nodeDir,'installer-postinstall-observed.json');
+  fs.symlinkSync(path.join(f.nodeDir,'missing-postinstall'),post);
+  await assert.rejects(observeFailedAttempt(args),
+    /POSTINSTALL_SUCCESS_PATH_ALREADY_RECORDED/);
+  fs.unlinkSync(post);
+  const launch=path.join(f.nodeDir,'installer-execution-launch-observed.json');
+  fs.unlinkSync(launch);
+  fs.symlinkSync(path.join(f.nodeDir,'missing-launch'),launch);
+  await assert.rejects(observeFailedAttempt(args),
+    /POSTINSTALL_RECEIPT_MISSING_OR_CORRUPT/);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+}));

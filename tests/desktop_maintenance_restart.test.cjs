@@ -277,3 +277,14 @@ test('dangling status alias is corrupt evidence, never a successful restart ACK'
     timeoutMs:150,pollMs:5});
   assert.deepEqual(result,{confirmed:false,reason:'STATUS_CORRUPT_OWNER_REVIEW'});
 }));
+
+test('dangling manual restart attempt is evidence and blocks a second Owner restart',()=>fixture(async dir=>{
+  if(process.platform==='win32')return;
+  archiveFixture(dir);
+  const marker=path.join(dir,'maintenance-restart-attempt.json');
+  fs.symlinkSync(path.join(dir,'missing-restart-attempt'),marker);
+  await assert.rejects(prepareManualRestart({...args,dir,
+    grantEnvelope:signedGrant(),fetcher:mock().fetcher}),
+    /PREVIOUS_ATTEMPT_OWNER_REVIEW/);
+  assert.equal(requiresReconciliation(dir),true);
+}));

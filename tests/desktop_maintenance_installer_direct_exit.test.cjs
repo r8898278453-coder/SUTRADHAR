@@ -103,3 +103,11 @@ test('an interrupted partial exit receipt is never overwritten',()=>withDir(dir=
   assert.equal(fs.readFileSync(file,'utf8'),'incomplete');
   assert.throws(()=>inspectDirectExit({dir,node,scope}),/CORRUPT/);
 }));
+
+test('dangling direct installer exit witness is corrupt, never missing',()=>withDir(dir=>{
+  if(process.platform==='win32')return;
+  const marker=path.join(dir,'installer-direct-exit-observed.json');
+  fs.symlinkSync(path.join(dir,'missing-direct-exit'),marker);
+  assert.equal(fs.existsSync(marker),false);
+  assert.throws(()=>inspectDirectExit({dir,node,scope}),/RECEIPT_CORRUPT/);
+}));

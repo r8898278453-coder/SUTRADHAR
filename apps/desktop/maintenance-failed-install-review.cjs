@@ -4,6 +4,7 @@
  * Writes one device-signed observation, NEVER authorizes hold release/retry.
  */
 'use strict';
+const {evidenceEntryPresent}=require('./maintenance-evidence-presence.cjs');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {identityEvidence,inspectPreparedIdentity}=
   require('./maintenance-install-preparation.cjs');
@@ -24,7 +25,7 @@ function inspectAttempt({dir,node,agentIds,observedVersion}={}){
   const held=inspectHold({dir,nodeId:node.node_id});
   if(!held.active||requiresReconciliation(dir))
     fail('INSTALL_FAILURE_REVIEW_ORIGINAL_HOLD_REQUIRED');
-  if(fs.existsSync(path.join(dir,'installer-postinstall-observed.json')))
+  if(evidenceEntryPresent(path.join(dir,'installer-postinstall-observed.json')))
     fail('INSTALL_FAILURE_REVIEW_POSTINSTALL_SUCCESS_PATH_ALREADY_RECORDED');
   const ready=jsonFile(path.join(dir,'installer-preparation-ready.json'));
   const attempt=verifySigned(jsonFile(path.join(dir,'installer-execution-attempt.json')),
@@ -51,7 +52,7 @@ function inspectAttempt({dir,node,agentIds,observedVersion}={}){
      !Number.isSafeInteger(ready.expected_epoch)||ready.expected_epoch<1)
     fail('INSTALL_FAILURE_REVIEW_EVIDENCE_MISMATCH');
   let launched=false;
-  if(fs.existsSync(path.join(dir,'installer-execution-launch-observed.json'))){
+  if(evidenceEntryPresent(path.join(dir,'installer-execution-launch-observed.json'))){
     const launch=verifySigned(jsonFile(path.join(dir,'installer-execution-launch-observed.json')),
       node,EXEC_PREFIX);
     if(launch.state!=='WINDOWS_INSTALLER_PROCESS_STARTED_UNVERIFIED'||
@@ -86,7 +87,7 @@ async function observeFailedAttempt({dir,node,agentIds,observedVersion,
     fail('INSTALL_FAILURE_REVIEW_PACKAGED_WINDOWS_REQUIRED');
   const origin=validOrigin(centralOrigin);
   const receiptPath=path.join(dir,'installer-failure-review-observed.json');
-  if(fs.existsSync(receiptPath))
+  if(evidenceEntryPresent(receiptPath))
     fail('INSTALL_FAILURE_REVIEW_ALREADY_RECORDED');
   const before=inspectAttempt({dir,node,agentIds,observedVersion});
   const firstPublisher=verifyPublisher({executablePath:installedExecutable,
@@ -162,7 +163,7 @@ async function observeFailedAttempt({dir,node,agentIds,observedVersion,
   verifyLocalPublisher(finalPublisher,publisherSubject);
   if(firstPublisher.exe_sha256!==finalPublisher.exe_sha256)
     fail('INSTALL_FAILURE_REVIEW_INSTALLED_EXE_CHANGED');
-  if(fs.existsSync(receiptPath))
+  if(evidenceEntryPresent(receiptPath))
     fail('INSTALL_FAILURE_REVIEW_ALREADY_RECORDED');
   const payload={schema:1,
     state:before.launched?'LAUNCH_OBSERVED_OLD_VERSION':

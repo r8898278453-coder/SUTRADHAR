@@ -828,3 +828,18 @@ tests verify no duplicate observer spawn and no false missing-witness
 report. The observer remains nonprivileged, unsigned and diagnostic only;
 it does not attest successful Windows installation, authorize HOLD
 release, retry, reboot or agent restart. Physical G6 remains HOLD.
+
+## 24 November 2026 — Shared Desktop maintenance evidence-entry guards
+
+All six additional Owner-controlled paths (installer preparation, actual
+launcher, post-install observation, failed-install classification, one-time
+manual restart and direct exit witness) now use the packaged
+`maintenance-evidence-presence.cjs` helper instead of follows-symlink
+`existsSync`. A dangling or suspicious directory entry is preserved as
+evidence, and only genuine ENOENT permits a missing-file decision. Other
+filesystem inspection errors stop for Owner review. Positive helper,
+negative symlink, corrupt witness, failed-install and one-shot restart
+regressions have been added; package closure includes the helper.
+This is a local safety improvement, NOT production signing, real Windows
+ACL/FS power-loss proof, installer success attestation or independent
+Hostinger/physical-PC acceptance. Original Owner/Central HOLD gates remain.
