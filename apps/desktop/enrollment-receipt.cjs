@@ -11,6 +11,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {atomicWrite}=require('./os-vault.cjs');
 const {boundedCentralJson}=require('./bounded-central-json.cjs');
+const {normalizeCentralUrl}=require('./desktop-config.cjs');
 const VERSION=1;
 const ID=/^node_[0-9a-f]{32}$/;
 const HASH=/^[0-9a-f]{64}$/;
@@ -29,6 +30,10 @@ function binding(node,centralUrl){
   if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||
     url.pathname!=='/'||Boolean(url.port&&url.port!=='443')||
     url.origin!==centralUrl)fail('ENROLLMENT_ORIGIN_INVALID');
+  try{
+    if(normalizeCentralUrl(centralUrl)!==centralUrl)
+      fail('ENROLLMENT_ORIGIN_INVALID');
+  }catch{fail('ENROLLMENT_ORIGIN_INVALID');}
   return {node_id:node.node_id,public_key_sha256:
     crypto.createHash('sha256').update(node.public_key_pem).digest('hex'),
     central_origin:centralUrl};

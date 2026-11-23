@@ -146,3 +146,14 @@ test('symlinked enrollment receipt requires Owner review, never follows target',
     assert.throws(()=>inspect(args),/ENROLLMENT_RECEIPT_INVALID/);
   });
 });
+
+test('an IP/private Central origin cannot produce a PREPARED receipt',()=>{
+  withDir(dir=>{
+    const identity=node();
+    for(const centralUrl of ['https://192.168.1.10','https://stage.example.com:9443',
+      'https://server.local','https://[::1]']){
+      assert.throws(()=>prepare({dir,node:identity,centralUrl}),/ORIGIN_INVALID/);
+      assert.equal(fs.existsSync(path.join(dir,'enrollment-receipt.json')),false);
+    }
+  });
+});

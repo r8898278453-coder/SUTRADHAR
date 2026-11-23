@@ -1,15 +1,34 @@
 'use strict';
 /** Pure desktop setup validators: no Electron import, network or side effects. */
 const crypto=require('node:crypto');
+const net=require('node:net');
 const ID_RE=/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/;
+// Setup only accepts a real publicly named HTTPS host, never a local/IP
+// target for transmission of the Owner's one-time enrollment grant.
+const LABEL=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const PRIVATE_SUFFIXES=new Set([
+  'localhost','local','localdomain','lan','internal','intranet',
+  'home','test','invalid','example','onion'
+]);
+function publicHostname(hostname){
+  if(typeof hostname!=='string'||hostname.length<4||
+     hostname.length>253||hostname.endsWith('.')||net.isIP(hostname)!==0)
+    return false;
+  const labels=hostname.split('.');
+  const suffix=labels.at(-1);
+  if(labels.length<2||labels.some(label=>!LABEL.test(label))||
+     PRIVATE_SUFFIXES.has(suffix))return false;
+  return /^[a-z]{2,63}$/.test(suffix)||
+    /^xn--[a-z0-9-]{2,59}$/.test(suffix);
+}
 function normalizeCentralUrl(input) {
   if(typeof input!=='string'||input.length>500||!input.trim())throw Error('Enter the Central HTTPS URL');
   let url;
   try {url=new URL(input.trim());}catch{throw Error('Enter a valid Central HTTPS URL');}
   if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||
-     (url.pathname!=='/'&&url.pathname!=='')||!url.hostname||
-     !url.hostname.includes('.')||url.hostname.endsWith('.'))
-    throw Error('Use an HTTPS domain only, e.g. https://central.example.com');
+     (url.pathname!=='/'&&url.pathname!=='')||Boolean(url.port)||
+     !publicHostname(url.hostname))
+    throw Error('Use a public HTTPS domain on port 443, e.g. https://central.example.com');
   return url.origin;
 }
 function cleanPcName(value) {

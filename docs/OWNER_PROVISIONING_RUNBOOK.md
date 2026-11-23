@@ -118,3 +118,18 @@ All four protected signing *variables* must contain canonical base64-encoded PEM
 ### Staging HTTPS DNS rebinding defense (read-only)
 
 The operator's real `ops:hostinger-preflight` command now validates every resolved public DNS A/AAAA result and connects to **one pinned reviewed public IP** instead of letting a second DNS lookup redirect requests to localhost/private services. HTTPS `servername` remains the exact Owner-registered staging hostname, TLS certificate validation stays enabled, redirects and non-GET paths are forbidden, and responses stay bounded. No request is made if the pinned endpoint fails. This narrow network defense does not replace Owner-managed egress firewall/DNS controls, Hostinger staging ownership verification, staging MySQL backup/restore or real production acceptance. CI simulated HTTP checks explicitly report `https_address_pinned:false`; production CLI uses the pinning path.
+
+
+## 23 November 2026 — First-run Central URL restriction
+
+The Desktop's Central URL and enrollment grant flow now only accept a
+public-domain-form HTTPS hostname on canonical port 443. IP addresses,
+`.local`, `.localhost`, `.lan`, `.internal`, `.test`,
+invalid domain labels and custom ports fail before any Owner enrollment
+grant is transmitted. Existing valid public Hostinger domains remain
+supported; if an older Desktop was configured with an internal/IP URL,
+stop and request Owner-guided reconciliation rather than deleting the
+OS-vault identity. A syntactically public hostname can still resolve to
+a private address or be DNS-rebound; this does **not** prove Hostinger
+domain control or provide a pinned network firewall. Owner networking,
+real HTTPS staging and G0–G7 acceptance are still required.

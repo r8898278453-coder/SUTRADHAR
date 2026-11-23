@@ -5,6 +5,7 @@
  */
 'use strict';
 const {URL}=require('node:url');
+const {normalizeCentralUrl}=require('./desktop-config.cjs');
 const {boundedCentralJson}=require('./bounded-central-json.cjs');
 function fail(code){throw Error(code);}
 function checkOrigin(value){
@@ -13,6 +14,10 @@ function checkOrigin(value){
   if(x.protocol!=='https:'||!x.hostname||x.username||x.password||x.search||x.hash||
     x.pathname!=='/'||(x.port&&x.port!=='443'))
     fail('ENROLL_CENTRAL_URL_INVALID');
+  try{
+    if(normalizeCentralUrl(x.origin)!==x.origin)
+      fail('ENROLL_CENTRAL_URL_INVALID');
+  }catch{fail('ENROLL_CENTRAL_URL_INVALID');}
   return x.origin;
 }
 function checkPublicNode(node){

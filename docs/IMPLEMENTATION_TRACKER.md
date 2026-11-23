@@ -566,3 +566,24 @@ responses, route/body denial, 409 duplicate ID and sanitized errors.
 ASAR external resource byte verification. This is code/CI protection,
 not evidence of real 60-second heartbeats, 180-second failover or
 physical Windows update/rollback. G4/G5/G6 stay HOLD.
+
+
+## 23 November 2026 — Public HTTPS hostname requirement for first enrollment
+
+Desktop setup originally accepted `https://192.168.x.y` / other IP
+literal or `https://public-host:custom-port` as if it were a Hostinger
+public Central. The OS-vault Owner grant enrollment path had a separate,
+looser hostname validator and could POST the private one-time enrollment
+grant to such a URL. `desktop-config.cjs` now validates an ASCII/punycode
+DNS hostname with at least two syntactically valid labels, rejects IP
+literals, local/private/reserved TLDs, malformed labels and ports other
+than canonical HTTPS 443. Owner grant enrollment and immutable enrollment
+receipt binding reuse this validator. Negative tests prove **no network
+request** is made to rejected hosts and no PREPARED enrollment receipt
+is created. Already-persisted invalid endpoints fail closed and require
+an Owner-reviewed migration, never automatic identity reset.
+This is only hostname *syntax* validation, **not** DNS resolution/pinning,
+certificate ownership verification, public address assurance or
+protection against DNS rebinding. Owner must independently establish
+the genuine deployed Hostinger staging domain and manage network egress
+before any real PC enrollment. G1/G4 remain HOLD.

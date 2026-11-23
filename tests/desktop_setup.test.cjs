@@ -11,6 +11,23 @@ test('SUTRADHAR Desktop accepts only host-only HTTPS Central URLs',()=>{
       assert.throws(()=>cfg.normalizeCentralUrl(bad),undefined,String(bad));
   }
 });
+test('Owner grant cannot target IPs, private DNS suffixes or custom ports',()=>{
+  const rejected=[
+    'https://127.0.0.1','https://192.168.1.10',
+    'https://10.0.0.1','https://[::1]',
+    'https://127.1','https://central.localhost','https://office.local',
+    'https://server.internal','https://server.lan','https://stage.example',
+    'https://stage.example.com:8443',
+    'https://invalid..example.com','https://-invalid.example.com',
+    'https://localhost.example','https://service.test'
+  ];
+  for(const url of rejected)
+    assert.throws(()=>cfg.normalizeCentralUrl(url),/HTTPS domain/,url);
+  assert.equal(cfg.normalizeCentralUrl('https://STAGE.Example.COM/'),
+    'https://stage.example.com');
+  assert.equal(cfg.normalizeCentralUrl('https://stage.example.co.in:443/'),
+    'https://stage.example.co.in');
+});
 test('friendly PC names validated and normalized',()=>{
   assert.equal(cfg.cleanPcName('  Office PC-01  '),'Office PC-01');
   for(const bad of ['', 'x', '<script>', 'a'.repeat(65), '\x00bye', null])

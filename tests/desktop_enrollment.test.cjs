@@ -67,6 +67,16 @@ test('Redirects, rejected owner grants and mismatched server proof fail closed',
     /ENROLL_CENTRAL_NETWORK_UNAVAILABLE/);
 });
 
+test('rejected local/private Central never receives Owner grant',async()=>{
+  for(const origin of ['https://127.0.0.1','https://192.168.1.100',
+    'https://printer.local','https://stage.example.com:9443']){
+    let contacted=false;
+    await assert.rejects(enrollWithOwnerGrant({...args,origin,
+      fetcher:async()=>{contacted=true;return response(200,{accepted:true});}}),
+      /ENROLL_CENTRAL_URL_INVALID/);
+    assert.equal(contacted,false,origin);
+  }
+});
 test('oversized enrollment response fails before any accepted new identity',async()=>{
   let calls=0;
   const fetcher=async()=>{calls++;return new Response(JSON.stringify({
