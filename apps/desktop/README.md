@@ -382,3 +382,15 @@ status cannot silently be shown as a valid Central ACK. The last
 accepted timestamp can remain visible during an outage but is never
 a fresh ACK or permission to restart, elect or release anything.
 Real signed Central state and physical-PC acceptance remain separate.
+
+
+## 23 November 2026 — OS-vault and receipt reader hardening
+
+Encrypted device identity and the signed-enrollment state receipt
+are now read by stable bounded file descriptors, not with an
+independent pathname read after checking the file. A changed
+inode, truncation, symlink or exposed POSIX file fails closed.
+This does not rotate an existing key, remove a write-intent
+marker, auto-enroll a PREPARED node, or authorize release.
+Actual Windows DPAPI and restart/power-cut acceptance still
+need Owner-supervised physical tests.

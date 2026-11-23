@@ -5,6 +5,58 @@
  */
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+/**
+ * Read an existing small private runtime file by descriptor, not by path
+ * after lstat(). O_NOFOLLOW where supported, inode/size/time identity checks
+ * before and after fixed-length reads; never retries a changed identity.
+ *
+ * This is a file-race guard, NOT proof of physical Windows DPAPI or ACLs.
+ */
+function readStableLocalFile(file,{minBytes=1,maxBytes=65536,io=fs}={}){
+  if(typeof file!=='string'||!path.isAbsolute(file)||
+     !Number.isSafeInteger(minBytes)||minBytes<1||
+     !Number.isSafeInteger(maxBytes)||maxBytes<minBytes||maxBytes>65536)
+    throw Error('LOCAL_PRIVATE_FILE_ARGUMENT_INVALID');
+  const same=(a,b)=>a&&b&&a.isFile()&&b.isFile()&&
+    !a.isSymbolicLink()&&!b.isSymbolicLink()&&
+    a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&
+    a.mtimeMs===b.mtimeMs&&a.ctimeMs===b.ctimeMs;
+  const safe=(s)=>s&&s.isFile()&&!s.isSymbolicLink()&&
+    s.size>=minBytes&&s.size<=maxBytes&&
+    (process.platform==='win32'||(s.mode&0o077)===0);
+  let first;
+  try{first=io.lstatSync(file);}catch{
+    throw Error('LOCAL_PRIVATE_FILE_UNSAFE');
+  }
+  if(!safe(first))throw Error('LOCAL_PRIVATE_FILE_UNSAFE');
+  let fd;
+  try{
+    try{fd=io.openSync(file,fs.constants.O_RDONLY|
+      (fs.constants.O_NOFOLLOW||0));}
+    catch{throw Error('LOCAL_PRIVATE_FILE_UNSAFE');}
+    const opened=io.fstatSync(fd);
+    if(!safe(opened)||!same(first,opened))
+      throw Error('LOCAL_PRIVATE_FILE_CHANGED');
+    const buffer=Buffer.alloc(opened.size);
+    let offset=0;
+    while(offset<buffer.length){
+      let n;
+      try{n=io.readSync(fd,buffer,offset,buffer.length-offset,offset);}
+      catch{throw Error('LOCAL_PRIVATE_FILE_CHANGED');}
+      if(!Number.isSafeInteger(n)||n<=0)
+        throw Error('LOCAL_PRIVATE_FILE_CHANGED');
+      offset+=n;
+    }
+    let finalFd,finalPath;
+    try{finalFd=io.fstatSync(fd);finalPath=io.lstatSync(file);}
+    catch{throw Error('LOCAL_PRIVATE_FILE_CHANGED');}
+    if(!safe(finalFd)||!safe(finalPath)||
+       !same(opened,finalFd)||!same(opened,finalPath))
+      throw Error('LOCAL_PRIVATE_FILE_CHANGED');
+    return buffer;
+  }finally{if(fd!==undefined)io.closeSync(fd);}
+}
+
 function atomicWrite(target,bytes){
   const dir=path.dirname(target);
   fs.mkdirSync(dir,{recursive:true,mode:0o700});
@@ -156,7 +208,7 @@ function createVault({safeStorage,dir,platform=process.platform}){
          (typeof process.getuid==='function'&&folder.uid!==process.getuid()))))
       throw Error('OS_VAULT_DIRECTORY_NOT_PRIVATE');
     let record;
-    try{record=JSON.parse(fs.readFileSync(file,'utf8'));}
+    try{record=JSON.parse(readStableLocalFile(file,{minBytes:30,maxBytes:65536}).toString('utf8'));}
     catch{throw Error('OS_VAULT_RECORD_INVALID');}
     if(!record||typeof record!=='object'||Array.isArray(record)||
        Object.keys(record).sort().join('|')!=='ciphertext|mode|version'||
@@ -250,4 +302,4 @@ function createVault({safeStorage,dir,platform=process.platform}){
     platform==='darwin'?'macOS Keychain':'OS credential store',encrypted:true};}
   return {read,save,status,file};
 }
-module.exports={createVault,atomicWrite};
+module.exports={createVault,atomicWrite,readStableLocalFile};

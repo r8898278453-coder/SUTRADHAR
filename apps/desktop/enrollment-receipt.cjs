@@ -9,7 +9,7 @@
  */
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
-const {atomicWrite}=require('./os-vault.cjs');
+const {atomicWrite,readStableLocalFile}=require('./os-vault.cjs');
 const {boundedCentralJson}=require('./bounded-central-json.cjs');
 const {normalizeCentralUrl}=require('./desktop-config.cjs');
 const VERSION=1;
@@ -48,7 +48,7 @@ function inspect({dir,node,centralUrl}){
   if(!stat.isFile()||stat.isSymbolicLink()||stat.size>4096||stat.size<100)
     fail('ENROLLMENT_RECEIPT_INVALID');
   let saved;
-  try{saved=JSON.parse(fs.readFileSync(receipt,'utf8'));}
+  try{saved=JSON.parse(readStableLocalFile(receipt,{minBytes:100,maxBytes:4096}).toString('utf8'));}
   catch{fail('ENROLLMENT_RECEIPT_INVALID');}
   if(!saved||typeof saved!=='object'||Object.keys(saved).sort().join('|')!==
      ['central_origin','node_id','prepared_at','public_key_sha256','state','version'].join('|')||

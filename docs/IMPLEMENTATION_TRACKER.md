@@ -618,3 +618,27 @@ encrypted-size ceiling. New tests simulate symlink replacement
 after lstat, regular-file replacement mid-read, premature EOF and
 normal authenticated archive. This is code/CI assurance only; real
 off-host backup and independent empty-staging MySQL restore G2 HOLD.
+
+
+## 23 November 2026 — Descriptor-safe OS-vault and enrollment receipt reads
+
+The Windows Desktop encrypted `identity.osvault.json` read and
+Owner-bound `enrollment-receipt.json` inspection previously performed
+a safe-looking `lstatSync` check followed by `readFileSync` by
+pathname. A concurrent malicious local file or symlink replacement
+could change what was read after validation. Shared
+`readStableLocalFile` now opens an OS descriptor with O_NOFOLLOW
+where supported, checks private permissions, exact inode/size/time
+against initial lstat, reads no more than the allowed 64 KiB (vault)
+or 4 KiB (receipt), and checks both descriptor and pathname identity
+again after the read. Any discrepancy fails closed. It does not
+change the existing immutable node identity contract, durable
+vault write-intent fence, signed PREPARED/SUBMITTED enrollment
+transition or no-auto-rekey rule. Negative tests deliberately
+replace a file with a symlink after lstat, swap to another same-byte
+regular file while reading and force an early EOF. The new tests
+are included in `npm run test:desktop`.
+
+This is local source/CI file-race protection, not a proof that an
+already compromised privileged Windows process cannot tamper with
+data, nor physical DPAPI/reboot acceptance. G4/G6 remain HOLD.
