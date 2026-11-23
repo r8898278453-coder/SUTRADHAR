@@ -168,3 +168,11 @@ test('unreadable later dismissal/change request cannot preserve earlier approval
     assert.ok(decision.blocks.includes('GITHUB_APPROVAL_NOT_VERIFIED'));
   }
 });
+
+test('read-only Owner PR cannot show manual merge readiness for nested secret path',async()=>{
+  const x=scenario();
+  const result=await inspectGithubPrReview({...x.input,
+    changedFiles:['src/.env.production']});
+  assert.equal(result.ready_for_manual_merge,false);
+  assert.equal(x.calls.length,0,'Reject unsafe planned scope before reading GitHub');
+});

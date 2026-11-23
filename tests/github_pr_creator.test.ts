@@ -168,3 +168,15 @@ test('remote PR URL is canonical and removal of previously QA-accepted files is 
   assert.deepEqual(result,{created:false,error:'DRAFT_PR_BRANCH_ALREADY_USED'});
   assert.equal(prior.calls.filter(x=>x.method==='POST').length,0);
 });
+
+test('broad authorized worker branch cannot draft changes to nested execution controls',async()=>{
+  for(const unsafe of ['src/.env.production','src/.gitignore',
+    'src/package.json','src/.npmrc']){
+    const f=fixture();
+    const result=await createVerifiedDraftPr({...f.input,
+      changedFiles:[unsafe],allowedFiles:[unsafe]});
+    assert.deepEqual(result,{created:false,error:'DRAFT_PR_CONFIGURATION_INVALID'},
+      unsafe);
+    assert.equal(f.calls.length,0);
+  }
+});

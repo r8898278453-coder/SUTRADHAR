@@ -4,6 +4,7 @@
  */
 import {evaluateGithubReviewPolicy} from './v7/github_review_policy.ts';
 import {githubApiJson} from './v7/github_api_json.ts';
+import {safeScope} from './v7/rules.ts';
 
 export type VerifiedMerge = {
   verified: true;
@@ -112,7 +113,9 @@ export async function verifyGitHubMergeEvidence(input: MergeVerificationInput):
     if (!Array.isArray(files) || files.length === 0 || files.length >= 100 ||
         pr.changed_files !== files.length ||
         files.some((f: any) => typeof f?.filename !== 'string' ||
-          !allowed.has(f.filename) || f.status === 'renamed' || !['added', 'modified', 'removed'].includes(f.status))) {
+          !allowed.has(f.filename) ||
+          (!input.branch.startsWith('rollback/')&&!safeScope(f.filename)) ||
+          f.status === 'renamed' || !['added', 'modified', 'removed'].includes(f.status))) {
       return deny('GITHUB_PR_FILE_SCOPE_MISMATCH');
     }
     const review=evaluateGithubReviewPolicy({

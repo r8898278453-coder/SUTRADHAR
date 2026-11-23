@@ -4,6 +4,7 @@
  * to match the exact commit/tree that passed real Docker testing.
  */
 import {githubApiJson} from './v7/github_api_json.ts';
+import {safeScope} from './v7/rules.ts';
 export type DraftPrResult =
   | { created: true; existing: boolean; prNumber: number; url: string; headSha: string; treeSha: string; branch: string; repo: string }
   | { created: false; error: string };
@@ -42,7 +43,8 @@ async function runVerifiedDraftPr(input: DraftPrInput, allowCreate: boolean): Pr
       !input.token?.trim() ||
       changed.size === 0 || changed.size >= 100 ||
       changed.size !== input.changedFiles.length ||
-      ![...changed].every(file => safePath(file) && allowed.has(file)) ||
+      ![...changed].every(file => safePath(file) && allowed.has(file) &&
+        (branch.startsWith('rollback/') || safeScope(file))) ||
       !input.title || input.title.length > 180) {
     return deny('DRAFT_PR_CONFIGURATION_INVALID');
   }
@@ -78,6 +80,7 @@ async function runVerifiedDraftPr(input: DraftPrInput, allowCreate: boolean): Pr
         comparison.files.length >= 100 ||
         comparison.files.some((file: any) =>
           !changed.has(file?.filename) || !safePath(file.filename) ||
+          (branch.startsWith('rollback/') ? false : !safeScope(file.filename)) ||
           !allowed.has(file.filename) ||
           !['added', 'modified'].includes(file.status) ||
           file.previous_filename)) {

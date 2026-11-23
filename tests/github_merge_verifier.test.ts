@@ -133,3 +133,13 @@ test('GitHub outage must not create a verified result', async () => {
   });
   assert.deepEqual(result, { verified: false, error: 'GITHUB_API_UNAVAILABLE' });
 });
+
+test('worker-branch merge rejects nested secret/execution controls even if allowlisted',async()=>{
+  for(const unsafe of ['src/.env.production','src/package.json',
+    'src/.gitignore','src/.npmrc']){
+    const result=await verifyGitHubMergeEvidence({
+      ...input({filenames:[unsafe]}),allowedFiles:[unsafe]});
+    assert.deepEqual(result,{verified:false,error:'GITHUB_PR_FILE_SCOPE_MISMATCH'},
+      unsafe);
+  }
+});
