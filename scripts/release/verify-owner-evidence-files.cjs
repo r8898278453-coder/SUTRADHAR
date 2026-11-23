@@ -10,6 +10,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {evaluate,GATES}=require('./verify-owner-acceptance.cjs');
+const {readOfflineText}=require('./read-offline-input.cjs');
 const LIMIT=64*1024*1024;
 const HEX=/^[0-9a-f]{64}$/;
 const fail=code=>{throw Error(code);};
@@ -110,19 +111,15 @@ function main(){
   const pubFile=process.env.SUTRADHAR_OWNER_ACCEPTANCE_PUBLIC_KEY_FILE||'';
   const manifestFile=process.env.SUTRADHAR_OWNER_EVIDENCE_MAP_FILE||'';
   try{
-    for(const [file,max] of [[envelopeFile,131072],[pubFile,10000],
-      [manifestFile,65536]]){
-      if(!path.isAbsolute(file)||fs.lstatSync(file).size>max||
-         !fs.lstatSync(file).isFile()||fs.lstatSync(file).isSymbolicLink())
-        fail('OWNER_EVIDENCE_INPUT_UNTRUSTED');
-    }
-    const envelope=JSON.parse(fs.readFileSync(envelopeFile,'utf8'));
-    const mapping=JSON.parse(fs.readFileSync(manifestFile,'utf8'));
+    const envelope=JSON.parse(readOfflineText(envelopeFile,
+      {minBytes:1,maxBytes:131072}));
+    const mapping=JSON.parse(readOfflineText(manifestFile,
+      {minBytes:1,maxBytes:65536}));
     if(!mapping||typeof mapping!=='object'||Array.isArray(mapping)||
        Object.keys(mapping).sort().join('|')!=='artifacts|schema'||
        mapping.schema!==1)fail('OWNER_EVIDENCE_MAP_INVALID');
     const result=evaluateEvidence({envelope,
-      ownerPublicKeyPem:fs.readFileSync(pubFile,'utf8'),
+      ownerPublicKeyPem:readOfflineText(pubFile,{minBytes:1,maxBytes:10000}),
       expectedSha:process.env.SUTRADHAR_EXPECTED_COMMIT_SHA||'',
       artifacts:mapping.artifacts});
     console.log(JSON.stringify(result,null,2));

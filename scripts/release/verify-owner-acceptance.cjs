@@ -5,9 +5,9 @@
  * No network access and no writes. Never accepts a private key.
  */
 'use strict';
-const fs=require('node:fs');
 const path=require('node:path');
 const crypto=require('node:crypto');
+const {readOfflineText}=require('./read-offline-input.cjs');
 const SHA=/^[a-f0-9]{40}$/;
 const HEX=/^[a-f0-9]{64}$/;
 const GATES=['G0','G1','G2','G3','G4','G5','G6','G7'];
@@ -77,13 +77,9 @@ function main(){
     console.error('ACCEPTANCE_ABSOLUTE_PATHS_REQUIRED');process.exitCode=1;return;
   }
   try{
-    for(const p of [file,pub]){
-      const st=fs.lstatSync(p);
-      if(!st.isFile()||st.isSymbolicLink()||st.size>131072||st.size<1)
-        throw Error('ACCEPTANCE_INPUT_FILE_INVALID');
-    }
-    const result=evaluate({envelope:JSON.parse(fs.readFileSync(file,'utf8')),
-      ownerPublicKeyPem:fs.readFileSync(pub,'utf8'),
+    const result=evaluate({envelope:JSON.parse(readOfflineText(file,
+      {minBytes:1,maxBytes:131072})),
+      ownerPublicKeyPem:readOfflineText(pub,{minBytes:1,maxBytes:10000}),
       expectedSha:process.env.SUTRADHAR_EXPECTED_COMMIT_SHA});
     console.log(JSON.stringify(result,null,2));
     if(!result.accepted)process.exitCode=1;

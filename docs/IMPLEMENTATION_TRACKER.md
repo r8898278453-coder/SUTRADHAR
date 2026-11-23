@@ -885,3 +885,18 @@ Regression tests cover dangling legacy evidence, plaintext appearing after
 startup, unchanged encrypted bytes and dangling vault-status aliases. These
 checks preserve Owner-only migration/recovery; they do not grant enrollment,
 production signing or real Windows DPAPI acceptance. G4/G6 remain HOLD.
+
+## 24 November 2026 — Offline Owner reviewer input descriptor stability
+
+The two local Owner acceptance CLI entrypoints now load signed indexes,
+pinned public keys and evidence manifests through one bounded, strict-UTF-8
+`read-offline-input.cjs` descriptor reader. The reader requires absolute
+regular non-symlink paths, checks original/opened/final inode, size and
+mtime/ctime, rejects short reads, and never buffers more than the
+file-specific 10 KiB/64 KiB/128 KiB bounds. Public keys are allowed to be
+readable because this is not a secret-storage guard. Existing cryptographic
+signature and local evidence-file hash requirements remain unchanged;
+new CLI/inode-swap/invalid-UTF-8/oversize/short-read tests run in CI.
+**Even accepted signed bytes can only verify local evidence format/hash:**
+production_release_authorized remains false, and G1–G7 still require real
+Hostinger, Windows signer, physical PC and independent Owner acceptance.

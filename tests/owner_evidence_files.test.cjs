@@ -107,3 +107,54 @@ test('symlinks are rejected instead of following an untrusted evidence path',()=
     assert.equal(result.accepted,false);
   }finally{c.close();}
 });
+
+test('offline Owner CLI reads immutable signed inputs and never issues production approval',()=>{
+  const c=setup();
+  try{
+    const cp=require('node:child_process');
+    const signed=path.join(c.dir,'owner-signed.json');
+    const pubFile=path.join(c.dir,'owner-public.pem');
+    const mapFile=path.join(c.dir,'evidence-map.json');
+    fs.writeFileSync(signed,JSON.stringify(c.sign()),{mode:0o600});
+    fs.writeFileSync(pubFile,c.pub,{mode:0o600});
+    fs.writeFileSync(mapFile,JSON.stringify({schema:1,artifacts:c.artifacts}),
+      {mode:0o600});
+    const env={...process.env,
+      SUTRADHAR_OWNER_ACCEPTANCE_FILE:signed,
+      SUTRADHAR_OWNER_ACCEPTANCE_PUBLIC_KEY_FILE:pubFile,
+      SUTRADHAR_OWNER_EVIDENCE_MAP_FILE:mapFile,
+      SUTRADHAR_EXPECTED_COMMIT_SHA:sha};
+    // Existing test proof was deliberately issued in November 2026; make the
+    // CLI signing window current without changing test keys or real evidence.
+    c.payload.issued_at_ms=Date.now()-60000;
+    c.payload.expires_at_ms=Date.now()+3600000;
+    for(const gate of c.payload.gates){
+      gate.reviewed_at_utc=new Date(Date.now()-1000).toISOString();
+    }
+    fs.writeFileSync(signed,JSON.stringify(c.sign()),{mode:0o600});
+    const acceptScript=path.resolve(__dirname,
+      '../scripts/release/verify-owner-acceptance.cjs');
+    const evidenceScript=path.resolve(__dirname,
+      '../scripts/release/verify-owner-evidence-files.cjs');
+    for(const script of [acceptScript,evidenceScript]){
+      const processResult=cp.spawnSync(process.execPath,[script],{
+        encoding:'utf8',timeout:12000,env});
+      assert.equal(processResult.status,0,
+        script+': '+processResult.stderr);
+      const output=JSON.parse(processResult.stdout);
+      assert.equal(output.accepted,true);
+      assert.equal(output.production_release_authorized,false);
+    }
+    if(process.platform!=='win32'){
+      const redirect=path.join(c.dir,'signed-symlink.json');
+      fs.symlinkSync(signed,redirect);
+      for(const script of [acceptScript,evidenceScript]){
+        const refused=cp.spawnSync(process.execPath,[script],{
+          encoding:'utf8',timeout:12000,
+          env:{...env,SUTRADHAR_OWNER_ACCEPTANCE_FILE:redirect}});
+        assert.notEqual(refused.status,0,script);
+        assert.equal(refused.stdout.includes('production_release_authorized":true'),false);
+      }
+    }
+  }finally{c.close();}
+});
