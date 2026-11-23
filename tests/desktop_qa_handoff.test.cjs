@@ -1117,3 +1117,25 @@ test('Frozen QA UI has dedicated explicit action, no arbitrary commands or recei
   assert.match(main,/QA_RECOVERY_MODE_INVALID/);
   assert.doesNotMatch(preload,/recoveryReviewOnly:|owner_confirmed_recovery_review|signWorkerAction|evidence_base64/);
 });
+
+
+test('independent QA history rejects nested execution/secret metadata despite broad scope',
+  {skip:!available},()=>{
+    const {verifyHistory}=require('../apps/desktop/qa-handoff.cjs');
+    for(const unsafe of ['package.json','.env.production','.npmrc','.gitignore']){
+      const f=fixture();
+      try{
+        fs.writeFileSync(path.join(f.work,'src',unsafe),'blocked configuration\n');
+        cmd(f.work,'add','--','src/'+unsafe);
+        cmd(f.work,'-c','user.name=SUTRADHAR tests',
+          '-c','user.email=noreply@example.invalid',
+          'commit','-m','attempt to add nested privileged file');
+        const head=cmd(f.work,'rev-parse','HEAD');
+        const tree=cmd(f.work,'rev-parse','HEAD^{tree}');
+        assert.throws(()=>verifyHistory(f.work,{
+          candidate_head_sha:head,candidate_tree_sha:tree,
+          baseline_sha:f.baseline,write_scopes:['src']
+        }),/HANDOFF_QA_OUT_OF_SCOPE_HISTORY/);
+      }finally{f.close();}
+    }
+  });

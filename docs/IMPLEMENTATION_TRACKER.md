@@ -1093,3 +1093,19 @@ effective bypass rules, actual human review, signing environment
 protection or Owner authorization. Actual repo \`main\` still reports
 \`protected:false\`, so G0 and production release remain HOLD. No
 GitHub branch protection was modified.
+
+## 24 November 2026 — Broad worker-scope child-file bypass closed end-to-end
+
+A legitimate parent write scope such as \`src\` must **not** grant rights
+to \`src/.env.production\`, \`src/package.json\`, \`src/.gitignore\` or
+\`src/.npmrc\`. Central's path policy is now applied to actual remote
+diff paths and Owner review/PR/merge evidence, not just scope strings.
+The packaged Electron path policy is separately applied at claim
+validation, every committed candidate diff and intermediate commit,
+and independent QA Git-object history. Both Desktop stages independently
+reject forbidden nested paths even when \`src\` is an allowed scope.
+Regression tests commit forbidden files into disposable local Git
+worktrees, prove no Central submit POST, and prove QA refuses the
+history. This is a default-deny security change; legitimate changes
+to build/security configuration require independent Owner-controlled
+review, not a worker's broad automated scope.

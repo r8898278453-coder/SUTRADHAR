@@ -873,3 +873,25 @@ test('dangling worker Git hook/worktree root cannot be treated as absent',
       }finally{f.close();}
     }
   });
+
+
+test('broad Central scope cannot submit nested secret or build-execution files',
+  {skip:!available},async()=>{
+    for(const unsafe of ['package.json','.env.production','.npmrc','.gitignore']){
+      const f=fixture(),h=candidateHarness(f,{writeScopes:['src']});
+      try{
+        await claimApprovedTask(args(f,h.fetcher));h.ready();
+        const work=path.join(f.worker,'worktrees','ticket_abc');
+        const file=path.join(work,'src',unsafe);
+        fs.writeFileSync(file,'worker-controlled Git config or secret\n');
+        run(work,'add','--','src/'+unsafe);
+        run(work,'-c','user.name=SUTRADHAR CI',
+          '-c','user.email=test@example.invalid','commit','-m','nested unsafe file');
+        await assert.rejects(submitWorkerCandidate(candidateArgs(f,h)),
+          /SUBMIT_CHANGED_PATH_OR_MODE_NOT_AUTHORIZED/);
+        assert.equal(h.count(),0,'Unsafe '+unsafe+' must never POST Central submit');
+        assert.equal(fs.existsSync(path.join(f.worker,
+          'submission_pending_ticket_abc.json')),false);
+      }finally{f.close();}
+    }
+  });
