@@ -985,17 +985,26 @@ power-loss or multi-process acceptance test.
 
 ## 24 November 2026 — Read-only G0 repository protection audit
 
-GitHub metadata for this repo's main was observed as \`protected:false\`
+GitHub metadata for this repo's main was observed as `protected:false`
 and repository rulesets were returned empty through the connected account;
 the branch protection endpoint was inaccessible (403). As a result, the
 G0 protected promotion prerequisite remains **HOLD**, not inferred PASS.
-A new read-only CLI \`ops:github-g0-protection\` audits exact main commit SHA,
+A new read-only CLI `ops:github-g0-protection` audits exact main commit SHA,
 visible effective branch rules, non-fast-forward/deletion restrictions,
 stale-review dismissal, last-push independent approval and required CI
 contexts; ambiguous APIs fail closed. Its source and mocked API regressions
-run in \`test:release-gates\`. The positive report is explicitly limited
-to rule metadata and still returns \`g0_release_gate:HOLD\` and
-\`production_release_authorized:false\`: branch bypass actors, actual PR
+run in `test:release-gates`. The positive report is explicitly limited
+to rule metadata and still returns `g0_release_gate:HOLD` and
+`production_release_authorized:false`: branch bypass actors, actual PR
 review, protected signer controls, real Hostinger staging/MySQL recovery,
 physical Windows acceptance and Owner approval cannot be self-certified.
 Nothing was changed in GitHub repository settings or main/production.
+
+### G0 CI fixture correction — 24 November 2026
+
+The read-only audit regression fixture previously returned branch metadata for
+both GitHub API paths because `/rules/branches/main` also ends with
+`/branches/main`. This was a test-only mocked-response bug, not authority
+to remove repository review controls. The fixture now compares exact URLs
+and asserts two distinct read-only GET paths. Audit policy remains
+fail-closed; G0 and production promotion remain HOLD.

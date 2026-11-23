@@ -57,13 +57,16 @@ test('read-only GitHub API calls have exact GET URLs and no mutation rights',asy
     assert.equal(opts.redirect,'error');
     assert.equal(opts.credentials,'omit');
     assert.ok(!opts.headers.Authorization);
-    return new Response(JSON.stringify(url.endsWith('/branches/main')?
+    return new Response(JSON.stringify(url==='https://api.github.com/repos/'+repository+'/branches/main'?
       fixture.branch:fixture.rules),{status:200});
   };
   const result=await audit({repository,expectedMainSha:sha,fetcher});
   assert.equal(result.accepted,true);
   assert.equal(sent.length,2);
-  assert.ok(sent.every(x=>x.url.startsWith('https://api.github.com/repos/'+repository+'/')));
+  assert.deepEqual(sent.map(x=>x.url).sort(),[
+    'https://api.github.com/repos/'+repository+'/branches/main',
+    'https://api.github.com/repos/'+repository+'/rules/branches/main'
+  ].sort());
 });
 test('403 permission failure, oversized JSON and malformed data cannot become PASS',async()=>{
   for(const fetcher of [
@@ -81,7 +84,7 @@ test('private token is used only as bearer header on read-only requests',async()
   const result=await audit({repository,expectedMainSha:sha,token:'test-only-token',
     fetcher:async(url,opts)=>{
       seen.push(opts.headers.Authorization);
-      return new Response(JSON.stringify(url.endsWith('/branches/main')?
+      return new Response(JSON.stringify(url==='https://api.github.com/repos/'+repository+'/branches/main'?
         x.branch:x.rules),{status:200});
     }});
   assert.equal(result.accepted,true);
