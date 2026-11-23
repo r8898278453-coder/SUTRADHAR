@@ -1,4 +1,19 @@
-# Implementation State — 2026-11-06
+# Implementation State — 2026-11-06 (historical snapshot)
+
+## 24 November 2026 — status correction
+
+This file records **the state of the 6–11 November development baseline**,
+not the current GitHub Draft PR implementation. Since that snapshot, the
+v7 Hostinger/MySQL Central code, separate Central-only build, Electron
+Desktop OS-vault worker/QA source, staging recovery tooling and extensive
+CI/test harnesses were added on the **unmerged fix branch**.
+
+See [repository deep audit](docs/REPOSITORY_DEEP_AUDIT_2026-11-24.md),
+[implementation tracker](docs/IMPLEMENTATION_TRACKER.md), and [gap register]
+(GAP_REGISTER.md). These later code commits are *not* evidence of protected
+main, live Hostinger staging, production signing, or real multi-PC acceptance.
+Statements below such as "all v7 tests NOT_RUN" refer to this **historical
+snapshot** and must not overwrite newer exact-HEAD CI evidence.
 
 **Status: REAL DOCKER + LOCAL ROLLBACK GIT CI VERIFIED; LIVE GITHUB MERGE/ROLLBACK NOT VERIFIED — NOT PRODUCTION READY**
 

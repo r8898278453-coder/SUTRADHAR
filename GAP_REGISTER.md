@@ -1,4 +1,4 @@
-# Active Gap Register — source/real-world reconciliation 23 November 2026
+# Active Gap Register — source/real-world reconciliation 24 November 2026
 
 This register reflects the current implementation branch, not an unsupported "all resolved" report.
 
@@ -56,3 +56,20 @@ metadata, absent Hostinger staging/off-host restore, no Owner-certified Windows
 signer, no witnessed real 2/3/8–10-PC behavior and no G0–G7 approval.
 Even if npm CI passes, do **not** merge, publish signed packages or deploy to
 live customers. The physical/credential/Owner gates cannot be closed by CI.
+
+## 24 November 2026 — audited source-level fixes vs still open
+
+The [targeted deep repository audit](docs/REPOSITORY_DEEP_AUDIT_2026-11-24.md)
+inventories the Git tree and distinguishes source defects repaired on
+unmerged Draft PR #1 from environmental/Owner prerequisites. Code-level
+fixes cover four developer CLI journal race paths; malformed GitHub review
+records; bounded GitHub provenance; G0 protected-branch prerequisites;
+future-dated Backup candidates; installer diagnostic evidence reads; and
+nested Git/npm/secret-file escapes under broad worker scopes. These are
+**pending exact-current-HEAD CI plus independent acceptance**, not
+self-certified production fixes.
+
+The known \`main protected:false\` G0 gap, Hostinger staging, MySQL
+backup→restore, trusted Windows signer, physical 2/3/8–10-PC election and
+update/rollback evidence, and G7 Owner approval remain OPEN. The
+historical public Master signing key rotation is still OWNER ACTION.

@@ -4,7 +4,7 @@
 
 **Developer Edge safety:** The separate developer-only plaintext identity daemon now requires a private single-process lock and durable local heartbeat counter writes. This does not change the packaged Electron OS-vault trust boundary or authorize deployment. See [Worker restart and developer Edge recovery](docs/WORKER_RESTART_PREFLIGHT_V7.md).
 
-> **Release status — 23 November 2026:** SUTRADHAR v7 remains **alpha on Draft PR #1**; it is NOT an approved production release. Core/Windows unsigned QA packaging and disposable MySQL tests are source-CI evidence only. No production-signed Windows installer, live Hostinger deployment or staging restore, approved automatic update, or independently verified 2/3/8–10 physical-PC rollout has been completed. Never connect this fix branch to a live production website or distribute unsigned QA output as trusted software.
+> **Release status — 24 November 2026:** SUTRADHAR v7 remains **alpha on Draft PR #1**; it is NOT an approved production release. Core/Windows unsigned QA packaging and disposable MySQL tests are source-CI evidence only. No production-signed Windows installer, live Hostinger deployment or staging restore, approved automatic update, or independently verified 2/3/8–10 physical-PC rollout has been completed. Never connect this fix branch to a live production website or distribute unsigned QA output as trusted software.
 
 SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 
@@ -26,6 +26,7 @@ SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 | Audit real-world failure fixes and remaining automation gates | [Real-world audit remediation tracker](docs/REAL_WORLD_AUDIT_REMEDIATION_V7.md) |
 | Verify a worker restart without stealing a lease | [Worker restart and checkpoint preflight](docs/WORKER_RESTART_PREFLIGHT_V7.md) |
 | See what has actually passed and what remains | [Implementation tracker](docs/IMPLEMENTATION_TRACKER.md) and [71-case acceptance matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) |
+| Review cross-system security gaps discovered in the latest source-tree audit | **[24 November repository deep audit](docs/REPOSITORY_DEEP_AUDIT_2026-11-24.md)** |
 | Decide whether the real-world production gates have sufficient Owner evidence | [17 November release-gate handoff](docs/OWNER_RELEASE_GATE_HANDOFF_2026-11-17.md) |
 | Review Windows signing, OS-vault keys, Hostinger staging, encrypted backup and physical PC acceptance | [Production-readiness checklist](docs/PRODUCTION_READINESS_V7_2026-11-12.md) |
 | Inspect PC update readiness and local signed no-install evidence | [Windows update safety preflight](docs/DESKTOP_MAINTENANCE_PREFLIGHT_V7.md) |
