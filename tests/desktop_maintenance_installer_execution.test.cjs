@@ -334,24 +334,30 @@ test('unsigned swap between two reads of ready receipt cannot reach installer la
   const file=path.join(f.nodeDir,'installer-preparation-ready.json');
   const saved=JSON.parse(fs.readFileSync(file,'utf8'));
   const {runner,launches}=launcherRecorder();
-  const open=fs.openSync;
-  let readyOpens=0,swapped=false;
+  const open=fs.openSync,close=fs.closeSync;
+  let firstReadyFd=null,swapped=false;
   try{
     fs.openSync=function(target,...opts){
-      if(target===file){
-        readyOpens++;
-        if(readyOpens===2){
-          swapped=true;
-          fs.writeFileSync(file,JSON.stringify({...saved,
-            observed_local_test_metadata:'unsigned swap'})+'\n');
-        }
+      const fd=open.call(fs,target,...opts);
+      if(target===file&&firstReadyFd===null)firstReadyFd=fd;
+      return fd;
+    };
+    fs.closeSync=function(fd){
+      const result=close.call(fs,fd);
+      // Replace only AFTER the first read's fd and pathname checks finished.
+      // That makes the later read structurally valid but signature-invalid,
+      // instead of merely triggering the same-read TOCTOU guard.
+      if(fd===firstReadyFd&&!swapped){
+        swapped=true;
+        fs.writeFileSync(file,JSON.stringify({...saved,
+          observed_local_test_metadata:'unsigned swap'})+'\n');
       }
-      return open.call(fs,target,...opts);
+      return result;
     };
     await assert.rejects(launchStagedInstaller({...f.args,
       grantEnvelope:f.grant(),runner}),
       /UPDATE_PREPARE_RECORD_SIGNATURE_INVALID/);
-  }finally{fs.openSync=open;}
+  }finally{fs.openSync=open;fs.closeSync=close;}
   assert.equal(swapped,true);
   assert.equal(launches.length,0);
   assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-execution-attempt.json')),false);
