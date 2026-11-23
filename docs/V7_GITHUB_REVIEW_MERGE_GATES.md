@@ -17,3 +17,15 @@ Only after manual GitHub human-reviewed merge: supply the exact ticket, register
 Central independently proves the merged PR, unique registered source head, one tested parent, candidate/merged tree equality, permitted changed files, exact-head required CI and human approvals, and merged commit reachability on the configured target branch. It then atomically marks the ticket DONE, preserves a durable Git receipt, and revokes reservations; NO GitHub write occurs. Duplicate retries with the same request ID and identical body read the original MySQL receipt even after DONE; conflicting IDs/bodies are refused.
 
 **Limitations:** Preview or merged-status claims are never production-approval evidence. No schema migration. No actual remote GitHub PR, merge, review, Hostinger/MySQL production change or physical multi-PC acceptance is asserted by automated mocked GitHub tests. Production signing, rollback verification and real Owner acceptance remain separate gates.
+
+## G0 read-only repository rules verification
+
+Before an independent reviewer can request release promotion, run
+\`npm run ops:github-g0-protection\` with the **exact main SHA**, not a PR
+SHA, on a trusted operator machine. It verifies visible GitHub protection
+metadata and effective rules for main; required checks must be bound to
+their published job contexts, and force-push/deletion must be disallowed.
+No GitHub API POST/PATCH/PUT/DELETE occurs. Unavailable APIs or a 403 mean
+HOLD. Even a compatible result explicitly never verifies bypass policies,
+human review decisions or production authorization. See the Owner
+provisioning runbook B0. The fix branch is not a protected promotion source.

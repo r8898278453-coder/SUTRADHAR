@@ -55,6 +55,34 @@ If external MySQL access is unavailable on Hostinger shared hosting, use hPanel'
 
 **Workflow availability:** New workflow files live on draft PR #1. GitHub shows manual **Run workflow** once the reviewed workflow exists on default branch; no approval to merge PR #1 has been given, so these workflows are not yet ready for Owner use.
 
+
+
+### B0 — Read-only GitHub protection audit (does not set any rules)
+
+After configuring protections in Settings, a trusted operator with Node.js 22
+can inspect the current **main** branch and effective GitHub branch rules without
+editing GitHub. Use a pinned known SHA obtained directly from the protected
+GitHub main branch; never substitute the fix/PR SHA:
+
+~~~sh
+export SUTRADHAR_G0_REPOSITORY=r8898278453-coder/SUTRADHAR
+export SUTRADHAR_G0_EXPECTED_MAIN_SHA=<40-character-main-SHA>
+# Optional if public REST visibility is insufficient: set a read-only
+# GITHUB_TOKEN using a trusted local credential manager, never in a chat.
+npm run ops:github-g0-protection
+~~~
+
+The audit checks branch-protected metadata, the exact SHA, applicable rules
+reported by GitHub, rejection of force-push/deletion, independent PR approval
+with stale-review dismissal and last-push approval, and exact-head CI contexts.
+A 403/permission failure, missing rule or incomplete response returns **HOLD**.
+A compatible snapshot still reports \`g0_release_gate:HOLD\` and
+\`production_release_authorized:false\`: bypass actors, protected signing
+environment reviewers, actual human approvals and all live-world G1–G7
+evidence require independent Owner verification. This is never a script to
+add rules or merge a PR. GitHub plan/repository settings may limit which rules
+are available; only the Owner can resolve that safely.
+
 ## C. Real Windows PCs (Owner)
 
 1. Choose **PC-A** and **PC-B** on different physical machines, then **PC-C**. Record friendly names, Windows build, network and Central URL in your secure test inventory, not private device keys.

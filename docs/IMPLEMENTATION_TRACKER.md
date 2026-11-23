@@ -982,3 +982,20 @@ bytes remain intact, the original pending claim remains for reconciliation,
 and no second Central claim POST occurs. Owner-only recovery and independent
 Central validation are still required; this is not a physical Windows
 power-loss or multi-process acceptance test.
+
+## 24 November 2026 — Read-only G0 repository protection audit
+
+GitHub metadata for this repo's main was observed as \`protected:false\`
+and repository rulesets were returned empty through the connected account;
+the branch protection endpoint was inaccessible (403). As a result, the
+G0 protected promotion prerequisite remains **HOLD**, not inferred PASS.
+A new read-only CLI \`ops:github-g0-protection\` audits exact main commit SHA,
+visible effective branch rules, non-fast-forward/deletion restrictions,
+stale-review dismissal, last-push independent approval and required CI
+contexts; ambiguous APIs fail closed. Its source and mocked API regressions
+run in \`test:release-gates\`. The positive report is explicitly limited
+to rule metadata and still returns \`g0_release_gate:HOLD\` and
+\`production_release_authorized:false\`: branch bypass actors, actual PR
+review, protected signer controls, real Hostinger staging/MySQL recovery,
+physical Windows acceptance and Owner approval cannot be self-certified.
+Nothing was changed in GitHub repository settings or main/production.
