@@ -9,16 +9,29 @@
 'use strict';
 const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path');
 const {inspectHold,location}=require('./maintenance-recovery-hold.cjs');
+const {readStableLocalFile}=require('./os-vault.cjs');
 const {checkRecovery}=require('./maintenance-recovery-preflight.cjs');
 const {verifyRecoveryGrant}=require('./maintenance-release-grant.cjs');
 const {verifyObservedReceipt}=require('./maintenance-postinstall-verification.cjs');
 function fail(code){throw Error(code);}
+// lstat treats an existing dangling symlink as PRESENT, not as an absent
+// incident/attempt/archive. Only genuine ENOENT permits a fresh release.
+function entryStat(file){
+  try{return fs.lstatSync(file);}
+  catch(error){
+    if(error?.code==='ENOENT')return null;
+    fail('RECOVERY_RELEASE_FILESYSTEM_UNCERTAIN');
+  }
+}
+function entryPresent(file){return entryStat(file)!==null;}
 function boundedFile(file){
-  if(typeof file!=='string'||!path.isAbsolute(file))fail('RECOVERY_RELEASE_GRANT_FILE_INVALID');
-  const st=fs.lstatSync(file);
-  if(!st.isFile()||st.isSymbolicLink()||st.size<200||st.size>8192)
+  if(typeof file!=='string'||!path.isAbsolute(file))
     fail('RECOVERY_RELEASE_GRANT_FILE_INVALID');
-  return JSON.parse(fs.readFileSync(file,'utf8'));
+  // Owner-selected grant bytes must not be swapped between path inspection
+  // and parsing. Reuse the same bounded private descriptor reader as the vault.
+  try{return JSON.parse(readStableLocalFile(file,{
+    minBytes:200,maxBytes:8192}).toString('utf8'));}
+  catch{fail('RECOVERY_RELEASE_GRANT_FILE_INVALID');}
 }
 function receiptLocation(dir,grantId){
   return path.join(dir,'maintenance-release-'+grantId+'.json');
@@ -36,7 +49,7 @@ async function releaseHold({dir,centralOrigin,nodeId,signer,grantEnvelope,
   // Never treat its Owner review grant as post-install success evidence.
   if(['installer-failure-review-observed.json',
       'installer-failure-exception-reviewed.json']
-      .some(name=>fs.existsSync(path.join(dir,name))))
+      .some(name=>entryPresent(path.join(dir,name))))
     fail('RECOVERY_RELEASE_FAILED_INSTALL_REQUIRES_DISTINCT_OWNER_RESOLUTION');
   // If Windows install/rollback was ever ATTEMPTED, do not release the
   // maintenance hold until the same PC's signature, installed target version
@@ -45,7 +58,7 @@ async function releaseHold({dir,centralOrigin,nodeId,signer,grantEnvelope,
     'installer-execution-attempt.json',
     'installer-execution-launch-observed.json',
     'installer-postinstall-observed.json'];
-  if(installJournals.some(name=>fs.existsSync(path.join(dir,name)))){
+  if(installJournals.some(name=>entryPresent(path.join(dir,name)))){
     if(!node||node.node_id!==nodeId||!Array.isArray(agentIds)||
        typeof currentVersion!=='string')
       fail('RECOVERY_RELEASE_POSTINSTALL_PROOF_REQUIRED');
@@ -63,7 +76,7 @@ async function releaseHold({dir,centralOrigin,nodeId,signer,grantEnvelope,
     held:original,now});
   const receipt=receiptLocation(dir,grant.grant_id);
   const archive=path.join(dir,'maintenance-recovery-hold.released.'+grant.grant_id+'.json');
-  if(fs.existsSync(receipt)||fs.existsSync(archive))
+  if(entryPresent(receipt)||entryPresent(archive))
     fail('RECOVERY_RELEASE_ATTEMPT_ALREADY_RECORDED');
   const evidenceArgs={dir,centralOrigin,nodeId,signer,...(fetcher?{fetcher}:{})};
   const first=await checkRecovery(evidenceArgs);
@@ -101,10 +114,16 @@ async function releaseHold({dir,centralOrigin,nodeId,signer,grantEnvelope,
      currentStat.dev!==before.dev||currentStat.ino!==before.ino||
      currentStat.size!==before.size||currentStat.mtimeMs!==before.mtimeMs)
     fail('RECOVERY_RELEASE_HOLD_FILE_CHANGED_OWNER_REVIEW');
-  if(fs.existsSync(archive))fail('RECOVERY_RELEASE_ARCHIVE_CONFLICT');
+  if(entryPresent(archive))fail('RECOVERY_RELEASE_ARCHIVE_CONFLICT');
   fs.renameSync(source,archive);
   // Refuse to claim successful release unless archive exists and old hold is absent.
-  if(fs.existsSync(source)||!fs.existsSync(archive))
+  // A dangling alias at the archive name is NOT proof of a successful move.
+  // Check archived inode identity as well as source absence.
+  const archived=entryStat(archive);
+  if(entryPresent(source)||!archived||!archived.isFile()||
+     archived.isSymbolicLink()||archived.dev!==before.dev||
+     archived.ino!==before.ino||archived.size!==before.size||
+     archived.mtimeMs!==before.mtimeMs)
     fail('RECOVERY_RELEASE_RENAME_UNCERTAIN');
   return Object.freeze({released:true,node_id:nodeId,plan_id:grant.plan_id,
     grant_id:grant.grant_id,agent_started:false,installer_executed:false,

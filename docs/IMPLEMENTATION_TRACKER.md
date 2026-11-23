@@ -796,3 +796,21 @@ persistent post-release reconciliation barrier likewise uses lstat
 to refuse a dangling directory alias. Negative tests cover all
 three incident paths and the directory case. No production
 authorization added. Physical Windows update/rollback G6 stays HOLD.
+
+## 24 November 2026 — Maintenance HOLD release file-presence and grant-read hardening
+
+The Owner-guided Desktop HOLD release path previously used follows-symlink
+\`existsSync\` checks for failed-install reviews, installer attempts and prior
+release/archival receipts. A dangling symlink could masquerade as absent;
+the post-rename presence check could also mistake a dangling archive alias for
+a successful release. All such checks now use \`lstat\` entry presence,
+where only genuine ENOENT means absent and uncertain filesystem errors halt
+the release. A successful archive must retain the original hold's inode, size
+and mtime and the old hold pathname must be absent. Owner-selected signed
+release grants now use the shared bounded, private descriptor reader with
+pre/post pathname-and-fd identity checks instead of a racy pathname read.
+Regression tests cover dangling review/installer/attempt/archive evidence,
+nonprivate grant files, an inode swap during grant read and an archive swap
+after rename. None of these changes allows automatic restart, installer
+execution, retry or rollout. OS-level attacks by fully privileged writers,
+power-loss durability and real Windows physical acceptance remain G6 HOLD.

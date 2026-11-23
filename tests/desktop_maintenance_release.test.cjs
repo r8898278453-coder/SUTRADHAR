@@ -98,3 +98,86 @@ test('reconciliation barrier refuses dangling symlinked node directories',()=>{
       /RECOVERY_BARRIER_NODE_DIRECTORY_INVALID/);
   }finally{fs.rmSync(parent,{recursive:true,force:true});}
 });
+
+test('dangling failure-review and installer attempt evidence block hold release',()=>fixture(async dir=>{
+  if(process.platform==='win32')return;
+  hold(dir);
+  const review=path.join(dir,'installer-failure-review-observed.json');
+  fs.symlinkSync(path.join(dir,'missing-review'),review);
+  await assert.rejects(releaseHold({...base,dir,grantEnvelope:sample(),
+    fetcher:makeFetch()}),/FAILED_INSTALL_REQUIRES_DISTINCT_OWNER_RESOLUTION/);
+  fs.unlinkSync(review);
+  const attempt=path.join(dir,'installer-execution-attempt.json');
+  fs.symlinkSync(path.join(dir,'missing-attempt'),attempt);
+  await assert.rejects(releaseHold({...base,dir,grantEnvelope:sample(),
+    fetcher:makeFetch()}),/POSTINSTALL_PROOF_REQUIRED/);
+  assert.equal(inspectHold({dir,nodeId}).active,true);
+}));
+
+test('dangling release and archive receipts preserve the no-retry fence',()=>fixture(async dir=>{
+  if(process.platform==='win32')return;
+  for(const name of ['maintenance-release-'+grantId+'.json',
+    'maintenance-recovery-hold.released.'+grantId+'.json']){
+    hold(dir);
+    const receipt=path.join(dir,name);
+    fs.symlinkSync(path.join(dir,'missing-record'),receipt);
+    await assert.rejects(releaseHold({...base,dir,grantEnvelope:sample(),
+      fetcher:makeFetch()}),/ATTEMPT_ALREADY_RECORDED/);
+    assert.equal(inspectHold({dir,nodeId}).active,true);
+    fs.unlinkSync(receipt);
+    fs.unlinkSync(path.join(dir,'maintenance-recovery-hold.json'));
+  }
+}));
+
+test('Owner grant read is bounded, private and revalidated after an inode swap',()=>fixture(dir=>{
+  const {boundedFile}=require('../apps/desktop/maintenance-release-executor.cjs');
+  const file=path.join(dir,'grant.json'),grant=sample();
+  fs.writeFileSync(file,JSON.stringify(grant),{mode:0o600});
+  assert.deepEqual(boundedFile(file),grant);
+  if(process.platform!=='win32'){
+    fs.chmodSync(file,0o644);
+    assert.throws(()=>boundedFile(file),/GRANT_FILE_INVALID/);
+    fs.chmodSync(file,0o600);
+  }
+  const read=fs.readSync;
+  let injected=false;
+  try{
+    fs.readSync=function(...args){
+      const n=read.apply(this,args);
+      if(!injected){
+        injected=true;
+        fs.renameSync(file,path.join(dir,'original-grant.json'));
+        fs.writeFileSync(file,JSON.stringify(grant),{mode:0o600});
+      }
+      return n;
+    };
+    assert.throws(()=>boundedFile(file),/GRANT_FILE_INVALID/);
+    assert.equal(injected,true);
+  }finally{fs.readSync=read;}
+}));
+
+test('post-rename dangling archive can never be reported as released',()=>fixture(async dir=>{
+  if(process.platform==='win32')return;
+  hold(dir);
+  const {location}=require('../apps/desktop/maintenance-recovery-hold.cjs');
+  const source=location(dir);
+  const archive=path.join(dir,'maintenance-recovery-hold.released.'+grantId+'.json');
+  const rename=fs.renameSync;
+  let injected=false;
+  try{
+    fs.renameSync=function(from,to){
+      rename(from,to);
+      if(!injected&&from===source&&to===archive){
+        injected=true;
+        rename(archive,archive+'.held-for-review');
+        fs.symlinkSync(path.join(dir,'missing-archive'),archive);
+      }
+    };
+    await assert.rejects(releaseHold({...base,dir,grantEnvelope:sample(),
+      fetcher:makeFetch()}),/RENAME_UNCERTAIN/);
+    assert.equal(injected,true);
+    assert.equal(fs.existsSync(path.join(dir,
+      'maintenance-release-'+grantId+'.json')),true,
+      'permanent attempt evidence must survive uncertain archive identity');
+  }finally{fs.renameSync=rename;}
+}));
