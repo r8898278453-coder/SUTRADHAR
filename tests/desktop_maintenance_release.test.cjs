@@ -84,3 +84,17 @@ test('a corrupt or interrupted release receipt still preserves the restart barri
   fs.writeFileSync(path.join(dir,'maintenance-release-'+'f'.repeat(64)+'.json'),'interrupted');
   assert.equal(requiresReconciliation(dir),true);
 }));
+
+test('reconciliation barrier refuses dangling symlinked node directories',()=>{
+  if(process.platform==='win32')return;
+  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+  const {requiresReconciliation}=require('../apps/desktop/maintenance-reconciliation-barrier.cjs');
+  const parent=fs.mkdtempSync(path.join(os.tmpdir(),'sut-reconciliation-dangling-'));
+  const alias=path.join(parent,'dangling-node-link');
+  try{
+    fs.symlinkSync(path.join(parent,'missing-node'),alias,'dir');
+    assert.equal(fs.existsSync(alias),false);
+    assert.throws(()=>requiresReconciliation(alias),
+      /RECOVERY_BARRIER_NODE_DIRECTORY_INVALID/);
+  }finally{fs.rmSync(parent,{recursive:true,force:true});}
+});

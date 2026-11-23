@@ -448,3 +448,13 @@ modified file, unsafe permission or replacement inode cannot be
 mistaken for no maintenance hold. Invalid states block automatic
 start/installer operations and preserve Owner evidence; actual
 Windows reboot and installed rollback acceptance remains pending.
+
+
+## 24 November 2026 — Installer evidence must survive interrupted paths
+
+Any present installer execution/failure-review marker—including a
+dangling symlink—now blocks automatic agent restart. The startup
+barrier and post-release reconciliation guard cannot misread a
+dangling node directory symlink as an unused node folder. This is a
+fail-closed local policy; it does not prove physical Windows installer
+completion or authorize a manual Owner restart.

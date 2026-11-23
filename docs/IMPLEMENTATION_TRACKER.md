@@ -777,3 +777,22 @@ This blocks the described unsafe local observations; it is not a
 Windows ACL/power-loss proof or an atomic defense against fully
 privileged concurrent modification. Production physical G4/G6
 acceptance remains HOLD.
+
+
+## 24 November 2026 — Installer incident and post-release absence checks
+
+The Desktop installer incident barrier also used existsSync to look
+for installer-execution-attempt.json,
+installer-failure-review-observed.json and
+installer-failure-exception-reviewed.json. On a dangling symlink,
+existsSync returns false, which could incorrectly permit automatic
+agent start after an uncertain installer attempt. The guard now uses
+lstat presence: any filesystem entry, including a broken symlink,
+retains the incident and blocks automatic start. It never parses
+untrusted incident file bytes. Manual restart still requires separate
+Owner verification and does not delete evidence. Dangling node
+directory symlinks are rejected, not accepted as absent. The
+persistent post-release reconciliation barrier likewise uses lstat
+to refuse a dangling directory alias. Negative tests cover all
+three incident paths and the directory case. No production
+authorization added. Physical Windows update/rollback G6 stays HOLD.
