@@ -60,3 +60,18 @@ The new verifier first checks the Ed25519 signature/format of the eight-gate Own
 ## Alpha safety status
 
 Do not connect production databases, sign/install Windows packages or merge main based on these tests. No migration is run by these inspection commands. Owner acceptance gate and production_release_authorized flags remain FALSE even with all valid local hashes. Continue real staging, distinct physical Windows PCs, protected GitHub branch checks, authorized signed installer and rollback gates before promotion.
+
+## 23 November 2026 — Immutable backup destination / offline verifier
+
+Backup now publishes fully written, fsynced ciphertext via an **exclusive
+same-directory hard link**, which never replaces a pre-existing archive even
+when two processes race the same path. Supported operator destination
+filesystems must support hard links (e.g. NTFS/ext4); a missing hard-link
+capability means STOP, not a fallback to overwriting rename. Protect a
+separate off-host copy as usual. `npm run ops:verify-backup` now requires
+only `DB_NAME`, the protected AES key, and the absolute encrypted file —
+not MySQL login credentials. It rejects symlinked/oversize files. Restore
+still demands actual DB credentials and exact staging-target Owner approval,
+validated before decrypting the archive. Plaintext is zeroed best-effort
+after verify or restore, but JS copies and child-memory cannot be guaranteed
+erased. Code/CI proof does not replace real Hostinger G2 acceptance.

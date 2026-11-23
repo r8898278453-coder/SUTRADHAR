@@ -433,3 +433,16 @@ certificate, no Owner exception receipt and no release of the previous local
 hold after overlarge Central response. This is source/unsigned QA protection,
 not proof of physical Windows install completion, independent Owner release
 authorization, or stable production signing. G0–G7 remain HOLD.
+
+
+## 23 November 2026 — Race-free encrypted archive publication
+
+Replaced `existsSync` + `renameSync` encrypted archive publication, where
+a concurrent writer could overwrite a prior valid backup, with exclusive
+hard-link publish of an fsynced ciphertext temp file. Negative tests
+assert immutable existing ciphertext, symlink refusal and exactly one
+winner in a two-OS-process destination race. Offline backup verification
+no longer requires MySQL credentials; restore refuses absent credentials and
+unapproved target before decrypting any backup. Decrypted SQL Buffer is
+cleared best-effort after use. This is source/CI testing only; G2 off-host,
+actual Hostinger restore timing and independent Owner signoff remain HOLD.
