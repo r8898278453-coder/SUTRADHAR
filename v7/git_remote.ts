@@ -11,6 +11,7 @@ export type GitRemoteProof =
   | {verified:true;headSha:string;treeSha:string;baseline:string;branch:string;changedFiles:string[]}
   | {verified:false;error_code:string};
 import {validTaskBranch} from './rules.ts';
+import {githubApiJson} from './github_api_json.ts';
 const sha=/^[0-9a-f]{40}$/,repoRe=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export async function inspectGitRemote(x:GitRemoteInput):Promise<GitRemoteProof>{
   const denied=(error_code:string):GitRemoteProof=>({verified:false,error_code});
@@ -25,11 +26,7 @@ export async function inspectGitRemote(x:GitRemoteInput):Promise<GitRemoteProof>
   const origin='https://api.github.com/repos/'+x.repo;
   const fetcher=x.fetcher||fetch;
   async function read(uri:string){
-    const response=await fetcher(origin+uri,{method:'GET',headers:{
-      Authorization:'Bearer '+x.token,Accept:'application/vnd.github+json',
-      'X-GitHub-Api-Version':'2022-11-28'},signal:AbortSignal.timeout(15000)});
-    if(!response.ok)throw Error('GITHUB_HTTP_FAILURE');
-    return response.json();
+    return githubApiJson(origin+uri,x.token,fetcher);
   }
   try{
     const [branch,base]=await Promise.all([

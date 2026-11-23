@@ -3,6 +3,7 @@
  * No branch creation, git push, or merge. GitHub is queried before PR creation
  * to match the exact commit/tree that passed real Docker testing.
  */
+import {githubApiJson} from './v7/github_api_json.ts';
 export type DraftPrResult =
   | { created: true; existing: boolean; prNumber: number; url: string; headSha: string; treeSha: string; branch: string; repo: string }
   | { created: false; error: string };
@@ -47,20 +48,8 @@ async function runVerifiedDraftPr(input: DraftPrInput, allowCreate: boolean): Pr
   }
   const api = `https://api.github.com/repos/${repo}`;
   const fetcher = input.fetcher || fetch;
-  async function request(uri: string, method: 'GET' | 'POST' = 'GET', data?: unknown): Promise<any> {
-    const r = await fetcher(api + uri, {
-      method,
-      headers: {
-        Authorization: `Bearer ${input.token}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        ...(data === undefined ? {} : { 'Content-Type': 'application/json' })
-      },
-      ...(data === undefined ? {} : { body: JSON.stringify(data) }),
-      signal: AbortSignal.timeout(15000)
-    });
-    if (!r.ok) throw new Error('GitHub request failed');
-    return r.json();
+  async function request(uri:string,method:'GET'|'POST'='GET',data?:unknown):Promise<any>{
+    return githubApiJson(api+uri,input.token,fetcher,{method,data});
   }
   try {
     const safeBase=baseBranch.split('/').map(encodeURIComponent).join('/');

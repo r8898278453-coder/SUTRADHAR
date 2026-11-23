@@ -3,6 +3,7 @@
  * NEVER issues POST, PUT, PATCH or DELETE, and never assumes a PR was
  * created merely because a branch exists.
  */
+import {githubApiJson} from './v7/github_api_json.ts';
 export type RollbackPrInspection =
   | { verified: true; state: 'ABSENT' }
   | { verified: true; state: 'DRAFT_PR'; prNumber: number; url: string }
@@ -49,18 +50,8 @@ export async function inspectRollbackDraftPr(
 
   const fetcher = input.fetcher || fetch;
   const api = `https://api.github.com/repos/${input.repo}`;
-  async function get(path: string): Promise<any> {
-    const response = await fetcher(api + path, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${input.token}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28'
-      },
-      signal: AbortSignal.timeout(15000)
-    });
-    if (!response.ok) throw new Error('GITHUB_READ_ONLY_INSPECTION_FAILED');
-    return response.json();
+  async function get(path:string):Promise<any>{
+    return githubApiJson(api+path,input.token,fetcher);
   }
 
   try {

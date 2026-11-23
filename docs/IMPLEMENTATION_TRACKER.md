@@ -1057,3 +1057,15 @@ are approved. Backup selection also rejects future timestamp anomalies,
 matching Master election's bounded clock tolerance. Source-level
 regressions exercise these fail-closed decisions; real G0 external review
 and multi-PC behavior are not accepted by source CI.
+
+## 24 November 2026 — GitHub HTTP provenance boundary after deep audit
+
+Every current V7 GitHub provenance consumer (read-only Git branch, human
+PR review, merged PR verifier, rollback PR inspection) and the
+Owner-confirmed Draft PR creator now uses a shared no-redirect,
+bounded 256 KiB strict-UTF-8 JSON reader. Remote errors, truncated bodies,
+oversized data and cross-host redirects fail closed. The only write here
+remains a pre-existing Owner-controlled **draft PR POST**, not Git push,
+merge, signing or deploy. Mocked CI exercises the same request structure
+and malformed/redirected payloads; true Owner-protected branch/review
+and external live GitHub acceptance remain HOLD.
