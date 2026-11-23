@@ -148,3 +148,16 @@ test('observer previous witness blocks new instance and incomplete files fail cl
   assert.throws(()=>inspectObserverWitness({dir,node,agentIds:['agent_a1']}),
     /WITNESS_CORRUPT/);
 }));
+
+test('dangling observer witness blocks duplicate sidecar and is not reported absent',()=>fixture(dir=>{
+  if(process.platform==='win32')return; // physical Windows symlink acceptance is separate
+  const file=path.join(dir,'installer-process-observer-unsigned.json');
+  fs.symlinkSync(path.join(dir,'missing-observer-outcome'),file);
+  assert.equal(fs.existsSync(file),false);
+  assert.throws(()=>launchPersistentObserver({dir,pid:48812,
+    installerPath:path.join(dir,'SUTRADHAR Desktop.exe'),
+    nodeId,grantId:grant,installerSha256:sha,platform:'win32',
+    runner:()=>{throw Error('must not spawn');}}),/PREVIOUS_WITNESS_OWNER_REVIEW/);
+  assert.throws(()=>inspectObserverWitness({dir,node,agentIds:['agent_a1']}),
+    /WITNESS_CORRUPT/);
+}));

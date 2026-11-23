@@ -14,6 +14,15 @@ const STATES=['PROCESS_NOT_PRESENT_AT_START','UNVERIFIABLE_PROCESS_IDENTITY',
   'DIRECT_PROCESS_DISAPPEARED','PROCESS_IDENTITY_CHANGED',
   'TIMED_OUT_STILL_PRESENT','INSPECTION_ERROR'];
 const fail=code=>{throw Error(code);};
+// Witnesses are evidence even when a symlink target is missing. A prior
+// observer entry must never be mistaken for permission to start another.
+function witnessEntryPresent(file){
+  try{fs.lstatSync(file);return true;}
+  catch(error){
+    if(error?.code==='ENOENT')return false;
+    fail('INSTALL_OBSERVER_FILE_STATE_UNCERTAIN');
+  }
+}
 const SCRIPT=String.raw`
 $ErrorActionPreference='Stop'
 $watchedPid=__PID__
@@ -98,7 +107,7 @@ function launchPersistentObserver({dir,pid,installerPath,nodeId,grantId,
   installerSha256,platform=process.platform,runner=spawn,
   onError=()=>{}}={}){
   if(platform!=='win32')fail('INSTALL_OBSERVER_WINDOWS_ONLY');
-  if(fs.existsSync(path.join(dir,NAME)))
+  if(witnessEntryPresent(path.join(dir,NAME)))
     fail('INSTALL_OBSERVER_PREVIOUS_WITNESS_OWNER_REVIEW');
   const script=buildObserverCommand({dir,pid,installerPath,nodeId,grantId,
     installerSha256});
@@ -155,7 +164,7 @@ function trustedLaunch({dir,node,agentIds}={}){
 function inspectObserverWitness({dir,node,agentIds}={}){
   const {attempt,launch}=trustedLaunch({dir,node,agentIds});
   const file=path.join(dir,NAME);
-  if(!fs.existsSync(file))return Object.freeze({available:false,
+  if(!witnessEntryPresent(file))return Object.freeze({available:false,
     state:'NO_WITNESS_OUTCOME_UNKNOWN',witness_signed:false,
     installer_completion_proven:false,hold_release_allowed:false});
   let raw,stat;

@@ -814,3 +814,17 @@ nonprivate grant files, an inode swap during grant read and an archive swap
 after rename. None of these changes allows automatic restart, installer
 execution, retry or rollout. OS-level attacks by fully privileged writers,
 power-loss durability and real Windows physical acceptance remain G6 HOLD.
+
+## 24 November 2026 — Observer witness entry-presence fence
+
+An optional, explicitly untrusted Windows installer-process liveness witness
+could be represented by a dangling symlink. The previous follows-symlink
+\`existsSync\` check incorrectly reported that filesystem entry as absent:
+a new observer could be requested despite unresolved previous witness evidence,
+or the Owner inspection could say "no witness". Both routes now use \`lstat\`
+presence (only genuine ENOENT is absent); symlink entries retain the
+Owner-review stop and are rejected as corrupt on inspection. Regression
+tests verify no duplicate observer spawn and no false missing-witness
+report. The observer remains nonprivileged, unsigned and diagnostic only;
+it does not attest successful Windows installation, authorize HOLD
+release, retry, reboot or agent restart. Physical G6 remains HOLD.
