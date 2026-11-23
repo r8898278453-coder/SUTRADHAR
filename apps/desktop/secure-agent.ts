@@ -8,6 +8,8 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+// Bundled into the isolated child executable by esbuild (not exposed via IPC).
+const {agentCentralRequest}=require('./agent-central-http.cjs');
 import {HEARTBEAT_SECONDS,ID_RE} from '../../v7/rules.ts';
 import {verifyRecoverySnapshot} from '../../v7/recovery_validation.ts';
 import {verifyExistingAgentOnOwnNode} from '../../v7/agent_restart_authority.ts';
@@ -77,11 +79,8 @@ async function main(){
     if(authorization)headers.authorization='Bearer '+authorization;
     else Object.assign(headers,await bridge<Record<string,string>>('sign',{kind:'node_api',method,uri,body}));
     if(agentId)headers['x-sutradhar-agent']=agentId;
-    const res=await fetch(central+uri,{method,headers,body:method==='POST'?body:undefined,
-      signal:AbortSignal.timeout(15000)});
-    const answer=await res.json() as any;
-    if(!res.ok)throw Error(String(answer?.error_code||'HTTP_'+res.status));
-    return answer;
+    return await agentCentralRequest({origin:central,method,uri,headers,
+      body:method==='POST'?body:undefined}) as any;
   }
   async function enroll(){
     // Electron main owns the one-time grant and posts enrollment over HTTPS.

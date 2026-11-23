@@ -543,3 +543,26 @@ roster; negative tests check corruption, symlinks and duplicate IDs.
 The new runtime file is included in the Windows ASAR allowlist and actual
 package integrity gate. This is local config hardening, NOT a proof of
 physical Windows encrypted vault acceptance or update/rollback. G4/G6 HOLD.
+
+
+## 23 November 2026 — Bounded heartbeat and Master recovery replies in real Windows child
+
+The packaged `apps/desktop/secure-agent.ts` still used unbounded
+`Response.json()` for **every signed node API reply**, including registration,
+heartbeat, current-node reconciliation, recovery and Master reconciliation.
+The isolated child now delegates to bundled `agent-central-http.cjs`
+with an exact route allowlist, 64 KiB cap on routine signed responses and
+a separately bounded **512 KiB** cap on the at-most-300-event recovery
+snapshot. All responses must stream valid UTF-8 JSON objects with
+`application/json`; oversized declared or actual received bytes,
+invalid/malformed data and unrecognized routes fail closed. Requests
+explicitly refuse redirects, disable caching, omit ambient cookies and
+apply the existing 15-second timeout. Only narrow machine-readable
+Central error codes are allowed back into the child error path.
+Negative tests cover the absence of a signed ACK on excessive JSON,
+recovery size differences, malformed UTF-8 and HTML, non-streaming
+responses, route/body denial, 409 duplicate ID and sanitized errors.
+`secure-agent.cjs` is esbuild-bundled and remains subject to actual
+ASAR external resource byte verification. This is code/CI protection,
+not evidence of real 60-second heartbeats, 180-second failover or
+physical Windows update/rollback. G4/G5/G6 stay HOLD.

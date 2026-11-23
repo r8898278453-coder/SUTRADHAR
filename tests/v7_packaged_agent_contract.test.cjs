@@ -14,6 +14,12 @@ test('packaged OS-vault Master delegates recovery to identical fail-closed share
   assert.match(packaged,/manifest_sha256\s*\}\s*\)/);
 });
 
+test('packaged child uses capped response parser, never unbounded Response.json()',()=>{
+  assert.match(packaged,/require\('\.\/agent-central-http\.cjs'\)/);
+  assert.match(packaged,/await agentCentralRequest\(/);
+  assert.doesNotMatch(packaged,/await res\.json\(\)/);
+  assert.match(packaged,/body:method==='POST'\?body:undefined/);
+});
 test('packaged heartbeat is connectivity only and Central derives work from authoritative ledgers',()=>{
   assert.match(packaged,/status:'ONLINE'/);
   for(const match of ['AS active_ticket','AS has_work_lease','AS has_git_job',

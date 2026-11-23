@@ -361,3 +361,14 @@ existing PC roster or silently change Central. Invalid or symlinked
 settings require Owner recovery, not identity deletion. This helper
 is included in actual Windows ASAR verification. No physical Windows
 installer/DPAPI acceptance is implied.
+
+
+## Signed child HTTP response size gate
+
+The packaged Windows agent now uses a strict, streaming read of Central
+heartbeat and registration replies, maximum 64 KiB. Master recovery
+snapshot uses a separate maximum 512 KiB to accommodate the 300-event
+validated history. Invalid headers, malformed JSON, unknown API paths,
+oversize responses, redirects and ambient web cookies are rejected.
+This cannot prove live Hostinger connectivity or physical election
+acceptance; independently observe real PC heartbeats before release.
