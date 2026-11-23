@@ -16,8 +16,7 @@ const LEASE=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const ORIGIN=/^https:\/\/[a-z0-9.-]+(?::443)?$/i;
 const fail=code=>{throw Error(code);};
 const digest=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
-const safeScope=x=>typeof x==='string'&&x.length<=450&&
-  /^[a-zA-Z0-9._/-]+$/.test(x)&&!x.split('/').some(v=>v==='..'||v==='.');
+const {safeScopedPath:safeScope}=require('./worker-scoped-path.cjs');
 function assertDirectory(dir){
   if(typeof dir!=='string'||!path.isAbsolute(dir))fail('WORKER_LOCAL_PATH_INVALID');
   const st=fs.lstatSync(dir);

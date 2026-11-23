@@ -34,18 +34,7 @@ function gitText(dir,hooks,...args){
   const b=git(dir,hooks,...args);
   return b.toString('utf8').trim();
 }
-function safePath(x){
-  if(typeof x!=='string'||x.length===0||x.length>450||
-     !/^[A-Za-z0-9._/-]+$/.test(x)||
-     x.startsWith('/')||x.includes('//')||
-     x.split('/').some(p=>!p||p==='.'||p==='..'))
-    return false;
-  // Changed Git metadata may cause unsafe future checkouts/QA/transport.
-  const parts=x.toLowerCase().split('/');
-  if(parts.some(p=>p==='.git'||p==='.gitattributes'||p==='.gitmodules'||
-      p==='.lfsconfig'))return false;
-  return true;
-}
+const {safeScopedPath:safePath}=require('./worker-scoped-path.cjs');
 function inScope(file,scopes){
   return scopes.some(s=>file===s||file.startsWith(s+'/'));
 }

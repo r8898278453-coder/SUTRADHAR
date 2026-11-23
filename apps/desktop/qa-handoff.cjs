@@ -82,14 +82,7 @@ function checkedTask(task,agentId,ticketId,role,recoveryReviewOnly=false){
     fail('HANDOFF_CENTRAL_TASK_NOT_AUTHORIZED');
   return task;
 }
-function safePath(p){
-  if(typeof p!=='string'||p.length===0||p.length>450||
-     !/^[A-Za-z0-9._/-]+$/.test(p)||p.startsWith('/')||
-     p.includes('//')||p.split('/').some(s=>!s||s==='.'||s==='..'))
-    return false;
-  return !p.toLowerCase().split('/').some(s=>
-    ['.git','.gitattributes','.gitmodules','.lfsconfig'].includes(s));
-}
+const {safeScopedPath:safePath}=require('./worker-scoped-path.cjs');
 function matchingTask(t,m){
   return t.ticket_id===m.ticket_id&&t.project_id===m.project_id&&
     t.repository===m.repository&&t.branch_name===m.branch_name&&
