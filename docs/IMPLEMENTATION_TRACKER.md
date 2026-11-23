@@ -737,3 +737,21 @@ Owner installer-execution grant, Authenticode, staged executable hash,
 noninteractive script limits and no automatic retry remain separate
 mandatory conditions. Windows physical installed update/rollback and
 power-loss acceptance G6 HOLD.
+
+
+## 23 November 2026 — Reauthenticate update receipt on second and final reads
+
+The Windows signed installer launch path inspected both signed local
+preparation journals through inspectPreparedIdentity, then independently
+re-read installer-preparation-ready.json for launch policy without
+verifying the signature of those second-read bytes. It now calls the
+existing verifyLocalRecord Ed25519 verifier on every separate ready
+read, and after Central rechecks, demands the final authenticated
+ready payload and staged installer path match the initial snapshot
+exactly before writing a permanent execution attempt marker.
+A regression swaps an unsigned ready record between its first and
+second reads and asserts no installer launch, no execution-attempt
+receipt, and intact Owner maintenance HOLD. The Owner execution grant,
+exact staged EXE hash, Windows Authenticode, no automatic retry,
+interactive/UAC restrictions, Central's paused Drained lease and
+real physical acceptance remain independent gates. G6 HOLD.

@@ -11,7 +11,8 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const {spawn}=require('node:child_process');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
-const {identityEvidence,inspectPreparedIdentity}=require('./maintenance-install-preparation.cjs');
+const {identityEvidence,inspectPreparedIdentity,verifyLocalRecord}=
+  require('./maintenance-install-preparation.cjs');
 const {verifyExecutionGrant}=require('./maintenance-installer-execution-grant.cjs');
 const {verifyWindowsPublisher}=require('./windows-authenticode.cjs');
 const {createDirectExitTracker}=require('./maintenance-installer-direct-exit.cjs');
@@ -49,7 +50,11 @@ function checkPrepared({dir,node,agentIds,observedVersion,now=Date.now()}){
   if(!proof.identity_preserved||!proof.agent_id_set_matched||
      !proof.public_key_fingerprint_matched)
     fail('UPDATE_EXECUTION_LOCAL_IDENTITY_NOT_PRESERVED');
-  const ready=boundedJson(path.join(dir,'installer-preparation-ready.json'));
+  // The first read inside inspectPreparedIdentity authenticates one snapshot.
+  // A second local read MUST independently authenticate its own bytes:
+  // pathname stability alone never proves an Ed25519-signed Owner state.
+  const ready=verifyLocalRecord(
+    boundedJson(path.join(dir,'installer-preparation-ready.json')),node);
   if(ready.status!=='OFFLINE_STAGED_NOT_INSTALLED'||
      !HEX.test(ready.installer_sha256||'')||
      ready.installer_sha256!==ready.staged_sha256||
@@ -176,7 +181,10 @@ async function launchStagedInstaller({dir,node,agentIds,observedVersion,
   // Recheck local file state and signer immediately before creating a
   // permanent one-shot marker. This remains subject to OS-level TOCTOU and
   // ACL acceptance on a real Windows PC.
-  checkPrepared({dir,node,agentIds,observedVersion});
+  const finalPrepared=checkPrepared({dir,node,agentIds,observedVersion});
+  if(finalPrepared.stagedPath!==stagedPath||
+     JSON.stringify(finalPrepared.ready)!==JSON.stringify(ready))
+    fail('UPDATE_EXECUTION_PREPARED_RECORD_CHANGED');
   if(sha256File(stagedPath)!==ready.installer_sha256)
     fail('UPDATE_EXECUTION_STAGED_HASH_CHANGED');
   const attempt={schema:1,state:'EXECUTION_ATTEMPT_OWNER_REVIEW_REQUIRED',

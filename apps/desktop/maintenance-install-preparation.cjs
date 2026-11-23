@@ -260,4 +260,5 @@ function inspectPreparedIdentity({dir,node,agentIds,observedVersion}={}){
     automatic_rollback_allowed:false});
 }
 
-module.exports={prepareInstaller,identityEvidence,inspectPreparedIdentity};
+module.exports={prepareInstaller,identityEvidence,inspectPreparedIdentity,
+  verifyLocalRecord};

@@ -426,3 +426,14 @@ concurrent regular-file swaps and exposed permissions keep Owner HOLD.
 This does not authorize download, unattended install, restart,
 rollback, or production release; actual signed installed and rebooted
 Windows device acceptance is still outstanding.
+
+
+## 23 November 2026 — Update receipt signature at every read
+
+Even after private descriptor validation, an installer preparation
+receipt can be replaced between separate reads. The launch path now
+independently checks the local Ed25519 signature on its second read
+and compares the final authenticated receipt to the original snapshot
+before creating a one-time installation attempt. A changed/unsigned
+receipt fails closed with the Owner hold preserved. This is not
+signed-installed Windows acceptance, automatic update or rollback.

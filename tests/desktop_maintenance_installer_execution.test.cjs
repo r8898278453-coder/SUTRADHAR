@@ -328,3 +328,40 @@ test('installer execution reads signed preparation ready receipt by bounded desc
   assert.match(main,/readStableLocalFile\(file,\{minBytes:100,maxBytes:max\}\)/);
   assert.doesNotMatch(main,/JSON\.parse\(fs\.readFileSync\(file,'utf8'\)\)/);
 });
+
+test('unsigned swap between two reads of ready receipt cannot reach installer launcher',()=>fixtures(async dir=>{
+  const f=initial(dir);await prepareInstaller(f.prep);
+  const file=path.join(f.nodeDir,'installer-preparation-ready.json');
+  const saved=JSON.parse(fs.readFileSync(file,'utf8'));
+  const {runner,launches}=launcherRecorder();
+  const open=fs.openSync;
+  let readyOpens=0,swapped=false;
+  try{
+    fs.openSync=function(target,...opts){
+      if(target===file){
+        readyOpens++;
+        if(readyOpens===2){
+          swapped=true;
+          fs.writeFileSync(file,JSON.stringify({...saved,
+            observed_local_test_metadata:'unsigned swap'})+'\n');
+        }
+      }
+      return open.call(fs,target,...opts);
+    };
+    await assert.rejects(launchStagedInstaller({...f.args,
+      grantEnvelope:f.grant(),runner}),
+      /UPDATE_PREPARE_RECORD_SIGNATURE_INVALID/);
+  }finally{fs.openSync=open;}
+  assert.equal(swapped,true);
+  assert.equal(launches.length,0);
+  assert.equal(fs.existsSync(path.join(f.nodeDir,'installer-execution-attempt.json')),false);
+  assert.equal(inspectHold({dir:f.nodeDir,nodeId}).active,true);
+}));
+test('installer execution requires signed receipt verification on every independent local read',()=>{
+  const prep=require('../apps/desktop/maintenance-install-preparation.cjs');
+  assert.equal(typeof prep.verifyLocalRecord,'function');
+  const source=fs.readFileSync(path.resolve(__dirname,
+    '../apps/desktop/maintenance-installer-execution.cjs'),'utf8');
+  assert.match(source,/const ready=verifyLocalRecord\(/);
+  assert.match(source,/JSON\.stringify\(finalPrepared\.ready\)!==JSON\.stringify\(ready\)/);
+});
