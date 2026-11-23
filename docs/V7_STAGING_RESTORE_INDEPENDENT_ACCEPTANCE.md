@@ -123,3 +123,16 @@ restricted to an initially EMPTY, isolated staging schema. The
 Owner must independently validate credential privileges, archive
 provenance, real restore result, migration and post-restore evidence.
 All G2 real-environment acceptance remains HOLD.
+
+
+## 23 November 2026 — Cross-schema table/routine reference containment
+
+The staging restore's authenticated SQL lexical preflight now rejects
+explicit schema-qualified table names and routine calls in normal and
+versioned executable comments. Covered examples include CREATE/DROP
+TABLE, INSERT/REPLACE/UPDATE/DELETE, FROM/JOIN, DROP TABLE IF EXISTS,
+CREATE INDEX ON, CREATE TRIGGER ON and CALL. Qualified columns in
+ordinary expressions remain accepted. A lexical check cannot replace
+server-side database permissions or prove that all SQL is safe; use a
+single-empty-staging-schema-only login without global/production rights
+and independently inspect the real Hostinger restore. G2 stays HOLD.

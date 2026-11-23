@@ -666,3 +666,19 @@ presence checks. Dangling or malformed markers retain an Owner
 reconciliation hold; no automatic replacement enrollment, deletion,
 new OS-vault identity or second network POST is authorized. Negative
 tests cover both dangling symlink variants. G4 stays HOLD.
+
+
+## 23 November 2026 — Staging restore object qualifier protection
+
+Authenticated backup SQL preflight now denies explicit database-qualified
+objects in table DDL/DML, table queries and routine calls (for example,
+DROP TABLE production_db.users, quoted schema.table names,
+CREATE INDEX ... ON production_db.users, and MySQL executable comments).
+These cases require neither USE nor CREATE DATABASE and could be harmful
+if an operator accidentally provided a globally privileged DB user.
+The tokenizer tracks object positions through comments, whitespace and
+quoted identifiers, and permits benign qualified column aliases and
+NEW.field references in triggers. Unit and encrypted CLI regressions
+verify unsafe dumps are rejected before MySQL connection.
+A dedicated **staging-schema-only** login, separate Owner authorization
+and real independent recovery acceptance are STILL required. G2 HOLD.

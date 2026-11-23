@@ -52,3 +52,35 @@ test('invalid UTF-8, partial quoted values and partial comments fail closed',()=
     Buffer.alloc(10)
   ])assert.throws(()=>validateRestoreSql(bytes),/BACKUP_HAS_DATABASE_SWITCH_OR_DROP/);
 });
+
+test('schema-qualified object references fail closed without USE',()=>{
+  const escapes=[
+    'DROP TABLE production_db.users;',
+    'DROP TABLE IF EXISTS production_db.users;',
+    'CREATE TABLE production_db.users (id INT);',
+    'INSERT INTO production_db.users VALUES (1);',
+    'REPLACE INTO production_db.users VALUES (1);',
+    'UPDATE production_db.users SET id = 0;',
+    'DELETE FROM production_db.users;',
+    'SELECT * FROM production_db.users;',
+    'SELECT * FROM local JOIN production_db.users ON local.id = 1;',
+    'TRUNCATE TABLE production_db.users;',
+    'RENAME TABLE local TO production_db.users;',
+    'CALL production_db.cleanup();',
+    'CREATE INDEX idx ON production_db.users(id);',
+    'CREATE TRIGGER t BEFORE INSERT ON production_db.users FOR EACH ROW SET @a = 1;',
+    '/*!50000 DROP TABLE production_db.users */;',
+    'DROP TABLE \x60production_db\x60.\x60users\x60;',
+    'INSERT INTO \x60production_db\x60 . \x60users\x60 VALUES (1);',
+    'DROP TABLE IF EXISTS /* comment */ \x60production_db\x60.\x60users\x60;'
+  ];
+  for(const sql of escapes)
+    assert.throws(()=>validateRestoreSql(Buffer.from(sql+'\n'+normal)),
+      /BACKUP_HAS_DATABASE_SWITCH_OR_DROP/,sql);
+});
+test('qualified column expressions and trigger NEW.field are not schema-qualified table names',()=>{
+  const sql=normal+
+    '\nSELECT x.id FROM v7_ledger AS x WHERE x.id = 1;'+
+    '\nCREATE TRIGGER t BEFORE INSERT ON v7_ledger FOR EACH ROW SET NEW.id = NEW.id + 1;\n';
+  assert.equal(validateRestoreSql(Buffer.from(sql)).accepted,true);
+});
