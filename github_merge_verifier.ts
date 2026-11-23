@@ -3,6 +3,7 @@
  * mutation. Every decision is based on authenticated live GitHub REST responses.
  */
 import {evaluateGithubReviewPolicy} from './v7/github_review_policy.ts';
+import {githubApiJson} from './v7/github_api_json.ts';
 
 export type VerifiedMerge = {
   verified: true;
@@ -56,19 +57,8 @@ export async function verifyGitHubMergeEvidence(input: MergeVerificationInput):
   const allowed = new Set(input.allowedFiles);
   const base = `https://api.github.com/repos/${input.repo}`;
   const fetcher = input.fetcher || fetch;
-  class GithubRequestError extends Error {}
-  async function getJson(uri: string): Promise<any> {
-    const response = await fetcher(base + uri, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${input.token}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28'
-      },
-      signal: AbortSignal.timeout(15000)
-    });
-    if (!response.ok) throw new GithubRequestError(`HTTP_${response.status}`);
-    return response.json();
+  async function getJson(uri:string):Promise<any>{
+    return githubApiJson(base+uri,input.token,fetcher);
   }
 
   try {

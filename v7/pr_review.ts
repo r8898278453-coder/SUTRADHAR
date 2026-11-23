@@ -4,6 +4,7 @@
  * This is a snapshot, NOT an authorization to bypass GitHub branch protection.
  */
 import {evaluateGithubReviewPolicy} from './github_review_policy.ts';
+import {githubApiJson} from './github_api_json.ts';
 export type PrReviewInput={
   repo:string;token:string;prNumber:number;baseBranch:string;branch:string;
   baselineSha:string;headSha:string;treeSha:string;changedFiles:string[];
@@ -39,27 +40,7 @@ export async function inspectGithubPrReview(input:PrReviewInput){
   const api='https://api.github.com/repos/'+input.repo;
   const request=input.fetcher||fetch;
   async function getJson(uri:string):Promise<any>{
-    const reply=await request(api+uri,{
-      method:'GET',redirect:'error',cache:'no-store',credentials:'omit',
-      headers:{Authorization:'Bearer '+input.token,
-        Accept:'application/vnd.github+json',
-        'X-GitHub-Api-Version':'2022-11-28'},
-      signal:AbortSignal.timeout(15000)
-    });
-    if(!reply.ok||Number(reply.headers.get('content-length')||0)>256*1024)
-      throw Error('GITHUB_READ_FAILED');
-    if(!reply.body?.getReader)throw Error('GITHUB_READ_FAILED');
-    const reader=reply.body.getReader(),buffers:Uint8Array[]=[];let len=0;
-    try{
-      for(;;){
-        const {done,value}=await reader.read();if(done)break;
-        len+=value.byteLength;
-        if(len>256*1024)throw Error('GITHUB_READ_TOO_LARGE');
-        buffers.push(value);
-      }
-    }finally{try{await reader.cancel();}catch{}reader.releaseLock();}
-    const bytes=Buffer.concat(buffers.map(b=>Buffer.from(b)));
-    return JSON.parse(bytes.toString('utf8'));
+    return githubApiJson(api+uri,input.token,request);
   }
   try{
     const p=await getJson('/pulls/'+input.prNumber);
