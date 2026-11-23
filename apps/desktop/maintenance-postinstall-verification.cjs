@@ -9,7 +9,8 @@ const {evidenceEntryPresent}=require('./maintenance-evidence-presence.cjs');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
 const {requiresReconciliation}=require('./maintenance-reconciliation-barrier.cjs');
-const {inspectPreparedIdentity,identityEvidence}=require('./maintenance-install-preparation.cjs');
+const {inspectPreparedIdentity,identityEvidence,verifyLocalRecord}=require('./maintenance-install-preparation.cjs');
+const {readStableLocalFile}=require('./os-vault.cjs');
 const {verifyInstalledDesktopPublisher}=require('./windows-authenticode.cjs');
 const {validOrigin}=require('./update-readiness.cjs');
 const {boundedCentralJson}=require('./bounded-central-json.cjs');
@@ -20,12 +21,10 @@ const EXEC_PREFIX='SUTRADHAR_INSTALL_EXECUTION_V1\n';
 const OBS_PREFIX='SUTRADHAR_POSTINSTALL_OBSERVATION_V1\n';
 function fail(code){throw Error(code);}
 function jsonFile(file){
-  let stat,body;
+  let body;
   try{
-    stat=fs.lstatSync(file);
-    if(!stat.isFile()||stat.isSymbolicLink()||stat.size<100||stat.size>8192)
-      fail('POSTINSTALL_RECEIPT_FILE_UNSAFE');
-    body=JSON.parse(fs.readFileSync(file,'utf8'));
+    const bytes=readStableLocalFile(file,{minBytes:100,maxBytes:8192});
+    body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
   }catch{fail('POSTINSTALL_RECEIPT_MISSING_OR_CORRUPT');}
   if(!body||typeof body!=='object'||Array.isArray(body))
     fail('POSTINSTALL_RECEIPT_MISSING_OR_CORRUPT');
@@ -59,7 +58,11 @@ function baseEvidence({dir,node,agentIds,observedVersion}){
   const held=inspectHold({dir,nodeId:node.node_id});
   if(!held.active||requiresReconciliation(dir))
     fail('POSTINSTALL_ORIGINAL_MAINTENANCE_HOLD_REQUIRED');
-  const ready=jsonFile(path.join(dir,'installer-preparation-ready.json'));
+  // This is a SECOND independent read after inspectPreparedIdentity.
+  // Reauthenticate these exact bytes; a prior signature check is not a
+  // permanent grant to trust later pathname contents.
+  const ready=verifyLocalRecord(
+    jsonFile(path.join(dir,'installer-preparation-ready.json')),node);
   const attempt=verifySigned(jsonFile(path.join(dir,'installer-execution-attempt.json')),
     node,EXEC_PREFIX);
   const launch=verifySigned(jsonFile(path.join(dir,'installer-execution-launch-observed.json')),

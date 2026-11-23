@@ -843,3 +843,19 @@ regressions have been added; package closure includes the helper.
 This is a local safety improvement, NOT production signing, real Windows
 ACL/FS power-loss proof, installer success attestation or independent
 Hostinger/physical-PC acceptance. Original Owner/Central HOLD gates remain.
+
+## 24 November 2026 — Reauthenticate second postinstall ready read and signed-journal file identity
+
+The Desktop post-install observation path independently read the signed
+\`installer-preparation-ready.json\` *after* a successful authenticated
+\`inspectPreparedIdentity\` read, but the later pathname bytes were not
+signature-verified. It now independently verifies the device Ed25519
+signature on every ready read. Shared \`jsonFile\` and signed direct
+installer exit journal inspection now use the private bounded descriptor
+reader with original/opened/final inode, metadata and pathname checks and
+strict UTF-8, instead of lstat followed by a racy pathname read.
+Regression tests swap the ready receipt after its first authenticated read
+and replace signed-receipt inodes during descriptor reads; each aborts
+without a new postinstall observation or installation success claim.
+This is a local code/CI bound, not a real privileged Windows race/ACL or
+power-loss proof. G6 physical acceptance remains HOLD.

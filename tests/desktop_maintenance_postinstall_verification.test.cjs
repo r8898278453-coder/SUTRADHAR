@@ -338,3 +338,47 @@ test('signed observation still rejects forged Central reconfirmation and impossi
   fs.writeFileSync(file,JSON.stringify(original));
   assert.equal(verifyObservedReceipt(params).observed,true);
 }));
+
+test('postinstall reauthenticates the second preparation-ready read before trusting it',()=>fixtures(async dir=>{
+  const {f,check}=await launched(dir);
+  const ready=path.join(f.nodeDir,'installer-preparation-ready.json');
+  const originalStat=fs.lstatSync;
+  let reads=0,swapped=false;
+  try{
+    fs.lstatSync=function(file,...options){
+      if(file===ready&&++reads===3){
+        swapped=true;
+        const forged=JSON.parse(fs.readFileSync(ready,'utf8'));
+        forged.previous_version='0.0.0';
+        fs.writeFileSync(ready,JSON.stringify(forged));
+      }
+      return originalStat.call(this,file,...options);
+    };
+    await assert.rejects(observePostInstall(check),
+      /UPDATE_PREPARE_RECORD_SIGNATURE_INVALID/);
+    assert.equal(swapped,true,'must exercise the separate ready receipt read');
+    assert.equal(fs.existsSync(path.join(f.nodeDir,
+      'installer-postinstall-observed.json')),false);
+  }finally{fs.lstatSync=originalStat;}
+}));
+test('postinstall journal descriptor read rejects identical-content inode replacement',()=>fixtures(async dir=>{
+  const {f}=await launched(dir);
+  const {jsonFile}=require('../apps/desktop/maintenance-postinstall-verification.cjs');
+  const receipt=path.join(f.nodeDir,'installer-execution-attempt.json');
+  const raw=fs.readFileSync(receipt);
+  const originalRead=fs.readSync;
+  let replaced=false;
+  try{
+    fs.readSync=function(...args){
+      const n=originalRead.apply(this,args);
+      if(!replaced){
+        replaced=true;
+        fs.renameSync(receipt,receipt+'.original');
+        fs.writeFileSync(receipt,raw,{mode:0o600});
+      }
+      return n;
+    };
+    assert.throws(()=>jsonFile(receipt),/MISSING_OR_CORRUPT/);
+    assert.equal(replaced,true);
+  }finally{fs.readSync=originalRead;}
+}));

@@ -10,6 +10,7 @@
 const {evidenceEntryPresent}=require('./maintenance-evidence-presence.cjs');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {inspectHold}=require('./maintenance-recovery-hold.cjs');
+const {readStableLocalFile}=require('./os-vault.cjs');
 const PREFIX='SUTRADHAR_INSTALLER_DIRECT_EXIT_V1\n';
 const NAME='installer-direct-exit-observed.json';
 const HEX=/^[0-9a-f]{64}$/;
@@ -91,12 +92,10 @@ function inspectDirectExit({dir,node,scope}={}){
   if(!evidenceEntryPresent(file))
     return Object.freeze({observed:false,installer_completion_proven:false,
       owner_review_required:true});
-  let raw,stat;
+  let raw;
   try{
-    stat=fs.lstatSync(file);
-    if(!stat.isFile()||stat.isSymbolicLink()||stat.size<200||stat.size>8192)
-      fail('INSTALL_DIRECT_EXIT_RECEIPT_UNSAFE');
-    raw=JSON.parse(fs.readFileSync(file,'utf8'));
+    raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(
+      readStableLocalFile(file,{minBytes:200,maxBytes:8192})));
   }catch{fail('INSTALL_DIRECT_EXIT_RECEIPT_CORRUPT');}
   if(!raw||typeof raw!=='object'||Array.isArray(raw)||
      typeof raw.signature_base64!=='string'||

@@ -111,3 +111,24 @@ test('dangling direct installer exit witness is corrupt, never missing',()=>with
   assert.equal(fs.existsSync(marker),false);
   assert.throws(()=>inspectDirectExit({dir,node,scope}),/RECEIPT_CORRUPT/);
 }));
+
+test('direct installer-exit signed receipt rejects inode swap during descriptor read',()=>withDir(dir=>{
+  const c=child(),tracker=createDirectExitTracker({child:c,dir,node,scope});
+  tracker.arm();c.emit('exit',0,null);
+  const receipt=path.join(dir,'installer-direct-exit-observed.json');
+  const bytes=fs.readFileSync(receipt),realRead=fs.readSync;
+  let changed=false;
+  try{
+    fs.readSync=function(...args){
+      const count=realRead.apply(this,args);
+      if(!changed){
+        changed=true;
+        fs.renameSync(receipt,receipt+'.original');
+        fs.writeFileSync(receipt,bytes,{mode:0o600});
+      }
+      return count;
+    };
+    assert.throws(()=>inspectDirectExit({dir,node,scope}),/RECEIPT_CORRUPT/);
+    assert.equal(changed,true);
+  }finally{fs.readSync=realRead;}
+}));
