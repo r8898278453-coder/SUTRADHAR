@@ -60,7 +60,10 @@ test('Legacy plaintext timestamp, corruption and altered receipts never silently
     assert.throws(()=>inspect(args),/RECEIPT_INVALID/);
     fs.rmSync(file);
     assert.equal(inspect(args),null);
-    fs.writeFileSync(file,JSON.stringify({...r,public_key_sha256:'b'.repeat(64)}));
+    // Re-create this *private* fixture after unlink. The reader correctly
+    // refuses a world-readable file before reaching identity comparisons.
+    fs.writeFileSync(file,JSON.stringify({...r,public_key_sha256:'b'.repeat(64)}),
+      {mode:0o600});
     assert.throws(()=>requireSubmitted(args),/MISMATCH/);
   });
 });
@@ -134,6 +137,18 @@ test('oversized signed reconciliation cannot change PREPARED to SUBMITTED',async
       /ENROLLMENT_RECONCILIATION_RESPONSE_TOO_LARGE/);
     assert.equal(inspect(args).state,'PREPARED');
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('world-readable enrollment receipts are refused before identity comparison',()=>{
+  if(process.platform==='win32')return;
+  withDir(dir=>{
+    const identity=node(),args={dir,node:identity,centralUrl:origin};
+    prepare(args);
+    const file=path.join(dir,'enrollment-receipt.json');
+    fs.chmodSync(file,0o644);
+    assert.throws(()=>requireSubmitted(args),/ENROLLMENT_RECEIPT_INVALID/);
+    assert.throws(()=>markSubmitted(args),/ENROLLMENT_RECEIPT_INVALID/);
+    assert.equal(fs.existsSync(file),true,'never delete Owner evidence');
+  });
 });
 test('symlinked enrollment receipt requires Owner review, never follows target',()=>{
   if(process.platform==='win32')return;
