@@ -5,6 +5,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {validateSettings}=require('./desktop-config.cjs');
+const {readEvidenceBytes}=require('./local-evidence-file.cjs');
 const MAX_SETTINGS_BYTES=4096;
 function fail(code){throw Error(code);}
 function validPath(file){
@@ -28,28 +29,21 @@ function readDesktopSettings({file}={}){
   if(!before.isFile()||before.isSymbolicLink()||
      before.size<20||before.size>MAX_SETTINGS_BYTES)
     fail('DESKTOP_SETTINGS_FILE_UNSAFE');
-  let fd;
-  try{
-    fd=fs.openSync(file,fs.constants.O_RDONLY|(fs.constants.O_NOFOLLOW||0));
-    const st=fs.fstatSync(fd);
-    if(!st.isFile()||st.size!==before.size||
-       st.ino!==before.ino||st.dev!==before.dev)
+  // The first lstat distinguishes a genuinely new first-run PC from
+  // unreadable evidence; the stable descriptor reader then authenticates
+  // inode, size, mtime and ctime across the full byte read and final pathname.
+  let buffer;
+  try{buffer=readEvidenceBytes(file,{minBytes:20,maxBytes:MAX_SETTINGS_BYTES});}
+  catch(error){
+    if(error?.message==='LOCAL_EVIDENCE_FILE_CHANGED'||
+       error?.message==='LOCAL_EVIDENCE_READ_SHORT_OR_INVALID')
       fail('DESKTOP_SETTINGS_FILE_CHANGED');
-    const buffer=Buffer.alloc(st.size);
-    let read=0;
-    while(read<buffer.length){
-      const bytes=fs.readSync(fd,buffer,read,buffer.length-read,read);
-      if(bytes<1)fail('DESKTOP_SETTINGS_FILE_CHANGED');
-      read+=bytes;
-    }
-    if(fs.readSync(fd,Buffer.alloc(1),0,1,read)!==0||
-       fs.fstatSync(fd).size!==st.size)
-      fail('DESKTOP_SETTINGS_FILE_CHANGED');
-    let obj;
-    try{obj=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(buffer));}
-    catch{fail('DESKTOP_SETTINGS_JSON_INVALID');}
-    return validate(obj);
-  }finally{if(fd!==undefined)fs.closeSync(fd);}
+    fail('DESKTOP_SETTINGS_FILE_UNSAFE');
+  }
+  let obj;
+  try{obj=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(buffer));}
+  catch{fail('DESKTOP_SETTINGS_JSON_INVALID');}
+  return validate(obj);
 }
 function writeDesktopSettings({file,settings}={}){
   validPath(file);

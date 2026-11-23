@@ -56,3 +56,41 @@ test('two OS processes racing to save settings result in one complete winner',as
     assert.deepEqual(fs.readdirSync(dir),['desktop-settings.json']);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+
+test('settings reader refuses same-byte pathname replacement during read',()=>fixture((file,dir)=>{
+  writeDesktopSettings({file,settings:data});
+  const original=fs.readSync,bytes=fs.readFileSync(file);
+  let replaced=false;
+  try{
+    fs.readSync=function(fd,buffer,offset,length,position){
+      const n=original.call(this,fd,buffer,offset,length,position);
+      if(!replaced){
+        replaced=true;
+        fs.renameSync(file,path.join(dir,'previous.json'));
+        fs.writeFileSync(file,bytes,{mode:0o600});
+      }
+      return n;
+    };
+    assert.throws(()=>readDesktopSettings({file}),/DESKTOP_SETTINGS_FILE_CHANGED/);
+    assert.equal(replaced,true);
+  }finally{fs.readSync=original;}
+}));
+test('settings reader refuses in-place mutation after bytes are read',()=>fixture(file=>{
+  writeDesktopSettings({file,settings:data});
+  const original=fs.readSync;
+  let changed=false;
+  try{
+    fs.readSync=function(fd,buffer,offset,length,position){
+      const n=original.call(this,fd,buffer,offset,length,position);
+      if(!changed){
+        changed=true;
+        const st=fs.statSync(file);
+        fs.utimesSync(file,new Date(st.atimeMs-2000),new Date(st.mtimeMs-2000));
+      }
+      return n;
+    };
+    assert.throws(()=>readDesktopSettings({file}),/DESKTOP_SETTINGS_FILE_CHANGED/);
+    assert.equal(changed,true);
+  }finally{fs.readSync=original;}
+}));

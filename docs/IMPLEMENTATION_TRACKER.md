@@ -1020,3 +1020,14 @@ ticket branch**, preserving local Owner recovery evidence. Targeted fixture
 tests verify no `refs/heads/ai/ticket_abc` branch is created and no
 Central claim POST occurs. This does not replace the independent physical
 Windows multi-process/cross-user file-system safety gate.
+
+## 24 November 2026 — Desktop first-run configuration stable descriptor read
+
+The Desktop Central HTTPS URL, PC label and local agent IDs are now read
+using the shared bounded nofollow descriptor reader. Existing first-run
+settings presence/shape checks remain, but a same-length path replacement
+or an in-place change to inode timestamps during read now fails closed before
+any settings are used for OS-vault enrollment or agent startup. Tests
+simulate a same-byte rename-and-replace and in-place timestamp mutation.
+The one-time `linkSync` publication policy remains unchanged; this is not
+physical Windows directory durability or a production enrollment approval.
