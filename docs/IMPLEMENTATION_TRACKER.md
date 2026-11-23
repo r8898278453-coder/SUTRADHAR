@@ -755,3 +755,25 @@ receipt, and intact Owner maintenance HOLD. The Owner execution grant,
 exact staged EXE hash, Windows Authenticode, no automatic retry,
 interactive/UAC restrictions, Central's paused Drained lease and
 real physical acceptance remain independent gates. G6 HOLD.
+
+
+## 24 November 2026 — Critical fail-closed maintenance HOLD presence and read
+
+The Desktop maintenance HOLD is the durable local permission barrier
+before resuming an agent after an Owner-supervised drain. It previously
+used existsSync on the hold path: a dangling symlink reports absent,
+which could incorrectly return agent_start_allowed:true. Both inspect
+and create now use lstat presence, preserving a HOLD for every existing
+entry (including a dangling symlink). The valid record is now loaded
+via shared readStableLocalFile (private bounded 100–4096 bytes, original
+and opened inode identity, exact positional read, final descriptor and
+pathname checks, strict UTF-8) instead of a pathname read after lstat.
+Corrupt, swapped, overly exposed or symlinked records fail closed and
+are not overwritten. Tests cover dangling symlink, symlink swap after
+initial lstat, different same-content inode during read and POSIX
+world-readable file, without relaxing Central or Owner authority.
+
+This blocks the described unsafe local observations; it is not a
+Windows ACL/power-loss proof or an atomic defense against fully
+privileged concurrent modification. Production physical G4/G6
+acceptance remains HOLD.

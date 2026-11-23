@@ -4,7 +4,8 @@
  * Recovery of a hold requires Owner review; no automatic deletion.
  */
 'use strict';
-const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const fs=require('node:fs'),path=require('node:path');
+const {readStableLocalFile}=require('./os-vault.cjs');
 const NODE=/^node_[0-9a-f]{32}$/;
 const HEX=/^[0-9a-f]{64}$/;
 const PLAN=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
@@ -19,6 +20,15 @@ function location(dir){
     fail('MAINTENANCE_HOLD_NODE_DIRECTORY_INVALID');
   return path.join(dir,NAME);
 }
+function markerStat(file){
+  // existsSync follows dangling symlinks and may falsely report a HOLD as
+  // absent. Treat any existing filesystem entry as evidence, not freedom.
+  try{return fs.lstatSync(file);}
+  catch(error){
+    if(error?.code==='ENOENT')return null;
+    fail('MAINTENANCE_HOLD_PATH_INSPECTION_FAILED');
+  }
+}
 function validate(x){
   if(!x||typeof x!=='object'||Array.isArray(x)||
      Object.keys(x).sort().join('|')!==
@@ -32,13 +42,15 @@ function validate(x){
 }
 function inspectHold({dir,nodeId}){
   const file=location(dir);
-  if(!fs.existsSync(file))return Object.freeze({active:false,agent_start_allowed:true});
-  const st=fs.lstatSync(file);
+  const st=markerStat(file);
+  if(!st)return Object.freeze({active:false,agent_start_allowed:true});
   if(!st.isFile()||st.isSymbolicLink()||st.size<100||st.size>4096)
     fail('MAINTENANCE_HOLD_FILE_INVALID');
   let record;
-  try{record=validate(JSON.parse(fs.readFileSync(file,'utf8')));}
-  catch{fail('MAINTENANCE_HOLD_CORRUPT_OWNER_REVIEW_REQUIRED');}
+  try{
+    record=validate(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(
+      readStableLocalFile(file,{minBytes:100,maxBytes:4096}))));
+  }catch{fail('MAINTENANCE_HOLD_CORRUPT_OWNER_REVIEW_REQUIRED');}
   if(typeof nodeId==='string'&&record.node_id!==nodeId)
     fail('MAINTENANCE_HOLD_IDENTITY_MISMATCH');
   return Object.freeze({active:true,agent_start_allowed:false,
@@ -54,7 +66,7 @@ function createHold({dir,nodeId,planId,waveId,offerSha256,now=Date.now()}){
     created_at_ms:now});
   // Check what is already on disk; an interrupted or corrupted record must
   // not be overwritten, even if its state is partially written.
-  if(fs.existsSync(file)){
+  if(markerStat(file)){
     const observed=inspectHold({dir,nodeId});
     if(observed.plan_id!==planId||observed.wave_id!==waveId)
       fail('MAINTENANCE_HOLD_CONFLICT_OWNER_REVIEW_REQUIRED');

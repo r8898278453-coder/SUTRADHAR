@@ -43,3 +43,72 @@ test('reject invalid identity, rollout and unsafe node directory',()=>fixture(di
   fs.writeFileSync(pathToFile,'hello');
   assert.throws(()=>inspectHold({dir:pathToFile,nodeId}),/DIRECTORY_INVALID/);
 }));
+
+test('dangling maintenance HOLD never permits automatic agent restart',()=>fixture(dir=>{
+  if(process.platform==='win32')return;
+  const file=path.join(dir,'maintenance-recovery-hold.json');
+  fs.symlinkSync(path.join(dir,'missing-hold-target'),file);
+  assert.equal(fs.existsSync(file),false,'demonstrates dangling-link hazard');
+  assert.equal(fs.lstatSync(file).isSymbolicLink(),true);
+  assert.throws(()=>inspectHold({dir,nodeId}),/MAINTENANCE_HOLD_FILE_INVALID/);
+  assert.throws(()=>createHold({dir,...intent}),/MAINTENANCE_HOLD_FILE_INVALID/);
+  assert.equal(fs.lstatSync(file).isSymbolicLink(),true,'preserve original evidence');
+}));
+test('swapped symlink after hold lstat is refused instead of following target bytes',()=>fixture(dir=>{
+  if(process.platform==='win32')return;
+  createHold({dir,...intent});
+  const file=path.join(dir,'maintenance-recovery-hold.json');
+  const saved=path.join(dir,'original-hold.json');
+  const other=path.join(dir,'unrelated.json');
+  fs.writeFileSync(other,fs.readFileSync(file),{mode:0o600});
+  let changed=false;
+  const open=fs.openSync;
+  try{
+    fs.openSync=function(target,...args){
+      if(target===file&&!changed){
+        changed=true;
+        fs.renameSync(file,saved);
+        fs.symlinkSync(other,file);
+      }
+      return open.call(fs,target,...args);
+    };
+    assert.throws(()=>inspectHold({dir,nodeId}),
+      /MAINTENANCE_HOLD_CORRUPT_OWNER_REVIEW_REQUIRED/);
+  }finally{fs.openSync=open;}
+  assert.equal(changed,true);
+  assert.equal(fs.lstatSync(file).isSymbolicLink(),true);
+  assert.throws(()=>inspectHold({dir,nodeId}),/MAINTENANCE_HOLD_FILE_INVALID/);
+}));
+test('same-content inode replacement during hold read cannot authorize restart',()=>fixture(dir=>{
+  createHold({dir,...intent});
+  const file=path.join(dir,'maintenance-recovery-hold.json');
+  const other=path.join(dir,'replacement.json');
+  fs.writeFileSync(other,fs.readFileSync(file),{mode:0o600});
+  const read=fs.readSync;
+  let replaced=false;
+  try{
+    fs.readSync=function(...args){
+      const n=read(...args);
+      if(!replaced){
+        replaced=true;
+        fs.renameSync(file,path.join(dir,'original.json'));
+        fs.renameSync(other,file);
+      }
+      return n;
+    };
+    assert.throws(()=>inspectHold({dir,nodeId}),
+      /MAINTENANCE_HOLD_CORRUPT_OWNER_REVIEW_REQUIRED/);
+  }finally{fs.readSync=read;}
+  assert.equal(replaced,true);
+  assert.equal(fs.lstatSync(file).isFile(),true);
+}));
+test('exposed hold record is refused, never considered safe to clear',()=>fixture(dir=>{
+  if(process.platform==='win32')return;
+  createHold({dir,...intent});
+  const file=path.join(dir,'maintenance-recovery-hold.json');
+  fs.chmodSync(file,0o644);
+  assert.throws(()=>inspectHold({dir,nodeId}),
+    /MAINTENANCE_HOLD_CORRUPT_OWNER_REVIEW_REQUIRED/);
+  assert.throws(()=>createHold({dir,...intent}),
+    /MAINTENANCE_HOLD_CORRUPT_OWNER_REVIEW_REQUIRED/);
+}));

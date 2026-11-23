@@ -437,3 +437,14 @@ and compares the final authenticated receipt to the original snapshot
 before creating a one-time installation attempt. A changed/unsigned
 receipt fails closed with the Owner hold preserved. This is not
 signed-installed Windows acceptance, automatic update or rollback.
+
+
+## 24 November 2026 — Maintenance HOLD cannot disappear via a dangling link
+
+The local maintenance-recovery-hold.json Owner fence now uses lstat
+presence checks instead of existsSync, plus stable bounded private
+descriptor reads and strict UTF-8 validation. A dangling symlink,
+modified file, unsafe permission or replacement inode cannot be
+mistaken for no maintenance hold. Invalid states block automatic
+start/installer operations and preserve Owner evidence; actual
+Windows reboot and installed rollback acceptance remains pending.
