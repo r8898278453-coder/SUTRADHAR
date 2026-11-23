@@ -1,8 +1,8 @@
 # SUTRADHAR — Repository deep audit and gap register (24 November 2026)
 
 **Status: source remediation under review; production RELEASE HOLD.**
-**Branch audited:** \`fix/p0-containment-2026-11-06\`, unmerged Draft PR #1.
-**Starting source snapshot:** \`dac84ae30ef83a6ec9b40fbd7b7e1313a2bc3337\`.
+**Branch audited:** `fix/p0-containment-2026-11-06`, unmerged Draft PR #1.
+**Starting source snapshot:** `dac84ae30ef83a6ec9b40fbd7b7e1313a2bc3337`.
 Check [Draft PR #1](https://github.com/r8898278453-coder/SUTRADHAR/pull/1)
 and the three GitHub Actions workflows on its **exact current HEAD** to
 determine the final source-level outcome. Earlier green runs do not
@@ -17,7 +17,7 @@ nonce/heartbeat, tasks and QA, GitHub provenance/review/merge/rollback,
 Desktop OS vault, worker local Git execution, QA handoff, installer
 recovery evidence, four developer CLI journals, key security helpers,
 representative tests and recorded workflow logs. Read-only inspection
-of GitHub main branch metadata returned \`protected:false\`.
+of GitHub main branch metadata returned `protected:false`.
 
 **Scope limit:** A complete tree inventory and targeted security review
 are **not** a line-by-line audit of every file, a pentest, an independent
@@ -30,24 +30,25 @@ merged, deployed, signed, installed or run against live Owner infrastructure.
 
 | Boundary | Actual reviewed source | Trust and release constraint |
 | --- | --- | --- |
-| Hostinger Central | \`v7/central.ts\`, \`v7/schema.sql\`, \`apps/central/build.cjs\` | MySQL/HTTPS Central is sole v7 authority; the build is \`ALPHA_UNAPPROVED\` |
-| Windows/Desktop | \`apps/desktop/main.cjs\`, \`os-vault.cjs\`, worker/QA/maintenance modules, \`apps/desktop/package.json\` | Electron MAIN-only OS credential signer; unsigned CI package is QA-only |
-| Cross-platform | \`packages/shared/contract.json\`, \`v7/rules.ts\`, separate Central/Desktop build scripts | One monorepo, two distinct applications, no permanent product branches |
-| Developer legacy | root \`server.ts\`, \`server_db.ts\`, \`core/\` Python/SQLite, developer-only V7 CLI | Explicitly **not** production Central or Windows OS-vault authority |
-| Protected release | \`.github/workflows\`, Owner runbooks, release scripts | CI verifies committed source, not protected reviewer/signing/deployment or physical acceptance |
+| Hostinger Central | `v7/central.ts`, `v7/schema.sql`, `apps/central/build.cjs` | MySQL/HTTPS Central is sole v7 authority; the build is `ALPHA_UNAPPROVED` |
+| Windows/Desktop | `apps/desktop/main.cjs`, `os-vault.cjs`, worker/QA/maintenance modules, `apps/desktop/package.json` | Electron MAIN-only OS credential signer; unsigned CI package is QA-only |
+| Cross-platform | `packages/shared/contract.json`, `v7/rules.ts`, separate Central/Desktop build scripts | One monorepo, two distinct applications, no permanent product branches |
+| Developer legacy | root `server.ts`, `server_db.ts`, `core/` Python/SQLite, developer-only V7 CLI | Explicitly **not** production Central or Windows OS-vault authority |
+| Protected release | `.github/workflows`, Owner runbooks, release scripts | CI verifies committed source, not protected reviewer/signing/deployment or physical acceptance |
 
 ## Findings repaired in this review (code-level, not production accepted)
 
 | ID | Priority | Verified source gap | Remediation / tests |
 | --- | --- | --- | --- |
-| DA-P0-01 | P0 | Four developer CLI one-shot worker journals could mistake dangling entries for absent or race a path-based read, risking a new request ID after ambiguous outcomes | \`v7/journal_file.ts\`; applied to claim/checkpoint/renew/submit; \`tests/v7_worker_journal_file.test.ts\` |
-| DA-P0-02 | P0 | Malformed latest GitHub review could silently disappear and allow earlier exact-head APPROVED vote to count | \`v7/github_review_policy.ts\` requires every returned review to be valid; negative \`tests/v7_pr_review.test.ts\` |
-| DA-P0-03 | P0 | GitHub provenance clients used some unbounded \`response.json()\` and lacked explicit no-redirect response policy | Bounded 256-KiB fatal-UTF-8 GET/Owner Draft PR transport \`v7/github_api_json.ts\`; applied to remote, PR review, Draft PR creator, merged-PR verifier and rollback lookup; tests |
-| DA-P0-04 | P0 | Exact-head PR readiness and merged-DONE verifier could report success without independently requiring GitHub target main protection metadata | \`v7/pr_review.ts\` and \`github_merge_verifier.ts\` now refuse missing/\`protected:false\`; unit, legacy HTTP and disposable MySQL fixtures |
-| DA-P0-05 | P0 | Parent scope \`src\` could authorize nested \`.env\`, Git metadata, npm build/config files if only scope strings or prefix containment were checked | \`v7/rules.ts\`, actual paths in \`v7/git_remote.ts\`, PR review/Draft PR/merge evidence, and shared packaged Desktop worker claim/submit/QA history policy. Scoped rollback is separate and still human-reviewed |
-| DA-P1-01 | P1 | Backup selection accepted an implausibly future-dated heartbeat candidate unlike Master policy | \`v7/rules.ts\` backup timestamp tolerance matched to bounded future clock check |
-| DA-P1-02 | P1 | Detached installer liveness diagnostic witness could be swapped during pathname read | \`maintenance-installer-persistent-observer.cjs\` uses existing bounded stable Desktop descriptor reader; witness is **always unsigned diagnostic, never install-completion evidence** |
-| DA-DOC-01 | P1 | Root legacy codebase/status docs still claimed v7 was merely specified although a separate v7 alpha codebase/builds exist | Updated current-vs-historical notices in \`CODEBASE_MAP.md\` and \`IMPLEMENTATION_STATE.md\`, linked this audit |
+| DA-P0-01 | P0 | Four developer CLI one-shot worker journals could mistake dangling entries for absent or race a path-based read, risking a new request ID after ambiguous outcomes | `v7/journal_file.ts`; applied to claim/checkpoint/renew/submit; `tests/v7_worker_journal_file.test.ts` |
+| DA-P0-02 | P0 | Malformed latest GitHub review could silently disappear and allow earlier exact-head APPROVED vote to count | `v7/github_review_policy.ts` requires every returned review to be valid; negative `tests/v7_pr_review.test.ts` |
+| DA-P0-03 | P0 | GitHub provenance clients used some unbounded `response.json()` and lacked explicit no-redirect response policy | Bounded 256-KiB fatal-UTF-8 GET/Owner Draft PR transport `v7/github_api_json.ts`; applied to remote, PR review, Draft PR creator, merged-PR verifier and rollback lookup; tests |
+| DA-P0-04 | P0 | Exact-head PR readiness and merged-DONE verifier could report success without independently requiring GitHub target main protection metadata | `v7/pr_review.ts` and `github_merge_verifier.ts` now refuse missing/`protected:false`; unit, legacy HTTP and disposable MySQL fixtures |
+| DA-P0-05 | P0 | Parent scope `src` could authorize nested `.env`, Git metadata, npm build/config files if only scope strings or prefix containment were checked | `v7/rules.ts`, actual paths in `v7/git_remote.ts`, PR review/Draft PR/merge evidence, and shared packaged Desktop worker claim/submit/QA history policy. Scoped rollback is separate and still human-reviewed |
+| DA-P1-01 | P1 | Backup selection accepted an implausibly future-dated heartbeat candidate unlike Master policy | `v7/rules.ts` backup timestamp tolerance matched to bounded future clock check |
+| DA-P1-02 | P1 | Detached installer liveness diagnostic witness could be swapped during pathname read | `maintenance-installer-persistent-observer.cjs` uses existing bounded stable Desktop descriptor reader; witness is **always unsigned diagnostic, never install-completion evidence** |
+| DA-P1-03 | P1 | A full GitHub merged-PR list page (100 records) could be mistaken for complete unique proof, or duplicate changed-file entries accepted | Reject 100-result pagination and duplicate path entries in `github_merge_verifier.ts`, with negative tests |
+| DA-DOC-01 | P1 | Root legacy codebase/status docs still claimed v7 was merely specified although a separate v7 alpha codebase/builds exist | Updated current-vs-historical notices in `CODEBASE_MAP.md` and `IMPLEMENTATION_STATE.md`, linked this audit |
 
 A release claim for any row still requires successful CI on the **exact**
 candidate commit, external reviewer evidence and, where applicable,
@@ -58,7 +59,7 @@ fix" does not mean "real-world accepted".
 
 | Gate | Severity | What is missing | Owner/developer next evidence |
 | --- | --- | --- | --- |
-| G0 | Critical | GitHub \`main\` is reported **unprotected**; effective rules, bypass actors, independent human reviews and signing-environment restrictions are not established | Owner configures protection + nonbypassable review/CI in GitHub Settings; independent read-only audit and human review |
+| G0 | Critical | GitHub `main` is reported **unprotected**; effective rules, bypass actors, independent human reviews and signing-environment restrictions are not established | Owner configures protection + nonbypassable review/CI in GitHub Settings; independent read-only audit and human review |
 | G1 | Critical | No real isolated Hostinger staging deployment confirmed | Owner provisions staging HTTPS Node.js app, reviewed deployment source and exact SHA |
 | G2 | Critical | No off-host/independent real staging MySQL backup→empty-restore evidence | Separate restricted restore credential and signed Owner restore proof |
 | G3 | Critical | No legitimate production Windows Authenticode signer/Owner environment approval | Certificate custody, protected approvals and reproducible signed installer validation |

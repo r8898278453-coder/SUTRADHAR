@@ -69,7 +69,7 @@ nested Git/npm/secret-file escapes under broad worker scopes. These are
 **pending exact-current-HEAD CI plus independent acceptance**, not
 self-certified production fixes.
 
-The known \`main protected:false\` G0 gap, Hostinger staging, MySQL
+The known `main protected:false` G0 gap, Hostinger staging, MySQL
 backup→restore, trusted Windows signer, physical 2/3/8–10-PC election and
 update/rollback evidence, and G7 Owner approval remain OPEN. The
 historical public Master signing key rotation is still OWNER ACTION.

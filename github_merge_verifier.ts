@@ -68,7 +68,8 @@ export async function verifyGitHubMergeEvidence(input: MergeVerificationInput):
       state: 'closed', base: branch, head: `${owner}:${input.branch}`, per_page: '100'
     });
     const prs = await getJson(`/pulls?${query.toString()}`);
-    if (!Array.isArray(prs) || prs.length > 100) return deny('GITHUB_BAD_PR_RESPONSE');
+    if (!Array.isArray(prs) || prs.length >= 100)
+      return deny('GITHUB_BAD_PR_RESPONSE');
     const matching = prs.filter((p: any) =>
       p?.merged_at && p?.draft === false &&
       p?.head?.ref === input.branch && p?.head?.repo?.full_name === input.repo &&
@@ -112,6 +113,7 @@ export async function verifyGitHubMergeEvidence(input: MergeVerificationInput):
     }
     if (!Array.isArray(files) || files.length === 0 || files.length >= 100 ||
         pr.changed_files !== files.length ||
+        new Set(files.map((f:any)=>f?.filename)).size!==files.length ||
         files.some((f: any) => typeof f?.filename !== 'string' ||
           !allowed.has(f.filename) ||
           (!input.branch.startsWith('rollback/')&&!safeScope(f.filename)) ||

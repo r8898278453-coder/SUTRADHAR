@@ -143,3 +143,25 @@ test('worker-branch merge rejects nested secret/execution controls even if allow
       unsafe);
   }
 });
+
+test('100 PRs is an incomplete paginated result, not unique merge proof',async()=>{
+  const original=input(),fetcher=original.fetcher!;
+  const result=await verifyGitHubMergeEvidence({...original,
+    fetcher:async(url,init)=>{
+      const reply=await fetcher(url,init);
+      if(!new URL(url).pathname.endsWith('/pulls'))return reply;
+      const [good]=await reply.json() as any[];
+      return new Response(JSON.stringify([good,...Array.from({length:99},(_,i)=>({
+        ...good,number:1000+i,
+        head:{...good.head,ref:'another-task-'+i}
+      }))]),{status:200});
+    }
+  });
+  assert.deepEqual(result,{verified:false,error:'GITHUB_BAD_PR_RESPONSE'});
+});
+test('duplicate GitHub changed file entries cannot represent a verified merged PR',async()=>{
+  const proof=await verifyGitHubMergeEvidence(input({
+    filenames:['src/safe.ts','src/safe.ts']
+  }));
+  assert.deepEqual(proof,{verified:false,error:'GITHUB_PR_FILE_SCOPE_MISMATCH'});
+});

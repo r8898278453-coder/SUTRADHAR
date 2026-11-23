@@ -9,8 +9,7 @@ Desktop OS-vault worker/QA source, staging recovery tooling and extensive
 CI/test harnesses were added on the **unmerged fix branch**.
 
 See [repository deep audit](docs/REPOSITORY_DEEP_AUDIT_2026-11-24.md),
-[implementation tracker](docs/IMPLEMENTATION_TRACKER.md), and [gap register]
-(GAP_REGISTER.md). These later code commits are *not* evidence of protected
+[implementation tracker](docs/IMPLEMENTATION_TRACKER.md), and [gap register](GAP_REGISTER.md). These later code commits are *not* evidence of protected
 main, live Hostinger staging, production signing, or real multi-PC acceptance.
 Statements below such as "all v7 tests NOT_RUN" refer to this **historical
 snapshot** and must not overwrite newer exact-HEAD CI evidence.
