@@ -39,7 +39,7 @@ export function chooseLeader(leader:Leader,candidates:Candidate[],utcMs:number) 
 }
 export function chooseBackups(master:string|null,candidates:Candidate[],utcMs:number) {
   const healthy=candidates.filter(x=>x.eligible && x.agent_id!==master &&
-    utcMs-x.last_seen_ms < LEASE_SECONDS*1000)
+    utcMs-x.last_seen_ms < LEASE_SECONDS*1000&&x.last_seen_ms<=utcMs+5000)
     .sort((a,b)=>a.arrival_id-b.arrival_id || a.agent_id.localeCompare(b.agent_id));
   const current=candidates.find(x=>x.agent_id===master);
   // Never label two agents sharing a node as distinct failover machines.
@@ -54,7 +54,14 @@ export function chooseBackups(master:string|null,candidates:Candidate[],utcMs:nu
 export function safeScope(s:string) {
   if(typeof s!=='string'||s.length>450||s.length<1||s.startsWith('/')||s.includes('\\')||
      s.split('/').some(x=>!x||x==='.'||x==='..')||s.includes('\0'))return false;
-  if(/^(?:\.git|\.env|node_modules)(?:\/|$)/i.test(s))return false;
+  // Nested Git metadata, npm execution config and environment secrets
+  // are not authorized simply because a parent scope is ordinary.
+  const blocked=new Set(['.git','.gitattributes','.gitmodules','.lfsconfig',
+    '.npmrc','node_modules','package.json','package-lock.json',
+    'yarn.lock','pnpm-lock.yaml']);
+  if(s.split('/').some(part=>blocked.has(part.toLowerCase())||
+       part.toLowerCase()==='.env'||part.toLowerCase().startsWith('.env.')))
+    return false;
   return /^[a-zA-Z0-9._/-]+$/.test(s);
 }
 // Central, read-only Git verifier and the PC publisher must agree on

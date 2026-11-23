@@ -139,3 +139,30 @@ test('latest dismissed review overrides an earlier approved review',()=>{
   assert.equal(policy.independent_reviews_passed,false);
   assert.equal(policy.independent_approvals,0);
 });
+
+
+test('unreadable later dismissal/change request cannot preserve earlier approval',()=>{
+  const context={
+    checks:{total_count:1,check_runs:[{name:'CI / tests',head_sha:HEAD,
+      app:{slug:'github-actions'},status:'completed',conclusion:'success'}]},
+    headSha:HEAD,prAuthor:'author',requiredChecks:['CI / tests'],
+    requiredApprovals:1,checkAppSlug:'github-actions',
+    cutoff:'2026-11-20T13:00:00Z'
+  };
+  const approved={id:1,user:{login:'reviewer',type:'User'},state:'APPROVED',
+    commit_id:HEAD,submitted_at:'2026-11-18T11:00:00Z'};
+  for(const later of [
+    {id:2,user:{login:'reviewer',type:'User'},state:'CHANGES_REQUESTED',
+      commit_id:HEAD,submitted_at:'broken-timestamp'},
+    {id:2,user:{login:'reviewer',type:'User'},state:'DISMISSED',
+      commit_id:HEAD,submitted_at:null},
+    {id:2,user:{login:'reviewer',type:'User'},state:'UNRECOGNIZED',
+      commit_id:HEAD,submitted_at:'2026-11-19T11:00:00Z'},
+    null
+  ]){
+    const decision=evaluateGithubReviewPolicy({...context,reviews:[approved,later]});
+    assert.equal(decision.independent_reviews_passed,false);
+    assert.equal(decision.independent_approvals,0);
+    assert.ok(decision.blocks.includes('GITHUB_APPROVAL_NOT_VERIFIED'));
+  }
+});

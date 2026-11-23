@@ -48,14 +48,19 @@ export function evaluateGithubReviewPolicy(x:GithubReviewPolicyInput):GithubRevi
   }
   if(!checksPassed)blockers.push('GITHUB_REQUIRED_CHECKS_MISSING');
   let independentApprovals=0,changesRequested=false;
-  let reviewsValid=Array.isArray(x.reviews)&&x.reviews.length<100;
+  // An incomplete/malformed later dismissal or CHANGES_REQUESTED must
+  // never disappear while an older APPROVED vote remains counted.
+  const knownStates=new Set(['APPROVED','CHANGES_REQUESTED','COMMENTED',
+    'DISMISSED','PENDING']);
+  const reviewsValid=Array.isArray(x.reviews)&&x.reviews.length<100&&
+    x.reviews.every((r:any)=>r&&typeof r==='object'&&!Array.isArray(r)&&
+      typeof r.user?.login==='string'&&r.user.login.length>0&&
+      r.user.login.length<=100&&typeof r.state==='string'&&
+      knownStates.has(r.state)&&typeof r.submitted_at==='string'&&
+      Number.isFinite(Date.parse(r.submitted_at)));
   if(reviewsValid){
     const chronological=x.reviews
-      .filter((review:any)=>
-        typeof review?.user?.login==='string'&&review.user.login.length>0&&
-        typeof review?.submitted_at==='string'&&
-        Number.isFinite(Date.parse(review.submitted_at))&&
-        Date.parse(review.submitted_at)<=stamp)
+      .filter((review:any)=>Date.parse(review.submitted_at)<=stamp)
       .sort((a:any,b:any)=>{
         const dateDiff=Date.parse(a.submitted_at)-Date.parse(b.submitted_at);
         return dateDiff || (Number(a.id||0)-Number(b.id||0));

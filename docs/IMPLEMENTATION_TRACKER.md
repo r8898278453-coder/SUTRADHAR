@@ -1045,3 +1045,15 @@ same-byte pathname replacement/timestamp races. This is a separate
 developer-only path; the packaged Windows OS-vault worker remains a
 separate security boundary. This does not prove hardware filesystem
 durability or authorize production.
+
+## 24 November 2026 — Deep audit: stale review and scoped metadata barriers
+
+GitHub review policy no longer silently filters malformed or partial review
+entries. A missing/invalid later change request or dismissal cannot allow
+an old exact-head approval to count; incompatible API evidence is HOLD.
+Central worker write scopes now reject nested \`.git\`, Git attributes,
+package execution controls, lockfiles and \`.env\` secrets before tickets
+are approved. Backup selection also rejects future timestamp anomalies,
+matching Master election's bounded clock tolerance. Source-level
+regressions exercise these fail-closed decisions; real G0 external review
+and multi-PC behavior are not accepted by source CI.

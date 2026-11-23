@@ -145,3 +145,26 @@ test('task creator cannot downgrade protected Central, Desktop, signing or repo 
     assert.equal(isProtectedScope(ordinary),false,ordinary);
   assert.equal(isProtectedScope('../escape'),true);
 });
+
+
+test('nested repo control files and package execution descriptors are never normal worker scopes',()=>{
+  for(const s of [
+    'src/.git','src/.git/config','src/.gitattributes','src/.gitmodules',
+    'src/.lfsconfig','src/.env.production','src/.env',
+    'src/node_modules/payload','src/package.json','src/package-lock.json',
+    'components/.npmrc','tests/yarn.lock','features/pnpm-lock.yaml'
+  ]){
+    assert.equal(safeScope(s),false,s);
+    assert.equal(isProtectedScope(s),true,s);
+  }
+  assert.equal(safeScope('src/.well-known/feature.ts'),true);
+  assert.equal(safeScope('src/package-shaped.ts'),true);
+});
+test('backup selection excludes future-dated heartbeats just like Master election',()=>{
+  const now=ts(4);
+  assert.deepEqual(chooseBackups('master',[
+    candidate('master','n1',1,now),
+    candidate('future','n2',2,now+3600000),
+    candidate('healthy','n3',3,now)
+  ],now),['healthy',null]);
+});
