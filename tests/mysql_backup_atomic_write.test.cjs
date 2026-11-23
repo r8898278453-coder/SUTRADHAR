@@ -93,3 +93,26 @@ test('restore rejects authenticated database-switch SQL before MySQL connection'
       'Refused before attempting connection: '+result.stderr);
   }
 }));
+
+test('versioned-comment database switches in encrypted archives are rejected before DB connection',()=>fixture(dir=>{
+  const file=path.join(dir,'unsafe.json');
+  const key=crypto.randomBytes(32).toString('base64');
+  for(const sql of ['/*!50000 USE production_db */;',
+    '/* prefix */ CREATE DATABASE production_db;',
+    'INSERT INTO x VALUES (1); /*!50000 DROP DATABASE production_db */;']){
+    if(fs.existsSync(file))fs.unlinkSync(file);
+    writeEncryptedArchive(file,encryptDump(
+      Buffer.from(sql+'\n'+'INSERT INTO t VALUES (1);\n'.repeat(20)),
+      {keyBase64:key,sourceDb:'sut_backup_ci'}));
+    const x=cp.spawnSync(process.execPath,
+      [path.resolve(__dirname,'../scripts/ops/mysql-ops.cjs'),'restore'],
+      {encoding:'utf8',timeout:10000,env:{...process.env,DB_NAME:'sut_backup_ci',
+        DB_HOST:'127.0.0.1',DB_USER:'root',DB_PASSWORD:'test-no-connect',
+        DB_PORT:'3306',SUTRADHAR_BACKUP_KEY_BASE64:key,
+        SUTRADHAR_ENCRYPTED_BACKUP_PATH:file,SUTRADHAR_RESTORE_STAGING_APPROVED:'yes',
+        SUTRADHAR_TARGET_DB_NAME:'sut_staging_ci',
+        SUTRADHAR_EXPECTED_TARGET_DB_NAME:'sut_staging_ci'}});
+    assert.notEqual(x.status,0,sql);
+    assert.match(x.stderr,/BACKUP_HAS_DATABASE_SWITCH_OR_DROP/,sql);
+  }
+}));

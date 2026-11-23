@@ -15,6 +15,7 @@ const crypto=require('node:crypto'),cp=require('node:child_process');
 const {encryptDump,decryptDump,MAX_DUMP_BYTES}=require('./backup-crypto.cjs');
 const {writeEncryptedArchive}=require('./backup-atomic-write.cjs');
 const {readEncryptedArchive}=require('./backup-safe-read.cjs');
+const {validateRestoreSql}=require('./restore-sql-guard.cjs');
 const action=process.argv[2];
 if(!['backup','verify','restore'].includes(action))throw Error('Usage: node mysql-ops.cjs backup|verify|restore');
 const sourceDb=process.env.DB_NAME||'';
@@ -86,9 +87,7 @@ async function main(){
         created_at:verified.createdAt,plaintext_sha256:verified.sha256,
         restorable_not_proven:true}));return;
     }
-    if(/^\s*(?:CREATE\s+DATABASE|USE\s+|DROP\s+DATABASE)/im.test(
-      verified.plain.toString('utf8')))
-      throw Error('BACKUP_HAS_DATABASE_SWITCH_OR_DROP');
+    validateRestoreSql(verified.plain);
     const mysql=require('mysql2/promise');
     const connection=await mysql.createConnection({host,user,password,port,database:target});
     try{
@@ -99,7 +98,7 @@ async function main(){
     const auth=clientConfig(target);
     try{
       run('mysql',['--defaults-extra-file='+auth.file,'--protocol=tcp',
-        '--default-character-set=utf8mb4','--database='+target],
+        '--binary-mode','--default-character-set=utf8mb4','--database='+target],
         {input:verified.plain,timeout:180000});
       console.log(JSON.stringify({operation:'STAGING_RESTORE_COMPLETED',target_db:target,
         source_db:sourceDb,plaintext_sha256:verified.sha256,
