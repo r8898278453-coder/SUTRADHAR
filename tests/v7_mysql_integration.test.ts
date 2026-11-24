@@ -1041,6 +1041,72 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         const missing=await b.signed(path,undefined,'GET');
         assert.equal(missing.code,200);
         assert.equal(missing.body.provider_mapping_state,'UNCONFIGURED');
+        const registryPath='/v7/owner/provider-registry';
+        const readRegistry=async()=>{
+          const response=await fetch(base+registryPath,{headers:{authorization:'Bearer '+admin}});
+          assert.equal(response.status,200);
+          return await response.json() as any;
+        };
+        assert.equal((await fetch(base+registryPath)).status,401);
+        const initial=await readRegistry();
+        assert.equal(initial.version,0);
+        assert.equal(initial.legacy_fallback_active,true);
+        const replace=(expected_version:number,bindings:any[],request_id='provider_registry_'+(++count))=>
+          post('/v7/owner/command',{request_id,command:'REPLACE_PROVIDER_REGISTRY',payload:{expected_version,bindings}},admin);
+        const invalidGrant=await replace(0,[{...binding,agent_id:c.agent_id}]);
+        assert.equal(invalidGrant.code,409,JSON.stringify(invalidGrant.body));
+        assert.equal(invalidGrant.body.error_code,'PROVIDER_REGISTRY_GRANT_REQUIRED');
+        const alias=await replace(0,[{...binding,project_id:'PROJECT_INTEGRATION'}]);
+        assert.equal(alias.code,409,JSON.stringify(alias.body));
+        assert.equal((await readRegistry()).version,0);
+        const request='provider_replace_fixture_'+(++count);
+        const [first,retry]=await Promise.all([replace(0,[binding],request),replace(0,[binding],request)]);
+        assert.equal(first.code,200,JSON.stringify(first.body));
+        assert.deepEqual(retry,first,'Identical request returns one durable receipt');
+        assert.equal(first.body.state.registry_version,1);
+        assert.equal(first.body.state.provider_mapping_verified,false);
+        assert.equal(first.body.state.automatic_execution_allowed,false);
+        const stored=await readRegistry();
+        assert.equal(stored.version,1);
+        assert.equal(stored.source,'MYSQL_OWNER_REGISTRY');
+        assert.deepEqual(stored.bindings,[binding]);
+        assert.equal(stored.registry_sha256,first.body.state.registry_sha256);
+        const stale=await replace(0,[]);
+        assert.equal(stale.code,409);
+        assert.equal(stale.body.error_code,'PROVIDER_REGISTRY_VERSION_CONFLICT');
+        process.env[key]=JSON.stringify([{...binding,workspace_ref:'workspace_other'}]);
+        const durable=await b.signed(path,undefined,'GET');
+        assert.equal(durable.code,200,JSON.stringify(durable.body));
+        assert.equal(durable.body.provider_mapping_source,'MYSQL_OWNER_REGISTRY');
+        assert.equal(durable.body.provider_registry_version,1);
+        assert.equal(durable.body.provider_mappings[0].workspace_ref,binding.workspace_ref);
+        const hidden=await c.signed(path,undefined,'GET');
+        assert.equal(hidden.body.provider_mapping_source,'NOT_APPLICABLE');
+        assert.equal(hidden.body.provider_registry_version,null);
+        assert.deepEqual(hidden.body.provider_mappings,[]);
+        // Competing replacements of the SAME version: one wins, one is stale.
+        const outcomes=await Promise.all([replace(1,[]),replace(1,[])]);
+        assert.deepEqual(outcomes.map(x=>x.code).sort(),[200,409]);
+        const cleared=await readRegistry();
+        assert.equal(cleared.version,2);
+        assert.equal(cleared.legacy_fallback_active,false);
+        assert.deepEqual(cleared.bindings,[]);
+        const deniedFallback=await b.signed(path,undefined,'GET');
+        assert.equal(deniedFallback.code,200,JSON.stringify(deniedFallback.body));
+        assert.equal(deniedFallback.body.provider_mapping_source,'MYSQL_OWNER_REGISTRY');
+        assert.equal(deniedFallback.body.provider_registry_version,2);
+        assert.equal(deniedFallback.body.provider_mapping_state,'UNCONFIGURED');
+        assert.deepEqual(deniedFallback.body.provider_mappings,[]);
+        // An old successful replacement receipt must not resurrect mappings.
+        assert.deepEqual(await replace(0,[binding],request),first);
+        assert.equal((await readRegistry()).version,2);
+        const registryDb=await mysql.createConnection({host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+          user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+        try{
+          const [ledger]:any=await registryDb.query('SELECT payload_json FROM v7_events WHERE event_type="PROVIDER_REGISTRY_REPLACED" ORDER BY event_id');
+          assert.equal(ledger.length,2,'Replays and rejected replacements cannot append extra snapshots');
+        }finally{await registryDb.end();}
+
       }finally{if(prior===undefined)delete process.env[key];else process.env[key]=prior;}
     }
     // Replaying the identical durable claim after a lost HTTP reply MUST
