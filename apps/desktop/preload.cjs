@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   previewWorkerContext:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:inspectWorkerTasks',agentId,ticketId,'context'),
   listMasterProjects:agentId=>ipcRenderer.invoke('sutradhar:listMasterProjects',agentId),
   recoverMasterBatchDraft:agentId=>ipcRenderer.invoke('sutradhar:recoverMasterBatchDraft',agentId),
+  inspectMasterBaseline:(agentId,projectId)=>ipcRenderer.invoke('sutradhar:inspectMasterBaseline',agentId,projectId),
   previewMasterBatch:(agentId,projectId,requestId,tasks)=>ipcRenderer.invoke('sutradhar:previewMasterBatch',agentId,projectId,requestId,tasks),
   commitMasterBatch:(agentId,projectId,requestId,digest)=>ipcRenderer.invoke('sutradhar:commitMasterBatch',agentId,projectId,requestId,digest),
   inspectMasterBatchReceipt:(agentId,projectId,requestId,digest)=>ipcRenderer.invoke('sutradhar:inspectMasterBatchReceipt',agentId,projectId,requestId,digest),
