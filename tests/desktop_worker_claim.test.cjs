@@ -4,7 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const crypto=require('node:crypto'),cp=require('node:child_process');
 const {createVault}=require('../apps/desktop/os-vault.cjs');
 const {createSignerBridge}=require('../apps/desktop/vault-bridge.cjs');
-const {claimApprovedTask,resumeApprovedTask}=require('../apps/desktop/worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt}=require('../apps/desktop/worker-claim.cjs');
 const {progressWorkerTask}=require('../apps/desktop/worker-progress.cjs');
 const {submitWorkerCandidate}=require('../apps/desktop/worker-submit.cjs');
 const available=cp.spawnSync('git',['--version'],{encoding:'utf8'}).status===0;
@@ -922,4 +922,119 @@ test('nonempty disabled hooks directory holds resume without changing prior leas
     assert.deepEqual(fs.readFileSync(receipt),before);
     assert.equal(r.claims(),1);
   }finally{f.close();}
+});
+
+
+test('provider-attempt signer only permits exact metadata and never generic heartbeat-child signing',()=>{
+  const f=fixture();
+  try{
+    const body={request_id:'provider_abc123',agent_id:'agent_aaa',ticket_id:'ticket_abc',
+      lease_id:'11111111-1111-4111-8111-111111111111',expected_master_epoch:7,action:'BEGIN',
+      provider:'CHATGPT_WEB',registry_version:1,binding_sha256:'b'.repeat(64),
+      checkpoint_generation:1,checkpoint_sha256:'c'.repeat(64),context_sha256:'d'.repeat(64)};
+    const sign=payload=>f.signer.signWorkerAction({operation:'provider-attempt',agent_id:'agent_aaa',payload});
+    const signed=sign(body);
+    assert.equal(signed.uri,'/v7/tasks/provider-attempt');
+    assert.deepEqual(JSON.parse(signed.body),body);
+    for(const forged of [{...body,prompt:'not accepted'},{...body,registry_version:0},
+      {...body,context_sha256:'bad'},{...body,provider:'UNKNOWN'},{...body,agent_id:'agent_foreign'}])
+      assert.throws(()=>sign(forged),/DENIED/);
+    assert.throws(()=>f.signer.sign({kind:'node_api',method:'POST',uri:signed.uri,body:signed.body}),/DENIED/);
+    const {provider,registry_version,binding_sha256,checkpoint_generation,checkpoint_sha256,context_sha256,...common}=body;
+    const close={...common,action:'CLOSE',attempt_id:'attempt_'+'a'.repeat(32),
+      external_session_reviewed:true,worktree_reviewed:true};
+    assert.equal(sign(close).uri,signed.uri);
+    assert.throws(()=>sign({...close,worktree_reviewed:false}),/DENIED/);
+    assert.throws(()=>sign({...close,chat_id:'unexpected'}),/DENIED/);
+  }finally{f.close();}
+});
+
+test('signed Desktop manual provider lifecycle recomputes reviewed context and verifies readback', {skip:!available},async()=>{
+  const f=fixture(),r=remote(f);
+  try{
+    await claimApprovedTask(args(f,r.fetcher));
+    const {compactWorkerContext}=require('../apps/desktop/worker-inspection.cjs');
+    const lease_id='11111111-1111-4111-8111-111111111111',agent_id='agent_aaa',ticket_id='ticket_abc';
+    const binding={project_id:'project_aaa',agent_id,provider:'CHATGPT_WEB',
+      account_ref:'account_example',workspace_ref:'workspace_example'};
+    const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
+    const checkpoint=g=>({generation:g,summary:'Reviewed work generation '+g,next_action:'Review next step',
+      content_sha256:sha('Reviewed work generation '+g+'\nReview next step')});
+    const task={ticket_id,project_id:binding.project_id,repository:'example/repo',branch_name:'ai/ticket_abc',
+      baseline_sha:f.baseline,title:'Build one feature',description:'Review source and add test',risk:'LOW',
+      version:3,status:'CHECKPOINTED',worker_agent_id:agent_id,write_scopes:['src/feature.ts'],
+      acceptance_criteria:['Test passes'],latest_checkpoint:checkpoint(1),
+      provider_mapping_state:'OWNER_DECLARED_UNVERIFIED',provider_mapping_source:'MYSQL_OWNER_REGISTRY',
+      provider_registry_version:1,provider_mappings:[{provider:binding.provider,account_ref:binding.account_ref,
+        workspace_ref:binding.workspace_ref,binding_sha256:sha(JSON.stringify(binding)),
+        state:'OWNER_DECLARED_UNVERIFIED',provider_mapping_verified:false,automatic_execution_allowed:false}],
+      provider_attempt:null};
+    let ledger=null,posts=0,lost=false,wrongLease=false;
+    const metadata=()=>ledger?{attempt_id:ledger.attempt_id,state:ledger.state,registry_version:ledger.registry_version,
+      checkpoint_generation:ledger.checkpoint_generation,context_sha256:ledger.context_sha256,
+      provider:ledger.provider,resolution:ledger.resolution}:null;
+    const fetcher=async(url,init)=>{
+      const uri=new URL(url).pathname;
+      assert.equal(init.redirect,'error');assert.equal(init.credentials,'omit');
+      const h=init.headers,raw=init.body||'';
+      const canonical=[h['x-sutradhar-timestamp'],h['x-sutradhar-nonce'],init.method,uri,sha(raw)].join('\n');
+      assert.equal(crypto.verify(null,Buffer.from(canonical),crypto.createPublicKey(f.pub.public_key_pem),
+        Buffer.from(h['x-sutradhar-signature'],'base64')),true);
+      let value;
+      if(uri==='/v7/tasks/resume-check')value={resume_allowed:true,automatic_execution_allowed:false,
+        agent_id,ticket_id,lease_id:wrongLease?'22222222-2222-4222-8222-222222222222':lease_id,epoch:7,
+        project_id:task.project_id,repository:task.repository,branch_name:task.branch_name,
+        baseline_sha:task.baseline_sha,write_scopes:task.write_scopes,status:task.status,latest_checkpoint:task.latest_checkpoint};
+      else if(uri==='/v7/tasks/detail/'+ticket_id)value={...task,provider_attempt:metadata()};
+      else if(uri==='/v7/tasks/provider-attempt'){
+        posts++;const b=JSON.parse(raw);
+        if(b.action==='BEGIN')ledger={attempt_id:'attempt_'+'a'.repeat(32),ticket_id,agent_id,lease_id,
+          epoch:7,registry_version:b.registry_version,provider:b.provider,binding_sha256:b.binding_sha256,
+          checkpoint_generation:b.checkpoint_generation,checkpoint_sha256:b.checkpoint_sha256,
+          context_sha256:b.context_sha256,state:'OPEN',resolution:null};
+        else if(b.action==='INTERRUPT')ledger={...ledger,state:'INTERRUPTED'};
+        else ledger={...ledger,state:'CLOSED',resolution:'WORKER_CHECKPOINT'};
+        if(lost)throw Error('FIXTURE_LOST_ACK');
+        value={accepted:true,attempt:ledger,provider_sent:false,provider_mapping_verified:false,automatic_execution_allowed:false};
+      }else throw Error('UNEXPECTED_ENDPOINT');
+      return new Response(JSON.stringify(value),{status:200});
+    };
+    const call=patch=>recordProviderAttempt({...args(f,fetcher),action:'BEGIN',provider:'CHATGPT_WEB',
+      reviewedDigest:compactWorkerContext({...task,provider_attempt:null},agent_id).context_sha256,...patch});
+    await assert.rejects(call({reviewedDigest:'0'.repeat(64)}),/REVIEWED_CONTEXT_CHANGED/);
+    assert.equal(posts,0);
+    wrongLease=true;await assert.rejects(call({}),/LEASE_MISMATCH/);wrongLease=false;
+    await assert.rejects(call({beforeMutation:()=>{throw Error('LOCAL_FENCE');}}),/LOCAL_FENCE/);
+    assert.equal(posts,0);
+    const opened=await call({});assert.equal(opened.attempt.state,'OPEN');assert.equal(posts,1);
+    assert.equal(opened.provider_sent,false);
+    await assert.rejects(call({}),/RECONCILIATION_REQUIRED/);
+    const attemptId=opened.attempt.attempt_id;
+    const interrupted=await call({action:'INTERRUPT',attemptId});
+    assert.equal(interrupted.attempt.state,'INTERRUPTED');
+    await assert.rejects(call({action:'CLOSE',attemptId}),/FRESH_CHECKPOINT_REQUIRED/);
+    assert.equal(posts,2);
+    task.latest_checkpoint=checkpoint(2);task.version++;
+    const closed=await call({action:'CLOSE',attemptId});
+    assert.equal(closed.attempt.resolution,'WORKER_CHECKPOINT');assert.equal(posts,3);
+    lost=true;
+    await assert.rejects(call({}),/OUTCOME_UNCERTAIN/);
+    assert.equal(posts,4);
+    await assert.rejects(call({}),/RECONCILIATION_REQUIRED/);
+    assert.equal(posts,4,'uncertain committed BEGIN is not retried');
+  }finally{f.close();}
+});
+
+test('Desktop renderer exposes only explicit attempt commands and a separate context field',()=>{
+  const root=path.join(__dirname,'../apps/desktop');
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const html=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  const renderer=fs.readFileSync(path.join(root,'setup.js'),'utf8');
+  assert.match(main,/ipcMain\.handle\('sutradhar:recordProviderAttempt'/);
+  assert.match(preload,/recordProviderAttempt:\(agentId,ticketId,action,provider,reviewedDigest,attemptId\)/);
+  assert.doesNotMatch(preload,/signWorkerAction|private_key_pem/);
+  assert.match(html,/id="workerProviderPreview"[^>]*readonly/);
+  assert.match(renderer,/get\('workerProviderPreview'\)\.value=r\.preview/);
+  assert.doesNotMatch(renderer,/\+r\.preview;/);
 });
