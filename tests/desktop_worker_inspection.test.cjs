@@ -173,3 +173,42 @@ test('compact context preview uses existing bounded inspection IPC, never automa
   assert.match(html,/id="workerContext"/);
   assert.match(js,/Nothing sent to provider/);
 });
+
+test('inspection rejects malformed UTF-8 before JSON parsing and signing inputs without coercion',async()=>{
+  const f=fixture();let calls=0;
+  const fetcher=async()=>{calls++;return new Response(Buffer.concat([
+    Buffer.from('[{"ticket_id":"ticket_123","project_id":"project_aaa","risk":"LOW","version":1,"title":"'),
+    Buffer.from([0xc3,0x28]),Buffer.from('"}]')
+  ]));};
+  const run=(overrides={})=>inspectWorkerTasks({origin:'https://central.example.com',
+    agentId:'agent_aaa',signer:f.signer,fetcher,...overrides});
+  try{
+    await assert.rejects(run({agentId:['agent_aaa']}),/INPUT_DENIED/);
+    await assert.rejects(run({ticketId:['ticket_123']}),/INPUT_DENIED/);
+    assert.equal(calls,0);
+    await assert.rejects(run(),/RESPONSE_INVALID/);
+    assert.equal(calls,1);
+    const item={ticket_id:'ticket_123',project_id:'project_aaa',risk:'LOW',version:1,title:'Valid 🌏 हिन्दी'};
+    for(const patch of [{version:true},{version:[1]},{version:'1e0'},{ticket_id:['ticket_123']},
+      {project_id:['project_aaa']},{title:'bad\uD800'}]){
+      await assert.rejects(run({fetcher:async()=>new Response(JSON.stringify([{...item,...patch}]))}),/RESPONSE_INVALID/);
+    }
+    const valid=await run({fetcher:async()=>new Response(JSON.stringify([{...item,version:'1'}]))});
+    assert.deepEqual(valid.tasks,[item]);
+  }finally{f.close();}
+});
+test('context rejects blank criteria, malformed identifiers and lossy checkpoint Unicode',()=>{
+  const {compactWorkerContext}=require('../apps/desktop/worker-inspection.cjs');
+  const t={ticket_id:'ticket_123',project_id:'project_aaa',title:'Feature 🌏',
+    description:'Implement scoped feature',repository:'example/repo',branch_name:'ai/ticket_123',
+    baseline_sha:'a'.repeat(40),risk:'LOW',status:'CLAIMED',version:1,
+    worker_agent_id:'agent_aaa',write_scopes:['src/x.ts'],acceptance_criteria:['Test passes']};
+  const summary='invalid\uD800',next_action='Test';
+  const checkpoint={generation:1,summary,next_action,content_sha256:crypto.createHash('sha256').update(summary+'\n'+next_action).digest('hex')};
+  for(const patch of [{acceptance_criteria:['  ']},{description:'bad\uD800'},
+    {repository:['example/repo']},{worker_agent_id:['agent_aaa']},{version:true},
+    {latest_checkpoint:checkpoint},{candidate_head_sha:['a'.repeat(40)],candidate_tree_sha:'a'.repeat(40)}]){
+    assert.throws(()=>compactWorkerContext({...t,...patch},'agent_aaa'),/INVALID|OWN_CLAIMED_TASK/);
+  }
+  assert.equal(JSON.parse(compactWorkerContext(t,'agent_aaa').preview).title,t.title);
+});
