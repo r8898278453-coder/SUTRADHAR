@@ -658,6 +658,18 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(catalogStale.code,409);
       const catalogExtra=await a.signed('/v7/tasks/plan-batch/projects',{...catalogBody,project_id});
       assert.equal(catalogExtra.code,400);
+      const exactProjectBody={...catalogBody,project_id};
+      const exactProject=await a.signed('/v7/tasks/plan-batch/project',exactProjectBody);
+      assert.equal(exactProject.code,200,JSON.stringify(exactProject.body));
+      assert.equal(exactProject.body.read_only,true);
+      assert.equal(exactProject.body.baseline_verified,false);
+      assert.equal(exactProject.body.automatic_execution_allowed,false);
+      assert.deepEqual(exactProject.body.project,{project_id,display_name:'Batch planning fixture',repository:'example/batch-ci',base_branch:'main'});
+      assert.equal((await a.signed('/v7/tasks/plan-batch/project',{...exactProjectBody,project_id:project_id.toUpperCase()})).code,404);
+      assert.equal((await a.signed('/v7/tasks/plan-batch/project',{...exactProjectBody,project_id:'project_missing_001'})).code,404);
+      assert.equal((await b.signed('/v7/tasks/plan-batch/project',{...exactProjectBody,agent_id:b.agent_id})).code,409);
+      assert.equal((await a.signed('/v7/tasks/plan-batch/project',{...exactProjectBody,expected_master_epoch:expected_master_epoch+1})).code,409);
+      assert.equal((await a.signed('/v7/tasks/plan-batch/project',{...exactProjectBody,arbitrary:true})).code,400);
       await owner('GRANT_PROJECT_AGENT',{project_id,agent_id:b.agent_id,can_develop:true});
       const task=(suffix:string,scope:string,deps:string[]=[],contract_keys:string[]=[])=>({
         ticket_id:'ticket_batch_'+suffix,baseline_sha:'a'.repeat(40),branch_name:'ai/batch_'+suffix,
