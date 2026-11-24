@@ -14,7 +14,7 @@ import {verifyGitHubMergeEvidence} from '../github_merge_verifier.ts';
 import {createVerifiedDraftPr,inspectVerifiedDraftPr} from '../github_pr_creator.ts';
 import {inspectGitRemote} from './git_remote.ts';
 import {inspectGithubPrReview} from './pr_review.ts';
-import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest,validTaskBranch,isProtectedScope,parseContractKeys,contractReservationConflicts} from './rules.ts';
+import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest,validTaskBranch,isProtectedScope,parseContractKeys,contractReservationConflicts,orderTaskBatch} from './rules.ts';
 import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
 import {permitSignedHeartbeatPilotRecord} from './pilot_heartbeat_window.ts';
@@ -55,7 +55,7 @@ class Fault extends Error {
   constructor(public code:string,public status=409){super(code);}
 }
 const fault=(code:string,status=409):never=>{throw new Fault(code,status);};
-function okId(x:unknown){return typeof x==='string'&&ID_RE.test(x);}
+function okId(x:unknown){return typeof x==='string'&&!/[\r\n]/.test(x)&&ID_RE.test(x);}
 function requireId(x:unknown){if(!okId(x))fault('INVALID_ID',400);return x as string;}
 function requireSha(x:unknown):string{if(typeof x!=='string'||!SHA_RE.test(x))fault('INVALID_SHA',400);return x as string;}
 function requireStr(x:unknown,max=1000):string{if(typeof x!=='string'||!x.trim()||x.length>max)fault('INVALID_FIELD',400);return (x as string).trim();}
@@ -161,7 +161,7 @@ async function nodeAuth(req:Request){
     fault('SIGNATURE_INVALID',401);
   const node=await transaction(async c=>{
     const n=await one(c,'SELECT node_id,public_key_pem,state FROM v7_nodes WHERE node_id=?',[nodeId]);
-    if(!n||n.state!=='APPROVED')fault('NODE_NOT_APPROVED',403);
+    if(!n||n.node_id!==nodeId||n.state!=='APPROVED')fault('NODE_NOT_APPROVED',403);
     const raw=(req as any).rawBody||Buffer.alloc(0);
     const signed=[String(ts),nonce,req.method,req.path,digest(raw)].join('\n');
     let verified=false;
@@ -1531,9 +1531,10 @@ app.post('/v7/leadership/reconcile',jsonRoute(async req=>{
     });
   });
 }));
-app.post('/v7/tasks/plan',jsonRoute(async req=>{
-  const node=await nodeAuth(req),d=req.body||{};
-  const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id),projectId=requireId(d.project_id);
+// Single-ticket and batch admission use the SAME validation and persistence
+// contract. The preview checks current MySQL state but cannot reserve anything.
+function parseTaskPlan(d:any){
+  const ticketId=requireId(d.ticket_id),projectId=requireId(d.project_id);
   const scope=d.write_scopes, deps=d.dependencies===undefined?[]:d.dependencies;
   let contractKeys:string[]|null=null;
   try{contractKeys=parseContractKeys(d.contract_keys);}catch{fault('INVALID_TASK_CONTRACT_KEYS',400);}
@@ -1558,51 +1559,124 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
   if(d.proposal_id!==undefined&&d.proposal_id!==null)
     fault('TASK_INITIAL_APPROVAL_MUST_BE_SERVER_CREATED',400);
   const baseline=requireSha(d.baseline_sha),title=requireStr(d.title,220),description=requireStr(d.description,10000);
+  if(/[\uD800-\uDFFF]/u.test(title)||/[\uD800-\uDFFF]/u.test(description))
+    fault('INVALID_FIELD',400);
   const fingerprint=digest(JSON.stringify([projectId,title.trim().toLowerCase(),
     description.trim().toLowerCase(),[...scope].sort(),[...deps].sort()]));
   const branch=requireStr(d.branch_name,120);
   if(!validTaskBranch(branch))fault('INVALID_BRANCH',400);
+  return {ticketId,projectId,scope:scope as string[],deps:deps as string[],contractKeys,
+    risk,criteria,baseline,title,description,fingerprint,branch};
+}
+type TaskPlan=ReturnType<typeof parseTaskPlan>;
+function taskPlanSummary(p:TaskPlan){
+  const approvalNeeded=p.risk==='CORE'||p.risk==='HIGH'||p.scope.some(isProtectedScope)||Boolean(p.contractKeys?.length);
+  return {ticket_id:p.ticketId,status:approvalNeeded?'WAITING_AUTHORIZATION':'READY',version:1,
+    owner_approval_required:approvalNeeded};
+}
+async function checkTaskPlan(c:PoolConnection,p:TaskPlan,plannedBefore:ReadonlySet<string>=new Set<string>()){
+  const registry=await one(c,'SELECT project_id,repository FROM v7_projects WHERE project_id=?',[p.projectId]);
+  if(!registry||registry.project_id!==p.projectId)return fault('PROJECT_NOT_FOUND',404);
+  await rows(c,'SELECT project_id FROM v7_projects WHERE repository=? ORDER BY project_id FOR UPDATE',[registry.repository]);
+  const project=await one(c,'SELECT * FROM v7_projects WHERE project_id=? AND status="ACTIVE" FOR UPDATE',[p.projectId]);
+  if(!project||project.project_id!==p.projectId||project.repository!==registry.repository)return fault('PROJECT_NOT_FOUND',404);
+  const branchTaken=await one(c,'SELECT t.ticket_id FROM v7_tickets t JOIN v7_projects p '+
+    'ON p.project_id=t.project_id WHERE p.repository=? AND t.branch_name=? LIMIT 1',
+    [project.repository,p.branch]);
+  if(branchTaken)fault('TASK_REPOSITORY_BRANCH_ALREADY_RESERVED',409);
+  const intentTaken=await one(c,'SELECT ticket_id FROM v7_tickets WHERE project_id=? AND fingerprint=? LIMIT 1',[p.projectId,p.fingerprint]);
+  if(intentTaken)fault('TASK_INTENT_DUPLICATE',409);
+  if(await one(c,'SELECT ticket_id FROM v7_tickets WHERE ticket_id=?',[p.ticketId]))fault('CONFLICT',409);
+  for(const dependency of p.deps){
+    if(plannedBefore.has(dependency))continue;
+    const other=await one(c,'SELECT ticket_id,project_id,status FROM v7_tickets WHERE ticket_id=?',[dependency]);
+    if(!other||other.ticket_id!==dependency||other.project_id!==p.projectId||other.status==='CANCELLED')
+      fault('INVALID_DEPENDENCY',409);
+  }
+}
+async function persistTaskPlan(c:PoolConnection,p:TaskPlan,agentId:string,epoch:number){
+  const summary=taskPlanSummary(p);
+  await c.query('INSERT INTO v7_tickets(ticket_id,project_id,creator_agent_id,fingerprint,created_epoch,title,description,baseline_sha,branch_name,risk,scopes_json,criteria_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [p.ticketId,p.projectId,agentId,p.fingerprint,epoch,p.title,p.description,p.baseline,p.branch,p.risk,JSON.stringify(p.scope),JSON.stringify(p.criteria),summary.status]);
+  for(const dep of p.deps)await c.query('INSERT INTO v7_dependencies(ticket_id,dependency_id) VALUES(?,?)',[p.ticketId,dep]);
+  if(summary.owner_approval_required){
+    const proposalId='approval_'+crypto.randomUUID().replace(/-/g,'');
+    const shared=Boolean(p.contractKeys?.length);
+    await c.query('INSERT INTO v7_approvals(proposal_id,ticket_id,kind,justification) VALUES(?,?,?,?)',
+      [proposalId,p.ticketId,p.scope.some(isProtectedScope)?'CORE_SECURITY':shared?'SHARED_CONTRACT':p.risk,
+        (shared?'Declared shared contracts: '+p.contractKeys!.join(', ')+'\n':'')+p.description.slice(0,500)]);
+  }
+  await event(c,'TASK_PLANNED',agentId,epoch,p.ticketId,{project_id:p.projectId,status:summary.status,risk:p.risk,
+    scope_digest:digest(JSON.stringify(p.scope)),...(p.contractKeys===null?{}:{contract_keys:p.contractKeys})});
+  return {accepted:true,...summary};
+}
+app.post('/v7/tasks/plan',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body||{},agentId=requireId(d.agent_id),p=parseTaskPlan(d);
   return transaction(async c=>{
     const ld=await readyMaster(c,node.node_id,agentId,d.expected_master_epoch);
     return idem(c,agentId,d.request_id,'TASK_PLAN',d,async()=>{
-      // A Git branch belongs to a REPOSITORY, not to a (repository, base)
-      // project configuration. Serialize planning across every project using
-      // the same repository before checking task/branch uniqueness. Acquire
-      // project locks in deterministic order to prevent opposite-base races.
-      const registry=await one(c,'SELECT repository FROM v7_projects WHERE project_id=?',[projectId]);
-      if(!registry)fault('PROJECT_NOT_FOUND',404);
-      await rows(c,'SELECT project_id FROM v7_projects WHERE repository=? ORDER BY project_id FOR UPDATE',
-        [registry.repository]);
-      const project=await one(c,'SELECT * FROM v7_projects WHERE project_id=? AND status="ACTIVE" FOR UPDATE',[projectId]);
-      if(!project||project.repository!==registry.repository)fault('PROJECT_NOT_FOUND',404);
-      const branchTaken=await one(c,'SELECT t.ticket_id FROM v7_tickets t JOIN v7_projects p '+
-        'ON p.project_id=t.project_id WHERE p.repository=? AND t.branch_name=? LIMIT 1',
-        [project.repository,branch]);
-      if(branchTaken)fault('TASK_REPOSITORY_BRANCH_ALREADY_RESERVED',409);
-      const intentTaken=await one(c,'SELECT ticket_id FROM v7_tickets WHERE project_id=? AND fingerprint=? LIMIT 1',
-        [projectId,fingerprint]);
-      if(intentTaken)fault('TASK_INTENT_DUPLICATE',409);
-      const sensitive=scope.some(isProtectedScope);
-      const sharedContractChange=Boolean(contractKeys?.length);
-      const approvalNeeded=risk==='CORE'||risk==='HIGH'||sensitive||sharedContractChange;
-      const status=approvalNeeded?'WAITING_AUTHORIZATION':'READY';
-      for(const dependency of deps){
-        requireId(dependency);
-        const other=await one(c,'SELECT project_id FROM v7_tickets WHERE ticket_id=?',[dependency]);
-        if(!other||other.project_id!==projectId)fault('INVALID_DEPENDENCY',409);
+      await checkTaskPlan(c,p);
+      return persistTaskPlan(c,p,agentId,Number(ld.epoch));
+    });
+  });
+}));
+function parsePlanningBatch(d:any,commit:boolean){
+  const expected=commit?'agent_id|expected_master_epoch|preview_sha256|project_id|request_id|tasks':
+    'agent_id|expected_master_epoch|project_id|request_id|tasks';
+  if(!d||typeof d!=='object'||Array.isArray(d)||Object.keys(d).sort().join('|')!==expected||
+     !Number.isSafeInteger(d.expected_master_epoch)||d.expected_master_epoch<1||
+     !Array.isArray(d.tasks)||d.tasks.length<2||d.tasks.length>10||
+     Buffer.byteLength(JSON.stringify(d.tasks),'utf8')>65536)
+    return fault('TASK_BATCH_INPUT_INVALID',400);
+  const agentId=requireId(d.agent_id),projectId=requireId(d.project_id),requestId=requireId(d.request_id);
+  const plans:TaskPlan[]=d.tasks.map((t:any)=>{
+    if(!t||typeof t!=='object'||Array.isArray(t)||
+       Object.keys(t).sort().join('|')!=='acceptance_criteria|baseline_sha|branch_name|contract_keys|dependencies|description|risk|ticket_id|title|write_scopes'||
+       !Array.isArray(t.contract_keys)||!Array.isArray(t.dependencies))
+      return fault('TASK_BATCH_TASK_SHAPE_INVALID',400);
+    return parseTaskPlan({...t,project_id:projectId});
+  });
+  let ordered:TaskPlan[];
+  try{ordered=orderTaskBatch(plans);}catch(e:any){
+    const code=String(e?.message||'');
+    return fault(['TASK_BATCH_SIZE_INVALID','TASK_BATCH_DUPLICATE_ID_BRANCH_OR_INTENT',
+      'TASK_BATCH_DEPENDENCY_ALIAS','TASK_BATCH_DEPENDENCY_CYCLE',
+      'TASK_BATCH_CONFLICT_REQUIRES_DEPENDENCY'].includes(code)?code:'TASK_BATCH_INVALID',400);
+  }
+  const preview_sha256=digest(JSON.stringify({agent_id:agentId,project_id:projectId,request_id:requestId,
+    expected_master_epoch:d.expected_master_epoch,plans:ordered}));
+  if(commit&&d.preview_sha256!==preview_sha256)return fault('TASK_BATCH_PREVIEW_MISMATCH',409);
+  return {agentId,projectId,requestId,ordered,preview_sha256,epoch:d.expected_master_epoch as number};
+}
+app.post('/v7/tasks/plan-batch/preview',jsonRoute(async req=>{
+  const node=await nodeAuth(req),b=parsePlanningBatch(req.body,false);
+  return transaction(async c=>{
+    await readyMaster(c,node.node_id,b.agentId,b.epoch);
+    const seen=new Set<string>();
+    for(const p of b.ordered){await checkTaskPlan(c,p,seen);seen.add(p.ticketId);}
+    return {read_only:true,project_id:b.projectId,epoch:b.epoch,request_id:b.requestId,
+      preview_sha256:b.preview_sha256,plan_order:b.ordered.map(p=>p.ticketId),
+      tickets:b.ordered.map(p=>({...taskPlanSummary(p),dependencies:p.deps,write_scopes:p.scope,contract_keys:p.contractKeys})),
+      automatic_execution_allowed:false,semantic_discovery_verified:false,baseline_verified:false};
+  });
+}));
+app.post('/v7/tasks/plan-batch',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body,b=parsePlanningBatch(d,true);
+  return transaction(async c=>{
+    await readyMaster(c,node.node_id,b.agentId,b.epoch);
+    return idem(c,b.agentId,b.requestId,'TASK_PLAN_BATCH',d,async()=>{
+      const tickets=[];
+      // All tickets, approvals, dependency edges and events share this ONE
+      // transaction. Any failure rolls back the complete batch and receipt.
+      for(const p of b.ordered){
+        await checkTaskPlan(c,p);
+        tickets.push(await persistTaskPlan(c,p,b.agentId,b.epoch));
       }
-      await c.query('INSERT INTO v7_tickets(ticket_id,project_id,creator_agent_id,fingerprint,created_epoch,title,description,baseline_sha,branch_name,risk,scopes_json,criteria_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        [ticketId,projectId,agentId,fingerprint,Number(ld.epoch),title,description,baseline,branch,risk,JSON.stringify(scope),JSON.stringify(criteria),status]);
-      for(const dep of deps)await c.query('INSERT INTO v7_dependencies(ticket_id,dependency_id) VALUES(?,?)',[ticketId,dep]);
-      if(approvalNeeded){
-        const proposalId='approval_'+crypto.randomUUID().replace(/-/g,'');
-        await c.query('INSERT INTO v7_approvals(proposal_id,ticket_id,kind,justification) VALUES(?,?,?,?)',
-          [proposalId,ticketId,sensitive?'CORE_SECURITY':sharedContractChange?'SHARED_CONTRACT':risk,
-            (sharedContractChange?'Declared shared contracts: '+contractKeys!.join(', ')+'\n':'')+description.slice(0,500)]);
-      }
-      await event(c,'TASK_PLANNED',agentId,Number(ld.epoch),ticketId,{project_id:projectId,status,risk,scope_digest:digest(JSON.stringify(scope)),
-        ...(contractKeys===null?{}:{contract_keys:contractKeys})});
-      return {accepted:true,ticket_id:ticketId,status,version:1,owner_approval_required:approvalNeeded};
+      await event(c,'TASK_BATCH_PLANNED',b.agentId,b.epoch,b.projectId,
+        {preview_sha256:b.preview_sha256,ticket_ids:b.ordered.map(p=>p.ticketId)});
+      return {accepted:true,project_id:b.projectId,epoch:b.epoch,request_id:b.requestId,
+        preview_sha256:b.preview_sha256,plan_order:b.ordered.map(p=>p.ticketId),tickets,
+        automatic_execution_allowed:false,semantic_discovery_verified:false,baseline_verified:false};
     });
   });
 }));
@@ -1634,8 +1708,8 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
       if(locked.status!=='READY'||(d.expected_version!==undefined&&Number(d.expected_version)!==Number(locked.version)))
         fault('TASK_NOT_READY',409);
       const outstanding=await rows(c,'SELECT dependency_id FROM v7_dependencies WHERE ticket_id=?',[ticketId]);
-      for(const dep of outstanding){const p=await one(c,'SELECT status FROM v7_tickets WHERE ticket_id=?',[dep.dependency_id]);
-        if(p?.status!=='DONE')fault('DEPENDENCY_UNVERIFIED',409);}
+      for(const dep of outstanding){const p=await one(c,'SELECT ticket_id,project_id,status FROM v7_tickets WHERE ticket_id=?',[dep.dependency_id]);
+        if(p?.status!=='DONE'||p.ticket_id!==dep.dependency_id||p.project_id!==locked.project_id)fault('DEPENDENCY_UNVERIFIED',409);}
       const busy=await one(c,'SELECT COUNT(*) n FROM v7_leases WHERE agent_id=? AND revoked=0 AND expires_at>UTC_TIMESTAMP(3)',[agentId]);
       if(Number(busy.n)>=1)fault('AGENT_CAPACITY_EXCEEDED',409);
       const access=await one(c,'SELECT can_develop FROM v7_project_agents WHERE project_id=? AND agent_id=?',
