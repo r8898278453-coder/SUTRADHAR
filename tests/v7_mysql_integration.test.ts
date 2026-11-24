@@ -114,6 +114,67 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     const repeated=await post('/v7/owner/migrate',{},admin);
     assert.equal(repeated.code,409,JSON.stringify(repeated.body));
     assert.equal(repeated.body.error_code,'SCHEMA_BOOTSTRAP_REQUIRES_EMPTY_DATABASE');
+    // Real HTTP + disposable MySQL parity, with synthetic Telegram updates.
+    // No bot token, Telegram network request, or actual webhook registration.
+    {
+      const names=['TELEGRAM_WEBHOOK_SECRET','TELEGRAM_ADMIN_USER_ID','TELEGRAM_ALLOWED_CHAT_ID','TELEGRAM_BOT_USERNAME','TELEGRAM_BOT_TOKEN'];
+      const saved=Object.fromEntries(names.map(k=>[k,process.env[k]]));
+      const secret='fixture_telegram_webhook_secret_1234567890';
+      process.env.TELEGRAM_WEBHOOK_SECRET=secret;
+      process.env.TELEGRAM_ADMIN_USER_ID='12345';
+      process.env.TELEGRAM_ALLOWED_CHAT_ID='12345';
+      process.env.TELEGRAM_BOT_USERNAME='SutradharFixtureBot';
+      delete process.env.TELEGRAM_BOT_TOKEN;
+      const db=await mysql.createConnection({host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+        user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+      const update=(update_id:number,text:string)=>({update_id,message:{
+        from:{id:12345,is_bot:false},chat:{id:12345,type:'private'},
+        date:Math.floor(Date.now()/1000),text}});
+      async function tg(body:any,token=secret){
+        const res=await fetch(base+'/v7/telegram/webhook',{method:'POST',
+          headers:{'content-type':'application/json','x-telegram-bot-api-secret-token':token},
+          body:JSON.stringify(body)});
+        return {code:res.status,body:await res.json() as any};
+      }
+      const cluster=async()=>{const [rows]:any=await db.query('SELECT paused,version,epoch,master_agent_id FROM v7_cluster WHERE singleton=1');return rows[0];};
+      try{
+        const before=await cluster();
+        const denied=update(90001,'/pause');denied.message.from.id=99999;
+        assert.equal((await tg(denied)).code,401);
+        assert.equal((await tg(update(90002,'/pause'),'wrong')).code,401);
+        assert.equal((await tg(update(90003,'/approve'))).body.ignored,true);
+        assert.deepEqual(await cluster(),before);
+        const message=update(90004,'/pause');
+        const [one,two,web]=await Promise.all([
+          tg(message),tg(message),post('/v7/owner/command',{request_id:'tg_parity_web_pause',command:'PAUSE',payload:{}},admin)]);
+        assert.equal(one.code,200,JSON.stringify(one.body));
+        assert.equal(two.code,200,JSON.stringify(two.body));
+        assert.equal(web.code,200,JSON.stringify(web.body));
+        assert.deepEqual([one.body.replayed,two.body.replayed].sort(),[false,true]);
+        assert.equal(one.body.receipt_id,'tg_90004');
+        const paused=await cluster();
+        assert.equal(Boolean(paused.paused),true);
+        assert.equal(Number(paused.version),Number(before.version)+1);
+        assert.equal(Number(paused.epoch),Number(before.epoch));
+        const [receipts]:any=await db.query('SELECT COUNT(*) n FROM v7_commands WHERE actor=? AND request_id=?',['owner:telegram','tg_90004']);
+        assert.equal(Number(receipts[0].n),1);
+        const conflict=await tg(update(90004,'/resume'));
+        assert.equal(conflict.code,409);
+        assert.equal(conflict.body.error_code,'IDEMPOTENCY_KEY_REUSED');
+        const status=await tg(update(90005,'/status@SutradharFixtureBot'));
+        assert.equal(status.code,200);
+        assert.deepEqual(await cluster(),paused);
+        assert.equal((await tg(update(90006,'/resume'))).code,200);
+        const resumed=await cluster();
+        assert.equal(Boolean(resumed.paused),false);
+        assert.equal(Number(resumed.version),Number(paused.version)+1);
+        assert.equal(Number(resumed.epoch),Number(before.epoch));
+        assert.equal(resumed.master_agent_id,before.master_agent_id);
+      }finally{
+        await db.end();
+        for(const name of names){if(saved[name]===undefined)delete process.env[name];else process.env[name]=saved[name];}
+      }
+    }
     // This test exercises a cluster that has *already passed* its initial 08:00 IST bootstrap.
     // Never depend on the GitHub runner's wall-clock time: if CI runs before 08:00 IST,
     // a new cluster correctly refuses the first election. The exact 08:00 boundary is

@@ -327,8 +327,12 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any,onFresh?:()=>
     // promote a Master or revoke worker leases merely by observing them.
     if(command==='STATUS') result={cluster:ld};
     else if(command==='PAUSE'||command==='RESUME'){
-      await c.query('UPDATE v7_cluster SET paused=?,version=version+1 WHERE singleton=1',[command==='PAUSE'?1:0]);
-      result={paused:command==='PAUSE'};
+      const paused=command==='PAUSE';
+      // Different authenticated channels can request the same desired state.
+      // The cluster row lock serializes them; repeated intent is a no-op.
+      if(Boolean(ld.paused)!==paused)
+        await c.query('UPDATE v7_cluster SET paused=?,version=version+1 WHERE singleton=1',[paused?1:0]);
+      result={paused};
     }else if(command==='APPROVE_NODE'||command==='REVOKE_NODE'){
       const nodeId=requireId(payload.node_id);
       const state=command==='APPROVE_NODE'?'APPROVED':'REVOKED';

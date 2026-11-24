@@ -30,7 +30,7 @@ This register reflects the current implementation branch, not an unsupported "al
 | V7-GAP-07 | P0 | Trusted local patch/Git operator, MySQL path and semantic contract reservations, no unverified DONE | PARTIAL — local Git/scope reservations/QA guards CI; live protected GitHub acceptance OPEN |
 | V7-GAP-08 | P0 | Independent QA, combined integration tree, live GitHub draft PR/merge acceptance, release evidence | PARTIAL — signed QA/source CI; real independent reviewer/device and live protected merge NOT_RUN |
 | V7-GAP-09 | P0 | Centralized checkpoint/event history with idempotent crash/network recovery | PARTIAL — MySQL ledgers and recovery tests; hardware crash/partition proof NOT_RUN |
-| V7-GAP-10 | P0 | Website and Telegram single Owner Command Service, default-deny core change authorization | PARTIAL — Owner API/dashboard policies CI; live Telegram parity and Owner authorization OPEN |
+| V7-GAP-10 | P0 | Website and Telegram single Owner Command Service, default-deny core change authorization | PARTIAL — shared web/private Telegram STATUS/PAUSE/RESUME service and replay tests added; real Telegram delivery, wider command parity and Owner authorization OPEN |
 | V7-GAP-11 | P1 | Context minimization, retry budgets, provider quota and transparent partial results | PARTIAL — bounded evidence/source policies; real provider quota/cost measurements OPEN |
 | V7-GAP-12 | P0 | Retire or disable production access to duplicate SQLite/in-memory/demo/legacy election and Git paths | PARTIAL — Central-only bundle and MySQL authority; legacy source remains and production route isolation NOT ACCEPTED |
 

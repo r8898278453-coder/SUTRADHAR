@@ -164,3 +164,8 @@
 - **M6 exit:** V7-O04..O12, full Hostinger stress/restart, 8–10 PC tests and Owner approvals.
 
 **Done for this documentation slice:** three design documents committed to the existing fix branch. **Not done:** executing these V7 tests, migration, Electron implementation, Hostinger deployment, Master election across real PCs, browser provider acceptance, live protected merge, or production release.
+
+
+### 24 November — Telegram source acceptance scope
+
+V7-H09 and V7-O04 now have disposable MySQL HTTP fixtures: duplicate Telegram update plus concurrent web PAUSE produces one cluster state transition (separate command receipts for distinct channel requests); replay of the same update produces one durable Telegram receipt. Unauthorized and unrecognized commands cannot alter cluster state, and STATUS does not elect a Master. V7-O05 priority-change parity and real Telegram delivery/credential acceptance are still open. Sensitive approvals remain web-only. CI fixtures are not a live Telegram acceptance record.
