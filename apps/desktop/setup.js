@@ -59,6 +59,7 @@ async function loadStatus(){
       s.centralReport?.acknowledgedNow&&s.maintenanceHold==='NONE'&&
       s.enrollmentState==='SUBMITTED');
     select.disabled=!approvedReadOnly;
+    masterAvailable=approvedReadOnly;updateMasterControls();
     get('workerList').disabled=!approvedReadOnly;
     get('workerDetail').disabled=!approvedReadOnly;
     get('workerContext').disabled=!approvedReadOnly;
@@ -444,6 +445,110 @@ for(const [buttonId,action] of [['workerProviderBegin','BEGIN'],['workerProvider
     }finally{await loadStatus();}
   });
 }
+// Local form draft only; Central and Electron main independently validate.
+let masterDraft=[],masterReview=null,masterBusy=false,masterAvailable=false,masterRevision=0;
+const masterTaskFields=['masterTicket','masterBaseline','masterBranch','masterTitle','masterDescription','masterScopes','masterCriteria','masterDependencies','masterContracts'];
+function masterIdentity(){return {agent:get('workerAgent').value,project:get('masterProject').value,request:get('masterRequest').value};}
+const masterId=x=>typeof x==='string'&&!/[\r\n]/.test(x)&&/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(x);
+const masterHash=x=>typeof x==='string'&&x.length===64&&/^[a-f0-9]{64}$/.test(x);
+function updateMasterControls(){
+  const id=masterIdentity(),valid=[id.agent,id.project,id.request].every(masterId);
+  const pending=masterTaskFields.some(k=>get(k).value!=='');
+  const eligible=masterAvailable&&!masterBusy&&valid;
+  get('masterAdd').disabled=masterBusy||masterDraft.length>=10;
+  get('masterUndo').disabled=masterBusy||!masterDraft.length;
+  get('masterPreview').disabled=!eligible||pending||masterDraft.length<2;
+  get('masterReceipt').disabled=!eligible||!masterHash(get('masterDigest').value);
+  get('masterCommit').disabled=!eligible||pending||!masterReview||
+    masterReview.revision!==masterRevision||masterReview.agent!==id.agent||
+    masterReview.project!==id.project||masterReview.request!==id.request||
+    masterReview.digest!==get('masterDigest').value||get('masterReviewed').checked!==true;
+  for(const k of [...masterTaskFields,'masterRisk','masterProject','masterRequest','masterDigest','masterReviewed'])
+    get(k).disabled=masterBusy;
+}
+function invalidateMasterReview({clearDigest=true}={}){
+  masterRevision++;masterReview=null;get('masterReviewed').checked=false;
+  if(clearDigest)get('masterDigest').value='';
+  updateMasterControls();
+}
+function renderMasterDraft(){
+  get('masterDraft').value=JSON.stringify(masterDraft,null,2);
+  invalidateMasterReview();
+}
+for(const k of ['workerAgent','masterProject','masterRequest'])get(k).addEventListener('input',()=>{
+  invalidateMasterReview();get('masterResult').textContent='Selection changed. Inspect exact current draft before preview.';
+});
+for(const k of [...masterTaskFields,'masterRisk'])get(k).addEventListener('input',()=>invalidateMasterReview());
+get('masterDigest').addEventListener('input',()=>{get('masterReviewed').checked=false;updateMasterControls();});
+get('masterReviewed').addEventListener('change',updateMasterControls);
+get('masterAdd').addEventListener('click',()=>{
+  if(masterBusy||masterDraft.length>=10)return;
+  const lines=k=>get(k).value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  const t={ticket_id:get('masterTicket').value,baseline_sha:get('masterBaseline').value,
+    branch_name:get('masterBranch').value,title:get('masterTitle').value,
+    description:get('masterDescription').value,risk:get('masterRisk').value,
+    write_scopes:lines('masterScopes'),acceptance_criteria:lines('masterCriteria'),
+    dependencies:lines('masterDependencies'),contract_keys:lines('masterContracts')};
+  if(!masterId(t.ticket_id)||!/^[a-f0-9]{40}$/.test(t.baseline_sha)||
+     !/^ai\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(t.branch_name)||
+     !t.title.trim()||!t.description.trim()||!t.write_scopes.length||!t.acceptance_criteria.length||
+     masterDraft.some(x=>x.ticket_id.toLowerCase()===t.ticket_id.toLowerCase()||
+       x.branch_name.toLowerCase()===t.branch_name.toLowerCase())){
+    get('masterResult').textContent='Complete all required task fields; use a unique exact task ID and branch.';return;
+  }
+  const next=[...masterDraft,t];
+  if(new TextEncoder().encode(JSON.stringify(next)).length>65536){
+    get('masterResult').textContent='Draft exceeds 64 KiB. Use smaller reviewed batches.';return;
+  }
+  masterDraft=next;for(const k of masterTaskFields)get(k).value='';
+  renderMasterDraft();get('masterResult').textContent='Task added locally; no Central changes.';
+});
+get('masterUndo').addEventListener('click',()=>{
+  if(masterBusy)return;
+  masterDraft=masterDraft.slice(0,-1);renderMasterDraft();
+  get('masterResult').textContent='Last task removed locally. Review complete draft again.';
+});
+get('masterPreview').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterPreview').disabled)return;
+  const id=masterIdentity();invalidateMasterReview();
+  const revision=masterRevision;masterBusy=true;updateMasterControls();
+  const output=get('masterResult');output.textContent='Validating current Master and exact draft…';
+  try{
+    const r=await api.previewMasterBatch(id.agent,id.project,id.request,masterDraft);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    masterReview={...id,revision,digest:r.preview_sha256};
+    get('masterDigest').value=r.preview_sha256;
+    output.textContent='PREVIEW ONLY. Review the entire draft and admission summary; retain the request ID and digest.\n'+JSON.stringify(r,null,2);
+  }catch(error){output.textContent='Preview blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterCommit').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterCommit').disabled)return;
+  const id=masterIdentity(),digest=get('masterDigest').value,revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const output=get('masterResult');output.textContent='Native confirmation required; admitting exact reviewed batch once…';
+  try{
+    const r=await api.commitMasterBatch(id.agent,id.project,id.request,digest);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    output.textContent=r.canceled?'Canceled. No admission requested. Preview again.':
+      'HISTORICAL ADMISSION RECEIPT — not current task state or execution permission.\n'+JSON.stringify(r,null,2);
+  }catch(error){output.textContent='Admission not verified: '+String(error?.message||error)+
+    '. Preserve exact draft, request ID and digest. Inspect historical receipt before another decision; no automatic retry.';}
+  finally{masterBusy=false;invalidateMasterReview({clearDigest:false});await loadStatus();}
+});
+get('masterReceipt').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterReceipt').disabled)return;
+  const id=masterIdentity(),digest=get('masterDigest').value,revision=masterRevision;
+  masterBusy=true;masterReview=null;get('masterReviewed').checked=false;updateMasterControls();
+  const output=get('masterResult');output.textContent='Reading historical receipt only…';
+  try{
+    const r=await api.inspectMasterBatchReceipt(id.agent,id.project,id.request,digest);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    output.textContent='HISTORICAL ADMISSION RECEIPT — not current task state.\n'+JSON.stringify(r,null,2);
+  }catch(error){output.textContent='Receipt not verified: '+String(error?.message||error)+
+    '. Do not assume non-admission or create a replacement batch; consult Owner if uncertain.';}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
 function exactWorkerTicket(){
   const ticket=get('workerTicket').value.trim();
   if(!/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(ticket))
