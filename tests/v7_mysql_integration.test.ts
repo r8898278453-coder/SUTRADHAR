@@ -860,6 +860,36 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(originalStillLive.code,200);
     assert.equal(originalStillLive.body.status,'CLAIMED',
       'Rejected cross-base claim does not mutate the first worker ticket');
+    // Provider registry uses non-secret Owner declarations, never provider login proof.
+    {
+      const key='SUTRADHAR_PROVIDER_MAPPINGS_JSON',prior=process.env[key];
+      const binding={project_id:'project_integration',agent_id:b.agent_id,
+        provider:'CHATGPT_WEB',account_ref:'account_fixture',workspace_ref:'workspace_fixture'};
+      try{
+        process.env[key]=JSON.stringify([binding]);
+        const path='/v7/tasks/detail/ticket_qa_test';
+        const own=await b.signed(path,undefined,'GET');
+        assert.equal(own.code,200,JSON.stringify(own.body));
+        assert.equal(own.body.provider_mapping_state,'OWNER_DECLARED_UNVERIFIED');
+        assert.equal(own.body.provider_mappings.length,1);
+        assert.equal(own.body.provider_mappings[0].workspace_ref,binding.workspace_ref);
+        assert.equal(own.body.provider_mappings[0].provider_mapping_verified,false);
+        assert.equal(own.body.provider_mappings[0].automatic_execution_allowed,false);
+        const other=await c.signed(path,undefined,'GET');
+        assert.equal(other.code,200,JSON.stringify(other.body));
+        assert.equal(other.body.provider_mapping_state,'NOT_APPLICABLE');
+        assert.deepEqual(other.body.provider_mappings,[]);
+        process.env[key]=JSON.stringify([binding,{...binding,project_id:'project_other_base'}]);
+        const invalid=await b.signed(path,undefined,'GET');
+        assert.equal(invalid.code,200);
+        assert.equal(invalid.body.provider_mapping_state,'INVALID_OWNER_CONFIGURATION');
+        assert.deepEqual(invalid.body.provider_mappings,[]);
+        delete process.env[key];
+        const missing=await b.signed(path,undefined,'GET');
+        assert.equal(missing.code,200);
+        assert.equal(missing.body.provider_mapping_state,'UNCONFIGURED');
+      }finally{if(prior===undefined)delete process.env[key];else process.env[key]=prior;}
+    }
     // Replaying the identical durable claim after a lost HTTP reply MUST
     // return the original lease, never create another lease or worktree.
     const recoveredClaim=await b.signed('/v7/tasks/claim',claimPayload);
