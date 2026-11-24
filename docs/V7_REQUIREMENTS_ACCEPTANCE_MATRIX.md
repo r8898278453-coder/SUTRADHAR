@@ -212,3 +212,16 @@ Last fully green source baseline `93993a0`; shared-contract HEAD `01ff1ce` depen
 | V7-B06, B08, B09 | tests/desktop_worker_inspection.test.cjs registry provenance outside prompt and invalid version rejection | Live authorized provider, actual tokens/quota and secret review |
 
 All new source evidence awaits exact-head CI. Original 71 scenarios retained; no LIVE_ACCEPTED promotion. G0–G7 HOLD.
+
+
+## Incremental Owner registry editor regression coverage
+
+Verified previous source baseline `215e5ee`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116654) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116645) both SUCCESS. New Owner registry editor is CODED / CI PENDING at this update.
+
+| Requirement | New source evidence | Still required |
+|---|---|---|
+| V7-P01, B05, O09 | tests/v7_owner_dashboard_session.test.cjs: explicit registry load, local-only alias draft, full-list confirmation, invalid response/alias refusal | Real browser operation, actual provider identity and permitted workspace isolation |
+| V7-P03, T02, O06, O11 | One-shot expected-version POST, duplicate click suppression, empty replacement consent, current version/digest/list readback, newer revision hold | Real Owner usability and revocation/restore test |
+| V7-B06, B08, B09 | Stale GET/POST responses after Owner logout ignored; no additional provider action | Live permission, physical assisted continuation, measured quota/tokens |
+
+New source awaits exact-head CI. Original 71 acceptance scenario definitions remain unchanged; no LIVE_ACCEPTED promotion or production gate change.
