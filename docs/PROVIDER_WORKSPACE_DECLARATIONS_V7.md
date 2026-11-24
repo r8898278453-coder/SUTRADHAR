@@ -110,3 +110,18 @@ At `82e2a8c`, [application CI](https://github.com/r8898278453-coder/SUTRADHAR/ac
 5. Closure does not requeue the ticket, release reservations, authenticate a provider, terminate a session or establish actual transmitted context. Separate Git/QA and ordinary ticket reconciliation remain required.
 
 The dashboard does not display the original lease identifier, raw prompt or provider session credentials. Existing API remains available to authorized operators. VM browser-model and disposable MySQL fixtures are not actual Hostinger/browser/provider acceptance. Packaged Desktop attempt mutation controls remain open; no production deployment or schema migration. G0–G7 HOLD.
+
+
+
+## Packaged Desktop manual provider attempt controls — staging alpha
+
+Verified exact baseline `1193b3b`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45459215514) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45459215696) both SUCCESS, including the previous strict-null correction and Owner interruption review dashboard. New packaged Desktop attempt controls and task-version admission are CODED / EXACT-HEAD CI PENDING.
+
+1. Use the original approved Windows PC and agent, with the existing local claim receipt, live Central acknowledgement and current lease. Keep the original trusted Git worktree. Save a fresh checkpoint first.
+2. Select the exact ticket, click **Preview compact provider context (manual only)**, review the separately displayed non-secret registry declarations, and inspect the dedicated read-only compact context field for secrets and scope. Independently verify provider permission and the actual account/workspace. The preview is compact JSON with an 8192-byte ceiling, not a provider tokenizer or quota estimate.
+3. Select the provider, enter the exact reviewed SHA-256 displayed by the preview, and click **Record reviewed attempt BEGIN (no provider send)**. Confirm the native dialog only after review. Electron main reloads the original sealed receipt, checks the live signed lease and exact Git worktree, reads current task details and recomputes compact JSON/digest. A mismatch blocks the mutation. Central rechecks the current task version, registry version, binding digest and checkpoint generation under transaction.
+4. To record an interruption, inspect signed task detail and enter its exact attempt ID. Click **Record interruption** and confirm. OPEN/INTERRUPTED holds a new preview and candidate submission. Do not repeat external operations on a lost response.
+5. Review the actual external session and local worktree, save a newer checkpoint and select **Close after independent review and fresh checkpoint** for the exact attempt. Native confirmation records the review assertions; same-lease closure does not authenticate or restart the provider.
+6. Each action sends one allowlisted signed metadata command, then reads back current state; uncertain or conflicting results require fresh signed inspection, not automatic retries. For a revoked original lease, use the separate Owner review dashboard. Never treat closure as permission to requeue.
+
+The renderer cannot submit a generic signed request, raw prompt, session ID, credential or provider response. Main recomputes the reviewed compact digest from current task metadata; this is not proof of the actual transmitted bytes or independent provider account verification. The trusted CLI BEGIN now supplies expected_task_version too; rebuild both components together. No provider requests or external continuation are performed. Real Windows OS-vault, provider and Hostinger acceptance, actual usage accounting and target ledger performance/restore remain open. G0–G7 HOLD.
