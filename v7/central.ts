@@ -225,7 +225,7 @@ async function readyMaster(c:PoolConnection,nodeId:string,agentId:string,epoch:a
   const live=await one(c,'SELECT a.agent_id FROM v7_agents a JOIN v7_nodes n ON n.node_id=a.node_id WHERE a.agent_id=? AND a.node_id=? AND a.state="APPROVED" AND n.state="APPROVED"',[agentId,nodeId]);
   if(!live)fault('MASTER_REVOKED',403);
   const now=await dbNow(c),until=ld.lease_until?Date.parse(ld.lease_until+'Z'):0;
-  if(until<=now)fault('LEASE_EXPIRED',409);
+  if(!Number.isFinite(until)||until<=now)fault('LEASE_EXPIRED',409);
   if(ld.phase!=='READY')fault('MASTER_RECOVERING',423);
   return ld;
 }
@@ -1616,7 +1616,9 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
     const ld=await readyMaster(c,node.node_id,agentId,d.expected_master_epoch);
     return idem(c,agentId,d.request_id,'TASK_PLAN',d,async()=>{
       await checkTaskPlan(c,p);
-      return persistTaskPlan(c,p,agentId,Number(ld.epoch));
+      const result=await persistTaskPlan(c,p,agentId,Number(ld.epoch));
+      await readyMaster(c,node.node_id,agentId,d.expected_master_epoch);
+      return result;
     });
   });
 }));
@@ -1654,6 +1656,7 @@ app.post('/v7/tasks/plan-batch/preview',jsonRoute(async req=>{
     await readyMaster(c,node.node_id,b.agentId,b.epoch);
     const seen=new Set<string>();
     for(const p of b.ordered){await checkTaskPlan(c,p,seen);seen.add(p.ticketId);}
+    await readyMaster(c,node.node_id,b.agentId,b.epoch);
     return {read_only:true,project_id:b.projectId,epoch:b.epoch,request_id:b.requestId,
       preview_sha256:b.preview_sha256,plan_order:b.ordered.map(p=>p.ticketId),
       tickets:b.ordered.map(p=>({...taskPlanSummary(p),dependencies:p.deps,write_scopes:p.scope,contract_keys:p.contractKeys})),
@@ -1674,6 +1677,8 @@ app.post('/v7/tasks/plan-batch',jsonRoute(async req=>{
       }
       await event(c,'TASK_BATCH_PLANNED',b.agentId,b.epoch,b.projectId,
         {preview_sha256:b.preview_sha256,ticket_ids:b.ordered.map(p=>p.ticketId)});
+      // Recheck database-clock authority before finalizing the entire receipt.
+      await readyMaster(c,node.node_id,b.agentId,b.epoch);
       return {accepted:true,project_id:b.projectId,epoch:b.epoch,request_id:b.requestId,
         preview_sha256:b.preview_sha256,plan_order:b.ordered.map(p=>p.ticketId),tickets,
         automatic_execution_allowed:false,semantic_discovery_verified:false,baseline_verified:false};
