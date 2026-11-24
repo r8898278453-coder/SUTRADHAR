@@ -77,6 +77,9 @@
 <button id="masterRecover" class="secondary" type="button" disabled>Recover pending reviewed batch after restart</button>
 <p class="hint">A confirmed admission is encrypted locally before sending. If interrupted, recover its exact draft and inspect its receipt. Unresolved admission blocks new batches on this PC. Unconfirmed drafts are not saved.</p>
 <p class="hint">All tasks in this Desktop batch must use the inspected local tracking ref SHA. If downstream work needs upstream code not yet merged, plan that downstream work later. Refresh/reinspect if the local ref changes.</p>
+<button id="masterPlanningContext" class="secondary" type="button" disabled>Prepare compact planning context (local preview only)</button>
+<p id="masterPlanningContextStatus" class="hint" role="status">No context prepared. Review for secrets before manually sharing. Byte reduction is not a token measurement.</p>
+<textarea id="masterPlanningContextText" rows="5" readonly spellcheck="false" aria-label="Exact compact planning context"></textarea>
 <button id="masterPreview" class="secondary" type="button" disabled>Validate and preview exact batch</button>
 <label for="masterDigest">Reviewed preview digest (retain for receipt lookup)</label><input id="masterDigest" maxlength="64" autocomplete="off" spellcheck="false">
 <label><input id="masterReviewed" type="checkbox"> I independently reviewed every task, baseline, dependency, scope, contract and criterion; no provider or Git work is authorized by admission.</label>
