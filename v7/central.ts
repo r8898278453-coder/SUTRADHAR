@@ -27,7 +27,7 @@ import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,Q
 import sharedContract from '../packages/shared/contract.json';
 import {publicCentralFiles} from './public_files.ts';
 import {parseOwnerTelegram,telegramReceiptText} from './telegram_owner.ts';
-import {declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot} from './provider_mappings.ts';
+import {declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot,validateProviderAttempt} from './provider_mappings.ts';
 import {verifyRecoverySnapshot} from './recovery_validation.ts';
 
 const app=express();
@@ -328,6 +328,23 @@ async function currentProviderRegistry(c:PoolConnection){
   try{
     return verifyProviderRegistrySnapshot(typeof row.payload_json==='string'?JSON.parse(row.payload_json):row.payload_json);
   }catch{fault('PROVIDER_REGISTRY_LEDGER_INVALID',423);}
+}
+// Single outstanding local attempt per ticket, persisted in the same
+// transaction as the signed command receipt. Missing history means no
+// recorded attempt, not proof that no external provider activity occurred.
+async function latestProviderAttempt(c:PoolConnection,ticketId:string){
+  const row=await one(c,'SELECT payload_json FROM v7_events WHERE event_type="PROVIDER_ATTEMPT_STATE" '+
+    'AND resource_id=? ORDER BY event_id DESC LIMIT 1',[ticketId]);
+  if(!row)return null;
+  try{
+    const x=validateProviderAttempt(typeof row.payload_json==='string'?JSON.parse(row.payload_json):row.payload_json);
+    if(x.ticket_id!==ticketId)throw Error('Ticket mismatch');
+    return x;
+  }catch{fault('PROVIDER_ATTEMPT_LEDGER_INVALID',423);}
+}
+async function requireNoOpenProviderAttempt(c:PoolConnection,ticketId:string){
+  const attempt=await latestProviderAttempt(c,ticketId);
+  if(attempt&&attempt.state!=='CLOSED')fault('PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED',423);
 }
 async function ownerCommand(c:PoolConnection,actor:string,body:any,onFresh?:()=>void){
   const command=requireStr(body.command,40);
@@ -687,10 +704,28 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any,onFresh?:()=>
         scope_reservation_preserved:true,owner_remote_review_required:true,
         automatic_reassignment_allowed:false,version:Number(t.version)+1,
         epoch:Number(ld.epoch)};
+    }else if(command==='RESOLVE_PROVIDER_ATTEMPT'){
+      if(actor!=='owner:web')fault('PROVIDER_ATTEMPT_WEB_OWNER_REQUIRED',403);
+      const ticketId=requireId(payload.ticket_id),attemptId=requireId(payload.attempt_id);
+      if(payload.external_session_reviewed!==true||payload.worktree_reviewed!==true||
+         payload.no_automatic_retry_confirmed!==true||
+         Object.keys(payload).sort().join('|')!=='attempt_id|external_session_reviewed|no_automatic_retry_confirmed|ticket_id|worktree_reviewed')
+        fault('PROVIDER_ATTEMPT_OWNER_REVIEW_REQUIRED',400);
+      const t=await one(c,'SELECT ticket_id,status FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
+      const lease=await one(c,'SELECT lease_id,revoked FROM v7_leases WHERE ticket_id=?',[ticketId]);
+      const attempt=await latestProviderAttempt(c,ticketId);
+      if(!t||t.ticket_id!==ticketId||t.status!=='RECONCILIATION_REQUIRED'||!lease||Number(lease.revoked)!==1||
+         !attempt||attempt.attempt_id!==attemptId||attempt.lease_id!==lease.lease_id||attempt.state==='CLOSED')
+        fault('PROVIDER_ATTEMPT_OWNER_STATE_INVALID',409);
+      const closed=validateProviderAttempt({...attempt,state:'CLOSED',resolution:'OWNER_REVIEW'});
+      await event(c,'PROVIDER_ATTEMPT_STATE',actor,Number(ld.epoch),ticketId,closed);
+      result={ticket_id:ticketId,attempt_id:attemptId,state:'CLOSED',
+        owner_review_recorded:true,automatic_execution_allowed:false,automatic_reassignment_allowed:false};
     }else if(command==='RECONCILE_TICKET'){
       const id=requireId(payload.ticket_id),reason=requireStr(payload.reason,500);
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[id]);
       if(!t||t.status!=='RECONCILIATION_REQUIRED')fault('TICKET_NOT_RECONCILABLE',409);
+      await requireNoOpenProviderAttempt(c,id);
       // A ticket with any recorded Git publication has a separate recovery
       // protocol; treating it as fresh READY work could duplicate remote effects.
       if(await one(c,'SELECT ticket_id FROM v7_git_jobs WHERE ticket_id=?',[id]))
@@ -800,6 +835,17 @@ app.post('/v7/nodes/enroll',jsonRoute(async req=>{
       [node_id,public_key_pem,display_name,typeof general_location==='string'?general_location.slice(0,150):null]);
     await event(c,'NODE_ENROLL_REQUEST','enrollment',0,node_id);
     return {accepted:true,node_id,state:'PENDING',owner_approval_required:true};
+  });
+}));
+app.get('/v7/owner/provider-attempt/:ticketId',jsonRoute(async req=>{
+  admin(req);
+  const ticketId=requireId(req.params.ticketId);
+  return transaction(async c=>{
+    await leader(c,false);
+    const t=await one(c,'SELECT ticket_id,status FROM v7_tickets WHERE ticket_id=?',[ticketId]);
+    if(!t||t.ticket_id!==ticketId)fault('TASK_NOT_FOUND',404);
+    return {ticket_id:ticketId,ticket_status:t.status,attempt:await latestProviderAttempt(c,ticketId),
+      read_only:true,automatic_execution_allowed:false,provider_mapping_verified:false};
   });
 }));
 app.get('/v7/owner/provider-registry',jsonRoute(async req=>{
@@ -1398,6 +1444,8 @@ app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
       }catch{providerMappingState='INVALID_OWNER_CONFIGURATION';providerMappingSource='INVALID';providerRegistryVersion=null;}
     }
     const contractKeys=(await taskContractDeclarations(c,[t.ticket_id])).get(t.ticket_id)??null;
+    const providerAttempt=Number(access.can_develop)===1&&t.worker_agent_id===agentId?
+      await latestProviderAttempt(c,t.ticket_id):null;
     return {ticket_id:t.ticket_id,project_id:t.project_id,repository:p.repository,base_branch:p.base_branch,
       contract_keys:contractKeys,
       title:t.title,description:t.description,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
@@ -1406,7 +1454,10 @@ app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
       candidate_head_sha:t.candidate_head_sha,candidate_tree_sha:t.candidate_tree_sha,
       latest_checkpoint:latest,provider_mapping_state:providerMappingState,
       provider_mappings:providerMappings,provider_mapping_source:providerMappingSource,
-      provider_registry_version:providerRegistryVersion};
+      provider_registry_version:providerRegistryVersion,provider_attempt:providerAttempt?{
+        attempt_id:providerAttempt.attempt_id,state:providerAttempt.state,registry_version:providerAttempt.registry_version,
+        checkpoint_generation:providerAttempt.checkpoint_generation,context_sha256:providerAttempt.context_sha256,
+        provider:providerAttempt.provider,resolution:providerAttempt.resolution}:null};
   });
 }));
 async function recoveryManifest(c:PoolConnection){
@@ -1573,6 +1624,7 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
       await rows(c,'SELECT project_id FROM v7_projects '+
         'WHERE repository=? ORDER BY project_id FOR UPDATE',[project.repository]);
       const locked=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
+      await requireNoOpenProviderAttempt(c,ticketId);
       if(locked.status!=='READY'||(d.expected_version!==undefined&&Number(d.expected_version)!==Number(locked.version)))
         fault('TASK_NOT_READY',409);
       const outstanding=await rows(c,'SELECT dependency_id FROM v7_dependencies WHERE ticket_id=?',[ticketId]);
@@ -1734,6 +1786,63 @@ app.post('/v7/tasks/checkpoint',jsonRoute(async req=>{
     });
   });
 }));
+// Manual attempt recording is opt-in, not a provider request or grant.
+// No raw prompt/response, credentials, remote chat ID or actual usage claims.
+app.post('/v7/tasks/provider-attempt',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body||{},id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
+  const leaseId=requireId(d.lease_id);
+  const action=d.action;
+  if(!['BEGIN','INTERRUPT','CLOSE'].includes(action))fault('PROVIDER_ATTEMPT_INPUT_INVALID',400);
+  const common='action|agent_id|expected_master_epoch|lease_id|request_id|ticket_id';
+  const fields=(action==='BEGIN'?[...common.split('|'),'binding_sha256','checkpoint_generation','checkpoint_sha256','context_sha256','provider','registry_version']:
+    action==='CLOSE'?[...common.split('|'),'attempt_id','external_session_reviewed','worktree_reviewed']:
+    [...common.split('|'),'attempt_id']).sort().join('|');
+  if(Object.keys(d).sort().join('|')!==fields)fault('PROVIDER_ATTEMPT_INPUT_INVALID',400);
+  return transaction(async c=>{
+    const t=await workerLease(c,node.node_id,id,ticket,leaseId,d.expected_master_epoch);
+    return idem(c,id,d.request_id,'PROVIDER_ATTEMPT',d,async()=>{
+      if(!['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status))fault('PROVIDER_ATTEMPT_TASK_STATE_INVALID',409);
+      const prior=await latestProviderAttempt(c,ticket);
+      let next;
+      if(action==='BEGIN'){
+        if(prior&&prior.state!=='CLOSED')fault('PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED',423);
+        if(t.status!=='CHECKPOINTED')fault('CHECKPOINT_REQUIRED',409);
+        const registry=await currentProviderRegistry(c);
+        if(!registry||registry.version!==d.registry_version)fault('PROVIDER_REGISTRY_VERSION_CONFLICT',409);
+        const mapping=declaredProviderMappings(JSON.stringify(registry.bindings),t.project_id,id)
+          .find(m=>m.provider===d.provider&&m.binding_sha256===d.binding_sha256);
+        if(!mapping)fault('PROVIDER_ATTEMPT_BINDING_REQUIRED',409);
+        const cp=await one(c,'SELECT generation,agent_id,epoch,summary,next_action,content_sha256 FROM v7_checkpoints WHERE ticket_id=? ORDER BY generation DESC LIMIT 1',[ticket]);
+        if(!cp||cp.agent_id!==id||Number(cp.epoch)!==Number(d.expected_master_epoch)||
+           Number(cp.generation)!==d.checkpoint_generation||cp.content_sha256!==d.checkpoint_sha256||
+           digest(cp.summary+'\n'+cp.next_action)!==cp.content_sha256)fault('CHECKPOINT_REQUIRED',409);
+        try{next=validateProviderAttempt({attempt_id:'attempt_'+crypto.randomUUID().replace(/-/g,''),
+          ticket_id:ticket,agent_id:id,lease_id:leaseId,epoch:Number(d.expected_master_epoch),
+          registry_version:d.registry_version,provider:d.provider,binding_sha256:d.binding_sha256,
+          checkpoint_generation:d.checkpoint_generation,checkpoint_sha256:d.checkpoint_sha256,
+          context_sha256:d.context_sha256,state:'OPEN',resolution:null});}
+        catch{fault('PROVIDER_ATTEMPT_INPUT_INVALID',400);}
+      }else{
+        if(!prior||prior.attempt_id!==d.attempt_id||prior.agent_id!==id||prior.lease_id!==leaseId||
+           prior.epoch!==Number(d.expected_master_epoch)||prior.state==='CLOSED')
+          fault('PROVIDER_ATTEMPT_STATE_INVALID',409);
+        if(action==='INTERRUPT'){
+          if(prior.state!=='OPEN')fault('PROVIDER_ATTEMPT_STATE_INVALID',409);
+          next=validateProviderAttempt({...prior,state:'INTERRUPTED'});
+        }else{
+          if(d.external_session_reviewed!==true||d.worktree_reviewed!==true||t.status!=='CHECKPOINTED')
+            fault('PROVIDER_ATTEMPT_REVIEW_REQUIRED',409);
+          const cp=await one(c,'SELECT generation,agent_id,epoch,summary,next_action,content_sha256 FROM v7_checkpoints WHERE ticket_id=? ORDER BY generation DESC LIMIT 1',[ticket]);
+          if(!cp||cp.agent_id!==id||Number(cp.epoch)!==prior.epoch||Number(cp.generation)<=prior.checkpoint_generation||
+             digest(cp.summary+'\n'+cp.next_action)!==cp.content_sha256)fault('PROVIDER_ATTEMPT_FRESH_CHECKPOINT_REQUIRED',409);
+          next=validateProviderAttempt({...prior,state:'CLOSED',resolution:'WORKER_CHECKPOINT'});
+        }
+      }
+      await event(c,'PROVIDER_ATTEMPT_STATE',id,Number(d.expected_master_epoch),ticket,next!);
+      return {accepted:true,attempt:next!,automatic_execution_allowed:false,provider_mapping_verified:false,provider_sent:false};
+    });
+  });
+}));
 app.post('/v7/tasks/submit',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{},id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
   const head=requireSha(d.candidate_head_sha),tree=requireSha(d.candidate_tree_sha);
@@ -1743,6 +1852,7 @@ app.post('/v7/tasks/submit',jsonRoute(async req=>{
     const t=await workerLease(c,node.node_id,id,ticket,leaseId,d.expected_master_epoch);
     return idem(c,id,d.request_id,'TASK_SUBMIT',d,async()=>{
     if(!['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status))fault('SUBMISSION_NOT_ALLOWED',409);
+    await requireNoOpenProviderAttempt(c,ticket);
     // A recovered/reclaimed ticket starts CLAIMED even when historical
     // checkpoints exist. Require a new checkpoint transition before submission
     // (also after failed QA), rather than treating old handoff as fresh proof.
