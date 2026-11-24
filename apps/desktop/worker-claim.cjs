@@ -474,6 +474,20 @@ async function commitMasterBatch({origin,agentId,prepared,signer,fetcher=fetch,b
     return {...result,historical_receipt:true};
   }catch{fail('WORKER_BATCH_OUTCOME_UNCERTAIN_INSPECT_RECEIPT_NO_RETRY');}
 }
+function validateBatchCancellation(x,body,order=null){
+  if(!x||Object.keys(x).sort().join('|')!=='agent_id|automatic_execution_allowed|epoch|owner_review_recorded|plan_order|preview_sha256|project_id|request_id|resolution_id|state'||
+     x.agent_id!==body.agent_id||x.project_id!==body.project_id||x.request_id!==body.request_id||
+     x.preview_sha256!==body.preview_sha256||x.state!=='ADMISSION_CANCELLED'||
+     x.owner_review_recorded!==true||x.automatic_execution_allowed!==false||
+     typeof x.resolution_id!=='string'||!/^batch_cancel_[a-f0-9]{32}$/.test(x.resolution_id)||
+     !Number.isSafeInteger(x.epoch)||x.epoch<1||
+     !Array.isArray(x.plan_order)||x.plan_order.length<2||x.plan_order.length>10||
+     x.plan_order.some(id=>typeof id!=='string'||!ID.test(id)||/[\r\n]/.test(id))||
+     new Set(x.plan_order.map(id=>id.toLowerCase())).size!==x.plan_order.length||
+     (order&&JSON.stringify(x.plan_order)!==JSON.stringify(order)))
+    fail('WORKER_BATCH_CANCELLATION_INVALID');
+  return {...x};
+}
 async function inspectMasterBatchReceipt({origin,agentId,projectId,requestId,reviewedDigest,signer,fetcher=fetch}){
   if(!ORIGIN.test(origin||'')||typeof reviewedDigest!=='string'||reviewedDigest.length!==64||
      !/^[a-f0-9]{64}$/.test(reviewedDigest))fail('WORKER_BATCH_RECEIPT_INPUT_DENIED');
@@ -481,6 +495,10 @@ async function inspectMasterBatchReceipt({origin,agentId,projectId,requestId,rev
   const reply=await signedRequest({origin,signer,method:'POST',uri:'plan-batch-receipt',agentId,payload:body,fetcher});
   if(reply?.read_only!==true||reply.historical_receipt!==true||reply.automatic_execution_allowed!==false)
     fail('WORKER_BATCH_RECEIPT_INVALID');
+  if(reply.resolution){
+    if(reply.receipt)fail('WORKER_BATCH_RECEIPT_INVALID');
+    return {resolution:validateBatchCancellation(reply.resolution,body),historical_receipt:true,automatic_execution_allowed:false};
+  }
   return {...validateBatchReceipt(reply.receipt,body,{historical:true}),historical_receipt:true};
 }
 async function listMasterProjects({origin,agentId,signer,fetcher=fetch,beforeMutation=()=>{}}){
@@ -573,6 +591,14 @@ function createMasterBatchJournal({dir,safeStorage,nodeId}){
     }
   }
   function validatedReceipt(intent,r){
+    if(r?.resolution){
+      if(Object.keys(r).sort().join('|')!=='automatic_execution_allowed|historical_receipt|resolution'||
+         r.historical_receipt!==true||r.automatic_execution_allowed!==false)
+        fail('MASTER_BATCH_JOURNAL_RECEIPT_MISMATCH');
+      return {resolution:validateBatchCancellation(r.resolution,
+        {...intent.body,preview_sha256:intent.review.preview_sha256},intent.review.plan_order),
+        historical_receipt:true,automatic_execution_allowed:false};
+    }
     const v=validateBatchReceipt({...r,accepted:true}, {...intent.body,preview_sha256:intent.review.preview_sha256});
     if(JSON.stringify(v)!==JSON.stringify(intent.review)||r.historical_receipt!==true)
       fail('MASTER_BATCH_JOURNAL_RECEIPT_MISMATCH');
