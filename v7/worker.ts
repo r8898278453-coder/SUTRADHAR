@@ -361,6 +361,51 @@ async function publish(id:string,reconcileOnly=false){
     throw e;
   }finally{if(patchFile){try{fs.unlinkSync(patchFile);}catch{}}}
 }
+// Explicit manual record only. After an uncertain POST, read signed detail
+// before deciding what to do; never automatically repeat a provider action.
+async function providerAttempt(id:string){
+  const kind=process.argv[5];
+  if(!['begin','interrupt','close'].includes(kind||''))throw Error('provider-attempt <agent> <ticket> {begin PROVIDER CONTEXT_SHA256|interrupt ATTEMPT_ID|close ATTEMPT_ID REVIEWED}');
+  const local=read(id);
+  await resume(id,true);
+  const t=await request('/v7/tasks/detail/'+id,undefined,'GET');
+  if(t.ticket_id!==id||t.worker_agent_id!==agentId)throw Error('PROVIDER_ATTEMPT_TASK_MISMATCH');
+  const body:any={action:kind.toUpperCase(),request_id:'provider_'+token(),agent_id:agentId,
+    ticket_id:id,lease_id:local.lease_id,expected_master_epoch:local.epoch};
+  if(kind==='begin'){
+    const provider=process.argv[6],context_sha256=process.argv[7];
+    const mapping=t.provider_mappings?.find((m:any)=>m.provider===provider);
+    if(t.status!=='CHECKPOINTED'||t.provider_mapping_source!=='MYSQL_OWNER_REGISTRY'||
+       !mapping||!/^[0-9a-f]{64}$/.test(context_sha256||'')||
+       !t.latest_checkpoint||t.provider_attempt&&t.provider_attempt.state!=='CLOSED')
+      throw Error('PROVIDER_ATTEMPT_BEGIN_REQUIRES_CURRENT_MAPPING_AND_CHECKPOINT');
+    Object.assign(body,{provider,context_sha256,registry_version:t.provider_registry_version,
+      binding_sha256:mapping.binding_sha256,checkpoint_generation:Number(t.latest_checkpoint.generation),
+      checkpoint_sha256:t.latest_checkpoint.content_sha256});
+  }else{
+    const attempt_id=process.argv[6];
+    if(!/^attempt_[a-f0-9]{32}$/.test(attempt_id||'')||t.provider_attempt?.attempt_id!==attempt_id||
+       t.provider_attempt.state==='CLOSED')throw Error('PROVIDER_ATTEMPT_STATE_MISMATCH');
+    body.attempt_id=attempt_id;
+    if(kind==='close'){
+      if(process.argv[7]!=='REVIEWED')throw Error('Review external session and exact local worktree before using REVIEWED');
+      Object.assign(body,{external_session_reviewed:true,worktree_reviewed:true});
+    }
+  }
+  try{
+    const result=await request('/v7/tasks/provider-attempt',body);
+    const latest=await request('/v7/tasks/detail/'+id,undefined,'GET');
+    const expected=kind==='begin'?'OPEN':kind==='interrupt'?'INTERRUPTED':'CLOSED';
+    if(result?.accepted!==true||result.automatic_execution_allowed!==false||
+       result.provider_mapping_verified!==false||result.provider_sent!==false||
+       result.attempt?.state!==expected||latest.provider_attempt?.attempt_id!==result.attempt.attempt_id||
+       latest.provider_attempt?.state!==expected)throw Error('PROVIDER_ATTEMPT_READBACK_REQUIRED');
+    console.log(JSON.stringify({attempt:latest.provider_attempt,automatic_execution_allowed:false,
+      note:'Local metadata only. No provider session or permission verified.'},null,2));
+  }catch{
+    throw Error('PROVIDER_ATTEMPT_OUTCOME_UNCERTAIN: inspect signed task detail and review before another command; no automatic retry');
+  }
+}
 async function main(){
   if(action==='list')console.log(JSON.stringify(await request('/v7/tasks/available',undefined,'GET'),null,2));
   else if(action==='detail')console.log(JSON.stringify(await request('/v7/tasks/detail/'+ticketId,undefined,'GET'),null,2));
@@ -368,11 +413,12 @@ async function main(){
   else if(action==='resume')await resume(ticketId);
   else if(action==='renew')await renew(ticketId);
   else if(action==='checkpoint')await checkpoint(ticketId);
+  else if(action==='provider-attempt')await providerAttempt(ticketId);
   else if(action==='submit')await submit(ticketId);
   else if(action==='qa')await qa(ticketId);
   else if(action==='qa-review')await qaReviewStatus(ticketId);
   else if(action==='publish')await publish(ticketId,false);
   else if(action==='reconcile-push')await publish(ticketId,true);
-  else throw new Error('Usage: worker {list|detail|prepare|resume|renew|checkpoint|submit|qa-review|publish|reconcile-push} AGENT_ID [TICKET_ID] [reason|summary_file] [next_action]');
+  else throw new Error('Usage: worker {list|detail|prepare|resume|renew|checkpoint|provider-attempt|submit|qa-review|publish|reconcile-push} AGENT_ID [TICKET_ID] [reason|summary_file] [next_action]');
 }
 main().catch(e=>{console.error('Worker failed closed:',e.message);process.exitCode=1;});
