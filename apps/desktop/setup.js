@@ -447,7 +447,7 @@ for(const [buttonId,action] of [['workerProviderBegin','BEGIN'],['workerProvider
 }
 // Local form draft only; Central and Electron main independently validate.
 let masterDraft=[],masterReview=null,masterBusy=false,masterAvailable=false,masterRevision=0;
-let masterCatalogAgent=null,masterCatalogItems=[],masterRecovered=false;
+let masterCatalogAgent=null,masterCatalogItems=[],masterRecovered=false,masterLocalBaseline=null;
 const masterTaskFields=['masterTicket','masterBaseline','masterBranch','masterTitle','masterDescription','masterScopes','masterCriteria','masterDependencies','masterContracts'];
 function masterIdentity(){return {agent:get('workerAgent').value,project:get('masterProject').value,request:get('masterRequest').value};}
 const masterId=x=>typeof x==='string'&&!/[\r\n]/.test(x)&&/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(x);
@@ -463,9 +463,11 @@ function updateMasterControls(){
   get('masterRecover').disabled=masterBusy||!masterAvailable||!masterId(id.agent);
   get('masterAdd').disabled=masterBusy||masterRecovered||masterDraft.length>=10;
   get('masterUndo').disabled=masterBusy||masterRecovered||!masterDraft.length;
-  get('masterPreview').disabled=!eligible||masterRecovered||pending||masterDraft.length<2;
+  const baselineMatches=masterLocalBaseline&&masterLocalBaseline.agent===id.agent&&masterLocalBaseline.project===id.project&&masterDraft.every(t=>t.baseline_sha===masterLocalBaseline.sha);
+  get('masterBaselineInspect').disabled=!masterAvailable||masterBusy||masterRecovered||!masterId(id.agent)||!masterId(id.project);
+  get('masterPreview').disabled=!eligible||masterRecovered||pending||masterDraft.length<2||!baselineMatches;
   get('masterReceipt').disabled=!eligible||!masterHash(get('masterDigest').value);
-  get('masterCommit').disabled=!eligible||masterRecovered||pending||!masterReview||
+  get('masterCommit').disabled=!eligible||masterRecovered||pending||!baselineMatches||!masterReview||
     masterReview.revision!==masterRevision||masterReview.agent!==id.agent||
     masterReview.project!==id.project||masterReview.request!==id.request||
     masterReview.digest!==get('masterDigest').value||get('masterReviewed').checked!==true;
@@ -482,6 +484,7 @@ function renderMasterDraft(){
   invalidateMasterReview();
 }
 for(const k of ['workerAgent','masterProject','masterRequest'])get(k).addEventListener('input',()=>{
+  if(k!=='masterRequest')clearMasterBaseline();
   invalidateMasterReview();get('masterResult').textContent='Selection changed. Inspect exact current draft before preview.';
 });
 for(const k of [...masterTaskFields,'masterRisk'])get(k).addEventListener('input',()=>invalidateMasterReview());
@@ -537,8 +540,35 @@ get('masterProjectChoice').addEventListener('change',()=>{
   if(masterBusy||masterRecovered||masterCatalogAgent!==masterIdentity().agent)return;
   const p=masterCatalogItems.find(x=>x.project_id===get('masterProjectChoice').value);
   if(!p)return;
-  get('masterProject').value=p.project_id;invalidateMasterReview();
+  get('masterProject').value=p.project_id;clearMasterBaseline();invalidateMasterReview();
   get('masterResult').textContent='Selected '+p.repository+' / '+p.base_branch+'. Independently review baseline SHA.';
+});
+function clearMasterBaseline(){
+  masterLocalBaseline=null;
+  get('masterBaselineStatus').textContent='Local tracking ref not inspected for current selection. Remote freshness is unverified.';
+}
+get('masterBaselineInspect').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterBaselineInspect').disabled)return;
+  const id=masterIdentity();
+  clearMasterBaseline();invalidateMasterReview();
+  const revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const status=get('masterBaselineStatus');
+  status.textContent='Select your trusted local Git checkout. No fetch or checkout will run.';
+  try{
+    const r=await api.inspectMasterBaseline(id.agent,id.project);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    if(r.canceled){status.textContent='Canceled. No baseline selected.';return;}
+    if(r.project_id!==id.project||r.local_tracking_ref_verified!==true||
+       r.remote_freshness_verified!==false||r.baseline_verified!==false||
+       r.automatic_execution_allowed!==false||!/^[a-f0-9]{40}$/.test(r.baseline_sha))
+      throw Error('Invalid local baseline observation');
+    masterLocalBaseline={agent:id.agent,project:id.project,sha:r.baseline_sha};
+    status.textContent=r.repository+' / '+r.tracking_ref+' — '+r.baseline_sha+
+      '\nTree: '+r.tree_sha+'. LOCAL ONLY; remote freshness and upstream changes are unverified. Use this exact SHA in each task.';
+    // Do not overwrite an existing task field or a previously reviewed draft.
+  }catch(error){status.textContent='Baseline inspection blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
 });
 get('masterRecover').addEventListener('click',async()=>{
   updateMasterControls();if(get('masterRecover').disabled)return;
@@ -550,7 +580,7 @@ get('masterRecover').addEventListener('click',async()=>{
     const r=await api.recoverMasterBatchDraft(agent);
     if(revision!==masterRevision||masterIdentity().agent!==agent)return;
     if(!r.pending){masterRecovered=false;output.textContent='No unresolved local admission journal.';return;}
-    masterRecovered=true;masterDraft=r.tasks;
+    masterRecovered=true;clearMasterBaseline();masterDraft=r.tasks;
     for(const k of masterTaskFields)get(k).value='';
     get('masterProject').value=r.project_id;get('masterRequest').value=r.request_id;
     renderMasterDraft();get('masterDigest').value=r.preview_sha256;
@@ -568,7 +598,7 @@ get('masterPreview').addEventListener('click',async()=>{
     if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
     masterReview={...id,revision,digest:r.preview_sha256};
     get('masterDigest').value=r.preview_sha256;
-    output.textContent='PREVIEW ONLY. Review the entire draft and admission summary; retain the request ID and digest.\n'+JSON.stringify(r,null,2);
+    output.textContent='PREVIEW ONLY. Review the entire draft and admission summary; retain the request ID and digest. Local tracking ref observed; remote freshness and upstream changes are NOT verified. If a dependency needs future merged code, plan that task later.\n'+JSON.stringify(r,null,2);
   }catch(error){output.textContent='Preview blocked: '+String(error?.message||error);}
   finally{masterBusy=false;updateMasterControls();await loadStatus();}
 });
