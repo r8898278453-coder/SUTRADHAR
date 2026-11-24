@@ -211,9 +211,10 @@ function createSignerBridge(vault){
          typeof payload.lease_id!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(payload.lease_id)||!epoch)
         fail('VAULT_WORKER_ACTION_DENIED');
       if(payload.action==='BEGIN'){
-        expected.push('provider','registry_version','binding_sha256','checkpoint_generation','checkpoint_sha256','context_sha256');
+        expected.push('provider','registry_version','binding_sha256','expected_task_version','checkpoint_generation','checkpoint_sha256','context_sha256');
         if(!['CHATGPT_WEB','GOOGLE_AI_STUDIO'].includes(payload.provider)||
            !Number.isSafeInteger(payload.registry_version)||payload.registry_version<1||
+           !Number.isSafeInteger(payload.expected_task_version)||payload.expected_task_version<1||
            !Number.isSafeInteger(payload.checkpoint_generation)||payload.checkpoint_generation<1||
            ![payload.binding_sha256,payload.checkpoint_sha256,payload.context_sha256].every(hash))
           fail('VAULT_WORKER_ACTION_DENIED');
