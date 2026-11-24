@@ -1144,3 +1144,8 @@ Shared pre/post-merge review policy preserves the last decisive review instead o
 ### 24 November — GitHub proof chronology and transport canonicalization
 
 Required checks now need valid UTC start/completion timestamps in chronological order, completed no later than the review snapshot or historical merge timestamp. A later CI rerun cannot retrospectively establish pre-merge proof. All affected HTTP/MySQL fixtures were updated. Shared GitHub transport rejects ambiguous repository path segments, encoded separators, fragments and URL normalization before attaching authorization. These are conservative read-only proof checks, not a substitute for actual branch protection or independent review.
+
+
+### 24 November — QA candidate bundle byte binding
+
+Offline QA handoff now captures a bounded 32 MiB descriptor snapshot with stable identity/size/timestamps and parent-path check. The same bytes are hashed and written exclusively to private disposable quarantine before Git verify/list/fetch, rather than reopening the operator-selected bundle. Export writes the captured bytes, checks dangling/existing outputs and preserves uncertain evidence. Tests cover source mutation, replacement after read and dangling output manifest. This assumes a trusted local OS; it does not provide isolation from a concurrent same-user attacker or physical QA approval.

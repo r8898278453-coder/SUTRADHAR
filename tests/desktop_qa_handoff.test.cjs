@@ -1139,3 +1139,49 @@ test('independent QA history rejects nested execution/secret metadata despite br
       }finally{f.close();}
     }
   });
+
+test('bundle snapshot rejects source modification during descriptor read',()=>{
+  const {readBundleBytes}=require('../apps/desktop/qa-handoff.cjs');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-bundle-read-')),file=path.join(dir,'input.bundle');
+  try{
+    fs.writeFileSync(file,Buffer.alloc(70000,1));
+    const bytes=readBundleBytes(file);
+    assert.equal(bytes.length,70000);
+    let changed=false;
+    const io={...fs,readSync(fd,buffer,offset,length,position){
+      const n=fs.readSync(fd,buffer,offset,length,position);
+      if(!changed){changed=true;fs.appendFileSync(file,'changed');}
+      return n;
+    }};
+    assert.throws(()=>readBundleBytes(file,{io}),/HANDOFF_BUNDLE_CHANGED/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('QA uses captured bundle bytes even if selected path changes before quarantine creation',{skip:!available},async()=>{
+  const f=fixture(),mkdtemp=fs.mkdtempSync;
+  try{
+    const exported=await exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker});
+    let changed=false;
+    fs.mkdtempSync=function(prefix,...args){
+      if(String(prefix).includes('sutradhar-qa-quarantine-')){
+        fs.writeFileSync(f.offer,'replacement after read');
+        changed=true;
+      }
+      return mkdtemp.call(fs,prefix,...args);
+    };
+    const proof=await inspectQAHandoff({...f.opts,agentId:'agent_qa',repoDir:f.qaRepo});
+    assert.equal(changed,true);
+    assert.equal(proof.verified,true);
+    assert.equal(proof.bundle_sha256,exported.bundle_sha256);
+    assert.equal(proof.candidate_head_sha,f.head);
+    assert.equal(cmd(f.qaRepo,'rev-parse','HEAD'),f.baseline);
+  }finally{fs.mkdtempSync=mkdtemp;f.close();}
+});
+test('dangling output manifest blocks export before writing a bundle',{skip:!available||process.platform==='win32'},async()=>{
+  const f=fixture();
+  try{
+    fs.symlinkSync(path.join(f.temp,'missing'),f.offer+'.json');
+    await assert.rejects(exportCandidateHandoff({...f.opts,agentId:'agent_dev',dir:f.worker}),/HANDOFF_OUTPUT_EXISTS/);
+    assert.equal(fs.existsSync(f.offer),false);
+    assert.equal(fs.lstatSync(f.offer+'.json').isSymbolicLink(),true);
+  }finally{f.close();}
+});

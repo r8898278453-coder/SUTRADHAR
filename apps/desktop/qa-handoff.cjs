@@ -10,7 +10,7 @@ const crypto=require('node:crypto'),{spawnSync}=require('node:child_process');
 const {inspectCommittedCandidate}=require('./worker-submit.cjs');
 const {loadWorkerReceipt}=require('./worker-claim.cjs');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
-const {readEvidenceBytes}=require('./local-evidence-file.cjs');
+const {readEvidenceBytes,evidenceEntryPresent}=require('./local-evidence-file.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const SHA=/^[a-f0-9]{40}$/,HASH=/^[a-f0-9]{64}$/;
 const REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -32,23 +32,32 @@ function sameRealDirectory(a,b){
     return normal(a)===normal(b);
   }catch{return false;}
 }
-function regularFile(p,max){
+// Capture one bounded descriptor snapshot. Both the hash and all Git
+// operations must refer to these same bytes, not a mutable selected path.
+function readBundleBytes(p,{io=fs}={}){
   if(typeof p!=='string'||!path.isAbsolute(p))fail('HANDOFF_FILE_PATH_INVALID');
-  const st=fs.lstatSync(p);
-  if(!st.isFile()||st.isSymbolicLink()||st.size===0||st.size>max)
-    fail('HANDOFF_FILE_UNTRUSTED_OR_TOO_LARGE');
-  return st.size;
-}
-function shaFile(p){
-  const size=regularFile(p,MAX_BUNDLE);
-  const h=crypto.createHash('sha256'),fd=fs.openSync(p,'r');
-  const bytes=Buffer.allocUnsafe(64*1024);
+  const valid=s=>s.isFile()&&!s.isSymbolicLink()&&s.size>0&&s.size<=MAX_BUNDLE;
+  const same=(a,b)=>valid(a)&&valid(b)&&a.dev===b.dev&&a.ino===b.ino&&
+    a.size===b.size&&a.mtimeMs===b.mtimeMs&&a.ctimeMs===b.ctimeMs;
+  const parent=io.realpathSync(path.dirname(p)),before=io.lstatSync(p);
+  if(!valid(before))fail('HANDOFF_FILE_UNTRUSTED_OR_TOO_LARGE');
+  let fd;
   try{
-    let n;
-    while((n=fs.readSync(fd,bytes,0,bytes.length,null))!==0)h.update(bytes.subarray(0,n));
-    if(fs.fstatSync(fd).size!==size)fail('HANDOFF_BUNDLE_CHANGED');
-  }finally{fs.closeSync(fd);}
-  return {size,hash:h.digest('hex')};
+    fd=io.openSync(p,fs.constants.O_RDONLY|(fs.constants.O_NOFOLLOW||0));
+    const opened=io.fstatSync(fd);
+    if(!same(before,opened))fail('HANDOFF_BUNDLE_CHANGED');
+    const bytes=Buffer.alloc(opened.size);
+    let offset=0;
+    while(offset<bytes.length){
+      const n=io.readSync(fd,bytes,offset,Math.min(65536,bytes.length-offset),offset);
+      if(!Number.isSafeInteger(n)||n<1||n>Math.min(65536,bytes.length-offset))
+        fail('HANDOFF_BUNDLE_CHANGED');
+      offset+=n;
+    }
+    if(!same(opened,io.fstatSync(fd))||!same(opened,io.lstatSync(p))||
+       parent!==io.realpathSync(path.dirname(p)))fail('HANDOFF_BUNDLE_CHANGED');
+    return bytes;
+  }finally{if(fd!==undefined)io.closeSync(fd);}
 }
 function env(){
   const safe=Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('GIT_')));
@@ -102,12 +111,12 @@ function outputPaths(p){
   const parent=realDirectory(path.dirname(p));
   const bundle=path.join(parent,path.basename(p));
   const manifest=bundle+'.json';
-  if(fs.existsSync(bundle)||fs.existsSync(manifest))fail('HANDOFF_OUTPUT_EXISTS');
+  if(evidenceEntryPresent(bundle)||evidenceEntryPresent(manifest))fail('HANDOFF_OUTPUT_EXISTS');
   return {bundle,manifest,parent};
 }
 function writeExclusive(file,content){
   const fd=fs.openSync(file,'wx',0o600);
-  try{fs.writeSync(fd,content);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  try{fs.writeFileSync(fd,content);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
 }
 async function centralTask({origin,agentId,ticketId,signer,fetcher}){
   return (await inspectWorkerTasks({origin,agentId,ticketId,signer,fetcher})).task;
@@ -129,7 +138,7 @@ async function exportCandidateHandoff({origin,agentId,ticketId,dir,signer,
     const created=path.join(tmp,'candidate.bundle');
     git(local.worktree,'bundle','create',created,'HEAD','^'+local.baseline_sha);
     bundleRef(local.worktree,created,candidate.head);
-    const dig=shaFile(created);
+    const bytes=readBundleBytes(created),dig={size:bytes.length,hash:sha(bytes)};
     const m={schema:1,kind:'CENTRAL_CONFIRMED_CANDIDATE_BUNDLE',
       ticket_id:remote.ticket_id,project_id:remote.project_id,
       repository:remote.repository,branch_name:remote.branch_name,
@@ -143,9 +152,9 @@ async function exportCandidateHandoff({origin,agentId,ticketId,dir,signer,
     const latest=checkedTask(await centralTask({origin,agentId,ticketId,signer,fetcher}),
       agentId,ticketId,'EXPORT');
     if(!matchingTask(latest,m))fail('HANDOFF_CENTRAL_CHANGED_DURING_EXPORT');
-    fs.copyFileSync(created,o.bundle,fs.constants.COPYFILE_EXCL);
-    const fd=fs.openSync(o.bundle,'r+');
-    try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+    if(!sameRealDirectory(realDirectory(o.parent),o.parent)||
+       evidenceEntryPresent(o.bundle)||evidenceEntryPresent(o.manifest))fail('HANDOFF_OUTPUT_EXISTS');
+    writeExclusive(o.bundle,bytes);
     writeExclusive(o.manifest,JSON.stringify(m,null,2)+'\n');
     return {bundle_path:o.bundle,manifest_path:o.manifest,
       ticket_id:ticketId,candidate_head_sha:candidate.head,
@@ -155,8 +164,8 @@ async function exportCandidateHandoff({origin,agentId,ticketId,dir,signer,
 }
 function readManifest(p){
   let m;
-  try{m=JSON.parse(readEvidenceBytes(p,
-    {minBytes:1,maxBytes:8192}).toString('utf8'));}
+  try{m=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(readEvidenceBytes(p,
+    {minBytes:1,maxBytes:8192})));}
   catch{fail('HANDOFF_MANIFEST_INVALID');}
   const keys=['schema','kind','ticket_id','project_id','repository','branch_name',
     'baseline_sha','candidate_head_sha','candidate_tree_sha','worker_agent_id',
@@ -251,21 +260,23 @@ async function inspectQAHandoff({origin,agentId,ticketId,signer,
   const manifestPath=bundlePath+'.json';
   const m=readManifest(manifestPath);
   if(!matchingTask(t,m))fail('HANDOFF_MANIFEST_CENTRAL_MISMATCH');
-  const dig=shaFile(bundlePath);
+  const bytes=readBundleBytes(bundlePath),dig={size:bytes.length,hash:sha(bytes)};
   if(dig.size!==m.bundle_size_bytes||dig.hash!==m.bundle_sha256)
     fail('HANDOFF_BUNDLE_DIGEST_MISMATCH');
   const repo=trustedRepository(repoDir,t);
   // No fetch, checkout, config mutation or refs written into trusted repo.
   const quarantine=fs.mkdtempSync(path.join(os.tmpdir(),'sutradhar-qa-quarantine-'));
   try{
+    const snapshot=path.join(quarantine,'verified-input.bundle');
+    writeExclusive(snapshot,bytes);
     const bare=path.join(quarantine,'objects.git');
     git(quarantine,'init','--bare',bare);
     git(bare,'-c','protocol.file.allow=always','fetch','--no-tags',
       '--no-recurse-submodules',repo,t.baseline_sha);
-    git(bare,'bundle','verify',bundlePath);
-    bundleRef(bare,bundlePath,t.candidate_head_sha);
+    git(bare,'bundle','verify',snapshot);
+    bundleRef(bare,snapshot,t.candidate_head_sha);
     git(bare,'-c','protocol.file.allow=always','fetch','--no-tags',
-      '--no-recurse-submodules',bundlePath,'HEAD');
+      '--no-recurse-submodules',snapshot,'HEAD');
     verifyHistory(bare,t);
     if(onVerifiedBare!==null){
       if(typeof onVerifiedBare!=='function')fail('HANDOFF_QA_CALLBACK_INVALID');
@@ -278,4 +289,4 @@ async function inspectQAHandoff({origin,agentId,ticketId,signer,
       git_published:false,automatic_execution_allowed:false};
   }finally{fs.rmSync(quarantine,{recursive:true,force:true});}
 }
-module.exports={exportCandidateHandoff,inspectQAHandoff,verifyHistory};
+module.exports={readBundleBytes,exportCandidateHandoff,inspectQAHandoff,verifyHistory};
