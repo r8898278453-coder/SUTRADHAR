@@ -1322,3 +1322,6 @@ Verified exact baseline `1193b3b`: [application CI](https://github.com/r88982784
 - P0: G0–G7 branch protection, signer rotation, Hostinger staging, trusted installer, physical 2/3/8–10 PC tests, rollback and independent 71-case acceptance.
 
 Decision: extend existing packaged modules, rather than add another deployment artifact or schema migration. BEGIN contract now requires expected_task_version, so coordinated Central/Desktop/CLI builds are needed. No automatic provider action, signing/release, deployment or main merge. See [operator workflow](PROVIDER_WORKSPACE_DECLARATIONS_V7.md).
+
+
+Additional safeguards `5432a9a`, `2651e1e`, `7768fb2`: main retains only the reviewed preview's in-memory task/origin/digest/registry-version/binding-digest metadata; a changed registry revision or binding blocks BEGIN even when compact context bytes match. Recovery refuses a missing original worktree rather than recreating it. These safeguards and regression fixtures also await exact-head CI.
