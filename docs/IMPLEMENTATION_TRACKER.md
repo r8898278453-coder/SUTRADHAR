@@ -1276,3 +1276,25 @@ Verified previous baseline `e935cef`: [application CI](https://github.com/r88982
 - P0: G0–G7 Owner branch protection and signer rotation, Hostinger staging, trusted Windows installer, physical 2/3/8–10 PCs, rollback and independent 71-case acceptance.
 
 Decision: retain opt-in metadata in existing MySQL audit ledger, no new schema or unverified provider integration. OPEN/INTERRUPTED is an explicit hold; a closed attempt does not prove external session safety. No automatic retry, actual provider actions or production deployment. See [provider recovery guide](PROVIDER_WORKSPACE_DECLARATIONS_V7.md).
+
+
+## Priority work update — provider recovery CI correction and Owner dashboard
+
+At `82e2a8c`, [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188656) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188901) FAILED because both Linux typecheck paths reported TS18049 nullable registry/prior state in central.ts. Disposable MySQL integration, unsigned Windows installer smoke, Python/shell/state jobs, Windows lock check and advisory review passed. Explicit return guards in `4d05bde` address the reported compiler diagnostics; its workflows were cancelled by subsequent commits, not verified green. Last fully green combined baseline `e935cef`. New Owner recovery UI and regression changes are CODED / EXACT-HEAD CI PENDING.
+
+| Work | Commits | Status |
+|---|---|---|
+| Explicit nullable control-flow return guards; authoritative revoked-original-lease resolution eligibility on Owner GET | `4d05bde` | CODED / CI PENDING |
+| Owner interrupted-attempt review panel; exact ticket/attempt, three review confirmations, one-shot closure, receipt and current readback, session isolation | `39ce7c6`, `3ecfc6c` | CODED / CI PENDING |
+| Dashboard VM regression and disposable MySQL eligibility fixtures | `6f4b34e`, `4fa7761` | CODED / CI PENDING |
+
+### Remaining priorities
+- P0: verify combined exact-head CI and repair any remaining errors before new features. Do not promote a failed/cancelled run.
+- P0: packaged Desktop signed attempt mutation controls, independently verified local context digest, actual permitted provider interruption/continuation and physical acceptance.
+- P0: Master task creator, automatic semantic dependency discovery/completeness review and combined QA.
+- P1: actual measured token/quota accounting and minimum-context reuse.
+- P0: safe web/Telegram parity and actual bot delivery.
+- P0: registry/attempt ledger retention, performance, restore and evidence review.
+- P0: G0–G7 Owner prerequisites, Hostinger staging, signer/rotation, physical 2/3/8–10 PCs, rollback and independent 71-case acceptance.
+
+Decision: reuse the existing Owner-authenticated dashboard and endpoint, without additional credential store or schema migration. Closure-only action requires current server eligibility and manual review; ordinary requeue remains separate. See [Owner recovery guide](PROVIDER_WORKSPACE_DECLARATIONS_V7.md). No provider calls, deployment, signing or merge.
