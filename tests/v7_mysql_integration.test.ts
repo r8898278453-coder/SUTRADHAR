@@ -802,6 +802,9 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         const delayed=await a.signed('/v7/tasks/plan-batch',{...nextEnvelope,preview_sha256:nextPreview.body.preview_sha256});
         assert.equal(delayed.code,409,JSON.stringify(delayed.body));
         assert.equal(delayed.body.error_code,'IDEMPOTENCY_KEY_REUSED');
+        const reusedPreview=await preview(nextEnvelope);
+        assert.equal(reusedPreview.code,409,JSON.stringify(reusedPreview.body));
+        assert.equal(reusedPreview.body.error_code,'IDEMPOTENCY_KEY_REUSED');
         const [cancelEvents]:any=await db.query('SELECT event_id FROM v7_events WHERE event_type="TASK_BATCH_ADMISSION_CANCELLED" AND resource_id=?',[project_id]);
         assert.equal(cancelEvents.length,1);
         assert.equal(await countTickets(),4);
