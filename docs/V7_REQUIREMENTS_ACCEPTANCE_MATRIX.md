@@ -169,3 +169,19 @@
 ### 24 November — Telegram source acceptance scope
 
 V7-H09 and V7-O04 now have disposable MySQL HTTP fixtures: duplicate Telegram update plus concurrent web PAUSE produces one cluster state transition (separate command receipts for distinct channel requests); replay of the same update produces one durable Telegram receipt. Unauthorized and unrecognized commands cannot alter cluster state, and STATUS does not elect a Master. V7-O05 priority-change parity and real Telegram delivery/credential acceptance are still open. Sensitive approvals remain web-only. CI fixtures are not a live Telegram acceptance record.
+
+
+## 24 November 2026 — Incremental requirements-to-source evidence (not live acceptance)
+
+Verified baseline `3465af4`: [application workflow](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985550) and [dependency workflow](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985559) completed successfully. The following is a scoped cross-reference, not a complete per-case audit or promotion of the original 71 tests.
+
+| Requirement IDs | Source evidence / regression location | Remaining target acceptance |
+|---|---|---|
+| V7-T02, T04, T06, T07, O11 | `tests/v7_mysql_integration.test.ts`: duplicate plan/branch, overlap, dependencies, invalid criteria and approvals | Full autonomous planning, semantic reservations (T05), protected reviewer |
+| V7-P01, B05, O09 | `tests/v7_rules.test.ts`, `tests/desktop_worker_inspection.test.cjs`, MySQL detail access: declared binding isolation | Durable registry, live account/workspace verification and cross-project provider isolation |
+| V7-B06, B08, B09 | Compact context byte budget, digest, deduplication, malformed Unicode and local metadata separation | Provider-permitted continuation, actual tokens/quota, secret prevention and measured retry budget |
+| V7-E05, E09, O02, O06 | MySQL project revocation/regrant, stale lease denial and evidence retention | Physical interruption/revocation and real signer rotation |
+| V7-O01, O03 | `tests/v7_recovery_validation.test.ts` plus signed MySQL recovery/independent Central checks | Physical successor recovery, exact worktree and remote receipts |
+| V7-O02, B10, Q06 | NEW `ee2e62f` / `8684dfe`: reclaim cannot submit based solely on historical checkpoint; fresh generation and malformed Unicode tests | CODED / CI PENDING; physical recovery and independently tested candidate |
+
+G0–G7 HOLD. No test row has been promoted to LIVE_ACCEPTED; all 71 original scenarios and their independent receipt requirements remain unchanged.
