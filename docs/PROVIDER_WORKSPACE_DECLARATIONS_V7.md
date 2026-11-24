@@ -97,3 +97,16 @@ This is local attempt metadata, not an adapter to ChatGPT/AI Studio. Record a ma
 - An unresolved attempt blocks new attempts, candidate submission, new claim, normal requeue and new compact Desktop handoff. Existing checkpoint and lease recovery operations remain available. No automated external continuation or session termination is performed.
 
 No raw prompt, provider response, chat ID, token count, credential or browser cookie is accepted by the attempt API. The audit ledger retains historical metadata; real provider permissions, exact transmitted context, attempt coverage for operators who bypass recording, dedicated storage/performance/restore, Desktop mutation/Owner resolution UI and actual physical interruption acceptance remain open.
+
+
+## Non-developer Owner interrupted-attempt review (staging alpha)
+
+At `82e2a8c`, [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188656) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188901) FAILED because both Linux typecheck paths reported TS18049 nullable registry/prior state in central.ts. Disposable MySQL integration, unsigned Windows installer smoke, Python/shell/state jobs, Windows lock check and advisory review passed. Explicit return guards in `4d05bde` address the reported compiler diagnostics; its workflows were cancelled by subsequent commits, not verified green. Last fully green combined baseline `e935cef`. New Owner recovery UI and regression changes are CODED / EXACT-HEAD CI PENDING.
+
+1. In the Central dashboard, open **Interrupted provider attempt — Owner review**. Enter the exact ticket ID and click **Inspect current attempt**. The read-only endpoint reports the latest attempt and whether its original lease is revoked and the ticket is RECONCILIATION_REQUIRED. No record does not prove no external effects.
+2. Preserve and independently inspect the original PC, worktree/checkpoint and actual provider session. If the lease remains live, use the separate signed worker recovery process; do not force Owner closure. If the server says ineligible, stop and use the appropriate separate recovery process.
+3. For an eligible attempt, retype the full displayed attempt ID. Check all three confirmations only after actual independent review. Click **Record exact Owner review and close attempt ONLY**, then confirm. Central rechecks the authoritative state before accepting.
+4. The dashboard performs one signed-in Owner POST and reads back the current exact closed attempt with OWNER_REVIEW resolution. Unknown or conflicting outcomes disable closure until fresh inspection. Logout clears local selection and ignores late responses; it does not cancel a committed command.
+5. Closure does not requeue the ticket, release reservations, authenticate a provider, terminate a session or establish actual transmitted context. Separate Git/QA and ordinary ticket reconciliation remain required.
+
+The dashboard does not display the original lease identifier, raw prompt or provider session credentials. Existing API remains available to authorized operators. VM browser-model and disposable MySQL fixtures are not actual Hostinger/browser/provider acceptance. Packaged Desktop attempt mutation controls remain open; no production deployment or schema migration. G0–G7 HOLD.
