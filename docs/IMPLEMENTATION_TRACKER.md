@@ -1392,3 +1392,19 @@ Exact baseline `85ae5a8` passed [application CI](https://github.com/r8898278453-
 Cancellation is a permanent deny marker for the exact original actor/request key, not proof of historical non-admission after database loss/restore. Owner must independently compare original local journal, ordered IDs, preview digest, database history and uncertain effects; server checks the current durable ledger and listed ticket IDs, not the full original task manifest. A wrong cancellation declaration is not automatically corrected. No existing tickets are deleted, no replacement work authorized, and an unavailable/revoked original signer cannot automatically release its local journal. Retention and physical DPAPI/power-cut acceptance remain open.
 
 Remaining priorities: latest CI and corrections; actual cancellation-vs-admission race/power-cut/restore and original signer unavailable recovery, journal retention and durable unconfirmed drafts; independent Git baseline and combined integration QA; automatic source-level semantic discovery and task decomposition; measured token/quota accounting, permitted provider continuation; web/Telegram parity; Hostinger staging, production signing and physical multi-PC acceptance. No new schema, deployment or release. G0–G7 HOLD.
+
+## Consolidated Desktop local Git baseline and exact project preflight
+
+Exact baseline `a77d3a8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45483558734) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45483558666), including previous Owner admission reconciliation. New local baseline and exact project lookup changes are CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Status |
+|---|---|---|
+| Signed exact active project lookup independent of catalog cap | 182e3c2, de4e403 | CODED / CI PENDING |
+| Read-only Git root/origin/tracking ref/commit/tree checks, task baseline equality and dependency warning | 92fbf53 | CODED / CI PENDING |
+| Native folder selection and pinned project/epoch/ref rechecks at preview and before encrypted admission | e1feefd | CODED / CI PENDING |
+| Narrow IPC, non-developer baseline observation and matching draft controls | 3930f15, a8dfa4a, 65bc67b | CODED / CI PENDING |
+| Local Git and signed lookup regressions; MySQL alias/stale epoch/non-Master tests | 7210734, 4806a90 | CODED / CI PENDING |
+
+Local verification observes the configured repository origin, local remote-tracking ref, commit and tree only. It is not live GitHub freshness, an independent remote attestation, source-level semantic analysis, or proof that upstream changes are included. Desktop batches now require every task to use the same inspected tracking-ref SHA; if a dependent task needs not-yet-merged code, plan it separately after upstream merge and review. Central and CLI planning contracts remain unchanged except for the additional signed project lookup; no baseline evidence is persisted in Central or the admission journal beyond the task's existing baseline SHA.
+
+Remaining priorities: exact-head CI and corrections; durable unconfirmed drafts, source-semantic discovery and autonomous task decomposition; independently verified live remote baseline and upstream merge proof, combined integration QA; measured token/quota accounting, permitted provider continuation; unavailable-signer recovery, journal/ledger retention and backup/restore; web/Telegram parity; Hostinger staging, production signing and physical multi-PC acceptance. G0–G7 HOLD.
