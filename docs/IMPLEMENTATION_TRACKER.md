@@ -1442,3 +1442,19 @@ Declared dependency waves are a topological view of internal declared edges only
 Explicit local compact planning preview hoists one shared baseline SHA and retains all exact task strings, order, scope, risk, contracts, dependencies and criteria. It reports exact UTF-8 bytes, difference versus expanded compact JSON and SHA-256; cap 16,384 bytes, fail closed rather than truncate. No token count or actual provider savings verified, no secret scan, no automatic transmission. Independent secret review is required before any manual sharing. Draft/review changes invalidate the displayed preview. Existing signed Central admission, approval, dependency and worker reservations remain authoritative.
 
 Remaining: exact-head CI and corrections; AST/semantic and contract discovery, actual task decomposition and verified combined QA; independently verified live baseline/upstream merge; measured provider token/quota accounting and permitted continuation; autosave, unavailable-signer recovery and retention; web/Telegram parity; Hostinger staging, production signing and physical multi-PC acceptance. G0–G7 HOLD.
+
+## Consolidated Owner-attested provider usage ledger and regression matrix
+
+Exact baseline `8e897c8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45492514727) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45492514610). Advisory planning graph, fair source sampling and compact context are source-CI verified. New Owner-attested provider usage history is CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Status |
+|---|---|---|
+| Strict usage input validation, exact closed-attempt record binding and digest; historical state fold and separate per-provider totals | cbd5acf | CODED / CI PENDING |
+| Transactional Owner-only immutable usage command and bounded authenticated ticket history | ebbcf0b | CODED / CI PENDING |
+| Dashboard historical inspection, exact attempt selection, independent review, session fence and one-shot readback | db112d2, 9e65ecf | CODED / CI PENDING |
+| 142 parameterized/standalone unit scenarios for count representations, exact identity, unknown/zero, field denial, record integrity, history transitions and bounds | 2105ee2 | CODED / CI PENDING |
+| MySQL historical usage, idempotency/duplicate/closed-state/alias/authentication tests and 3 Owner UI scenarios | 44fcd8a, 627d8de | CODED / CI PENDING |
+
+Test scenarios are not independent production features or completed acceptance requirements. Only independently observed, exact per-attempt provider display counts are accepted. Input/output must be explicit integer readings (0–1,000,000,000 each); cached input is optional/unknown and, when known, is a subset of input, never additional. No guesses based on bytes, prompts, responses, credentials, billing, provider session IDs or estimates accepted. Record binds the original closed attempt/context/agent/provider/registry/binding/epoch; duplicate different requests cannot overwrite, while same Owner request can replay its durable receipt. A mistaken permanent reading requires a separate future Owner correction protocol, not edits. Unknown readings are not zero usage. No provider API measurement or quota enforcement, no cost claims, no execution/reassignment permission. Bounded ticket history (100 attempts/100 records/300 transitions) fails closed on invalid/overflow history; DB retention, correction, performance and restore acceptance remain open.
+
+Remaining: exact-head CI and corrections; AST/semantic analysis and automatic decomposition; verified live baseline/upstream merge and combined integration QA; provider API telemetry/quota/budget controls where permitted; correction/retention and restore; unavailable signer recovery, autosave, web/Telegram parity, Hostinger staging, signing and physical multi-PC acceptance. G0–G7 HOLD.
