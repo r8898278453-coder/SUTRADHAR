@@ -1342,3 +1342,18 @@ Previous exact HEAD `8145c64`: [application CI](https://github.com/r8898278453-c
 | Operator manifest and safe workflow | [MASTER_TASK_BATCH_PLANNING_V7.md](MASTER_TASK_BATCH_PLANNING_V7.md) | DOCUMENTED |
 
 Next priorities: exact-head CI and correction; non-developer Master planning UI, autonomous architecture/task decomposition and actual source-level semantic completeness, baseline refresh/independent combined QA; measured provider token/quota accounting and minimal-context continuation; permitted provider session verification and physical acceptance; website/Telegram parity, ledger retention/backup/restore, Hostinger staging, signed Windows installer, 2/3/8–10-PC failover and G0–G7 independent acceptance. No release gate promoted. Batch conflict order is declaration-based, not code analysis or automatic task execution; immutable baselines require independent review. No new schema/deployment.
+
+
+## Consolidated Desktop Master planning and durable receipt recovery
+
+Exact baseline `804726e` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45463312420) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45463312581), including previous Desktop correction and Master batch admission. New Desktop Master planner and receipt lookup are CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Status |
+|---|---|---|
+| Original-actor historical receipt lookup, exact Master node/agent eligibility and maintenance fence | 495268e | CODED / CI PENDING |
+| Narrow OS-vault signing allowlist and bounded signed Master planning client, validated ordered preview and receipt | b66dbf0, 5040762 | CODED / CI PENDING |
+| Main-process pinned reviewed payload, native confirmation and fixed IPC | 5f32f0e, 9e45313 | CODED / CI PENDING |
+| No-code local task form, draft validation, review consent and receipt inspection | 8b25045, 67b7e3e | CODED / CI PENDING |
+| Signed Desktop fixture and disposable MySQL receipt isolation regression | 022e5d2, 40bf372 | CODED / CI PENDING |
+
+Remaining P0/P1 priorities: exact-head CI; physical Windows/Hostinger Master workflow and independent QA; autonomous task decomposition/source semantic discovery and verified baseline/combined integration QA; durable Desktop draft recovery and no-code project selection; measured provider token/quota accounting and context reuse; permitted provider session continuation; Owner web/Telegram parity; ledger retention/backup/restore; production signing and physical 2/3/8–10-PC acceptance. Decision: use existing Desktop signer/client and command ledger, no new schema or provider integration. A historical receipt cannot grant current execution authority. G0–G7 HOLD.
