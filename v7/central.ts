@@ -844,8 +844,14 @@ app.get('/v7/owner/provider-attempt/:ticketId',jsonRoute(async req=>{
     await leader(c,false);
     const t=await one(c,'SELECT ticket_id,status FROM v7_tickets WHERE ticket_id=?',[ticketId]);
     if(!t||t.ticket_id!==ticketId)fault('TASK_NOT_FOUND',404);
-    return {ticket_id:ticketId,ticket_status:t.status,attempt:await latestProviderAttempt(c,ticketId),
-      read_only:true,automatic_execution_allowed:false,provider_mapping_verified:false};
+    const attempt=await latestProviderAttempt(c,ticketId);
+    const lease=await one(c,'SELECT lease_id,revoked FROM v7_leases WHERE ticket_id=?',[ticketId]);
+    const ownerResolutionEligible=Boolean(t.status==='RECONCILIATION_REQUIRED'&&
+      attempt&&attempt.state!=='CLOSED'&&lease&&Number(lease.revoked)===1&&attempt.lease_id===lease.lease_id);
+    return {ticket_id:ticketId,ticket_status:t.status,attempt,
+      owner_resolution_eligible:ownerResolutionEligible,
+      read_only:true,automatic_execution_allowed:false,automatic_reassignment_allowed:false,
+      provider_mapping_verified:false};
   });
 }));
 app.get('/v7/owner/provider-registry',jsonRoute(async req=>{
@@ -1808,7 +1814,7 @@ app.post('/v7/tasks/provider-attempt',jsonRoute(async req=>{
         if(prior&&prior.state!=='CLOSED')fault('PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED',423);
         if(t.status!=='CHECKPOINTED')fault('CHECKPOINT_REQUIRED',409);
         const registry=await currentProviderRegistry(c);
-        if(!registry||registry.version!==d.registry_version)fault('PROVIDER_REGISTRY_VERSION_CONFLICT',409);
+        if(!registry||registry.version!==d.registry_version)return fault('PROVIDER_REGISTRY_VERSION_CONFLICT',409);
         const mapping=declaredProviderMappings(JSON.stringify(registry.bindings),t.project_id,id)
           .find(m=>m.provider===d.provider&&m.binding_sha256===d.binding_sha256);
         if(!mapping)fault('PROVIDER_ATTEMPT_BINDING_REQUIRED',409);
@@ -1825,7 +1831,7 @@ app.post('/v7/tasks/provider-attempt',jsonRoute(async req=>{
       }else{
         if(!prior||prior.attempt_id!==d.attempt_id||prior.agent_id!==id||prior.lease_id!==leaseId||
            prior.epoch!==Number(d.expected_master_epoch)||prior.state==='CLOSED')
-          fault('PROVIDER_ATTEMPT_STATE_INVALID',409);
+          return fault('PROVIDER_ATTEMPT_STATE_INVALID',409);
         if(action==='INTERRUPT'){
           if(prior.state!=='OPEN')fault('PROVIDER_ATTEMPT_STATE_INVALID',409);
           next=validateProviderAttempt({...prior,state:'INTERRUPTED'});
