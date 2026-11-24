@@ -1232,3 +1232,25 @@ Last fully green application + dependency baseline: `93993a0`. Previous shared-c
 - P0: G0–G7 Owner prerequisites, staging/restore, production signing, physical 2/3/8–10-PC tests and independent 71-case acceptance.
 
 Decision: use a bounded versioned full snapshot in the existing append-only MySQL event ledger instead of introducing unreviewed DDL. Explicit replacement/clear is the local registry revocation mechanism, not external account/session revocation. See [Owner registry guide](PROVIDER_WORKSPACE_DECLARATIONS_V7.md). No live deployment, signing or automatic provider operation.
+
+
+## Priority work update — non-developer provider registry editor
+
+Verified baseline `215e5ee`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116654) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116645) both SUCCESS. This includes the shared-contract and durable provider registry source/regressions. The new dashboard editor is CODED / CI PENDING at this update.
+
+| Work | Commit | Status |
+|---|---|---|
+| Owner registry panel, accessible labeled fields, local draft table and explicit full-replacement consent | `3e79218` | CODED / CI PENDING |
+| Guarded load, local alias validation, remove/add, expected-version single POST and exact current readback; session isolation | `0344b12` | CODED / CI PENDING |
+| Prevent save with unadded input; clear pending inputs on explicit reload | `1522fb4`, `e5245fa` | CODED / CI PENDING |
+| Owner dashboard regression fixtures: no draft POST, double-click containment, exact readback, conflicting revision, invalid metadata, disconnect during GET/POST | `7680759` | CODED / CI PENDING |
+
+### Remaining priority order
+- P0: verify latest exact-head CI; real browser/Hostinger Owner usability and registry retention/restore/load acceptance.
+- P0: provider interruption and permitted continuation; durable attempt/hold and safe recovery evidence.
+- P0: autonomous Master task planning and semantic dependency discovery, declaration completeness, combined QA.
+- P1: actual provider token/quota measurement and minimum-context reuse, rather than claiming byte budgets as token counts.
+- P0: safe web/Telegram command parity and live bot delivery.
+- P0: G0–G7 branch protection and signer rotation, Hostinger staging/restore, production signing, physical 2/3/8–10-PC tests, rollback and independent 71-case acceptance.
+
+Decision: extend existing dashboard assets and API, not another authentication or deployment surface. Use explicit reload after uncertain replacement, not automatic retry. Registry is local unverified alias metadata; no actual provider login, external revocation, deployment, schema migration or release. See [Owner guide](PROVIDER_WORKSPACE_DECLARATIONS_V7.md).
