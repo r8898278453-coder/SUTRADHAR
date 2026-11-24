@@ -194,7 +194,7 @@ async function signedRequest({origin,signer,method,uri,agentId,payload,fetcher})
   let headers,body;
   if(method==='GET'&&uri==='/v7/cluster/state'){
     headers=signer.sign({kind:'node_api',method:'GET',uri,body:''});body=undefined;
-  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint','submit','provider-attempt','plan-batch-preview','plan-batch','plan-batch-receipt','plan-batch-projects'].includes(uri)){
+  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint','submit','provider-attempt','plan-batch-preview','plan-batch','plan-batch-receipt','plan-batch-projects','plan-batch-project'].includes(uri)){
     const prepared=signer.signWorkerAction({operation:uri,agent_id:agentId,payload});
     headers=prepared.headers;body=prepared.body;uri=prepared.uri;
   }else fail('WORKER_REQUEST_NOT_ALLOWLISTED');
@@ -529,6 +529,81 @@ async function listMasterProjects({origin,agentId,signer,fetcher=fetch,beforeMut
   return {projects,truncated:r.truncated,epoch:r.epoch,baseline_verified:false};
 }
 
+// Current signed project identity, independent of the capped catalog list.
+async function lookupMasterProject({origin,agentId,projectId,signer,fetcher=fetch,beforeMutation=()=>{}}){
+  const exactId=x=>typeof x==='string'&&ID.test(x)&&!/[\r\n]/.test(x);
+  if(typeof origin!=='string'||!ORIGIN.test(origin)||!exactId(agentId)||!exactId(projectId))
+    fail('MASTER_BASELINE_INPUT_DENIED');
+  const cluster=await signedRequest({origin,signer,method:'GET',uri:'/v7/cluster/state',agentId,fetcher});
+  if(cluster?.phase!=='READY'||cluster.paused!==false||cluster.master_agent_id!==agentId||
+     !Number.isSafeInteger(cluster.epoch)||cluster.epoch<1)fail('WORKER_BATCH_MASTER_NOT_READY');
+  beforeMutation();
+  const r=await signedRequest({origin,signer,method:'POST',uri:'plan-batch-project',agentId,fetcher,
+    payload:{agent_id:agentId,expected_master_epoch:cluster.epoch,project_id:projectId}});
+  const p=r?.project;
+  if(r?.read_only!==true||r.agent_id!==agentId||r.epoch!==cluster.epoch||
+     r.automatic_execution_allowed!==false||r.baseline_verified!==false||!p||
+     Object.keys(p).sort().join('|')!=='base_branch|display_name|project_id|repository'||
+     p.project_id!==projectId||typeof p.display_name!=='string'||!p.display_name.trim()||p.display_name.length>170||
+     typeof p.repository!=='string'||p.repository.length>190||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(p.repository)||
+     typeof p.base_branch!=='string'||p.base_branch.length>80||!/^[A-Za-z0-9._/-]+$/.test(p.base_branch))
+    fail('MASTER_BASELINE_PROJECT_INVALID');
+  return {project:{project_id:p.project_id,repository:p.repository,base_branch:p.base_branch},epoch:r.epoch};
+}
+// Local, read-only object/ref inspection. Never fetch, checkout, reset, run
+// project commands, expose file contents or assert the remote ref is current.
+function inspectMasterBaseline({repoDir,project}){
+  if(!project||typeof project.project_id!=='string'||!ID.test(project.project_id)||
+     typeof project.repository!=='string'||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(project.repository)||
+     typeof project.base_branch!=='string'||project.base_branch.length>80||
+     !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(project.base_branch)||
+     project.base_branch.includes('..')||project.base_branch.includes('//')||
+     project.base_branch.endsWith('/')||project.base_branch.split('/').some(p=>p.startsWith('.')||p.endsWith('.lock')))
+    fail('MASTER_BASELINE_PROJECT_INVALID');
+  const repo=assertDirectory(repoDir);
+  // Do not inherit Git overrides, injected configuration or replacement
+  // objects. Disable all Git transport protocols (including lazy fetching).
+  const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!/^GIT_/i.test(k)));
+  Object.assign(env,{GIT_NO_REPLACE_OBJECTS:'1',GIT_NO_LAZY_FETCH:'1',GIT_TERMINAL_PROMPT:'0',
+    GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_OPTIONAL_LOCKS:'0'});
+  const read=(...args)=>{
+    const p=spawnSync('git',['--no-optional-locks','-c','protocol.allow=never','-c','core.fsmonitor=false',
+      '-C',repo,...args],{env,encoding:'utf8',timeout:10000,maxBuffer:256*1024,windowsHide:true});
+    if(p.error||p.status!==0||typeof p.stdout!=='string')fail('MASTER_BASELINE_LOCAL_GIT_READ_FAILED');
+    return p.stdout.trim();
+  };
+  if(!sameRealDirectory(read('rev-parse','--show-toplevel'),repo))fail('MASTER_BASELINE_REPOSITORY_ROOT_MISMATCH');
+  const urls=read('config','--local','--no-includes','--get-all','remote.origin.url').split(/\r?\n/);
+  if(urls.length!==1||urls[0].replace(/\.git$/,'').replace(/^git@github\.com:/,'https://github.com/')!=='https://github.com/'+project.repository)
+    fail('MASTER_BASELINE_REPOSITORY_ORIGIN_MISMATCH');
+  const ref='refs/remotes/origin/'+project.base_branch;
+  read('check-ref-format',ref);
+  const sha=read('show-ref','--verify','--hash',ref);
+  if(sha.length!==40||!SHA.test(sha)||read('cat-file','-t',sha)!=='commit')
+    fail('MASTER_BASELINE_LOCAL_COMMIT_INVALID');
+  const tree=read('rev-parse','--verify',sha+'^{tree}');
+  if(tree.length!==40||!SHA.test(tree)||read('cat-file','-t',tree)!=='tree')
+    fail('MASTER_BASELINE_LOCAL_TREE_INVALID');
+  if(read('show-ref','--verify','--hash',ref)!==sha)fail('MASTER_BASELINE_REF_CHANGED');
+  return {project_id:project.project_id,repository:project.repository,base_branch:project.base_branch,
+    tracking_ref:ref,baseline_sha:sha,tree_sha:tree,local_tracking_ref_verified:true,
+    remote_freshness_verified:false,baseline_verified:false,automatic_execution_allowed:false};
+}
+function requireMasterBaseline({tasks,observed,current}){
+  if(!observed||!current||JSON.stringify(observed)!==JSON.stringify(current)||
+     observed.local_tracking_ref_verified!==true||observed.remote_freshness_verified!==false||
+     !Array.isArray(tasks)||tasks.length<2||tasks.length>10||
+     tasks.some(t=>!t||t.baseline_sha!==observed.baseline_sha))
+    fail('MASTER_BASELINE_CHANGED_OR_TASK_BASELINE_MISMATCH');
+  // Internal dependencies can be order-only. Their future code is NOT
+  // contained in the current immutable baseline; never claim otherwise.
+  const ids=new Set(tasks.map(t=>t.ticket_id));
+  return {local_tracking_ref_verified:true,remote_freshness_verified:false,
+    internal_dependencies:tasks.flatMap(t=>(Array.isArray(t.dependencies)?t.dependencies:[])
+      .filter(id=>ids.has(id)).map(id=>({ticket_id:t.ticket_id,depends_on:id}))),
+    upstream_changes_in_baseline_verified:false,automatic_execution_allowed:false};
+}
+
 // Append-only encrypted admission evidence, one unresolved intent per PC.
 // No private keys, arbitrary paths, automated replay or automatic deletion.
 // A Windows filesystem power-cut guarantee still requires physical acceptance.
@@ -642,4 +717,4 @@ function createMasterBatchJournal({dir,safeStorage,nodeId}){
   }
   return {pending,begin,close};
 }
-module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,createMasterBatchJournal};
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,createMasterBatchJournal};
