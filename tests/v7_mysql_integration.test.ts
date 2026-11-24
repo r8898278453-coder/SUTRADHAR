@@ -899,6 +899,32 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(reviewed.state.status,'READY');
       const staleReplay=await d.signed('/v7/tasks/claim',claimBody);
       assert.equal(staleReplay.code,403,JSON.stringify(staleReplay.body));
+      // A new claim may inspect the preserved handoff, but may not submit
+      // a new candidate using only the previous revoked lease's checkpoint.
+      const fresh=await d.signed('/v7/tasks/claim',{...claimBody,request_id:'fresh_claim_'+(++count)});
+      assert.equal(fresh.code,200,JSON.stringify(fresh.body));
+      assert.notEqual(fresh.body.lease_id,lease_id);
+      const handoff=await d.signed('/v7/tasks/resume-check',{agent_id,ticket_id,
+        lease_id:fresh.body.lease_id,expected_master_epoch});
+      assert.equal(handoff.code,200,JSON.stringify(handoff.body));
+      assert.equal(handoff.body.latest_checkpoint.content_sha256,checkpoint.body.content_sha256);
+      const staleSubmit=await d.signed('/v7/tasks/submit',{agent_id,ticket_id,
+        lease_id:fresh.body.lease_id,expected_master_epoch,request_id:'stale_cp_submit_'+(++count),
+        candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40)});
+      assert.equal(staleSubmit.code,409,JSON.stringify(staleSubmit.body));
+      assert.equal(staleSubmit.body.error_code,'CHECKPOINT_REQUIRED');
+      const malformed=await d.signed('/v7/tasks/checkpoint',{...checkpointBody,
+        lease_id:fresh.body.lease_id,request_id:'malformed_cp_'+(++count),summary:'\uD800'});
+      assert.equal(malformed.code,400,JSON.stringify(malformed.body));
+      assert.equal(malformed.body.error_code,'CHECKPOINT_TEXT_INVALID');
+      const nextCheckpoint=await d.signed('/v7/tasks/checkpoint',{...checkpointBody,
+        lease_id:fresh.body.lease_id,request_id:'fresh_cp_'+(++count),
+        summary:'New worker reviewed preserved handoff and current source'});
+      assert.equal(nextCheckpoint.code,200,JSON.stringify(nextCheckpoint.body));
+      assert.equal(nextCheckpoint.body.generation,checkpoint.body.generation+1);
+      await owner('REVOKE_PROJECT_AGENT',{project_id,agent_id});
+      await owner('RECONCILE_TICKET',{ticket_id,
+        reason:'Disposable CI: close recovered claim after testing checkpoint freshness',remote_checked:true});
     }
     const claimPayload={request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'};
