@@ -8,9 +8,9 @@ function browser(){
   function element(id){
     if(!nodes.has(id))nodes.set(id,{
       value:'',textContent:'',className:'',hidden:id==='dashboard',
-      disabled:false,checked:false,listeners:{},
+      disabled:false,checked:false,listeners:{},children:[],
       addEventListener(type,cb){this.listeners[type]=cb;},
-      replaceChildren(){},append(){},
+      replaceChildren(...children){this.children=children;},append(...children){this.children.push(...children);},
       click(){downloads.push({href:this.href,download:this.download});}
     });
     return nodes.get(id);
@@ -174,4 +174,119 @@ test('explicit-click review export follows dual GET and never includes API token
   assert.equal(b.downloads.length,count,'input invalidation blocks stale download');
   e('disconnect').onclick();
   assert.equal(e('node-recovery-save-bundle').disabled,true);
+});
+
+
+const aliasBinding={project_id:'project_demo',agent_id:'agent_demo',
+  provider:'CHATGPT_WEB',account_ref:'account_demo',workspace_ref:'workspace_demo'};
+function registryRead(version,bindings=[]){
+  return {version,bindings,source:version?'MYSQL_OWNER_REGISTRY':'LEGACY_ENV_CONFIGURATION',
+    registry_sha256:version?'a'.repeat(64):null,legacy_fallback_active:!version,
+    provider_mapping_verified:false,automatic_execution_allowed:false};
+}
+async function loadRegistry(b,data){
+  const run=b.element('provider-registry-load').onclick();
+  assert.equal(b.pending.length,1);
+  assert.equal(b.pending[0].url,'/v7/owner/provider-registry');
+  complete(b.pending.shift(),data);await run;
+}
+function confirmRegistry(b){
+  b.ctx.confirm=()=>true;
+  b.element('provider-registry-consent').checked=true;
+  b.element('provider-registry-consent').listeners.change();
+}
+function registryReceipt(post,version,count){
+  return {accepted:true,receipt_id:post.request_id,state:{registry_version:version,
+    registry_sha256:'a'.repeat(64),binding_count:count,
+    provider_mapping_verified:false,automatic_execution_allowed:false}};
+}
+async function awaitPending(b){
+  for(let i=0;i<12&&!b.pending.length;i++)await b.flush();
+  assert.equal(b.pending.length,1);
+}
+test('Owner registry editor adds aliases locally and saves exactly one CAS replacement with readback',async()=>{
+  const b=browser(),e=b.element;
+  await loadRegistry(b,registryRead(0));
+  assert.match(e('provider-registry-status').textContent,/NOT listed/);
+  assert.equal(e('provider-registry-save').disabled,true);
+  e('provider-project').value=aliasBinding.project_id;
+  e('provider-agent').value=aliasBinding.agent_id;
+  e('provider-kind').value=aliasBinding.provider;
+  e('provider-account').value=aliasBinding.account_ref;
+  e('provider-workspace').value=aliasBinding.workspace_ref;
+  confirmRegistry(b);
+  assert.equal(e('provider-registry-save').disabled,true,'unadded input blocks save');
+  e('provider-registry-add').onclick();
+  assert.equal(b.queries.length,1,'draft changes never POST');
+  assert.equal(e('provider-registry-consent').checked,false);
+  confirmRegistry(b);
+  assert.equal(e('provider-registry-save').disabled,false);
+  const run=e('provider-registry-save').onclick();
+  assert.equal(b.pending.length,1);
+  assert.equal(b.queries[1].options.method,'POST');
+  assert.equal(b.queries[1].options.redirect,'error');
+  const post=JSON.parse(b.queries[1].options.body);
+  assert.equal(post.command,'REPLACE_PROVIDER_REGISTRY');
+  assert.deepEqual(post.payload,{expected_version:0,bindings:[aliasBinding]});
+  await e('provider-registry-save').onclick();
+  assert.equal(b.queries.length,2,'busy save blocks a second POST');
+  complete(b.pending.shift(),registryReceipt(post,1,1));
+  await awaitPending(b);
+  complete(b.pending.shift(),registryRead(1,[aliasBinding]));
+  await run;
+  assert.match(e('provider-registry-status').textContent,/Saved and read back exact version 1/);
+  assert.equal(e('provider-registry-save').disabled,true);
+  assert.ok(b.queries.every(x=>x.options.credentials==='omit'));
+});
+test('Owner registry empty replacement requires explicit consent and current readback',async()=>{
+  const b=browser(),e=b.element;
+  await loadRegistry(b,registryRead(4,[aliasBinding]));
+  const remove=e('provider-registry-rows').children[0].children[5].children[0];
+  remove.onclick();
+  assert.equal(b.queries.length,1);
+  assert.equal(e('provider-registry-save').disabled,true);
+  confirmRegistry(b);
+  const run=e('provider-registry-save').onclick();
+  const post=JSON.parse(b.queries[1].options.body);
+  assert.deepEqual(post.payload,{expected_version:4,bindings:[]});
+  complete(b.pending.shift(),registryReceipt(post,5,0));
+  await awaitPending(b);
+  complete(b.pending.shift(),registryRead(6,[]));
+  await run;
+  assert.match(e('provider-registry-status').textContent,/Save not verified/);
+  assert.equal(e('provider-registry-save').disabled,true);
+  assert.equal(e('provider-registry-add').disabled,true);
+  await e('provider-registry-save').onclick();
+  assert.equal(b.queries.length,3,'no automatic retry after later competing version');
+});
+test('Owner logout during registry POST discards late receipt and never performs readback',async()=>{
+  const b=browser(),e=b.element;
+  await loadRegistry(b,registryRead(0));
+  confirmRegistry(b);
+  const run=e('provider-registry-save').onclick();
+  const post=JSON.parse(b.queries[1].options.body);
+  e('disconnect').onclick();
+  complete(b.pending.shift(),registryReceipt(post,1,0));
+  await run;
+  assert.equal(b.queries.length,2);
+  assert.match(e('provider-registry-status').textContent,/session changed/);
+  assert.equal(e('provider-registry-save').disabled,true);
+  assert.equal(e('provider-registry-rows').children.length,0);
+});
+test('Owner registry rejects malformed alias metadata, never displays secrets as a draft',async()=>{
+  const b=browser(),e=b.element;
+  await loadRegistry(b,registryRead(1,[{...aliasBinding,account_ref:'user@example.org'}]));
+  assert.match(e('provider-registry-status').textContent,/unavailable or invalid/);
+  assert.equal(e('provider-registry-add').disabled,true);
+  assert.equal(e('provider-registry-save').disabled,true);
+  assert.equal(e('provider-registry-rows').children.length,0);
+});
+test('Owner registry stale GET after logout cannot display earlier session aliases',async()=>{
+  const b=browser(),e=b.element;
+  const run=e('provider-registry-load').onclick();
+  e('disconnect').onclick();
+  complete(b.pending.shift(),registryRead(1,[aliasBinding]));
+  await run;
+  assert.equal(e('provider-registry-rows').children.length,0);
+  assert.equal(e('provider-registry-save').disabled,true);
 });
