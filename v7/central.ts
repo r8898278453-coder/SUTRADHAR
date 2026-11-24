@@ -1621,6 +1621,8 @@ app.post('/v7/tasks/resume-check',jsonRoute(async req=>{
 app.post('/v7/tasks/checkpoint',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{},id=requireId(d.agent_id),ticket=requireId(d.ticket_id);
   const summary=requireStr(d.summary,8000),next=requireStr(d.next_action,500);
+  if(/[\uD800-\uDFFF]/u.test(summary)||/[\uD800-\uDFFF]/u.test(next))
+    fault('CHECKPOINT_TEXT_INVALID',400);
   return transaction(async c=>{
     const leaseId=requireId(d.lease_id);
     // Do not replay a stored success without a STILL valid worker lease.
@@ -1651,8 +1653,15 @@ app.post('/v7/tasks/submit',jsonRoute(async req=>{
     const t=await workerLease(c,node.node_id,id,ticket,leaseId,d.expected_master_epoch);
     return idem(c,id,d.request_id,'TASK_SUBMIT',d,async()=>{
     if(!['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status))fault('SUBMISSION_NOT_ALLOWED',409);
-    const checkpoint=await one(c,'SELECT checkpoint_id FROM v7_checkpoints WHERE ticket_id=? LIMIT 1',[ticket]);
-    if(!checkpoint)fault('CHECKPOINT_REQUIRED',409);
+    // A recovered/reclaimed ticket starts CLAIMED even when historical
+    // checkpoints exist. Require a new checkpoint transition before submission
+    // (also after failed QA), rather than treating old handoff as fresh proof.
+    if(t.status!=='CHECKPOINTED')fault('CHECKPOINT_REQUIRED',409);
+    const checkpoint=await one(c,'SELECT agent_id,epoch,summary,next_action,content_sha256 FROM v7_checkpoints WHERE ticket_id=? ORDER BY generation DESC LIMIT 1',[ticket]);
+    if(!checkpoint||checkpoint.agent_id!==id||Number(checkpoint.epoch)!==Number(d.expected_master_epoch)||
+       typeof checkpoint.summary!=='string'||typeof checkpoint.next_action!=='string'||
+       digest(checkpoint.summary+'\n'+checkpoint.next_action)!==checkpoint.content_sha256)
+      fault('CHECKPOINT_REQUIRED',409);
     await c.query('UPDATE v7_tickets SET status="SUBMITTED_FOR_REVIEW",candidate_head_sha=?,candidate_tree_sha=?,version=version+1 WHERE ticket_id=?',
       [head,tree,ticket]);
     await event(c,'TASK_SUBMITTED',id,Number(d.expected_master_epoch),ticket,{head,tree});
