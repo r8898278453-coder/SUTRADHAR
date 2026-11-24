@@ -85,3 +85,10 @@ At `3465af4`, both [application CI](https://github.com/r8898278453-coder/SUTRADH
 Verified previous baseline `93993a0`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700768) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700737) both SUCCESS, including the fresh-checkpoint change. The new shared-contract implementation and regressions are CODED / CI PENDING at this update.
 
 V7-GAP-05/V7-GAP-07: explicit declared contract keys, Owner review, conservative same-repository claim exclusion and Desktop context fidelity are implemented in source. This does not independently infer missing declarations or prove combined integration; target ledger lookup performance and live QA remain open. V7-GAP-09 fresh-checkpoint guard is now CI verified at 93993a0. No gap promoted to ACCEPTED; G0–G7 HOLD. See [tracker](docs/IMPLEMENTATION_TRACKER.md) and [matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md).
+
+
+## Provider registry follow-up
+
+Last fully green application + dependency baseline: `93993a0`. Previous shared-contract HEAD `01ff1ce`: [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45451459381) SUCCESS; [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45451459160) CANCELLED after subsequent branch development. Shared-contract and new registry source still require exact-head application CI.
+
+V7-GAP-06 / V7-GAP-11: durable versioned Owner replacement of non-secret provider declarations, exact active grant checks, canonical digest, explicit clear without legacy fallback, and Desktop local provenance are CODED / CI PENDING. See [Owner registry guide](docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). Registry uses existing MySQL events; dedicated indexed storage/performance, retention and restore evidence, non-developer editor, provider-permitted account/workspace verification, interruption and actual token/quota measurement remain OPEN. G0–G7 HOLD; no gap accepted solely on source evidence.
