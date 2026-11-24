@@ -745,6 +745,7 @@ $('connect').onclick=async()=>{
   clearWorkerExpiryIntent();clearQaOwnerAttempt();
   resetProviderRegistry('Owner session changed. Load current registry.');
   resetProviderRecovery('Owner session changed. Inspect current attempt.',true);
+  resetBatchRecovery('Owner session changed. Inspect exact original admission.',true);
   key=$('key').value;$('key').value='';
   try{
     await refresh();
@@ -768,6 +769,7 @@ $('disconnect').onclick=()=>{
   clearWorkerExpiryIntent();clearQaOwnerAttempt();
   resetProviderRegistry('Owner session changed. Load current registry.');
   resetProviderRecovery('Owner session changed. Inspect current attempt.',true);
+  resetBatchRecovery('Owner session changed. Inspect exact original admission.',true);
   gitRecoverySnapshot=null;
   $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
   invalidateOwnerRecoveryDisplay(
@@ -1351,4 +1353,107 @@ $('provider-recovery-close').onclick=async()=>{
   }catch{
     if(current())resetProviderRecovery('Closure not verified. It may have committed or been rejected. Inspect current attempt before another decision. No automatic retry.');
   }
+};
+
+
+// Owner-only cancellation of an absent admission receipt. No automatic retry.
+let batchRecovery=null,batchRecoveryBusy=false,batchRecoveryRevision=0;
+const batchFields=['agent','project','request','digest','order'];
+const batchChecks=['evidence','no-retry'];
+function batchInput(){
+  const field=k=>$('batch-recovery-'+k).value;
+  const k={agent_id:field('agent'),project_id:field('project'),request_id:field('request'),
+    preview_sha256:field('digest'),plan_order:field('order').split(/\r?\n/)};
+  const validId=x=>typeof x==='string'&&!/[\r\n]/.test(x)&&providerRecoveryId.test(x);
+  if(![k.agent_id,k.project_id,k.request_id].every(validId)||
+     k.preview_sha256.length!==64||!/^[a-f0-9]{64}$/.test(k.preview_sha256)||
+     k.plan_order.length<2||k.plan_order.length>10||!k.plan_order.every(validId)||
+     new Set(k.plan_order.map(x=>x.toLowerCase())).size!==k.plan_order.length)
+    throw Error('Enter exact original IDs, digest and ordered tickets (2–10 lines, no blank lines).');
+  return k;
+}
+function batchRecoveryControls(){
+  let same=false;
+  try{same=JSON.stringify(batchInput())===JSON.stringify(batchRecovery?.input);}catch{}
+  const eligible=Boolean(key&&!$('dashboard').hidden&&!batchRecoveryBusy&&same&&batchRecovery?.data.owner_cancellation_eligible);
+  for(const f of batchFields)$('batch-recovery-'+f).disabled=batchRecoveryBusy;
+  for(const f of batchChecks)$('batch-recovery-'+f).disabled=!eligible;
+  $('batch-recovery-load').disabled=batchRecoveryBusy;
+  $('batch-recovery-cancel').disabled=!eligible||!batchChecks.every(f=>$('batch-recovery-'+f).checked===true);
+}
+function resetBatchRecovery(reason,clear=false){
+  batchRecoveryRevision++;batchRecovery=null;batchRecoveryBusy=false;
+  if(clear)for(const f of batchFields)$('batch-recovery-'+f).value='';
+  for(const f of batchChecks)$('batch-recovery-'+f).checked=false;
+  value('batch-recovery-status',reason);batchRecoveryControls();
+}
+function validateBatchObservation(d,k){
+  if(!d||d.read_only!==true||d.automatic_execution_allowed!==false||
+     ['agent_id','project_id','request_id','preview_sha256'].some(f=>d[f]!==k[f])||
+     JSON.stringify(d.plan_order)!==JSON.stringify(k.plan_order)||
+     !['NO_RECEIPT','HOLD_TICKET_CONFLICT','ADMITTED','ADMISSION_CANCELLED'].includes(d.state)||
+     d.owner_cancellation_eligible!==(d.state==='NO_RECEIPT'))throw Error('BATCH_RECOVERY_RESPONSE_INVALID');
+  if(d.state==='ADMISSION_CANCELLED'){
+    const x=d.resolution;
+    if(!x||x.state!==d.state||x.owner_review_recorded!==true||x.automatic_execution_allowed!==false||
+       ['agent_id','project_id','request_id','preview_sha256'].some(f=>x[f]!==k[f])||
+       JSON.stringify(x.plan_order)!==JSON.stringify(k.plan_order)||
+       typeof x.resolution_id!=='string'||!/^batch_cancel_[a-f0-9]{32}$/.test(x.resolution_id)||
+       !Number.isSafeInteger(x.epoch)||x.epoch<1)throw Error('BATCH_RECOVERY_RESOLUTION_INVALID');
+  }
+  if(d.state==='ADMITTED'&&(!d.receipt||d.receipt.accepted!==true||
+     d.receipt.project_id!==k.project_id||d.receipt.request_id!==k.request_id||
+     d.receipt.preview_sha256!==k.preview_sha256||
+     JSON.stringify(d.receipt.plan_order)!==JSON.stringify(k.plan_order)||
+     d.receipt.automatic_execution_allowed!==false))
+    throw Error('BATCH_RECOVERY_RECEIPT_INVALID');
+  return d;
+}
+const batchObservation=k=>request('/v7/owner/master-batch/inspect',{method:'POST',redirect:'error',body:JSON.stringify(k)});
+for(const f of batchFields)$('batch-recovery-'+f).addEventListener('input',()=>{
+  if(!batchRecoveryBusy)resetBatchRecovery('Input changed. Inspect exact admission again.');
+});
+for(const f of batchChecks)$('batch-recovery-'+f).addEventListener('change',batchRecoveryControls);
+$('batch-recovery-load').onclick=async()=>{
+  if(!key||batchRecoveryBusy||$('dashboard').hidden)return;
+  resetBatchRecovery('Inspecting exact original admission…');
+  let input;
+  try{input=batchInput();}catch(e){value('batch-recovery-status',e.message);return;}
+  const session=ownerSessionVersion,originalKey=key,revision=++batchRecoveryRevision;
+  const current=()=>key===originalKey&&ownerSessionVersion===session&&batchRecoveryRevision===revision&&!$('dashboard').hidden;
+  batchRecoveryBusy=true;batchRecoveryControls();
+  try{
+    const data=validateBatchObservation(await batchObservation(input),input);
+    if(!current())return;
+    batchRecovery={input,data};
+    value('batch-recovery-status',data.state==='NO_RECEIPT'?
+      'No receipt or listed ticket IDs found in current DB. NOT proof of non-admission. Independent review required before permanently blocking original request.':
+      data.state==='HOLD_TICKET_CONFLICT'?'HOLD: at least one original ticket ID exists. No cancellation permitted.':
+      data.state==='ADMITTED'?'Historical admission exists. Do not cancel or duplicate.':
+      'Original request permanently blocked by Owner resolution '+data.resolution.resolution_id+'. No execution permission.');
+  }catch{if(current())value('batch-recovery-status','Inspection unavailable or invalid. HOLD.');}
+  finally{if(current()){batchRecoveryBusy=false;batchRecoveryControls();}}
+};
+$('batch-recovery-cancel').onclick=async()=>{
+  batchRecoveryControls();if($('batch-recovery-cancel').disabled)return;
+  const input=batchRecovery.input;
+  if(!confirm('Permanently block original request '+input.request_id+' for '+input.agent_id+'? No new work authorized.'))return;
+  const session=ownerSessionVersion,originalKey=key,revision=++batchRecoveryRevision;
+  const current=()=>key===originalKey&&ownerSessionVersion===session&&batchRecoveryRevision===revision&&!$('dashboard').hidden;
+  batchRecoveryBusy=true;batchRecoveryControls();
+  const request_id='batch_review_'+crypto.randomUUID().replaceAll('-','');
+  value('batch-recovery-status','Recording cancellation once; verifying current durable marker…');
+  try{
+    const receipt=await request('/v7/owner/command',{method:'POST',redirect:'error',body:JSON.stringify({
+      request_id,command:'CANCEL_MASTER_BATCH_ADMISSION',payload:{...input,evidence_reviewed:true,no_retry_confirmed:true}})});
+    if(!current())return;
+    const x=receipt?.state;
+    if(receipt?.accepted!==true||receipt.receipt_id!==request_id||x?.state!=='ADMISSION_CANCELLED'||
+       x.owner_review_recorded!==true||x.automatic_execution_allowed!==false)throw Error('BATCH_RECOVERY_RECEIPT_INVALID');
+    const data=validateBatchObservation(await batchObservation(input),input);
+    if(!current())return;
+    if(data.state!=='ADMISSION_CANCELLED'||data.resolution.resolution_id!==x.resolution_id)
+      throw Error('BATCH_RECOVERY_READBACK_REQUIRED');
+    resetBatchRecovery('Exact permanent cancellation read back. Original approved Desktop can inspect its receipt and close its local hold. No automatic retry or new task authorization.');
+  }catch{if(current())resetBatchRecovery('Cancellation not verified. Inspect current admission before another decision. No automatic retry.');}
 };
