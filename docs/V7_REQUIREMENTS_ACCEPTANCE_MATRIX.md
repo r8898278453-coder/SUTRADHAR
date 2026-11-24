@@ -185,3 +185,17 @@ Verified baseline `3465af4`: [application workflow](https://github.com/r88982784
 | V7-O02, B10, Q06 | NEW `ee2e62f` / `8684dfe`: reclaim cannot submit based solely on historical checkpoint; fresh generation and malformed Unicode tests | CODED / CI PENDING; physical recovery and independently tested candidate |
 
 G0–G7 HOLD. No test row has been promoted to LIVE_ACCEPTED; all 71 original scenarios and their independent receipt requirements remain unchanged.
+
+
+## Incremental V7-T05 source coverage — declared shared contract reservations
+
+Verified previous baseline `93993a0`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700768) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700737) both SUCCESS, including the fresh-checkpoint change. The new shared-contract implementation and regressions are CODED / CI PENDING at this update.
+
+| Requirement | Added evidence | Remaining proof |
+|---|---|---|
+| V7-T05, T04 | `tests/v7_rules.test.ts` canonical keys and hierarchy; `tests/v7_mysql_integration.test.ts` distinct-file and cross-base shared API conflict, disjoint admission, no reservation on refusal | Run new exact-head CI; independent semantic declaration review, automatic discovery and live combined integration |
+| V7-O11 | Nonempty LOW-risk declaration remains WAITING_AUTHORIZATION; explicit Owner review before claim | Real independent Owner review |
+| V7-O02, O06 | Revoked contract holder retains reservation until Owner reconciliation; competing claim denied until release | Physical recovery and external side-effect proof |
+| V7-B06, B08 | `tests/desktop_worker_inspection.test.cjs`: declared keys preserved in bounded preview; malformed metadata rejected | Actual provider permission, token usage, secret review |
+
+Previous fresh-checkpoint regressions are verified in source CI at 93993a0. The 71 original scenario definitions are retained, with no promotion to LIVE_ACCEPTED.
