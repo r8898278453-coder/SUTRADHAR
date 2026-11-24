@@ -59,7 +59,19 @@ function providerDeclarations(x){
     seen.add(m.provider);
     return {...m};
   });
-  return {provider_mapping_state:state,provider_mappings:mappings};
+  const source=x.provider_mapping_source??'LEGACY_RESPONSE_UNCLASSIFIED';
+  const version=x.provider_registry_version??null;
+  if(!['MYSQL_OWNER_REGISTRY','LEGACY_ENV_CONFIGURATION','NOT_APPLICABLE','INVALID','LEGACY_RESPONSE_UNCLASSIFIED'].includes(source)||
+     (source==='MYSQL_OWNER_REGISTRY'&&(!Number.isSafeInteger(version)||version<1))||
+     (source==='LEGACY_ENV_CONFIGURATION'&&version!==0)||
+     (!['MYSQL_OWNER_REGISTRY','LEGACY_ENV_CONFIGURATION'].includes(source)&&version!==null)||
+     (source==='NOT_APPLICABLE'&&state!=='NOT_APPLICABLE')||
+     (source==='INVALID'&&state!=='INVALID_OWNER_CONFIGURATION')||
+     (['MYSQL_OWNER_REGISTRY','LEGACY_ENV_CONFIGURATION'].includes(source)&&
+       !['OWNER_DECLARED_UNVERIFIED','UNCONFIGURED'].includes(state)))
+    fail('WORKER_PROVIDER_MAPPING_INVALID');
+  return {provider_mapping_state:state,provider_mappings:mappings,
+    provider_mapping_source:source,provider_registry_version:version};
 }
 function contractDeclaration(value){
   // An older Central response is unclassified, never verified conflict-free.
@@ -198,6 +210,7 @@ function compactWorkerContext(task,agentId){
   return {kind:'PROVIDER_ASSISTED_HANDOFF_PREVIEW',preview,utf8_bytes:bytes,
     byte_budget:CONTEXT_MAX_BYTES,context_sha256:crypto.createHash('sha256').update(preview).digest('hex'),
     provider_mapping_state:t.provider_mapping_state,provider_mappings:t.provider_mappings,
+    provider_mapping_source:t.provider_mapping_source,provider_registry_version:t.provider_registry_version,
     provider_mapping_verified:false,lease_verified:false,provider_sent:false,
     automatic_execution_allowed:false,secret_scan_verified:false};
 }
