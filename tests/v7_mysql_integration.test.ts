@@ -638,6 +638,93 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:c.agent_id,can_qa:true});
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_integration',agent_id:d.agent_id,can_develop:true});
     await owner('GRANT_PROJECT_AGENT',{project_id:'project_other_base',agent_id:d.agent_id,can_develop:true});
+    // Master batch: read-only review, deterministic DAG, exact versioned digest,
+    // no partial writes on late collision, one durable receipt on concurrent replay.
+    {
+      const project_id='project_batch_ci',expected_master_epoch=Number(status.epoch);
+      await owner('CREATE_PROJECT',{project_id,display_name:'Batch planning fixture',repository:'example/batch-ci'});
+      await owner('GRANT_PROJECT_AGENT',{project_id,agent_id:b.agent_id,can_develop:true});
+      const task=(suffix:string,scope:string,deps:string[]=[],contract_keys:string[]=[])=>({
+        ticket_id:'ticket_batch_'+suffix,baseline_sha:'a'.repeat(40),branch_name:'ai/batch_'+suffix,
+        title:'Batch fixture '+suffix,description:'Review scoped implementation '+suffix,
+        risk:'LOW',write_scopes:[scope],acceptance_criteria:['Test passes '+suffix],dependencies:deps,contract_keys});
+      const first=task('a','src/a.ts'),second=task('b','src/a.ts',[first.ticket_id]),
+        third=task('c','src/c.ts',[],['db:inventory']);
+      const envelope={agent_id:a.agent_id,project_id,expected_master_epoch,request_id:'batch_'+(++count),
+        tasks:[third,second,first]};
+      const preview=(data:any)=>a.signed('/v7/tasks/plan-batch/preview',data);
+      const db=await mysql.createConnection({host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+        user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+      const countTickets=async()=>{
+        const [r]:any=await db.query('SELECT COUNT(*) n FROM v7_tickets WHERE project_id=?',[project_id]);return Number(r[0].n);
+      };
+      try{
+        const aliasProject=await preview({...envelope,project_id:project_id.toUpperCase()});
+        assert.equal(aliasProject.code,404,JSON.stringify(aliasProject.body));
+        const staleMaster=await b.signed('/v7/tasks/plan-batch/preview',{...envelope,agent_id:b.agent_id});
+        assert.equal(staleMaster.code,409,JSON.stringify(staleMaster.body));
+        for(const [tasks,error] of [
+          [[first,{...second,dependencies:[]}],'TASK_BATCH_CONFLICT_REQUIRES_DEPENDENCY'],
+          [[{...first,dependencies:[second.ticket_id]},second],'TASK_BATCH_DEPENDENCY_CYCLE'],
+          [[first,{...second,dependencies:[first.ticket_id.toUpperCase()]}],'TASK_BATCH_DEPENDENCY_ALIAS'],
+          [[first,{...second,branch_name:first.branch_name.toUpperCase().replace('AI/','ai/')}],'TASK_BATCH_DUPLICATE_ID_BRANCH_OR_INTENT'],
+          [[first,{...second,contract_keys:null}],'TASK_BATCH_TASK_SHAPE_INVALID'],
+          [[first,{...third,dependencies:['ticket_missing_batch']}],'INVALID_DEPENDENCY']
+        ] as const){
+          const invalid=await preview({...envelope,tasks});
+          assert.equal(invalid.body.error_code,error,JSON.stringify(invalid.body));
+          assert.ok([400,409].includes(invalid.code));
+        }
+        assert.equal(await countTickets(),0);
+        const reviewed=await preview(envelope);
+        assert.equal(reviewed.code,200,JSON.stringify(reviewed.body));
+        assert.equal(reviewed.body.read_only,true);
+        assert.equal(reviewed.body.semantic_discovery_verified,false);
+        assert.equal(reviewed.body.baseline_verified,false);
+        assert.deepEqual(reviewed.body.plan_order,[first.ticket_id,second.ticket_id,third.ticket_id]);
+        assert.equal(reviewed.body.tickets[2].owner_approval_required,true);
+        assert.equal((await preview({...envelope,tasks:[first,second,third]})).body.preview_sha256,reviewed.body.preview_sha256);
+        assert.equal(await countTickets(),0);
+        const commit={...envelope,preview_sha256:reviewed.body.preview_sha256};
+        const modified=await a.signed('/v7/tasks/plan-batch',{...commit,tasks:[first,{...second,title:'Modified after review'},third]});
+        assert.equal(modified.code,409,JSON.stringify(modified.body));
+        assert.equal(modified.body.error_code,'TASK_BATCH_PREVIEW_MISMATCH');
+        const accepted=await Promise.all([a.signed('/v7/tasks/plan-batch',commit),a.signed('/v7/tasks/plan-batch',commit)]);
+        assert.ok(accepted.every(x=>x.code===200),JSON.stringify(accepted));
+        assert.deepEqual(accepted[0].body,accepted[1].body);
+        assert.equal(await countTickets(),3);
+        const [edges]:any=await db.query('SELECT dependency_id FROM v7_dependencies WHERE ticket_id=?',[second.ticket_id]);
+        assert.deepEqual(edges.map((x:any)=>x.dependency_id),[first.ticket_id]);
+        const [approvals]:any=await db.query('SELECT kind,state FROM v7_approvals WHERE ticket_id=?',[third.ticket_id]);
+        assert.equal(approvals.length,1);assert.equal(approvals[0].kind,'SHARED_CONTRACT');
+        const [batchEvents]:any=await db.query('SELECT event_id FROM v7_events WHERE event_type="TASK_BATCH_PLANNED" AND resource_id=?',[project_id]);
+        assert.equal(batchEvents.length,1);
+        const notReady=await b.signed('/v7/tasks/claim',{agent_id:b.agent_id,ticket_id:second.ticket_id,
+          expected_master_epoch,request_id:'batch_dep_claim_'+(++count)});
+        assert.equal(notReady.code,409,JSON.stringify(notReady.body));
+        assert.equal(notReady.body.error_code,'DEPENDENCY_UNVERIFIED');
+        const alias=await a.signed('/v7/tasks/plan',{agent_id:a.agent_id,project_id,expected_master_epoch,
+          request_id:'batch_alias_'+(++count),...task('alias','src/alias.ts',[first.ticket_id.toUpperCase()])});
+        assert.equal(alias.code,409,JSON.stringify(alias.body));
+        assert.equal(alias.body.error_code,'INVALID_DEPENDENCY');
+        const nextA=task('d','src/d.ts',[],['event:batch.review']),nextB=task('e','src/e.ts');
+        const nextEnvelope={...envelope,request_id:'batch_rollback_'+(++count),tasks:[nextB,nextA]};
+        const nextPreview=await preview(nextEnvelope);assert.equal(nextPreview.code,200,JSON.stringify(nextPreview.body));
+        // A separate task reserves the later branch between preview and commit.
+        const collision=await a.signed('/v7/tasks/plan',{agent_id:a.agent_id,project_id,expected_master_epoch,
+          request_id:'batch_collision_'+(++count),...task('collision','src/collision.ts'),branch_name:nextB.branch_name});
+        assert.equal(collision.code,200,JSON.stringify(collision.body));
+        const rollback=await a.signed('/v7/tasks/plan-batch',{...nextEnvelope,preview_sha256:nextPreview.body.preview_sha256});
+        assert.equal(rollback.code,409,JSON.stringify(rollback.body));
+        assert.equal(rollback.body.error_code,'TASK_REPOSITORY_BRANCH_ALREADY_RESERVED');
+        assert.equal(await countTickets(),4);
+        const [partial]:any=await db.query('SELECT ticket_id FROM v7_tickets WHERE ticket_id IN (?,?)',[nextA.ticket_id,nextB.ticket_id]);
+        const [partialApprovals]:any=await db.query('SELECT proposal_id FROM v7_approvals WHERE ticket_id=?',[nextA.ticket_id]);
+        const [partialEvents]:any=await db.query('SELECT event_id FROM v7_events WHERE event_type="TASK_PLANNED" AND resource_id=?',[nextA.ticket_id]);
+        const [partialReceipt]:any=await db.query('SELECT request_id FROM v7_commands WHERE actor=? AND request_id=?',[a.agent_id,nextEnvelope.request_id]);
+        assert.equal(partial.length+partialApprovals.length+partialEvents.length+partialReceipt.length,0,'all partial admission and receipt writes roll back');
+      }finally{await db.end();}
+    }
     // Actual MySQL fencing: a formerly eligible idle PC cannot obtain
     // a new task lease, while normal unrelated agents keep operating.
     const blockedAvailability=await d.signed('/v7/tasks/available',undefined,'GET');
