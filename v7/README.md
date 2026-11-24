@@ -151,3 +151,9 @@ Use exact recovered agent/project/request/digest/order in Owner dashboard. Exist
 Exact baseline `a77d3a8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45483558734) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45483558666), including previous Owner admission reconciliation. New local baseline and exact project lookup changes are CODED / EXACT-HEAD CI PENDING.
 
 Desktop Master selects trusted local checkout, inspects signed project origin/base tracking ref and commit/tree, and uses that SHA for every task. Preview and native-confirmed commit recheck local evidence before admission. No remote freshness or upstream merge verification; plan dependent work later if it needs upstream changes. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). G0–G7 HOLD.
+
+## Master unconfirmed draft restore and local source hints
+
+Exact baseline `6c996cb` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45485717874) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45485717690), including the Desktop Git baseline preflight. New encrypted unconfirmed draft and bounded source-hint changes are CODED / EXACT-HEAD CI PENDING.
+
+Explicitly save editable task/editor data locally; reload under the same agent/Central and reinspect the baseline before fresh preview. Pending confirmed admission recovery takes priority. Relative-import hints are bounded local lexical evidence, not verified semantic dependencies or token measurements. No source upload, Git mutation or new schema. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). G0–G7 HOLD.
