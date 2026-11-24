@@ -746,6 +746,7 @@ $('connect').onclick=async()=>{
   resetProviderRegistry('Owner session changed. Load current registry.');
   resetProviderRecovery('Owner session changed. Inspect current attempt.',true);
   resetBatchRecovery('Owner session changed. Inspect exact original admission.',true);
+  resetUsage('Owner session changed. Inspect ticket usage.',true);
   key=$('key').value;$('key').value='';
   try{
     await refresh();
@@ -770,6 +771,7 @@ $('disconnect').onclick=()=>{
   resetProviderRegistry('Owner session changed. Load current registry.');
   resetProviderRecovery('Owner session changed. Inspect current attempt.',true);
   resetBatchRecovery('Owner session changed. Inspect exact original admission.',true);
+  resetUsage('Owner session changed. Inspect ticket usage.',true);
   gitRecoverySnapshot=null;
   $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
   invalidateOwnerRecoveryDisplay(
@@ -1456,4 +1458,121 @@ $('batch-recovery-cancel').onclick=async()=>{
       throw Error('BATCH_RECOVERY_READBACK_REQUIRED');
     resetBatchRecovery('Exact permanent cancellation read back. Original approved Desktop can inspect its receipt and close its local hold. No automatic retry or new task authorization.');
   }catch{if(current())resetBatchRecovery('Cancellation not verified. Inspect current admission before another decision. No automatic retry.');}
+};
+
+
+// Exact per-attempt Owner readings, not estimates or provider API authority.
+let usageSnapshot=null,usageBusy=false,usageRevision=0;
+const usageCount=s=>typeof s==='string'&&/^(?:0|[1-9][0-9]{0,9})$/.test(s)&&Number(s)<=1000000000?Number(s):null;
+const usageHash=s=>typeof s==='string'&&s.length===64&&/^[a-f0-9]{64}$/.test(s);
+function usageReading(){
+  const a=usageSnapshot?.attempts.find(x=>x.attempt_id===$('usage-attempt').value&&x.owner_recording_eligible);
+  const input=usageCount($('usage-input').value),output=usageCount($('usage-output').value),
+    rawCached=$('usage-cached').value,cached=usageCount(rawCached);
+  if(!a||usageSnapshot.ticket_id!==$('usage-ticket').value||input===null||output===null||
+     (rawCached!==''&&(cached===null||cached>input))||!$('usage-reviewed').checked)return null;
+  return {ticket_id:usageSnapshot.ticket_id,attempt_id:a.attempt_id,context_sha256:a.context_sha256,
+    input_tokens:input,output_tokens:output,cached_input_tokens:cached,evidence_reviewed:true};
+}
+function usageControls(){
+  const enabled=Boolean(key&&!$('dashboard').hidden&&!usageBusy&&usageSnapshot&&
+    usageSnapshot.ticket_id===$('usage-ticket').value&&usageSnapshot.attempts.some(x=>x.owner_recording_eligible));
+  $('usage-ticket').disabled=usageBusy;$('usage-load').disabled=usageBusy;
+  for(const f of ['attempt','input','output','cached','reviewed'])$('usage-'+f).disabled=!enabled;
+  $('usage-save').disabled=!enabled||!usageReading();
+}
+function resetUsage(message,clear=false){
+  usageRevision++;usageSnapshot=null;usageBusy=false;
+  if(clear)$('usage-ticket').value='';
+  $('usage-attempt').replaceChildren();$('usage-attempt').value='';
+  for(const f of ['input','output','cached'])$('usage-'+f).value='';
+  $('usage-reviewed').checked=false;value('usage-status',message);usageControls();
+}
+function validateUsage(d,ticket){
+  if(!d||d.ticket_id!==ticket||d.read_only!==true||d.provider_usage_verified!==false||
+     d.quota_verified!==false||d.automatic_execution_allowed!==false||
+     !Array.isArray(d.attempts)||d.attempts.length>100||!Array.isArray(d.totals)||d.totals.length!==2)
+    throw Error('PROVIDER_USAGE_RESPONSE_INVALID');
+  const providers=['CHATGPT_WEB','GOOGLE_AI_STUDIO'],seen=new Set();
+  const count=n=>Number.isSafeInteger(n)&&n>=0&&n<=1000000000;
+  for(const a of d.attempts){
+    if(!a||typeof a.attempt_id!=='string'||!/^attempt_[a-f0-9]{32}$/.test(a.attempt_id)||seen.has(a.attempt_id)||
+       !providers.includes(a.provider)||!['OPEN','INTERRUPTED','CLOSED'].includes(a.state)||!usageHash(a.context_sha256)||
+       a.owner_recording_eligible!==(a.state==='CLOSED'&&a.usage===null))throw Error('PROVIDER_USAGE_RESPONSE_INVALID');
+    seen.add(a.attempt_id);
+    if(a.usage!==null){
+      const r=a.usage;
+      if(a.state!=='CLOSED'||r.ticket_id!==ticket||r.attempt_id!==a.attempt_id||r.context_sha256!==a.context_sha256||
+         r.provider!==a.provider||r.source!=='OWNER_ATTESTED_PROVIDER_DISPLAY'||r.evidence_reviewed!==true||
+         r.provider_usage_verified!==false||r.quota_verified!==false||r.automatic_execution_allowed!==false||
+         !count(r.input_tokens)||!count(r.output_tokens)||
+         (r.cached_input_tokens!==null&&(!count(r.cached_input_tokens)||r.cached_input_tokens>r.input_tokens))||
+         !usageHash(r.usage_sha256))throw Error('PROVIDER_USAGE_RESPONSE_INVALID');
+    }
+  }
+  for(let i=0;i<providers.length;i++){
+    const p=providers[i],t=d.totals[i],all=d.attempts.filter(a=>a.provider===p),known=all.filter(a=>a.usage!==null);
+    if(!t||t.provider!==p||t.attempt_count!==all.length||t.recorded_attempt_count!==known.length||
+       t.unknown_attempt_count!==all.length-known.length||
+       t.recorded_input_tokens!==known.reduce((n,a)=>n+a.usage.input_tokens,0)||
+       t.recorded_output_tokens!==known.reduce((n,a)=>n+a.usage.output_tokens,0)||
+       t.recorded_cached_input_tokens!==known.reduce((n,a)=>n+(a.usage.cached_input_tokens??0),0)||
+       t.cached_input_unknown_record_count!==known.filter(a=>a.usage.cached_input_tokens===null).length)
+      throw Error('PROVIDER_USAGE_TOTALS_INVALID');
+  }
+  return d;
+}
+function displayUsage(d){
+  usageSnapshot=d;
+  const sel=$('usage-attempt');sel.replaceChildren();
+  const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Choose exact closed attempt';sel.append(placeholder);
+  for(const a of d.attempts.filter(x=>x.owner_recording_eligible)){
+    const opt=document.createElement('option');opt.value=a.attempt_id;opt.textContent=a.attempt_id+' / '+a.provider+' / context '+a.context_sha256;sel.append(opt);
+  }
+  sel.value='';for(const f of ['input','output','cached'])$('usage-'+f).value='';
+  $('usage-reviewed').checked=false;
+  value('usage-status','OWNER-ATTESTED COUNTS ONLY — unknown attempts are not zero; cached input is a subset.\n'+JSON.stringify(d,null,2));
+}
+$('usage-ticket').addEventListener('input',()=>{if(!usageBusy)resetUsage('Ticket changed. Inspect again.');});
+for(const f of ['attempt','input','output','cached'])$('usage-'+f).addEventListener('input',()=>{
+  $('usage-reviewed').checked=false;usageControls();
+});
+$('usage-reviewed').addEventListener('change',usageControls);
+const fetchUsage=ticket=>request('/v7/owner/provider-usage/'+encodeURIComponent(ticket),{redirect:'error'});
+$('usage-load').onclick=async()=>{
+  if(!key||usageBusy||$('dashboard').hidden)return;
+  const ticket=$('usage-ticket').value;resetUsage('Inspecting historical usage…');
+  if(!providerRecoveryId.test(ticket)||/[\r\n]/.test(ticket)){value('usage-status','Enter exact ticket ID.');return;}
+  const session=ownerSessionVersion,originalKey=key,revision=++usageRevision;
+  const current=()=>key===originalKey&&ownerSessionVersion===session&&usageRevision===revision&&!$('dashboard').hidden;
+  usageBusy=true;usageControls();
+  try{const d=validateUsage(await fetchUsage(ticket),ticket);if(current())displayUsage(d);}
+  catch{if(current())value('usage-status','Usage history unavailable or invalid. HOLD.');}
+  finally{if(current()){usageBusy=false;usageControls();}}
+};
+$('usage-save').onclick=async()=>{
+  usageControls();if($('usage-save').disabled)return;
+  const payload=usageReading();
+  if(!payload||!confirm('Permanently record independently observed counts for '+payload.attempt_id+'? No provider verification or execution authorization.'))return;
+  const session=ownerSessionVersion,originalKey=key,revision=++usageRevision;
+  const current=()=>key===originalKey&&ownerSessionVersion===session&&usageRevision===revision&&!$('dashboard').hidden;
+  usageBusy=true;usageControls();
+  const request_id='usage_'+crypto.randomUUID().replaceAll('-','');
+  try{
+    const receipt=await request('/v7/owner/command',{method:'POST',redirect:'error',body:JSON.stringify({
+      request_id,command:'RECORD_PROVIDER_USAGE',payload})});
+    if(!current())return;
+    const r=receipt?.state;
+    if(receipt?.accepted!==true||receipt.receipt_id!==request_id||!r||
+       Object.entries(payload).some(([k,v])=>r[k]!==v)||!usageHash(r.usage_sha256)||
+       r.provider_usage_verified!==false||r.quota_verified!==false||r.automatic_execution_allowed!==false)
+      throw Error('PROVIDER_USAGE_RECEIPT_INVALID');
+    const d=validateUsage(await fetchUsage(payload.ticket_id),payload.ticket_id);
+    if(!current())return;
+    const saved=d.attempts.find(a=>a.attempt_id===payload.attempt_id)?.usage;
+    if(!saved||saved.usage_sha256!==r.usage_sha256||Object.entries(payload).some(([k,v])=>saved[k]!==v))
+      throw Error('PROVIDER_USAGE_READBACK_REQUIRED');
+    displayUsage(d);
+  }catch{if(current())resetUsage('Reading not verified. Inspect current usage before any new decision. No automatic retry.');}
+  finally{if(current()){usageBusy=false;usageControls();}}
 };
