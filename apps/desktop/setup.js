@@ -448,6 +448,8 @@ for(const [buttonId,action] of [['workerProviderBegin','BEGIN'],['workerProvider
 // Local form draft only; Central and Electron main independently validate.
 let masterDraft=[],masterReview=null,masterBusy=false,masterAvailable=false,masterRevision=0;
 let masterCatalogAgent=null,masterCatalogItems=[],masterRecovered=false,masterLocalBaseline=null;
+let masterDraftVersion=null;
+const masterEditorIds={ticket:'masterTicket',baseline:'masterBaseline',branch:'masterBranch',title:'masterTitle',description:'masterDescription',risk:'masterRisk',scopes:'masterScopes',criteria:'masterCriteria',dependencies:'masterDependencies',contracts:'masterContracts'};
 const masterTaskFields=['masterTicket','masterBaseline','masterBranch','masterTitle','masterDescription','masterScopes','masterCriteria','masterDependencies','masterContracts'];
 function masterIdentity(){return {agent:get('workerAgent').value,project:get('masterProject').value,request:get('masterRequest').value};}
 const masterId=x=>typeof x==='string'&&!/[\r\n]/.test(x)&&/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(x);
@@ -465,6 +467,9 @@ function updateMasterControls(){
   get('masterUndo').disabled=masterBusy||masterRecovered||!masterDraft.length;
   const baselineMatches=masterLocalBaseline&&masterLocalBaseline.agent===id.agent&&masterLocalBaseline.project===id.project&&masterDraft.every(t=>t.baseline_sha===masterLocalBaseline.sha);
   get('masterBaselineInspect').disabled=!masterAvailable||masterBusy||masterRecovered||!masterId(id.agent)||!masterId(id.project);
+  get('masterDraftSave').disabled=masterBusy||masterRecovered||!masterAvailable||!masterId(id.agent);
+  get('masterDraftLoad').disabled=get('masterDraftSave').disabled;
+  get('masterSourceHints').disabled=!eligible||masterRecovered||pending||masterDraft.length<2||!baselineMatches;
   get('masterPreview').disabled=!eligible||masterRecovered||pending||masterDraft.length<2||!baselineMatches;
   get('masterReceipt').disabled=!eligible||!masterHash(get('masterDigest').value);
   get('masterCommit').disabled=!eligible||masterRecovered||pending||!baselineMatches||!masterReview||
@@ -476,6 +481,7 @@ function updateMasterControls(){
 }
 function invalidateMasterReview({clearDigest=true}={}){
   masterRevision++;masterReview=null;get('masterReviewed').checked=false;
+  get('masterSourceStatus').textContent='Draft or review changed. Inspect source hints again if needed.';
   if(clearDigest)get('masterDigest').value='';
   updateMasterControls();
 }
@@ -484,6 +490,7 @@ function renderMasterDraft(){
   invalidateMasterReview();
 }
 for(const k of ['workerAgent','masterProject','masterRequest'])get(k).addEventListener('input',()=>{
+  if(k==='workerAgent'){masterDraftVersion=null;get('masterDraftStatus').textContent='Agent changed. Load the saved draft before replacing an existing snapshot.';}
   if(k!=='masterRequest')clearMasterBaseline();
   invalidateMasterReview();get('masterResult').textContent='Selection changed. Inspect exact current draft before preview.';
 });
@@ -568,6 +575,64 @@ get('masterBaselineInspect').addEventListener('click',async()=>{
       '\nTree: '+r.tree_sha+'. LOCAL ONLY; remote freshness and upstream changes are unverified. Use this exact SHA in each task.';
     // Do not overwrite an existing task field or a previously reviewed draft.
   }catch(error){status.textContent='Baseline inspection blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+function collectMasterDraft(){
+  const id=masterIdentity();
+  return {project_id:id.project,request_id:id.request,tasks:masterDraft,
+    editor:Object.fromEntries(Object.entries(masterEditorIds).map(([k,v])=>[k,get(v).value]))};
+}
+get('masterDraftSave').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterDraftSave').disabled)return;
+  const agent=masterIdentity().agent,revision=masterRevision,body=collectMasterDraft();
+  const expected=masterDraftVersion?.agent===agent?masterDraftVersion.sha:null;
+  masterBusy=true;invalidateMasterReview();const fence=masterRevision;updateMasterControls();
+  const output=get('masterDraftStatus');
+  try{
+    const r=await api.saveMasterUnconfirmedDraft(agent,body,expected);
+    if(fence!==masterRevision||masterIdentity().agent!==agent)return;
+    if(r.automatic_execution_allowed!==false||!Number.isSafeInteger(r.revision)||!masterHash(r.sha256))
+      throw Error('Invalid draft receipt');
+    masterDraftVersion={agent,sha:r.sha256};
+    output.textContent='Encrypted local draft saved, revision '+r.revision+'. No admission or preview saved.';
+  }catch(error){output.textContent='Draft save not verified: '+String(error?.message||error)+'. Load existing snapshot before replacing it.';}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterDraftLoad').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterDraftLoad').disabled)return;
+  if(!confirm('Load the saved unconfirmed draft for this agent, replacing current unsaved fields if one exists?'))return;
+  const agent=masterIdentity().agent;
+  clearMasterBaseline();invalidateMasterReview();const revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const output=get('masterDraftStatus');
+  try{
+    const r=await api.loadMasterUnconfirmedDraft(agent);
+    if(revision!==masterRevision||masterIdentity().agent!==agent)return;
+    if(r===null){masterDraftVersion=null;output.textContent='No saved draft for this agent and Central.';return;}
+    if(r.automatic_execution_allowed!==false||!Number.isSafeInteger(r.revision)||!masterHash(r.sha256)||!r.draft)
+      throw Error('Invalid saved draft');
+    const d=r.draft;
+    get('masterProject').value=d.project_id;get('masterRequest').value=d.request_id;
+    masterDraft=d.tasks;
+    for(const [k,v] of Object.entries(masterEditorIds))get(v).value=d.editor[k];
+    renderMasterDraft();masterDraftVersion={agent,sha:r.sha256};
+    output.textContent='Restored unconfirmed revision '+r.revision+'. Reinspect baseline and obtain a fresh Central preview; do not reuse an admitted request.';
+  }catch(error){output.textContent='Draft restore blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterSourceHints').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterSourceHints').disabled)return;
+  const id=masterIdentity(),revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const output=get('masterSourceStatus');output.textContent='Inspecting bounded immutable local source blobs…';
+  try{
+    const r=await api.inspectMasterSourceHints(id.agent,id.project,masterDraft);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    if(r.semantic_discovery_verified!==false||r.automatic_execution_allowed!==false||
+       r.provider_sent!==false||r.source_contents_returned!==false||!Array.isArray(r.hints))
+      throw Error('Invalid source hint report');
+    output.textContent='LOCAL LEXICAL HINTS ONLY — review these potential shared dependencies; no task or dependency was changed. Empty hints do not prove independence.\n'+JSON.stringify(r,null,2);
+  }catch(error){output.textContent='Source hint inspection blocked: '+String(error?.message||error);}
   finally{masterBusy=false;updateMasterControls();await loadStatus();}
 });
 get('masterRecover').addEventListener('click',async()=>{
