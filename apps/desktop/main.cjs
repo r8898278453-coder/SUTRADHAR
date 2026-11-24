@@ -601,7 +601,7 @@ app.whenReady().then(()=>{
       if(x.origin!==origin||x.body.agent_id!==agentId)
         throw Error('MASTER_BATCH_JOURNAL_ORIGINAL_AGENT_AND_CENTRAL_REQUIRED');
       return {pending:true,project_id:x.body.project_id,request_id:x.body.request_id,
-        tasks:x.body.tasks,preview_sha256:x.review.preview_sha256,epoch:x.body.expected_master_epoch,
+        tasks:x.body.tasks,plan_order:x.review.plan_order,preview_sha256:x.review.preview_sha256,epoch:x.body.expected_master_epoch,
         automatic_execution_allowed:false};
     }finally{workerClaimBusy=false;}
   });
