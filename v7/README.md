@@ -96,3 +96,10 @@ See [registry setup](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md) for authenti
 Verified previous source baseline `215e5ee`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116654) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116645) both SUCCESS. New Owner registry editor is CODED / CI PENDING at this update.
 
 The existing Central dashboard has a local draft editor with load, add/remove, review and exact versioned save. At version 0 independently inventory every intended legacy alias before replacing the registry. Do not type credentials or provider URLs into alias inputs. Save once, verify readback; on uncertain or competing revision reload rather than blindly retrying. Disconnect clears tab-local data but does not undo accepted MySQL mutations. The authenticated API workflow remains available for diagnostics. See [Owner guide](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). Real browser/provider/Hostinger acceptance pending; G0–G7 HOLD.
+
+
+## Manual provider attempt recovery
+
+Verified previous baseline `e935cef`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765773) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765743) both SUCCESS. New manual attempt source is CODED / CI PENDING at this update.
+
+See [provider interruption instructions](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md) for explicit trusted worker CLI provider-attempt begin/interrupt/close, fresh checkpoint review and Owner revoked-lease resolution. The record is a local audit/hold, not a remote provider request or permission grant. Never repeat an uncertain external operation; inspect signed detail and independently review first. Packaged Desktop read-only attempt metadata holds a new compact handoff, but mutation controls and Owner resolution UI are not yet implemented. No physical provider acceptance or production deployment. G0–G7 HOLD.
