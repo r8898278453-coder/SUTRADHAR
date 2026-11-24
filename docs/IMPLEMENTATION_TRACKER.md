@@ -1,6 +1,6 @@
 # SUTRADHAR — Implementation & Release Tracker
 
-> **Current-reading note (22 November 2026):** Rows labelled `SPECIFIED ONLY`, `NOT_RUN` or `NOT IMPLEMENTED` in the original 6–11 November baseline sections below are preserved as historical records; they do **not** describe every current alpha source feature. Newer dated development sections and the [repository README](../README.md) record subsequent code/CI changes. Nevertheless, real Hostinger staging, production Windows signing, physical multi-PC tests, provider-permitted autonomy and independent release acceptance remain **NOT ACCEPTED / HOLD**. Neither historical notes nor CI imply go-live.
+> **Current-reading note (24 November 2026):** Rows labelled `SPECIFIED ONLY`, `NOT_RUN` or `NOT IMPLEMENTED` in the original 6–11 November baseline sections below are preserved as historical records; they do **not** describe every current alpha source feature. Newer dated development sections and the [repository README](../README.md) record subsequent code/CI changes. Nevertheless, real Hostinger staging, production Windows signing, physical multi-PC tests, provider-permitted autonomy and independent release acceptance remain **NOT ACCEPTED / HOLD**. Neither historical notes nor CI imply go-live.
 
 **Original tracker baseline:** 2026-11-06  
 **V7 architecture documentation update:** 2026-11-11 (SPECIFIED ONLY)  
@@ -20,7 +20,7 @@
 
 - [Architecture Blueprint v7.0](./SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md) — Hostinger Business + MySQL, 8–10 Electron nodes, retained 1 Master + 2 backups, 60-second heartbeats, browser-first workers and owner control.
 - [Authoritative Agent / Task / QA / Recovery Contract](./AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md) — scope, permissions, state transitions, checkpoints, integration and fail-closed recovery.
-- [V7 Requirements / Acceptance Matrix](./V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) — executable proposed test IDs by milestone; **all new V7 tests NOT_RUN**.
+- [V7 Requirements / Acceptance Matrix](./V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) — executable proposed test IDs by milestone; **all new V7 tests NOT_RUN at the original design baseline**. See the dated source-evidence cross-reference and current CI; no live acceptance implied.
 
 | New target | Priority | Status | Required proof |
 |---|---|---|---|
@@ -1159,3 +1159,31 @@ Implemented strict private-chat webhook authorization and fixed STATUS/PAUSE/RES
 ### 24 November — compact human-assisted provider context
 
 Packaged Desktop adds an explicit read-only context preview for the selected agent's claimed task, with exact ticket version/baseline, deduplicated scopes/criteria, verified latest checkpoint hash, deterministic context hash and 8 KiB UTF-8 ceiling. Oversize context holds rather than silently truncating acceptance criteria. Preview never sends data, opens a provider or grants lease/project authorization. The operator must independently verify the live lease, authorized provider account/project and absence of secrets before manual use. Real provider mapping, tokenizer/quota counters and provider acceptance remain open.
+
+
+## 24 November 2026 — Consolidated progress and next work register
+
+**Last verified source baseline:** `3465af48304de2cb12ba4725d05f3c2e09455124`. Both [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985550) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985559) completed SUCCESS. Earlier exact-head baselines `5cbff65` and `9f41cc9` also passed. These are GitHub CI results, not Owner production acceptance.
+
+| Work item | Source / regression commits | Evidence status |
+|---|---|---|
+| Restart reconciliation strict identity, chronology, repeated reads and local ACK | `ac8ad81`, `7baed95`, `ba1a6f1`, `7305f8b`; test fixture corrected `c08b6b9` | VERIFIED in later source CI; physical restart pending |
+| Strict context Unicode, compact deterministic handoff, Git identity | `63e1bcd`, `8a26ef9`, `9427485`, `359ac3b` | VERIFIED in later source CI; token measurement pending |
+| Master plan validation and fresh Owner approval | `f429402`, `5cbff65` | VERIFIED disposable MySQL CI |
+| Owner-declared provider mapping and dependency-ready discovery | `b4d3c9c`, `33f0197`, `519ca86`, `2f0f2f0`, `016066b`, `1910f9f`, `56ee267`, `9f41cc9` | VERIFIED source CI; actual provider verification and MySQL registry open |
+| Project grant revocation, lease replay containment | `47c9213`, `0aeb654` | VERIFIED disposable MySQL CI |
+| Shared agent + Central Master recovery snapshot validation | `5c1bac8`, `f12d3e2`, `3465af4` | VERIFIED source CI |
+| Fresh checkpoint before candidate submission after reclaim/failed QA; reject invalid Unicode | `ee2e62f`, `8684dfe` | CODED / CI PENDING at documentation update |
+
+### Active remaining work (not closed by green CI)
+
+| Priority | Workstream | Exit condition |
+|---|---|---|
+| P0 | Durable provider workspace registry | Reviewed additive MySQL migration, versioned grants/revocation, exact identity binding and independent provider permission proof |
+| P0 | Task intelligence and semantic conflicts | Deterministic task DAG, contract reservations, clarification and negative concurrency tests |
+| P0 | Worker/provider interruption | Current lease/worktree and checkpoint binding; permitted continuation; durable hold and recovery evidence |
+| P1 | Minimum-token context reuse | Measured actual allowed provider usage, bounded retry/quota ledger, no secret disclosure |
+| P0 | Owner interfaces | Real private Telegram delivery, remaining safe command parity; privileged approvals stay gated |
+| P0 | G0–G7 | Owner branch protection/key rotation, real staging/restore, production signer, physical 2/3/8–10 PCs, rollback and all 71 acceptance receipts |
+
+Updated [blueprint](SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md), [contract](AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md), [matrix](V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md), [gap register](../GAP_REGISTER.md), [root README](../README.md) and [v7 runbook](../v7/README.md) to reflect the same verified baseline. Preserve the original historical tracking sections. Current exact-head CI and [Draft PR #1](https://github.com/r8898278453-coder/SUTRADHAR/pull/1) must be checked before further work. No merge, live deployment, signing or automatic external action.
