@@ -57,7 +57,9 @@
 <label for="masterProject">Existing exact project ID</label><input id="masterProject" maxlength="100" autocomplete="off" spellcheck="false">
 <label for="masterRequest">Unique batch request ID</label><input id="masterRequest" maxlength="100" autocomplete="off" spellcheck="false">
 <label for="masterTicket">Task ID</label><input id="masterTicket" maxlength="100" autocomplete="off">
-<label for="masterBaseline">Independently reviewed baseline commit SHA (40 lowercase hex)</label><input id="masterBaseline" maxlength="40" autocomplete="off" spellcheck="false">
+<button id="masterBaselineInspect" class="secondary" type="button" disabled>Inspect trusted local Git checkout (no network)</button>
+<p id="masterBaselineStatus" class="hint" role="status" aria-live="polite">Local tracking ref not inspected. Remote freshness and upstream changes are not verified.</p>
+<label for="masterBaseline">Inspected local baseline SHA (40 lowercase hex)</label><input id="masterBaseline" maxlength="40" autocomplete="off" spellcheck="false">
 <label for="masterBranch">Task branch (ai/…)</label><input id="masterBranch" maxlength="120" autocomplete="off" spellcheck="false">
 <label for="masterTitle">Task title</label><input id="masterTitle" maxlength="220">
 <label for="masterDescription">Scoped task description</label><textarea id="masterDescription" maxlength="10000" rows="3"></textarea>
@@ -70,6 +72,7 @@
 <label for="masterDraft">Review all task fields (local draft, not yet admitted)</label><textarea id="masterDraft" rows="8" readonly spellcheck="false"></textarea>
 <button id="masterRecover" class="secondary" type="button" disabled>Recover pending reviewed batch after restart</button>
 <p class="hint">A confirmed admission is encrypted locally before sending. If interrupted, recover its exact draft and inspect its receipt. Unresolved admission blocks new batches on this PC. Unconfirmed drafts are not saved.</p>
+<p class="hint">All tasks in this Desktop batch must use the inspected local tracking ref SHA. If downstream work needs upstream code not yet merged, plan that downstream work later. Refresh/reinspect if the local ref changes.</p>
 <button id="masterPreview" class="secondary" type="button" disabled>Validate and preview exact batch</button>
 <label for="masterDigest">Reviewed preview digest (retain for receipt lookup)</label><input id="masterDigest" maxlength="64" autocomplete="off" spellcheck="false">
 <label><input id="masterReviewed" type="checkbox"> I independently reviewed every task, baseline, dependency, scope, contract and criterion; no provider or Git work is authorized by admission.</label>
