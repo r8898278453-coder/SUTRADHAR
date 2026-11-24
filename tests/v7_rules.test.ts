@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chooseLeader,chooseBackups,firstElectionOpen,scopesOverlap,safeScope,LEASE_SECONDS,HEARTBEAT_SECONDS,validTaskBranch,isProtectedScope,parseContractKeys,contractReservationConflicts} from '../v7/rules.ts';
-import {parseProviderMappings,declaredProviderMappings} from '../v7/provider_mappings.ts';
+import {parseProviderMappings,declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot} from '../v7/provider_mappings.ts';
 const day=Date.parse('2026-11-11T00:00:00Z');
 const ts=(hour:number,minute=0)=>day+hour*3600000+minute*60000;
 const candidate=(id:string,node:string,arrival:number,seen:number)=>({
@@ -229,4 +229,21 @@ test('declared shared contract keys are canonical, bounded and hierarchically ex
   assert.equal(contractReservationConflicts(['api:orders'],null),true);
   assert.equal(contractReservationConflicts([],['api:orders']),false);
   assert.equal(contractReservationConflicts(null,null),false);
+});
+
+test('versioned provider registry snapshots are canonical and empty snapshot is explicit',()=>{
+  const first={project_id:'project_alpha',agent_id:'agent_alpha',provider:'CHATGPT_WEB',account_ref:'account_alpha',workspace_ref:'workspace_alpha'};
+  const second={...first,agent_id:'agent_beta'};
+  const snapshot=providerRegistrySnapshot(1,[second,first]);
+  assert.deepEqual(snapshot,providerRegistrySnapshot(1,[first,second]));
+  assert.deepEqual(verifyProviderRegistrySnapshot(snapshot),snapshot);
+  assert.notEqual(snapshot.registry_sha256,providerRegistrySnapshot(2,[first,second]).registry_sha256);
+  const empty=providerRegistrySnapshot(2,[]);
+  assert.deepEqual(verifyProviderRegistrySnapshot(empty).bindings,[]);
+  for(const bad of [{...snapshot,version:2},{...snapshot,registry_sha256:'0'.repeat(64)},
+    {...snapshot,extra:true},{...snapshot,bindings:[first]}])
+    assert.throws(()=>verifyProviderRegistrySnapshot(bad),/PROVIDER_REGISTRY_INVALID/);
+  for(const v of [0,-1,1.5,'1',Number.MAX_SAFE_INTEGER+1])
+    assert.throws(()=>providerRegistrySnapshot(v,[]),/PROVIDER_REGISTRY_INVALID/);
+  assert.throws(()=>providerRegistrySnapshot(1,[{...first,workspace_ref:'workspace_alpha\n'}]));
 });
