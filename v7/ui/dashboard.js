@@ -744,6 +744,7 @@ $('connect').onclick=async()=>{
   clearPrCreation();clearPrRecovery();clearGitRecoveryReview();
   clearWorkerExpiryIntent();clearQaOwnerAttempt();
   resetProviderRegistry('Owner session changed. Load current registry.');
+  resetProviderRecovery('Owner session changed. Inspect current attempt.',true);
   key=$('key').value;$('key').value='';
   try{
     await refresh();
@@ -766,6 +767,7 @@ $('disconnect').onclick=()=>{
   key='';clearPrCreation();clearPrRecovery();clearGitRecoveryReview();
   clearWorkerExpiryIntent();clearQaOwnerAttempt();
   resetProviderRegistry('Owner session changed. Load current registry.');
+  resetProviderRecovery('Owner session changed. Inspect current attempt.',true);
   gitRecoverySnapshot=null;
   $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
   invalidateOwnerRecoveryDisplay(
@@ -1236,4 +1238,117 @@ $('provider-registry-save').onclick=async()=>{
     registrySnapshot=null;registryDraft=[];
     registryStatus('Save not verified. It may have committed or been rejected. Reload current registry before any new change. No automatic retry.');
   }finally{if(current()){registryBusy=false;renderProviderRegistry();}}
+};
+
+
+// Owner-only provider recovery. Explicit observation and one-shot closure,
+// never a task requeue or a remote provider action.
+let providerRecovery=null,providerRecoveryBusy=false,providerRecoveryRevision=0;
+const providerRecoveryChecks=['provider-recovery-session','provider-recovery-worktree','provider-recovery-no-retry'];
+const providerRecoveryId=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
+function providerRecoveryControls(){
+  const eligible=Boolean(key&&!$('dashboard').hidden&&!providerRecoveryBusy&&
+    providerRecovery?.owner_resolution_eligible&&$('provider-recovery-ticket').value===providerRecovery.ticket_id);
+  $('provider-recovery-load').disabled=providerRecoveryBusy;
+  $('provider-recovery-ticket').disabled=providerRecoveryBusy;
+  $('provider-recovery-attempt').disabled=!eligible;
+  for(const id of providerRecoveryChecks)$(id).disabled=!eligible;
+  $('provider-recovery-close').disabled=!eligible||
+    $('provider-recovery-attempt').value!==providerRecovery?.attempt?.attempt_id||
+    !providerRecoveryChecks.every(id=>$(id).checked===true);
+}
+function resetProviderRecovery(reason,clearTicket=false){
+  providerRecoveryRevision++;providerRecovery=null;providerRecoveryBusy=false;
+  if(clearTicket)$('provider-recovery-ticket').value='';
+  $('provider-recovery-attempt').value='';
+  for(const id of providerRecoveryChecks)$(id).checked=false;
+  value('provider-recovery-status',reason);providerRecoveryControls();
+}
+function validateProviderRecovery(data,ticket){
+  if(!data||data.ticket_id!==ticket||typeof data.ticket_status!=='string'||
+     data.read_only!==true||data.automatic_execution_allowed!==false||
+     data.automatic_reassignment_allowed!==false||data.provider_mapping_verified!==false||
+     typeof data.owner_resolution_eligible!=='boolean')throw Error('PROVIDER_RECOVERY_RESPONSE_INVALID');
+  const x=data.attempt;
+  if(x===null){
+    if(data.owner_resolution_eligible)throw Error('PROVIDER_RECOVERY_RESPONSE_INVALID');
+  }else{
+    const fields='agent_id|attempt_id|binding_sha256|checkpoint_generation|checkpoint_sha256|context_sha256|epoch|lease_id|provider|registry_version|resolution|state|ticket_id';
+    const hash=v=>typeof v==='string'&&v.length===64&&/^[a-f0-9]{64}$/.test(v);
+    const id=v=>typeof v==='string'&&!/[\r\n]/.test(v)&&providerRecoveryId.test(v);
+    if(!x||Object.keys(x).sort().join('|')!==fields||x.ticket_id!==ticket||
+       typeof x.attempt_id!=='string'||!/^attempt_[a-f0-9]{32}$/.test(x.attempt_id)||
+       !id(x.agent_id)||!id(x.lease_id)||!['CHATGPT_WEB','GOOGLE_AI_STUDIO'].includes(x.provider)||
+       !['OPEN','INTERRUPTED','CLOSED'].includes(x.state)||
+       ![x.epoch,x.registry_version,x.checkpoint_generation].every(v=>Number.isSafeInteger(v)&&v>0)||
+       ![x.binding_sha256,x.checkpoint_sha256,x.context_sha256].every(hash)||
+       (x.state==='CLOSED'?!['WORKER_CHECKPOINT','OWNER_REVIEW'].includes(x.resolution):x.resolution!==null)||
+       (data.owner_resolution_eligible&&(data.ticket_status!=='RECONCILIATION_REQUIRED'||x.state==='CLOSED')))
+      throw Error('PROVIDER_RECOVERY_RESPONSE_INVALID');
+  }
+  return data;
+}
+function renderProviderRecovery(data){
+  const x=data.attempt;
+  value('provider-recovery-status',x?[
+    'Ticket: '+data.ticket_id+' / '+data.ticket_status,
+    'Attempt: '+x.attempt_id+' / '+x.state,
+    'Agent: '+x.agent_id+' / Provider: '+x.provider,
+    'Original epoch: '+x.epoch+' / Registry version: '+x.registry_version,
+    'Checkpoint generation: '+x.checkpoint_generation,
+    'Checkpoint SHA-256: '+x.checkpoint_sha256,
+    'Context digest (declared, not transmitted-byte proof): '+x.context_sha256,
+    data.owner_resolution_eligible?'Eligible for independent Owner review ONLY.':'Not eligible for Owner closure. No retry or reassignment.'
+  ].join('\n'):'No recorded attempt. This does not prove no external activity.');
+}
+$('provider-recovery-ticket').addEventListener('input',()=>{
+  if(!providerRecoveryBusy)resetProviderRecovery('Ticket changed. Inspect current attempt.');
+});
+$('provider-recovery-attempt').addEventListener('input',providerRecoveryControls);
+for(const id of providerRecoveryChecks)$(id).addEventListener('change',providerRecoveryControls);
+$('provider-recovery-load').onclick=async()=>{
+  if(!key||providerRecoveryBusy||$('dashboard').hidden)return;
+  const ticket=$('provider-recovery-ticket').value;
+  resetProviderRecovery('Inspecting current recorded attempt…');
+  if(typeof ticket!=='string'||/[\r\n]/.test(ticket)||!providerRecoveryId.test(ticket)){
+    value('provider-recovery-status','Enter exact ticket ID.');return;
+  }
+  const session=ownerSessionVersion,originalKey=key,revision=++providerRecoveryRevision;
+  const current=()=>key===originalKey&&ownerSessionVersion===session&&providerRecoveryRevision===revision&&!$('dashboard').hidden;
+  providerRecoveryBusy=true;providerRecoveryControls();
+  try{
+    const data=validateProviderRecovery(await request('/v7/owner/provider-attempt/'+encodeURIComponent(ticket),{redirect:'error'}),ticket);
+    if(!current())return;
+    providerRecovery=data;renderProviderRecovery(data);
+  }catch{if(current())value('provider-recovery-status','Inspection unavailable or invalid. HOLD; no closure permitted.');}
+  finally{if(current()){providerRecoveryBusy=false;providerRecoveryControls();}}
+};
+$('provider-recovery-close').onclick=async()=>{
+  providerRecoveryControls();if($('provider-recovery-close').disabled)return;
+  const ticket=providerRecovery.ticket_id,attempt=providerRecovery.attempt.attempt_id;
+  if(!confirm('Record independently reviewed closure of '+attempt+' on '+ticket+'? No task requeue or provider action.'))return;
+  const session=ownerSessionVersion,originalKey=key,revision=++providerRecoveryRevision;
+  const current=()=>key===originalKey&&ownerSessionVersion===session&&providerRecoveryRevision===revision&&!$('dashboard').hidden;
+  const request_id='provider_review_'+crypto.randomUUID().replaceAll('-','');
+  providerRecoveryBusy=true;providerRecoveryControls();
+  value('provider-recovery-status','Recording Owner review once; verifying current attempt…');
+  try{
+    const receipt=await request('/v7/owner/command',{method:'POST',redirect:'error',body:JSON.stringify({
+      request_id,command:'RESOLVE_PROVIDER_ATTEMPT',payload:{ticket_id:ticket,attempt_id:attempt,
+        external_session_reviewed:true,worktree_reviewed:true,no_automatic_retry_confirmed:true}})});
+    if(!current())return;
+    const state=receipt?.state;
+    if(receipt?.accepted!==true||receipt.receipt_id!==request_id||state?.ticket_id!==ticket||
+       state.attempt_id!==attempt||state.state!=='CLOSED'||state.owner_review_recorded!==true||
+       state.automatic_execution_allowed!==false||state.automatic_reassignment_allowed!==false)
+      throw Error('PROVIDER_RECOVERY_RECEIPT_INVALID');
+    const data=validateProviderRecovery(await request('/v7/owner/provider-attempt/'+encodeURIComponent(ticket),{redirect:'error'}),ticket);
+    if(!current())return;
+    if(data.attempt?.attempt_id!==attempt||data.attempt.state!=='CLOSED'||
+       data.attempt.resolution!=='OWNER_REVIEW'||data.owner_resolution_eligible)
+      throw Error('PROVIDER_RECOVERY_READBACK_REQUIRED');
+    resetProviderRecovery('Owner review recorded and exact closure read back. Separate task reconciliation remains required. No provider action or reassignment.');
+  }catch{
+    if(current())resetProviderRecovery('Closure not verified. It may have committed or been rejected. Inspect current attempt before another decision. No automatic retry.');
+  }
 };
