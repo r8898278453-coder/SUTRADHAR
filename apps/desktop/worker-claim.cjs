@@ -93,7 +93,7 @@ function git(root,hooks,...args){
   if(p.error||p.status!==0)fail('WORKER_TRUSTED_GIT_PREFLIGHT_FAILED');
   return p.stdout.trim();
 }
-function localWorktree({repoDir,t,workerDir}){
+function localWorktree({repoDir,t,workerDir,requireExisting=false}){
   const repo=assertDirectory(repoDir),workRoot=path.join(workerDir,'worktrees');
   const hookRoot=path.join(workerDir,'disabled-git-hooks');
   // A dangling worktree/hook directory alias is historical filesystem
@@ -150,6 +150,7 @@ function localWorktree({repoDir,t,workerDir}){
       git(target,hookRoot,'merge-base','HEAD',t.baseline_sha)!==t.baseline_sha)
       fail('WORKER_EXISTING_WORKTREE_MISMATCH');
   }else{
+    if(requireExisting)fail('WORKER_PROVIDER_WORKTREE_MISSING');
     // No remote interaction. If the branch exists elsewhere, never overwrite.
     assertDisabledHooks(hookRoot);
     const branch=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-c','core.fsmonitor=false',
@@ -333,7 +334,7 @@ async function resumeApprovedTask({origin,agentId,ticketId,dir,signer,fetcher=fe
 // command from a locally sealed receipt, fresh signed Central observations,
 // and a digest previously reviewed by the operator. Never send provider data.
 async function recordProviderAttempt({origin,agentId,ticketId,dir,signer,action,provider,
-  reviewedDigest,attemptId,fetcher=fetch,beforeMutation=()=>{}}){
+  reviewedDigest,reviewedRegistryVersion,reviewedBindingDigest,attemptId,fetcher=fetch,beforeMutation=()=>{}}){
   if(!ORIGIN.test(origin||'')||!['BEGIN','INTERRUPT','CLOSE'].includes(action))
     fail('WORKER_PROVIDER_ATTEMPT_INPUT_DENIED');
   const local=loadWorkerReceipt(dir,agentId,ticketId);
@@ -344,7 +345,7 @@ async function recordProviderAttempt({origin,agentId,ticketId,dir,signer,action,
   if(proof.lease_id!==local.lease_id)fail('WORKER_PROVIDER_LEASE_MISMATCH');
   // Unlike claim preparation, recovery must never recreate a missing worktree.
   if(!evidenceEntryPresent(local.worktree))fail('WORKER_PROVIDER_WORKTREE_MISSING');
-  const work=localWorktree({repoDir:local.repository_dir,t:{...local,write_scopes:local.scopes},workerDir:dir});
+  const work=localWorktree({repoDir:local.repository_dir,t:{...local,write_scopes:local.scopes},workerDir:dir,requireExisting:true});
   if(work.worktree!==local.worktree)fail('WORKER_PROVIDER_WORKTREE_MISMATCH');
   const task=await detail();
   if(task.worker_agent_id!==agentId||task.project_id!==local.project_id||
@@ -364,6 +365,8 @@ async function recordProviderAttempt({origin,agentId,ticketId,dir,signer,action,
     const mapping=task.provider_mappings.find(m=>m.provider===provider);
     if(!mapping||typeof reviewedDigest!=='string'||reviewedDigest!==preview.context_sha256)
       fail('WORKER_PROVIDER_REVIEWED_CONTEXT_CHANGED');
+    if(reviewedRegistryVersion!==task.provider_registry_version||reviewedBindingDigest!==mapping.binding_sha256)
+      fail('WORKER_PROVIDER_REVIEWED_MAPPING_CHANGED');
     Object.assign(body,{provider,registry_version:task.provider_registry_version,
       binding_sha256:mapping.binding_sha256,expected_task_version:task.version,checkpoint_generation:cp.generation,
       checkpoint_sha256:cp.content_sha256,context_sha256:preview.context_sha256});
