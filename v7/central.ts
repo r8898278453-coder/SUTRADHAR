@@ -28,6 +28,7 @@ import sharedContract from '../packages/shared/contract.json';
 import {publicCentralFiles} from './public_files.ts';
 import {parseOwnerTelegram,telegramReceiptText} from './telegram_owner.ts';
 import {declaredProviderMappings} from './provider_mappings.ts';
+import {verifyRecoverySnapshot} from './recovery_validation.ts';
 
 const app=express();
 const MAX_BODY='128kb';
@@ -1385,6 +1386,10 @@ app.post('/v7/leadership/reconcile',jsonRoute(async req=>{
         fault('TASK_RECONCILIATION_REQUIRED',423);
       if(current.unresolved_git_jobs.length)
         fault('GIT_RECONCILIATION_REQUIRED',423);
+      // The Master cannot ACK a malformed yet correctly hashed DB snapshot.
+      // Independently verify using the same contract as both agent builds.
+      try{verifyRecoverySnapshot(current,epoch);}
+      catch{fault('RECOVERY_SNAPSHOT_VALIDATION_FAILED',423);}
       await c.query('UPDATE v7_cluster SET phase="READY",version=version+1 WHERE singleton=1');
       await event(c,'MASTER_RECOVERY_ACK',id,epoch,null,{manifest_sha256:req.body.manifest_sha256});
       return {accepted:true,phase:'READY',epoch};
