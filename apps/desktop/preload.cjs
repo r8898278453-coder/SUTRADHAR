@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   recoverMasterBatchDraft:agentId=>ipcRenderer.invoke('sutradhar:recoverMasterBatchDraft',agentId),
   loadMasterUnconfirmedDraft:agentId=>ipcRenderer.invoke('sutradhar:loadMasterUnconfirmedDraft',agentId),
   saveMasterUnconfirmedDraft:(agentId,draft,expectedDigest)=>ipcRenderer.invoke('sutradhar:saveMasterUnconfirmedDraft',agentId,draft,expectedDigest),
+  buildMasterPlanningContext:(agentId,projectId,tasks)=>ipcRenderer.invoke('sutradhar:buildMasterPlanningContext',agentId,projectId,tasks),
   inspectMasterSourceHints:(agentId,projectId,tasks)=>ipcRenderer.invoke('sutradhar:inspectMasterSourceHints',agentId,projectId,tasks),
   inspectMasterBaseline:(agentId,projectId)=>ipcRenderer.invoke('sutradhar:inspectMasterBaseline',agentId,projectId),
   previewMasterBatch:(agentId,projectId,requestId,tasks)=>ipcRenderer.invoke('sutradhar:previewMasterBatch',agentId,projectId,requestId,tasks),
