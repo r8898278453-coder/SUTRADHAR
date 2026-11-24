@@ -1350,9 +1350,50 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       const closed=await d.signed('/v7/tasks/provider-attempt',close);
       assert.equal(closed.code,200,JSON.stringify(closed.body));
       assert.equal(closed.body.attempt.resolution,'WORKER_CHECKPOINT');
+      const readUsage=async()=>{
+        const response=await fetch(base+'/v7/owner/provider-usage/'+ticket_id,{headers:{authorization:'Bearer '+admin}});
+        assert.equal(response.status,200);return await response.json() as any;
+      };
+      const reading={ticket_id,attempt_id,context_sha256:closed.body.attempt.context_sha256,
+        input_tokens:100,output_tokens:30,cached_input_tokens:20,evidence_reviewed:true};
+      const recordUsage=(payload:any,request_id='usage_review_'+(++count))=>post('/v7/owner/command',{
+        request_id,command:'RECORD_PROVIDER_USAGE',payload},admin);
+      const beforeUsage=await readUsage();
+      assert.equal(beforeUsage.attempts.length,1);
+      assert.equal(beforeUsage.attempts[0].usage,null);
+      assert.equal(beforeUsage.attempts[0].owner_recording_eligible,true);
+      assert.equal((await fetch(base+'/v7/owner/provider-usage/'+ticket_id,{headers:{authorization:'Bearer invalid'}})).status,401);
+      assert.equal((await fetch(base+'/v7/owner/provider-usage/'+ticket_id.toUpperCase(),{headers:{authorization:'Bearer '+admin}})).status,404);
+      assert.equal((await recordUsage({...reading,context_sha256:'0'.repeat(64)})).code,409);
+      assert.equal((await recordUsage({...reading,input_tokens:-1})).code,400);
+      assert.equal((await recordUsage({...reading,cached_input_tokens:101})).code,400);
+      assert.equal((await recordUsage({...reading,prompt:'forbidden'})).code,400);
+      const usageRequest='usage_once_'+(++count);
+      const usageSaved=await Promise.all([recordUsage(reading,usageRequest),recordUsage(reading,usageRequest)]);
+      assert.ok(usageSaved.every(x=>x.code===200),JSON.stringify(usageSaved));
+      assert.deepEqual(usageSaved[0].body,usageSaved[1].body);
+      assert.equal(usageSaved[0].body.state.provider_usage_verified,false);
+      assert.equal(usageSaved[0].body.state.quota_verified,false);
+      assert.equal((await recordUsage(reading)).code,409);
+      assert.equal((await recordUsage({...reading,input_tokens:101},usageRequest)).code,409);
+      const afterUsage=await readUsage();
+      assert.deepEqual(afterUsage.attempts[0].usage,usageSaved[0].body.state);
+      assert.equal(afterUsage.attempts[0].owner_recording_eligible,false);
+      const firstTotal=afterUsage.totals.find((t:any)=>t.provider===closed.body.attempt.provider);
+      assert.equal(firstTotal.recorded_input_tokens,100);
+      assert.equal(firstTotal.recorded_output_tokens,30);
+      assert.equal(firstTotal.recorded_cached_input_tokens,20);
+      assert.equal(firstTotal.unknown_attempt_count,0);
       const again=await d.signed('/v7/tasks/provider-attempt',{...begin,request_id:'provider_second_'+(++count),
         expected_task_version:Number(fresh.body.version),checkpoint_generation:fresh.body.generation,checkpoint_sha256:fresh.body.content_sha256});
       assert.equal(again.code,200,JSON.stringify(again.body));
+      const secondReading={...reading,attempt_id:again.body.attempt.attempt_id,context_sha256:again.body.attempt.context_sha256,
+        input_tokens:0,output_tokens:0,cached_input_tokens:null};
+      assert.equal((await recordUsage(secondReading)).code,409);
+      const activeUsage=await readUsage();
+      assert.equal(activeUsage.attempts.length,2);
+      assert.equal(activeUsage.attempts[1].usage,null);
+      assert.equal(activeUsage.totals.find((t:any)=>t.provider===again.body.attempt.provider).unknown_attempt_count,1);
       await owner('REVOKE_PROJECT_AGENT',{project_id,agent_id});
       const reconcile={ticket_id,reason:'Disposable CI: reconcile interrupted provider record',remote_checked:true};
       const held=await post('/v7/owner/command',{request_id:'provider_held_'+(++count),command:'RECONCILE_TICKET',payload:reconcile},admin);
@@ -1368,6 +1409,16 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       const closedObservation=await observe();
       assert.equal(closedObservation.owner_resolution_eligible,false);
       assert.equal(closedObservation.attempt.resolution,'OWNER_REVIEW');
+      const secondSaved=await recordUsage(secondReading);
+      assert.equal(secondSaved.code,200,JSON.stringify(secondSaved.body));
+      const historicalUsage=await readUsage();
+      assert.deepEqual(historicalUsage.attempts[0].usage,usageSaved[0].body.state);
+      assert.deepEqual(historicalUsage.attempts[1].usage,secondSaved.body.state);
+      const totalUsage=historicalUsage.totals.find((t:any)=>t.provider===again.body.attempt.provider);
+      assert.equal(totalUsage.recorded_attempt_count,2);
+      assert.equal(totalUsage.unknown_attempt_count,0);
+      assert.equal(totalUsage.recorded_input_tokens,100);
+      assert.equal(totalUsage.cached_input_unknown_record_count,1);
       assert.equal((await owner('RECONCILE_TICKET',reconcile)).state.status,'READY');
       await owner('REPLACE_PROVIDER_REGISTRY',{expected_version:3,bindings:[]});
     }
