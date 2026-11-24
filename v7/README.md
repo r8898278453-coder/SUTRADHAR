@@ -110,3 +110,10 @@ See [provider interruption instructions](../docs/PROVIDER_WORKSPACE_DECLARATIONS
 Previous HEAD `82e2a8c` failed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188656) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188901) on TS18049 strict-null diagnostics; disposable MySQL integration and unsigned Windows smoke passed. Explicit return guards (`4d05bde`) correct the reported paths; combined CI verification of the fix and new UI remains pending. Last fully green baseline `e935cef`.
 
 Use the dashboard's interrupted provider attempt panel to inspect current ticket, retype exact attempt ID, independently review external session and worktree, and record closure ONLY when Central reports eligible. Current readback must confirm exact CLOSED / OWNER_REVIEW; uncertainty requires another inspection, no automatic retry. Ordinary task reconciliation remains a separate gate. See [operator guide](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). Packaged Desktop mutation and real provider/browser/physical acceptance pending. G0–G7 HOLD.
+
+
+## Consolidated packaged Desktop attempt controls
+
+Verified exact baseline `1193b3b`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45459215514) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45459215696) both SUCCESS. New consolidated Desktop/provider admission batch is CODED / EXACT-HEAD CI PENDING.
+
+Use the original approved Windows PC, live receipt/lease and original trusted worktree. Preview compact context, independently review provider permission and mappings, record BEGIN with exact reviewed digest, record interruption if needed, and close only after independent review and a newer checkpoint. Main-only signing and current readback are required; no blind retry or remote provider operation. BEGIN now requires expected_task_version, so Central/CLI/Desktop must be rebuilt together. See [step-by-step guide](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). Actual transmitted bytes, provider tokens, physical interruption and live acceptance remain pending. G0–G7 HOLD.
