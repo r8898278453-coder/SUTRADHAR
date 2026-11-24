@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const path=require('node:path');
 const {spawnSync}=require('node:child_process');
-const {analyzeBulkPlanningDraft,analyzeMasterPlanningDraft}=require('../apps/desktop/worker-claim.cjs');
+const {analyzeBulkPlanningDraft,analyzeMasterPlanningDraft,extractBulkReviewGroup}=require('../apps/desktop/worker-claim.cjs');
 const {parseBulkInput}=require('../scripts/ops/master-bulk-review.cjs');
 const baseline='a'.repeat(40);
 const task=(n,patch={})=>{const id='ticket_'+String(n).padStart(3,'0');return {
@@ -151,4 +151,45 @@ test('real CLI produces review only and does not echo bad input',()=>{
   const bad=spawnSync(process.execPath,[cli],{input:'SYNTHETIC_PRIVATE_MARKER',encoding:'utf8',timeout:15000});
   assert.equal(bad.status,1);assert.equal(bad.stdout,'');
   assert.equal(bad.stderr.includes('SYNTHETIC_PRIVATE_MARKER'),false);
+});
+
+test('explicit extraction preserves exact fields and full dependencies',()=>{
+  const t=tasks(12);t[11].dependencies=['ticket_001','external_001'];
+  const r=analyzeBulkPlanningDraft(t),g=groupOf(r,'ticket_012');
+  const x=extractBulkReviewGroup(t,r.manifest_sha256,g.group_id);
+  assert.deepEqual(x.tasks,[t[11]]);
+  assert.deepEqual(x.group,g);
+  assert.equal(x.automatic_admission_allowed,false);
+  assert.equal(x.secret_scan_verified,false);
+  assert.equal(x.task_description_contents_returned,true);
+  assert.match(x.group_review_sha256,/^[a-f0-9]{64}$/);
+  assert.deepEqual(extractBulkReviewGroup([...t].reverse(),r.manifest_sha256,g.group_id),x);
+});
+for(const field of ['title','description','acceptance_criteria','dependencies','write_scopes','contract_keys','risk','branch_name']){
+  test('changed '+field+' invalidates even unrelated selected group',()=>{
+    const t=tasks(12),r=analyzeBulkPlanningDraft(t);
+    const changed={...t[11],[field]:({title:'new title',description:'new detail',acceptance_criteria:['new criterion'],
+      dependencies:['external_001'],write_scopes:['src/other.ts'],contract_keys:['api:other'],risk:'MEDIUM',branch_name:'ai/other'})[field]};
+    assert.throws(()=>extractBulkReviewGroup([...t.slice(0,11),changed],r.manifest_sha256,'review_001'),/MANIFEST_CHANGED/);
+  });
+}
+for(const bad of ['review_000','review_999','../review_001','review_001\n','review_01','REVIEW_001']){
+  test('bad group selection '+JSON.stringify(bad),()=>{
+    const t=tasks(2),r=analyzeBulkPlanningDraft(t);
+    assert.throws(()=>extractBulkReviewGroup(t,r.manifest_sha256,bad),/SELECTION_INVALID|GROUP_NOT_FOUND/);
+  });
+}
+test('explicit export retains conflicts with other groups',()=>{
+  const t=[task(1,{write_scopes:['src/shared']}),task(2,{write_scopes:['src/shared/a.ts']})],r=analyzeBulkPlanningDraft(t);
+  const x=extractBulkReviewGroup(t,r.manifest_sha256,'review_001');
+  assert.equal(x.related_conflicts.length,1);
+  assert.equal(x.related_conflicts[0].requires_review,true);
+});
+test('real CLI extraction requires exact digest and group ID',()=>{
+  const cli=path.resolve(__dirname,'../scripts/ops/master-bulk-review.cjs');
+  const t=tasks(12),r=analyzeBulkPlanningDraft(t);
+  const good=spawnSync(process.execPath,[cli,'--extract',r.manifest_sha256,'review_002'],{input:wrap(t),encoding:'utf8',timeout:15000});
+  assert.equal(good.status,0,good.stderr);assert.deepEqual(JSON.parse(good.stdout).tasks,t.slice(10));
+  const bad=spawnSync(process.execPath,[cli,'--extract','f'.repeat(64),'review_002'],{input:wrap(t),encoding:'utf8',timeout:15000});
+  assert.equal(bad.status,1);assert.equal(bad.stdout,'');
 });
