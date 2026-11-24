@@ -377,3 +377,14 @@ Verified previous baseline `e935cef`: [application CI](https://github.com/r88982
 - Trusted developer CLI uses explicit signed mutation followed by current detail readback and refuses automatic retry. Packaged Desktop task detail validates non-secret attempt metadata and blocks new compact handoff while unresolved. Record history is opt-in; absence of record is not proof of absence of external activity. Context digest is not verified against transmitted bytes. No provider login, session restoration, automatic continuation or external side effects.
 
 Existing MySQL event ledger reused without schema migration. Dedicated indexed storage, backup/restore and retention review, actual provider verification, packaged Desktop mutation controls, Owner resolution UI, physical acceptance and token accounting remain open. G0–G7 HOLD.
+
+
+## Owner provider recovery dashboard contract — incremental alpha
+
+Previous HEAD `82e2a8c` failed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188656) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188901) on TS18049 strict-null diagnostics; disposable MySQL integration and unsigned Windows smoke passed. Explicit return guards (`4d05bde`) correct the reported paths; combined CI verification of the fix and new UI remains pending. Last fully green baseline `e935cef`.
+
+- Read-only Owner GET /v7/owner/provider-attempt/:ticketId supplies owner_resolution_eligible only when ticket state is RECONCILIATION_REQUIRED, attempt unresolved, and original matching lease revoked. No execution, mapping verification or reassignment authorization. GET is not permission to mutate; POST rechecks current state.
+- Dashboard requires exact ticket observation, retyped full attempt ID, independent session and worktree review, no-auto-retry attestation and explicit confirmation. It sends one RESOLVE_PROVIDER_ATTEMPT POST; checks receipt ID, exact ticket/attempt and closure-only flags; verifies current readback of CLOSED with OWNER_REVIEW. Unknown/mismatched outcomes require fresh inspection, never automatic retry. Session generation, key and revision guards suppress stale results; logout clears local review, not already committed MySQL state.
+- No provider credentials/session contents in UI; no ordinary ticket requeue, reservation release, QA/Git change or external provider action. Original manual worker recovery remains separate. Real provider identity/session and actual context/usage are not verified.
+
+Tests in tests/v7_owner_dashboard_session.test.cjs and tests/v7_mysql_integration.test.ts cover eligibility, review, duplicate suppression, mismatch and logout. Source CI pending; no physical acceptance. G0–G7 HOLD.
