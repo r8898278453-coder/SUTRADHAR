@@ -1001,8 +1001,11 @@ test('signed Desktop manual provider lifecycle recomputes reviewed context and v
       return new Response(JSON.stringify(value),{status:200});
     };
     const call=patch=>recordProviderAttempt({...args(f,fetcher),action:'BEGIN',provider:'CHATGPT_WEB',
-      reviewedDigest:compactWorkerContext({...task,provider_attempt:null},agent_id).context_sha256,...patch});
+      reviewedDigest:compactWorkerContext({...task,provider_attempt:null},agent_id).context_sha256,
+      reviewedRegistryVersion:1,reviewedBindingDigest:task.provider_mappings[0].binding_sha256,...patch});
     await assert.rejects(call({reviewedDigest:'0'.repeat(64)}),/REVIEWED_CONTEXT_CHANGED/);
+    await assert.rejects(call({reviewedRegistryVersion:2}),/REVIEWED_MAPPING_CHANGED/);
+    await assert.rejects(call({reviewedBindingDigest:'0'.repeat(64)}),/REVIEWED_MAPPING_CHANGED/);
     assert.equal(posts,0);
     wrongLease=true;await assert.rejects(call({}),/LEASE_MISMATCH/);wrongLease=false;
     await assert.rejects(call({beforeMutation:()=>{throw Error('LOCAL_FENCE');}}),/LOCAL_FENCE/);
