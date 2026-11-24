@@ -15,6 +15,11 @@ const NODE=/^node_[0-9a-f]{32}$/;
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const HEX=/^[0-9a-f]{64}$/;
 function fail(code){throw Error(code);}
+function validId(v){return typeof v==='string'&&ID.test(v);}
+function validAge(v){
+  return (typeof v==='number'||(typeof v==='string'&&/^(0|[1-9][0-9]*)$/.test(v)))&&
+    Number.isSafeInteger(Number(v))&&Number(v)>=0&&Number(v)<=120;
+}
 function readRecord(file){
   let fd;
   try{
@@ -89,8 +94,8 @@ function validateCentralCancellation(d,r){
 function validateCluster(d,agentIds){
   if(!d||!Number.isSafeInteger(d.epoch)||d.epoch<1||
      d.phase!=='READY'||d.paused!==false||
-     !ID.test(d.master_agent_id||'')||!Array.isArray(d.backups)||
-     d.backups.length!==2||d.backups.some(x=>!ID.test(x))||
+     !validId(d.master_agent_id)||!Array.isArray(d.backups)||
+     d.backups.length!==2||d.backups.some(x=>!validId(x))||
      new Set([d.master_agent_id,...d.backups]).size!==3)
     fail('MAINTENANCE_RESTART_CLUSTER_UNHEALTHY');
   const roles=new Set([d.master_agent_id,...d.backups]);
@@ -103,7 +108,7 @@ function validateAgents(d,nodeId,agentIds){
     fail('MAINTENANCE_RESTART_NODE_AGENTS_MISMATCH');
   const seen=new Set();
   for(const a of d.agents){
-    if(!a||!ID.test(a.agent_id||'')||seen.has(a.agent_id)||
+    if(!a||!validId(a.agent_id)||seen.has(a.agent_id)||
        !agentIds.includes(a.agent_id)||a.state!=='APPROVED'||
        a.status!=='IDLE'||a.active_ticket!==null||
        ![0,false].includes(a.has_live_work_lease)||
@@ -118,7 +123,7 @@ async function prepareManualRestart({dir,nodeId,agentIds,centralOrigin,
   const origin=validOrigin(centralOrigin);
   if(!NODE.test(nodeId||'')||!Array.isArray(agentIds)||
      agentIds.length<1||agentIds.length>4||
-     agentIds.some(x=>!ID.test(x))||new Set(agentIds).size!==agentIds.length||
+     agentIds.some(x=>!validId(x))||new Set(agentIds).size!==agentIds.length||
      !signer||typeof signer.sign!=='function')
     fail('MAINTENANCE_RESTART_LOCAL_IDENTITY_INVALID');
   const release=readReleased({dir,nodeId});
@@ -194,7 +199,7 @@ async function confirmLiveCentral({nodeId,agentIds,centralOrigin,signer,
   const origin=validOrigin(centralOrigin);
   if(!NODE.test(nodeId||'')||!Array.isArray(agentIds)||
      agentIds.length<1||agentIds.length>4||
-     agentIds.some(x=>!ID.test(x))||new Set(agentIds).size!==agentIds.length||
+     agentIds.some(x=>!validId(x))||new Set(agentIds).size!==agentIds.length||
      !Number.isSafeInteger(epoch)||epoch<1||
      !signer||typeof signer.sign!=='function')
     fail('MAINTENANCE_RESTART_POST_ACK_IDENTITY_INVALID');
@@ -220,33 +225,44 @@ async function confirmLiveCentral({nodeId,agentIds,centralOrigin,signer,
     }
     return data;
   }
-  const me=await read('/v7/nodes/me');
-  if(me.node_id!==nodeId||!Array.isArray(me.agents)||
+  function verifyAcknowledgedAgents(me){
+  if(!me||me.node_id!==nodeId||!Array.isArray(me.agents)||
      me.agents.length!==agentIds.length)
     fail('MAINTENANCE_RESTART_POST_ACK_NODE_MISMATCH');
   const found=new Set();
   for(const a of me.agents){
-    if(!a||!ID.test(a.agent_id||'')||!agentIds.includes(a.agent_id)||
+    if(!a||!validId(a.agent_id)||!agentIds.includes(a.agent_id)||
        found.has(a.agent_id)||a.state!=='APPROVED'||
        (a.status!=='IDLE'&&a.status!=='ONLINE')||
        a.active_ticket!==null||
        ![0,false].includes(a.has_live_work_lease)||
        ![0,false].includes(a.has_unreconciled_git_job)||
-       a.heartbeat_age_seconds===null||
-       !Number.isSafeInteger(Number(a.heartbeat_age_seconds))||
-       Number(a.heartbeat_age_seconds)<0||Number(a.heartbeat_age_seconds)>120)
+       !validAge(a.heartbeat_age_seconds))
       fail('MAINTENANCE_RESTART_POST_ACK_AGENT_NOT_RECONCILED');
     found.add(a.agent_id);
+  }
   }
   const cluster=await read('/v7/cluster/state');
   validateCluster(cluster,agentIds);
   if(cluster.epoch!==epoch)
     fail('MAINTENANCE_RESTART_POST_ACK_EPOCH_CHANGED');
-  const maintenance=await read('/v7/nodes/maintenance');
-  if(maintenance.node_id!==nodeId||maintenance.intent!==null||
+  verifyAcknowledgedAgents(await read('/v7/nodes/me'));
+  function verifyMaintenance(maintenance){
+  if(!maintenance||maintenance.node_id!==nodeId||maintenance.intent!==null||
      maintenance.installer_execution_allowed!==false||
      maintenance.owner_maintenance_lease!==false)
     fail('MAINTENANCE_RESTART_POST_ACK_MAINTENANCE_REAPPEARED');
+  }
+  verifyMaintenance(await read('/v7/nodes/maintenance'));
+  // These are bounded read-only observations, not an atomic Central lease.
+  // Refuse role changes or renewed maintenance during the confirmation window.
+  verifyAcknowledgedAgents(await read('/v7/nodes/me'));
+  const after=await read('/v7/cluster/state');
+  validateCluster(after,agentIds);
+  if(after.epoch!==epoch||after.master_agent_id!==cluster.master_agent_id||
+     after.backups.join('|')!==cluster.backups.join('|'))
+    fail('MAINTENANCE_RESTART_POST_ACK_CLUSTER_CHANGED');
+  verifyMaintenance(await read('/v7/nodes/maintenance'));
   return Object.freeze({reconciled:true,node_id:nodeId,epoch,
     all_local_agents_acknowledged:true,installer_execution_allowed:false,
     automatic_restart_allowed:false});
