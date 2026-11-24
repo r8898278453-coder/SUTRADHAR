@@ -319,7 +319,8 @@ test('post-restart confirmation rechecks roles, agent leases and maintenance bef
         const altered=endpoint.endsWith('/me')?
           {...healthy,agents:[{...healthy.agents[0],has_live_work_lease:1}]}:
           {node_id:nodeId,intent:{state:'DRAINING'},installer_execution_allowed:false,owner_maintenance_lease:false};
-        return new Response(JSON.stringify(altered));
+        return new Response(JSON.stringify(altered),{
+          headers:{'content-type':'application/json'}});
       }
       return base.fetcher(url,init);
     };
