@@ -128,3 +128,10 @@ The renderer cannot submit a generic signed request, raw prompt, session ID, cre
 
 
 Additional safeguards `5432a9a`, `2651e1e`, `7768fb2`: main retains only the reviewed preview's in-memory task/origin/digest/registry-version/binding-digest metadata; a changed registry revision or binding blocks BEGIN even when compact context bytes match. Recovery refuses a missing original worktree rather than recreating it. These safeguards and regression fixtures also await exact-head CI.
+
+
+## Follow-up CI reconciliation
+
+Previous exact HEAD `8145c64`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45461963696) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45461963719) were cancelled. Before cancellation the real MySQL and Python/shell/state jobs passed, while the TypeScript/unit/build job failed at Desktop security validation: obsolete static regex expected a ternary that had been replaced by the reviewed-context guard. Test correction `b4ec4ae` preserves the security assertions. Last fully green combined baseline `1193b3b`. New planner and correction are CODED / EXACT-HEAD CI PENDING.
+
+The corrected Desktop preview security assertion now matches the guarded main-process implementation, not the obsolete ternary. Actual provider authentication, transmitted bytes, context minimization beyond existing preview, and measured token/quota usage have not been implemented or independently verified in this planning batch. [Master task batch planning](MASTER_TASK_BATCH_PLANNING_V7.md) is manual declared input and does not invoke a provider.
