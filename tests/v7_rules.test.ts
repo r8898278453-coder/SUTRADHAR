@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chooseLeader,chooseBackups,firstElectionOpen,scopesOverlap,safeScope,LEASE_SECONDS,HEARTBEAT_SECONDS,validTaskBranch,isProtectedScope} from '../v7/rules.ts';
+import {parseProviderMappings,declaredProviderMappings} from '../v7/provider_mappings.ts';
 const day=Date.parse('2026-11-11T00:00:00Z');
 const ts=(hour:number,minute=0)=>day+hour*3600000+minute*60000;
 const candidate=(id:string,node:string,arrival:number,seen:number)=>({
@@ -184,4 +185,30 @@ test('Windows aliases and case-insensitive scope reservations fail closed',()=>{
   assert.equal(scopesOverlap('src/Feature.ts','SRC/feature.ts'),true);
   assert.equal(scopesOverlap('Src/Features','src/features/a.ts'),true);
   assert.equal(scopesOverlap('src/a','SRC/ab'),false);
+});
+
+test('provider registry is scoped to exact project and agent and never attests provider authorization',()=>{
+  const binding={project_id:'project_alpha',agent_id:'agent_alpha',provider:'CHATGPT_WEB',
+    account_ref:'account_operator',workspace_ref:'workspace_alpha'};
+  const raw=JSON.stringify([binding,{...binding,agent_id:'agent_beta'}]);
+  assert.equal(parseProviderMappings(raw).length,2);
+  const result=declaredProviderMappings(raw,binding.project_id,binding.agent_id);
+  assert.equal(result.length,1);
+  assert.equal(result[0].state,'OWNER_DECLARED_UNVERIFIED');
+  assert.equal(result[0].provider_mapping_verified,false);
+  assert.equal(result[0].automatic_execution_allowed,false);
+  assert.match(result[0].binding_sha256,/^[a-f0-9]{64}$/);
+  assert.deepEqual(declaredProviderMappings(raw,binding.project_id,'agent_OTHER'),[]);
+  assert.deepEqual(declaredProviderMappings(undefined,binding.project_id,binding.agent_id),[]);
+  assert.deepEqual(declaredProviderMappings(raw,'PROJECT_ALPHA',binding.agent_id),[]);
+  for(const invalid of [
+    [binding,binding],
+    [binding,{...binding,project_id:'project_beta'}],
+    [binding,{...binding,agent_id:'agent_beta',workspace_ref:'workspace_beta'}],
+    [{...binding,token:'sentinel'}],
+    [{...binding,account_ref:'user@example.org'}],
+    [{...binding,workspace_ref:'https://example.invalid/project'}],
+    [{...binding,provider:'UNKNOWN'}]
+  ])assert.throws(()=>parseProviderMappings(JSON.stringify(invalid)),/PROVIDER_MAPPING_(CONFIG_INVALID|CONFLICT)/);
+  assert.throws(()=>parseProviderMappings(' '.repeat(16385)),/CONFIG_INVALID/);
 });
