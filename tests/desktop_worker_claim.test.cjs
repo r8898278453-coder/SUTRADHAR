@@ -4,7 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const crypto=require('node:crypto'),cp=require('node:child_process');
 const {createVault}=require('../apps/desktop/os-vault.cjs');
 const {createSignerBridge}=require('../apps/desktop/vault-bridge.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,createMasterDraftStore,createMasterBatchJournal}=require('../apps/desktop/worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal}=require('../apps/desktop/worker-claim.cjs');
 const {progressWorkerTask}=require('../apps/desktop/worker-progress.cjs');
 const {submitWorkerCandidate}=require('../apps/desktop/worker-submit.cjs');
 const available=cp.spawnSync('git',['--version'],{encoding:'utf8'}).status===0;
@@ -1354,4 +1354,80 @@ test('unconfirmed draft and source hint IPC remain narrow and separate from admi
   assert.match(main,/ipcMain\.handle\('sutradhar:inspectMasterSourceHints'[\s\S]*?await recheckMasterBaseline/);
   assert.match(preload,/saveMasterUnconfirmedDraft:\(agentId,draft,expectedDigest\)/);
   assert.match(html,/id="masterDraftSave"/);assert.match(html,/id="masterSourceHints"/);
+});
+
+
+function planningFixture(id,scope,dependencies=[],contract_keys=[]){
+  return {ticket_id:id,baseline_sha:'a'.repeat(40),branch_name:'ai/'+id,title:'Task '+id,
+    description:'Preserve exact scoped implementation and tests.',risk:'LOW',
+    write_scopes:[scope],acceptance_criteria:['Run the specified test'],dependencies,contract_keys};
+}
+test('Master review groups distinguish declared dependency waves from unordered conflicts and external dependencies',()=>{
+  const a=planningFixture('ticket_a','src/Inventory',[],['api:inventory']),
+    b=planningFixture('ticket_b','src/inventory/read.ts',['ticket_a'],['api:inventory.read']),
+    c=planningFixture('ticket_c','src/orders.ts',['ticket_external'],['db:orders']),
+    d=planningFixture('ticket_d','src/other.ts',[],['db:orders.items']),
+    e=planningFixture('ticket_e','tests/independent.ts');
+  const r=analyzeMasterPlanningDraft([d,c,b,e,a]);
+  assert.deepEqual(r.declared_dependency_waves,[['ticket_a','ticket_c','ticket_d','ticket_e'],['ticket_b']]);
+  assert.deepEqual(r.declared_review_groups,[['ticket_a','ticket_b'],['ticket_c','ticket_d'],['ticket_e']]);
+  assert.deepEqual(r.external_dependencies_unverified,[{ticket_id:'ticket_c',dependencies:['ticket_external']}]);
+  assert.deepEqual(r.declared_conflicts,[
+    {ticket_ids:['ticket_a','ticket_b'],path_conflict:true,contract_conflict:true,declared_order:['ticket_a','ticket_b'],requires_review:false},
+    {ticket_ids:['ticket_c','ticket_d'],path_conflict:false,contract_conflict:true,declared_order:null,requires_review:true}]);
+  assert.equal(r.unresolved_declared_conflict_count,1);
+  assert.equal(r.automatic_execution_allowed,false);assert.equal(r.worker_availability_verified,false);
+  assert.equal(r.semantic_discovery_verified,false);assert.equal(r.upstream_changes_in_baseline_verified,false);
+  assert.deepEqual(analyzeMasterPlanningDraft([a,b,c,d,e]),r);
+  assert.throws(()=>analyzeMasterPlanningDraft([a,{...b,dependencies:['TICKET_A']}]),/DEPENDENCY_ALIAS/);
+  assert.throws(()=>analyzeMasterPlanningDraft([{...a,dependencies:['ticket_b']},b]),/DEPENDENCY_CYCLE/);
+  assert.throws(()=>analyzeMasterPlanningDraft([a,{...b,branch_name:a.branch_name.toUpperCase().replace('AI/','ai/')}]),/DUPLICATE_ID_OR_BRANCH/);
+  assert.throws(()=>analyzeMasterPlanningDraft([a,{...b,contract_keys:['api:inventory','api:inventory.read']}]),/DRAFT_INVALID/);
+  const transitive=analyzeMasterPlanningDraft([a,planningFixture('ticket_mid','src/mid.ts',['ticket_a']),
+    {...b,dependencies:['ticket_mid']}]);
+  assert.equal(transitive.unresolved_declared_conflict_count,0);
+  assert.deepEqual(transitive.declared_conflicts[0].declared_order,['ticket_a','ticket_b']);
+});
+test('compact Master planning context hoists the baseline without losing any task content or claiming token savings',()=>{
+  const tasks=[planningFixture('ticket_a','src/a.ts'),planningFixture('ticket_b','src/b.ts',['ticket_a'])];
+  tasks[0].description='Keep exact Unicode: हिंदी test and emoji 🚀';
+  const observed={project_id:'project_aaa',repository:'example/repo',base_branch:'main',baseline_sha:'a'.repeat(40),
+    local_tracking_ref_verified:true,remote_freshness_verified:false};
+  const result=buildMasterPlanningContext({observed,tasks});
+  const parsed=JSON.parse(result.preview);
+  assert.equal(parsed.baseline_sha,observed.baseline_sha);
+  assert.deepEqual(parsed.tasks.map(t=>({baseline_sha:parsed.baseline_sha,...t})),tasks);
+  assert.equal(result.utf8_bytes,Buffer.byteLength(result.preview,'utf8'));
+  assert.equal(result.context_sha256,crypto.createHash('sha256').update(result.preview).digest('hex'));
+  assert.ok(result.bytes_saved>0);
+  assert.equal(result.expanded_utf8_bytes-result.utf8_bytes,result.bytes_saved);
+  for(const key of ['provider_sent','secret_scan_verified','token_usage_verified','automatic_execution_allowed'])
+    assert.equal(result[key],false);
+  assert.throws(()=>buildMasterPlanningContext({observed,tasks:[tasks[0],{...tasks[1],baseline_sha:'b'.repeat(40)}]}),/BASELINE_INVALID/);
+  assert.throws(()=>buildMasterPlanningContext({observed,tasks:tasks.map(t=>({...t,description:'x'.repeat(9000)}))}),/BUDGET_EXCEEDED/);
+});
+test('source sampling provides per-task coverage when an alphabetic directory dominates the bounded budget',{skip:!available},()=>{
+  const f=fixture();
+  try{
+    fs.mkdirSync(path.join(f.repo,'src','aaa'));
+    for(let i=0;i<15;i++)fs.writeFileSync(path.join(f.repo,'src','aaa','a'+i+'.ts'),'export const value=1;\n');
+    fs.writeFileSync(path.join(f.repo,'src','zzz.ts'),'export const other=2;\n');
+    run(f.repo,'add','.');run(f.repo,'commit','-m','bounded sampling fixture');
+    const baseline=run(f.repo,'rev-parse','HEAD');run(f.repo,'update-ref','refs/remotes/origin/main',baseline);
+    const project={project_id:'project_aaa',repository:'example/repo',base_branch:'main'};
+    const observed=inspectMasterBaseline({repoDir:f.repo,project});
+    const tasks=[{...planningFixture('ticket_a','src/aaa'),baseline_sha:baseline},
+      {...planningFixture('ticket_b','src/zzz.ts'),baseline_sha:baseline}];
+    const r=inspectMasterSourceHints({repoDir:f.repo,project,observed,tasks});
+    assert.equal(r.scanned_file_count,12);assert.equal(r.scan_limited,true);
+    assert.deepEqual(r.task_coverage,[{ticket_id:'ticket_a',scoped_files:15,scanned_files:11},
+      {ticket_id:'ticket_b',scoped_files:1,scanned_files:1}]);
+  }finally{f.close();}
+});
+test('compact context IPC is fixed and local baseline-gated',()=>{
+  const root=path.join(__dirname,'../apps/desktop');
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  assert.match(main,/ipcMain\.handle\('sutradhar:buildMasterPlanningContext'[\s\S]*?await recheckMasterBaseline/);
+  assert.match(preload,/buildMasterPlanningContext:\(agentId,projectId,tasks\)/);
 });
