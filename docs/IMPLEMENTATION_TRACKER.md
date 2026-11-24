@@ -1129,3 +1129,8 @@ The Owner-pinned read-only Hostinger probe now checks the exact four dashboard a
 ### 24 November — disabled Git hook directory and G0 audit completeness
 
 Desktop claim/resume/submit now reject a populated disabled hooks directory before Git commands, preserve suspect files, and disable Git fsmonitor during worktree preflight/creation. Negative tests retain existing receipts and forbid a fresh claim or local branch creation. This is defense in depth for a trusted local OS/operator, not containment of a concurrent same-user attacker. G0 read-only inspection now covers all seven CI job contexts, validates repository path segments, and checks the exact main SHA/protected flag again after the visible rule observation. No live protection or release settings changed.
+
+
+### 24 November — Central public HTTP asset isolation
+
+Replaced the production-wide Express static-directory exposure and wildcard HTML fallback with a fixed dashboard/manifest HTTP allowlist. Local HTTP regression tests verify intended assets and health routing, missing-script failures, no-store, denied internal bundles/schema/identity paths, and symlink refusal. Hostinger external static hosting configuration must still be checked separately in staging (G1 HOLD).

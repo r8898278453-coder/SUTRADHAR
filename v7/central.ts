@@ -25,6 +25,7 @@ import {inspectLastRetainedPilotHeartbeat} from './pilot_signed_packet_recheck.t
 import {inspectLeadershipSafety} from './leadership_diagnostic.ts';
 import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,QaEvidenceError} from './qa_evidence.ts';
 import sharedContract from '../packages/shared/contract.json';
+import {publicCentralFiles} from './public_files.ts';
 
 const app=express();
 const MAX_BODY='128kb';
@@ -2612,8 +2613,7 @@ app.use((err:any,_req:Request,res:Response,_next:NextFunction)=>{
 if(process.env.NODE_ENV==='production'){
   const bundleDir=typeof __dirname==='string'?__dirname:path.dirname(process.argv[1]||process.cwd());
   const dir=fs.existsSync(path.resolve(bundleDir,'index.html'))?path.resolve(bundleDir):path.resolve(process.cwd(),'dist');
-  app.use(express.static(dir,{index:false}));
-  app.get('*',(_req,res)=>res.sendFile(path.join(dir,'index.html')));
+  app.use(publicCentralFiles(dir));
 }
 if(process.env.SUTRADHAR_V7_NO_LISTEN!=='true'){
   app.listen(PORT,'0.0.0.0',()=>console.log('SUTRADHAR v7 MySQL control plane listening; configured='+configured));

@@ -56,3 +56,5 @@ See the [Owner-ready production checklist](../../docs/PRODUCTION_READINESS_V7_20
 See [ADR](../../docs/ADR_001_MONOREPO_TWO_APPS.md) and [Release operations](../../docs/RELEASE_OPERATIONS.md).
 
 The staging preflight also retrieves the four fixed dashboard assets over the pinned HTTPS transport and compares their bytes to `ui_sha256` in the deployed manifest. This catches missing/fallback HTML and mixed-version UI files, but is not independent attestation of server or deployment authenticity. Older manifests without UI digests must be rebuilt before this check passes.
+
+Central Express now serves only `/`, `/index.html`, `/app.css`, `/dashboard.js`, `/owner-crash-crosscheck.js` and `/release-manifest.json` after the API routes. Missing assets fail closed, unknown routes are JSON 404, and internal server bundles, SQL schemas, credentials and other build files are not public routes. Hostinger reverse-proxy/static serving configuration must independently enforce the same boundary in staging; the application allowlist cannot certify an external web-server configuration.
