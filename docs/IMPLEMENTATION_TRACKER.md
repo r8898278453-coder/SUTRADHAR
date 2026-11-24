@@ -1149,3 +1149,8 @@ Required checks now need valid UTC start/completion timestamps in chronological 
 ### 24 November — QA candidate bundle byte binding
 
 Offline QA handoff now captures a bounded 32 MiB descriptor snapshot with stable identity/size/timestamps and parent-path check. The same bytes are hashed and written exclusively to private disposable quarantine before Git verify/list/fetch, rather than reopening the operator-selected bundle. Export writes the captured bytes, checks dangling/existing outputs and preserves uncertain evidence. Tests cover source mutation, replacement after read and dangling output manifest. This assumes a trusted local OS; it does not provide isolation from a concurrent same-user attacker or physical QA approval.
+
+
+### 24 November — Telegram Owner adapter policy
+
+Implemented strict private-chat webhook authorization and fixed STATUS/PAUSE/RESUME parser with bounded freshness, stable update receipt IDs, and redacted best-effort notification only on fresh committed commands. Tests exercise malformed, stale, forwarded and unauthorized messages. Privileged approvals stay web-only; no real bot registration or Telegram external acceptance performed.

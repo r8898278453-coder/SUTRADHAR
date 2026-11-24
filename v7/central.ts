@@ -26,6 +26,7 @@ import {inspectLeadershipSafety} from './leadership_diagnostic.ts';
 import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,QaEvidenceError} from './qa_evidence.ts';
 import sharedContract from '../packages/shared/contract.json';
 import {publicCentralFiles} from './public_files.ts';
+import {parseOwnerTelegram,telegramReceiptText} from './telegram_owner.ts';
 
 const app=express();
 const MAX_BODY='128kb';
@@ -315,11 +316,12 @@ async function evaluate(c:PoolConnection,reason='heartbeat'){
   }
   return await leader(c,false);
 }
-async function ownerCommand(c:PoolConnection,actor:string,body:any){
+async function ownerCommand(c:PoolConnection,actor:string,body:any,onFresh?:()=>void){
   const command=requireStr(body.command,40);
   const payload=body.payload||{};
   return idem(c,actor,requireId(body.request_id),command,payload,async()=>{
     const ld=await leader(c);
+    onFresh?.();
     let result:any;
     // A status command may create an Owner audit/receipt, but must never
     // promote a Master or revoke worker leases merely by observing them.
@@ -744,27 +746,26 @@ app.post('/v7/owner/command',jsonRoute(async req=>{
   admin(req);return transaction(async c=>ownerCommand(c,'owner:web',req.body||{}));
 }));
 app.post('/v7/telegram/webhook',jsonRoute(async req=>{
-  if(!safeEqual(req.header('x-telegram-bot-api-secret-token'),process.env.TELEGRAM_WEBHOOK_SECRET))
-    fault('UNAUTHORIZED',401);
-  const msg=req.body?.message;
-  const user=String(msg?.from?.id||''),chat=String(msg?.chat?.id||'');
-  if(!user||!chat||user!==process.env.TELEGRAM_ADMIN_USER_ID||
-     chat!==process.env.TELEGRAM_ALLOWED_CHAT_ID)fault('UNAUTHORIZED',401);
-  const text=String(msg?.text||'').trim();
-  const actions:{[key:string]:string}={'/status':'STATUS','/pause':'PAUSE','/resume':'RESUME'};
-  const command=actions[text.split('@')[0]];
-  if(!command)return {ok:true,ignored:true};
-  const request_id='tg_'+String(req.body.update_id);
-  const result=await transaction(async c=>ownerCommand(c,'owner:telegram',{request_id,command,payload:{}}));
-  // Notification is best effort. The durable command receipt already exists.
-  if(process.env.TELEGRAM_BOT_TOKEN){
-    try{await fetch('https://api.telegram.org/bot'+process.env.TELEGRAM_BOT_TOKEN+'/sendMessage',{
-      method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({chat_id:chat,text:JSON.stringify(result.state).slice(0,3000)}),
-      signal:AbortSignal.timeout(4000)
-    });}catch{ /* never retry an accepted command just to deliver notification */ }
+  const decision=parseOwnerTelegram({body:req.body,secret:req.header('x-telegram-bot-api-secret-token'),env:process.env});
+  if(decision.kind==='denied')fault('UNAUTHORIZED',401);
+  if(decision.kind!=='command')return {ok:true,ignored:true};
+  let fresh=false;
+  const result=await transaction(async c=>ownerCommand(c,'owner:telegram',
+    {request_id:decision.request_id,command:decision.command,payload:{}},()=>{fresh=true;}));
+  // The command receipt has committed. Redelivery must not send a second
+  // notification, and notification failure cannot retry the command.
+  const token=process.env.TELEGRAM_BOT_TOKEN;
+  if(fresh&&typeof token==='string'&&/^\d{1,16}:[A-Za-z0-9_-]{20,128}$/.test(token)){
+    try{
+      const response=await fetch('https://api.telegram.org/bot'+token+'/sendMessage',{
+        method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({chat_id:decision.chat_id,text:telegramReceiptText(decision.command,result)}),
+        redirect:'error',credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(4000)
+      });
+      await response.body?.cancel();
+    }catch{ /* notification is best effort; durable command is already committed */ }
   }
-  return {ok:true,accepted:true};
+  return {ok:true,accepted:true,replayed:!fresh,receipt_id:decision.request_id};
 }));
 app.post('/v7/agents/register',jsonRoute(async req=>{
   const node=await nodeAuth(req);
