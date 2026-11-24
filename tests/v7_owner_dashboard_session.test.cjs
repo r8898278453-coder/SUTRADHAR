@@ -441,3 +441,70 @@ test('Owner batch recovery blocks conflicting or edited evidence and discards la
   assert.equal(d.queries.length,2);assert.equal(g('batch-recovery-cancel').disabled,true);
   assert.equal(g('batch-recovery-request').value,'');
 });
+
+
+const usageTicket='ticket_usage',usageId='attempt_'+'a'.repeat(32),usageContext='b'.repeat(64);
+const ownerUsageReading={ticket_id:usageTicket,attempt_id:usageId,context_sha256:usageContext,
+  input_tokens:100,output_tokens:20,cached_input_tokens:null,evidence_reviewed:true};
+const ownerUsageRecord={...ownerUsageReading,provider:'CHATGPT_WEB',source:'OWNER_ATTESTED_PROVIDER_DISPLAY',
+  provider_usage_verified:false,quota_verified:false,automatic_execution_allowed:false,usage_sha256:'c'.repeat(64)};
+function usageObservation(record=null,state='CLOSED'){
+  const known=record!==null;
+  return {ticket_id:usageTicket,read_only:true,provider_usage_verified:false,quota_verified:false,automatic_execution_allowed:false,
+    attempts:[{attempt_id:usageId,provider:'CHATGPT_WEB',state,context_sha256:usageContext,usage:record,
+      owner_recording_eligible:state==='CLOSED'&&!known}],
+    totals:[{provider:'CHATGPT_WEB',attempt_count:1,recorded_attempt_count:known?1:0,unknown_attempt_count:known?0:1,
+      recorded_input_tokens:known?100:0,recorded_output_tokens:known?20:0,recorded_cached_input_tokens:0,
+      cached_input_unknown_record_count:known?1:0},
+      {provider:'GOOGLE_AI_STUDIO',attempt_count:0,recorded_attempt_count:0,unknown_attempt_count:0,
+        recorded_input_tokens:0,recorded_output_tokens:0,recorded_cached_input_tokens:0,cached_input_unknown_record_count:0}]};
+}
+async function loadUsage(b,data=usageObservation()){
+  const e=b.element;e('usage-ticket').value=usageTicket;
+  const run=e('usage-load').onclick();
+  assert.equal(b.pending.length,1);
+  assert.equal(b.queries[0].url,'/v7/owner/provider-usage/'+usageTicket);
+  complete(b.pending.shift(),data);await run;
+}
+function consentUsage(b){
+  const e=b.element;b.ctx.confirm=()=>true;
+  e('usage-attempt').value=usageId;e('usage-input').value='100';e('usage-output').value='20';
+  e('usage-cached').value='';e('usage-reviewed').checked=true;e('usage-reviewed').listeners.change();
+}
+test('Owner usage requires independently reviewed exact counts and durable readback',async()=>{
+  const b=browser(),e=b.element;await loadUsage(b);
+  assert.equal(e('usage-save').disabled,true);consentUsage(b);
+  assert.equal(e('usage-save').disabled,false);
+  const run=e('usage-save').onclick(),body=JSON.parse(b.queries[1].options.body);
+  assert.equal(body.command,'RECORD_PROVIDER_USAGE');assert.deepEqual(body.payload,ownerUsageReading);
+  complete(b.pending.shift(),{accepted:true,receipt_id:body.request_id,state:ownerUsageRecord});
+  await awaitPending(b);
+  complete(b.pending.shift(),usageObservation(ownerUsageRecord));await run;
+  assert.equal(e('usage-save').disabled,true);assert.match(e('usage-status').textContent,/OWNER-ATTESTED/);
+  assert.equal(b.queries.length,3);
+});
+test('Owner usage prevents submission for open attempt, bad counts, changed consent and malformed totals',async()=>{
+  const a=browser();await loadUsage(a,usageObservation(null,'OPEN'));consentUsage(a);
+  await a.element('usage-save').onclick();assert.equal(a.queries.length,1);
+  const b=browser(),e=b.element;await loadUsage(b);consentUsage(b);
+  for(const bad of ['-1','1e3','1000000001','1.2',' 1','01','']){
+    e('usage-input').value=bad;e('usage-reviewed').checked=true;
+    await e('usage-save').onclick();assert.equal(b.queries.length,1);
+  }
+  consentUsage(b);e('usage-cached').value='101';await e('usage-save').onclick();assert.equal(b.queries.length,1);
+  consentUsage(b);e('usage-input').listeners.input();await e('usage-save').onclick();assert.equal(b.queries.length,1);
+  const c=browser(),malformed=usageObservation();malformed.totals[0].unknown_attempt_count=0;
+  await loadUsage(c,malformed);consentUsage(c);await c.element('usage-save').onclick();assert.equal(c.queries.length,1);
+});
+test('Owner usage ignores late mutation response after logout and prevents blind retry on uncertain readback',async()=>{
+  const b=browser(),e=b.element;await loadUsage(b);consentUsage(b);
+  const run=e('usage-save').onclick(),body=JSON.parse(b.queries[1].options.body);
+  e('disconnect').onclick();complete(b.pending.shift(),{accepted:true,receipt_id:body.request_id,state:ownerUsageRecord});await run;
+  assert.equal(b.queries.length,2);assert.equal(e('usage-ticket').value,'');assert.equal(e('usage-save').disabled,true);
+  const c=browser(),f=c.element;await loadUsage(c);consentUsage(c);
+  const run2=f('usage-save').onclick(),body2=JSON.parse(c.queries[1].options.body);
+  complete(c.pending.shift(),{accepted:true,receipt_id:body2.request_id,state:ownerUsageRecord});await awaitPending(c);
+  complete(c.pending.shift(),usageObservation());await run2;
+  assert.match(f('usage-status').textContent,/Reading not verified/);
+  await f('usage-save').onclick();assert.equal(c.queries.length,3);
+});
