@@ -7,7 +7,7 @@ const path=require('node:path');
 const {TextDecoder}=require('node:util');
 const LIMITS=Object.freeze({files:12,blob:16384,tree:1048576,references:128,edges:40});
 const fail=code=>{throw Error(code);};
-const safePath=p=>typeof p==='string'&&p.length<=450&&/^[A-Za-z0-9_@.-]+(?:\/[A-Za-z0-9_@.-]+)*$/.test(p)&&
+const safePath=p=>typeof p==='string'&&p.length<=450&&!/[\r\n]/.test(p)&&/^[A-Za-z0-9_@.-]+(?:\/[A-Za-z0-9_@.-]+)*$/.test(p)&&
   p.split('/').every(s=>s!=='.'&&s!=='..'&&!s.endsWith('.')&&!/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(s));
 const source=p=>/\.(?:[cm]?[jt]s|tsx|jsx)$/i.test(p);
 const sha=s=>typeof s==='string'&&s.length===40&&/^[0-9a-f]{40}$/.test(s);
@@ -22,7 +22,7 @@ function parseReferences(file,raw){
     if(++count>LIMITS.references){overflow=true;return;}
     if(!node||!ts.isStringLiteralLike(node)){unknown++;return;}
     const s=node.text;
-    if(!/^(?:\.\/|\.\.\/)[A-Za-z0-9_@./-]+$/.test(s)||s.length>450){unknown++;return;}
+    if(/[\r\n]/.test(s)||!/^(?:\.\/|\.\.\/)[A-Za-z0-9_@./-]+$/.test(s)||s.length>450){unknown++;return;}
     refs.add(s);
   }
   // Iterative traversal avoids our own recursive visitor on nested input.
@@ -46,7 +46,7 @@ function parseReferences(file,raw){
   return {status:overflow?'REFERENCE_LIMIT':'PARSED',references:overflow?[]:[...refs].sort(order),unknown};
 }
 function resolveReference(file,spec,inventory){
-  if(!safePath(file)||!source(file)||typeof spec!=='string'||spec.length>450||
+  if(!safePath(file)||!source(file)||typeof spec!=='string'||spec.length>450||/[\r\n]/.test(spec)||
      !/^(?:\.\/|\.\.\/)[A-Za-z0-9_@./-]+$/.test(spec))return {status:'UNSUPPORTED'};
   const base=path.posix.normalize(path.posix.join(path.posix.dirname(file),spec));
   if(!safePath(base))return {status:'OUTSIDE_OR_UNSAFE'};
