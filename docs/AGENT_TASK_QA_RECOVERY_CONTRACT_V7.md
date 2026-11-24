@@ -352,3 +352,15 @@ Last fully green source baseline `93993a0`; shared-contract HEAD `01ff1ce` depen
 - Historical receipts are not fresh authorization. Regrant may make a still-stored unverified declaration visible again; Owner must explicitly remove obsolete declarations. Do not treat a stored snapshot as a live account ACL.
 
 No schema change, automatic provider actions, verified real provider mapping or live acceptance. Dedicated indexed storage, retention/restore performance, dashboard editor and provider interruption recovery remain open. See [Owner instructions](PROVIDER_WORKSPACE_DECLARATIONS_V7.md).
+
+
+## Owner registry editor contract — incremental alpha
+
+Verified previous source baseline `215e5ee`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116654) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116645) both SUCCESS. New Owner registry editor is CODED / CI PENDING at this update.
+
+- Existing Owner dashboard loads registry by explicit GET only; periodic dashboard refresh does not overwrite local draft. Display source/revision and alias rows with text-only DOM rendering. Client validates bounded alias syntax and conflict rules; Central remains authoritative for exact grants and version.
+- Add/remove changes only in-tab draft; review consent resets when inputs or draft change. Save is disabled during requests, without a loaded revision, without review consent, for unchanged initialized lists or while unadded form fields are populated. Initial version 0 requires explicit warning that invisible legacy environment aliases will be superseded.
+- Save uses one REPLACE_PROVIDER_REGISTRY command with unique request ID and expected version; no automatic retry. Current GET readback must match accepted receipt ID, next version, digest and complete binding list before success. Rejected, uncertain or superseded outcomes clear the editable snapshot and require explicit reload. This is server readback comparison, not independent cryptographic provider authentication.
+- Session generation/key/revision checks discard late GET/POST results after disconnect/reconnect. Credentials, aliases and drafts are not stored persistently by the editor. Disconnect cannot cancel a command already committed. No external login, session revocation, provider authorization or execution; real provider and physical acceptance remain open.
+
+Tests in tests/v7_owner_dashboard_session.test.cjs model local draft, explicit consent, CAS, concurrent revision, malformed response and stale session. No real-browser acceptance claimed; G0–G7 HOLD.
