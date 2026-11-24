@@ -1,6 +1,6 @@
 /**
  * Owner-declared provider workspace bindings, not provider authentication.
- * Initial read-only deployment configuration; no database migration or
+ * Bounded registry declarations and legacy deployment configuration; no
  * external provider requests. Never store credentials, URLs or cookies here.
  */
 import {createHash} from 'node:crypto';
@@ -9,9 +9,9 @@ const ACCOUNT=/^account_[A-Za-z0-9_-]{3,64}$/;
 const WORKSPACE=/^workspace_[A-Za-z0-9_-]{3,96}$/;
 const PROVIDERS=['CHATGPT_WEB','GOOGLE_AI_STUDIO'] as const;
 type Provider=typeof PROVIDERS[number];
-type Binding={project_id:string;agent_id:string;provider:Provider;
+export type Binding={project_id:string;agent_id:string;provider:Provider;
   account_ref:string;workspace_ref:string};
-const exact=(v:unknown,re:RegExp):v is string=>typeof v==='string'&&re.test(v);
+const exact=(v:unknown,re:RegExp):v is string=>typeof v==='string'&&!/[\r\n]/.test(v)&&re.test(v);
 const invalid=()=>{throw Error('PROVIDER_MAPPING_CONFIG_INVALID');};
 export function parseProviderMappings(raw:unknown):Binding[]{
   if(raw===undefined||raw==='')return [];
@@ -51,4 +51,29 @@ export function declaredProviderMappings(raw:unknown,projectId:string,agentId:st
       binding_sha256:createHash('sha256').update(JSON.stringify(x)).digest('hex'),
       state:'OWNER_DECLARED_UNVERIFIED' as const,provider_mapping_verified:false as const,
       automatic_execution_allowed:false as const}));
+}
+
+
+// Canonical full-snapshot replacement makes revocation explicit (including
+// an empty registry) and allows optimistic concurrency without schema DDL.
+// The digest covers version and every declaration, not provider identity.
+export function providerRegistrySnapshot(version:unknown,bindings:unknown){
+  if(typeof version!=='number'||!Number.isSafeInteger(version)||version<1||
+     !Array.isArray(bindings))throw Error('PROVIDER_REGISTRY_INVALID');
+  const canonical=parseProviderMappings(JSON.stringify(bindings)).sort((a,b)=>{
+    const x=[a.project_id,a.agent_id,a.provider].join('|');
+    const y=[b.project_id,b.agent_id,b.provider].join('|');
+    return x<y?-1:x>y?1:0;
+  });
+  const payload={version,bindings:canonical};
+  return {...payload,registry_sha256:createHash('sha256').update(JSON.stringify(payload)).digest('hex')};
+}
+export function verifyProviderRegistrySnapshot(input:unknown){
+  if(!input||typeof input!=='object'||Array.isArray(input)||
+     Object.keys(input).sort().join('|')!=='bindings|registry_sha256|version')
+    throw Error('PROVIDER_REGISTRY_INVALID');
+  const x=input as Record<string,unknown>;
+  const snapshot=providerRegistrySnapshot(x.version,x.bindings);
+  if(x.registry_sha256!==snapshot.registry_sha256)throw Error('PROVIDER_REGISTRY_INVALID');
+  return snapshot;
 }
