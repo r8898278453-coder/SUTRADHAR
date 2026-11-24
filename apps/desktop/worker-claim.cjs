@@ -365,7 +365,7 @@ async function recordProviderAttempt({origin,agentId,ticketId,dir,signer,action,
     if(!mapping||typeof reviewedDigest!=='string'||reviewedDigest!==preview.context_sha256)
       fail('WORKER_PROVIDER_REVIEWED_CONTEXT_CHANGED');
     Object.assign(body,{provider,registry_version:task.provider_registry_version,
-      binding_sha256:mapping.binding_sha256,checkpoint_generation:cp.generation,
+      binding_sha256:mapping.binding_sha256,expected_task_version:task.version,checkpoint_generation:cp.generation,
       checkpoint_sha256:cp.content_sha256,context_sha256:preview.context_sha256});
   }else{
     if(!previous||previous.attempt_id!==attemptId||previous.state==='CLOSED'||
