@@ -10,7 +10,7 @@ const {spawnSync}=require('node:child_process');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
 const {evidenceEntryPresent}=require('./local-evidence-file.cjs');
 const {readEvidenceBytes}=require('./local-evidence-file.cjs');
-const {readStableLocalFile}=require('./os-vault.cjs');
+const {readStableLocalFile,atomicWrite}=require('./os-vault.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const SHA=/^[a-f0-9]{40}$/;
 const LEASE=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -604,6 +604,154 @@ function requireMasterBaseline({tasks,observed,current}){
     upstream_changes_in_baseline_verified:false,automatic_execution_allowed:false};
 }
 
+// Unconfirmed editable draft is deliberately separate from admission evidence.
+// No saved preview, authority, consent, checkout path or execution permission.
+function createMasterDraftStore({dir,safeStorage,nodeId,origin,agentId}){
+  const exactId=x=>typeof x==='string'&&ID.test(x)&&!/[\r\n]/.test(x);
+  if(!path.isAbsolute(dir)||typeof nodeId!=='string'||!/^node_[a-f0-9]{32}$/.test(nodeId)||
+     typeof origin!=='string'||!ORIGIN.test(origin)||!exactId(agentId)||
+     safeStorage?.isEncryptionAvailable()!==true||
+     (typeof safeStorage.getSelectedStorageBackend==='function'&&safeStorage.getSelectedStorageBackend()==='basic_text'))
+    fail('MASTER_DRAFT_STORAGE_DENIED');
+  const privateDir=d=>{
+    if(!evidenceEntryPresent(d))fs.mkdirSync(d,{recursive:true,mode:0o700});
+    const st=fs.lstatSync(d);
+    if(!st.isDirectory()||st.isSymbolicLink()||(process.platform!=='win32'&&(st.mode&0o077)!==0))
+      fail('MASTER_DRAFT_DIRECTORY_UNSAFE');
+  };
+  privateDir(dir);
+  const folder=path.join(dir,digest([nodeId,origin,agentId]));
+  privateDir(folder);
+  const file=path.join(folder,'draft.bin');
+  const text=(x,n)=>typeof x==='string'&&x.length<=n&&!/[\uD800-\uDFFF]/u.test(x);
+  const list=(a,n,fn)=>Array.isArray(a)&&a.length<=n&&a.every(fn);
+  const limits={ticket:100,baseline:40,branch:120,title:220,description:10000,
+    scopes:13530,criteria:15030,dependencies:3030,contracts:1164};
+  function validate(d){
+    if(!d||Object.keys(d).sort().join('|')!=='editor|project_id|request_id|tasks'||
+       ![d.project_id,d.request_id].every(x=>x===''||exactId(x))||
+       !d.editor||Object.keys(d.editor).sort().join('|')!=='baseline|branch|contracts|criteria|dependencies|description|risk|scopes|ticket|title'||
+       !Object.entries(limits).every(([k,n])=>text(d.editor[k],n))||
+       !['LOW','MEDIUM','HIGH','CORE'].includes(d.editor.risk)||
+       !list(d.tasks,10,t=>t&&Object.keys(t).sort().join('|')==='acceptance_criteria|baseline_sha|branch_name|contract_keys|dependencies|description|risk|ticket_id|title|write_scopes'&&
+         exactId(t.ticket_id)&&typeof t.baseline_sha==='string'&&t.baseline_sha.length===40&&SHA.test(t.baseline_sha)&&
+         text(t.branch_name,120)&&text(t.title,220)&&text(t.description,10000)&&
+         ['LOW','MEDIUM','HIGH','CORE'].includes(t.risk)&&list(t.write_scopes,30,x=>text(x,450))&&
+         list(t.acceptance_criteria,30,x=>text(x,500))&&list(t.dependencies,30,exactId)&&
+         list(t.contract_keys,12,x=>text(x,96)))||
+       new Set(d.tasks.map(t=>t.ticket_id.toLowerCase())).size!==d.tasks.length||
+       Buffer.byteLength(JSON.stringify(d),'utf8')>60000)
+      fail('MASTER_DRAFT_SHAPE_OR_SIZE_INVALID');
+    return d;
+  }
+  function load(){
+    // Atomic writer's durable intent belongs only to this draft folder.
+    // Never silently restore an earlier snapshot after an ambiguous write.
+    const names=fs.readdirSync(folder);
+    if(names.some(n=>n!=='draft.bin'))fail('MASTER_DRAFT_WRITE_UNCERTAIN_OWNER_REVIEW');
+    if(!evidenceEntryPresent(file))return null;
+    try{
+      const x=JSON.parse(safeStorage.decryptString(readStableLocalFile(file,{maxBytes:65536})));
+      if(!x||Object.keys(x).sort().join('|')!=='agent_id|draft|node_id|origin|revision|schema|sha256'||
+         x.schema!==1||x.node_id!==nodeId||x.origin!==origin||x.agent_id!==agentId||
+         !Number.isSafeInteger(x.revision)||x.revision<1)fail('MASTER_DRAFT_BINDING_INVALID');
+      const {sha256,...payload}=x;
+      if(sha256!==digest(payload))fail('MASTER_DRAFT_DIGEST_INVALID');
+      validate(x.draft);
+      return {revision:x.revision,sha256,draft:x.draft,automatic_execution_allowed:false};
+    }catch{fail('MASTER_DRAFT_CORRUPT_OWNER_REVIEW');}
+  }
+  function save(d,expectedDigest){
+    const prior=load();
+    if(expectedDigest!==(prior?.sha256??null))fail('MASTER_DRAFT_REVISION_CONFLICT_LOAD_FIRST');
+    const payload={schema:1,node_id:nodeId,origin,agent_id:agentId,
+      revision:(prior?.revision??0)+1,draft:validate(d)};
+    if(!Number.isSafeInteger(payload.revision))fail('MASTER_DRAFT_REVISION_INVALID');
+    const sha256=digest(payload);
+    const bytes=safeStorage.encryptString(JSON.stringify({...payload,sha256}));
+    if(!Buffer.isBuffer(bytes)||bytes.length<1||bytes.length>65536)fail('MASTER_DRAFT_ENCRYPTED_SIZE_INVALID');
+    atomicWrite(file,bytes);
+    const after=load();
+    if(!after||after.sha256!==sha256)fail('MASTER_DRAFT_READBACK_REQUIRED');
+    return after;
+  }
+  return {load,save};
+}
+
+// Heuristic relative-import evidence from immutable local Git blobs only.
+// No source text is returned, no project module is loaded or executed, no
+// dependency edge is inferred as authoritative. Unsupported syntax is unknown.
+function inspectMasterSourceHints({repoDir,project,observed,tasks}){
+  requireMasterBaseline({tasks,observed,current:inspectMasterBaseline({repoDir,project})});
+  const repo=assertDirectory(repoDir);
+  const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!/^GIT_/i.test(k)));
+  Object.assign(env,{GIT_NO_REPLACE_OBJECTS:'1',GIT_NO_LAZY_FETCH:'1',GIT_TERMINAL_PROMPT:'0',
+    GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_OPTIONAL_LOCKS:'0'});
+  const read=(max,...args)=>{
+    const p=spawnSync('git',['--no-optional-locks','-c','protocol.allow=never','-c','core.fsmonitor=false','-C',repo,...args],
+      {env,encoding:null,timeout:5000,maxBuffer:max,windowsHide:true});
+    if(p.error||p.status!==0||!Buffer.isBuffer(p.stdout)||p.stdout.length>max)
+      fail('MASTER_SOURCE_HINT_GIT_READ_FAILED');
+    return p.stdout;
+  };
+  const inventory=new TextDecoder('utf-8',{fatal:true}).decode(read(1024*1024,'ls-tree','-r','-z',observed.tree_sha));
+  const files=new Map(),aliases=new Set();
+  for(const line of inventory.split('\0')){
+    if(!line)continue;
+    const m=/^(100644|100755) blob ([a-f0-9]{40})\t(.+)$/.exec(line);
+    if(!m||!safeScope(m[3]))continue;
+    const lower=m[3].toLowerCase();
+    if(aliases.has(lower))fail('MASTER_SOURCE_HINT_PATH_ALIAS');
+    aliases.add(lower);files.set(m[3],m[2]);
+  }
+  const source=/\.(?:[cm]?[jt]s|tsx|jsx)$/i;
+  const own=(t,p)=>t.write_scopes.some(s=>p===s||p.startsWith(s+'/'));
+  if(tasks.some(t=>!t||typeof t.ticket_id!=='string'||!ID.test(t.ticket_id)||
+     !Array.isArray(t.write_scopes)||!t.write_scopes.length||t.write_scopes.length>30||
+     t.write_scopes.some(s=>!safeScope(s))))
+    fail('MASTER_SOURCE_HINT_SCOPE_INVALID');
+  const selected=[...files.keys()].filter(p=>source.test(p)&&tasks.some(t=>own(t,p))).sort();
+  const sample=selected.slice(0,12),refs=new Map(),skipped=[];
+  for(const file of sample){
+    const sha=files.get(file);
+    const size=Number(read(128,'cat-file','-s',sha).toString('ascii').trim());
+    if(!Number.isSafeInteger(size)||size<0||size>16384){skipped.push(file);continue;}
+    const raw=read(16384,'cat-file','blob',sha);
+    if(raw.length!==size){skipped.push(file);continue;}
+    let code;try{code=new TextDecoder('utf-8',{fatal:true}).decode(raw);}catch{skipped.push(file);continue;}
+    // Deliberately a lexical hint, not an AST. Comments and strings can
+    // produce false positives; dynamic/package/alias imports are not resolved.
+    const re=/(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)['"](\.{1,2}\/[A-Za-z0-9._/-]+)['"]/g;
+    const targets=new Set();
+    for(const m of code.matchAll(re)){
+      const base=path.posix.normalize(path.posix.join(path.posix.dirname(file),m[1]));
+      if(!safeScope(base))continue;
+      const candidates=[base,...['.ts','.tsx','.js','.jsx','.mjs','.cjs'].map(e=>base+e),
+        ...['.ts','.tsx','.js','.jsx','.mjs','.cjs'].map(e=>base+'/index'+e)];
+      const found=[...new Set(candidates)].filter(x=>files.has(x)&&source.test(x));
+      if(found.length===1)targets.add(found[0]);
+    }
+    refs.set(file,[...targets].sort());
+  }
+  const hints=[];
+  for(const [file,targets] of refs)for(const target of targets){
+    for(const a of tasks.filter(t=>own(t,file)))for(const b of tasks.filter(t=>own(t,target)&&t.ticket_id!==a.ticket_id)){
+      if(hints.length>=40)break;
+      hints.push({kind:'CROSS_TASK_RELATIVE_IMPORT',from_ticket:a.ticket_id,to_ticket:b.ticket_id,source_path:file,target_path:target});
+    }
+  }
+  // Report shared imports even when the target is outside task write scopes.
+  for(const target of new Set([...refs.values()].flat())){
+    const users=tasks.filter(t=>[...refs].some(([file,targets])=>own(t,file)&&targets.includes(target))).map(t=>t.ticket_id);
+    if(users.length>1&&hints.length<40)hints.push({kind:'SHARED_RELATIVE_IMPORT',ticket_ids:users,target_path:target});
+  }
+  requireMasterBaseline({tasks,observed,current:inspectMasterBaseline({repoDir,project})});
+  return {baseline_sha:observed.baseline_sha,tree_sha:observed.tree_sha,scoped_source_file_count:selected.length,
+    scanned_file_count:refs.size,skipped_file_count:skipped.length,scan_limited:selected.length>12||skipped.length>0||hints.length>=40,
+    hints,semantic_discovery_verified:false,automatic_execution_allowed:false,provider_sent:false,
+    source_contents_returned:false};
+}
+
 // Append-only encrypted admission evidence, one unresolved intent per PC.
 // No private keys, arbitrary paths, automated replay or automatic deletion.
 // A Windows filesystem power-cut guarantee still requires physical acceptance.
@@ -717,4 +865,4 @@ function createMasterBatchJournal({dir,safeStorage,nodeId}){
   }
   return {pending,begin,close};
 }
-module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,createMasterBatchJournal};
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,createMasterDraftStore,createMasterBatchJournal};
