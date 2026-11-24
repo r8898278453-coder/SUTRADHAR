@@ -25,7 +25,7 @@ This register reflects the current implementation branch, not an unsupported "al
 | V7-GAP-02 | P0 | Persistent node identity vs separate agent identity; 60s heartbeat, 180s suspicion, secure enrollment | PARTIAL — signed API and enrollment code/CI; physical Windows DPAPI/restart NOT_RUN |
 | V7-GAP-03 | P0 | Initial post-08:00 election, retention across days, two ranked backups, fenced multi-PC failover | PARTIAL — MySQL election/concurrency/fencing CI; physical 2/3/8–10-PC NOT_RUN |
 | V7-GAP-04 | P0 | Master hybrid developer duty + backup worker preemption, durable takeover context | PARTIAL — durable leadership/worker recovery source, physical hybrid duty acceptance open |
-| V7-GAP-05 | P0 | Master deduplicated project selection/creation, parallel-safe task DAG and explicit QA contract | PARTIAL — bounded signed task DAG/atomic admission/CLI CI verified at 804726e; no-code Desktop Master planner and historical receipt recovery CODED / CI PENDING; autonomous decomposition, source semantic completeness, actual baseline proof and combined QA OPEN |
+| V7-GAP-05 | P0 | Master deduplicated project selection/creation, parallel-safe task DAG and explicit QA contract | PARTIAL — Desktop planner and signed historical receipt CI verified at 0fc7c7a; current-Master project catalog and encrypted reviewed admission recovery CODED / CI PENDING; autonomous decomposition, baseline proof, source semantic discovery and combined QA OPEN |
 | V7-GAP-06 | P0 | Electron isolation, browser provider compatibility, permitted chat continuation and project mapping | PARTIAL — OS-vault/Electron and scoped Owner-declared unverified workspace bindings in CI; durable MySQL registry, browser/provider permission and physical acceptance OPEN |
 | V7-GAP-07 | P0 | Trusted local patch/Git operator, MySQL path and semantic contract reservations, no unverified DONE | PARTIAL — local Git/scope reservations/QA guards CI; live protected GitHub acceptance OPEN |
 | V7-GAP-08 | P0 | Independent QA, combined integration tree, live GitHub draft PR/merge acceptance, release evidence | PARTIAL — signed QA/source CI; real independent reviewer/device and live protected merge NOT_RUN |
@@ -138,3 +138,10 @@ V7-GAP-05: bounded deterministic DAG, explicit declared conflict ordering, share
 Exact baseline `804726e` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45463312420) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45463312581), including previous Desktop correction and Master batch admission. New Desktop Master planner and receipt lookup are CODED / EXACT-HEAD CI PENDING.
 
 V7-GAP-05/09: Desktop form and reviewed admission, signed original-actor historical receipt lookup and maintenance/identity fences coded. Durable local draft, physical usability and successor/Owner reconciliation if original signer unavailable remain OPEN. V7-GAP-07/08: actual Git baseline and combined QA remain OPEN. No provider/token feature added. No live acceptance promotion. G0–G7 HOLD.
+
+
+## Reviewed Master admission journal and project catalog follow-up
+
+Exact baseline `0fc7c7a` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325287) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325508), including the previous Desktop Master planner and historical receipt lookup. New project catalog and admission journal changes are CODED / EXACT-HEAD CI PENDING.
+
+V7-GAP-05/09: current-Master signed project picker and encrypted original reviewed admission intent/receipt, one unresolved admission per PC, exact original-actor restart inspection coded. Unconfirmed drafts, Owner resolution for missing receipt/unavailable signer, journal retention and physical DPAPI/power-cut acceptance OPEN. V7-GAP-07/08: actual baseline and combined QA OPEN. V7-GAP-11: actual provider token/quota usage OPEN. No LIVE_ACCEPTED promotion. G0–G7 HOLD.
