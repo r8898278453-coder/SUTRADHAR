@@ -251,3 +251,17 @@ Previous HEAD `82e2a8c` failed [application CI](https://github.com/r8898278453-c
 | V7-B05, B06, B08, B09 | No actual provider permission, prompt or quota claim; local evidence only | Packaged Desktop mutation, transmitted context verification, live permitted recovery and measured usage |
 
 No change to the original 71 scenario definitions; no LIVE_ACCEPTED promotion. G0–G7 HOLD.
+
+
+## Consolidated Desktop provider attempt regression coverage
+
+Verified exact baseline `1193b3b`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45459215514) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45459215696) both SUCCESS. New consolidated Desktop/provider admission batch is CODED / EXACT-HEAD CI PENDING.
+
+| Requirement | New source evidence | Still required |
+|---|---|---|
+| V7-B05, B06, B08, B09 | Desktop main recomputes compact digest; exact reviewed mapping revision/binding, task version, separate context-only field; signed fixture rejects stale context | Actual provider permission and transmitted bytes; measured provider tokens/quota |
+| V7-O02, O03, O06 | Original lease echo, trusted Git worktree, native review, main-only signer, fresh checkpoint and uncertain response hold | Physical original-PC interruption, external effects and independent recovery review |
+| V7-O09, O11 | Non-developer BEGIN/INTERRUPT/CLOSE controls, verified current readback; existing Owner closure UI CI passed | Real Windows/Hostinger usability and approved provider continuity |
+| V7-P03, T02 | Disposable MySQL fixture for stale expected_task_version rejection, coordinated client/signer admission | Exact-head CI and independent acceptance |
+
+Original 71 acceptance scenarios retained; no LIVE_ACCEPTED promotion. G0–G7 HOLD.
