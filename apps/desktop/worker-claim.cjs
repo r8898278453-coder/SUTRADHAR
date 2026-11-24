@@ -711,7 +711,18 @@ function inspectMasterSourceHints({repoDir,project,observed,tasks}){
      t.write_scopes.some(s=>!safeScope(s))))
     fail('MASTER_SOURCE_HINT_SCOPE_INVALID');
   const selected=[...files.keys()].filter(p=>source.test(p)&&tasks.some(t=>own(t,p))).sort();
-  const sample=selected.slice(0,12),refs=new Map(),skipped=[];
+  // Round-robin per task avoids exhausting the entire file budget on the
+  // first alphabetic directory. Report exact per-task coverage below.
+  const queues=[...tasks].sort((a,b)=>a.ticket_id<b.ticket_id?-1:a.ticket_id>b.ticket_id?1:0)
+    .map(t=>selected.filter(p=>own(t,p)));
+  const chosen=new Set();
+  while(chosen.size<12&&queues.some(q=>q.length)){
+    for(const q of queues){
+      while(q.length&&chosen.has(q[0]))q.shift();
+      if(q.length&&chosen.size<12)chosen.add(q.shift());
+    }
+  }
+  const sample=[...chosen],refs=new Map(),skipped=[];
   for(const file of sample){
     const sha=files.get(file);
     const size=Number(read(128,'cat-file','-s',sha).toString('ascii').trim());
@@ -748,6 +759,8 @@ function inspectMasterSourceHints({repoDir,project,observed,tasks}){
   requireMasterBaseline({tasks,observed,current:inspectMasterBaseline({repoDir,project})});
   return {baseline_sha:observed.baseline_sha,tree_sha:observed.tree_sha,scoped_source_file_count:selected.length,
     scanned_file_count:refs.size,skipped_file_count:skipped.length,scan_limited:selected.length>12||skipped.length>0||hints.length>=40,
+    task_coverage:tasks.map(t=>({ticket_id:t.ticket_id,scoped_files:selected.filter(p=>own(t,p)).length,
+      scanned_files:[...refs.keys()].filter(p=>own(t,p)).length})),
     hints,semantic_discovery_verified:false,automatic_execution_allowed:false,provider_sent:false,
     source_contents_returned:false};
 }
