@@ -48,7 +48,7 @@ const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
   require('./pilot-node-continuity.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
-const {claimApprovedTask,resumeApprovedTask}=require('./worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt}=require('./worker-claim.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
@@ -604,6 +604,35 @@ app.whenReady().then(()=>{
         origin,agentId,ticketId,
         dir:path.join(nodeDir(),'worker'),signer
       });
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:recordProviderAttempt',async(event,agentId,ticketId,action,provider,reviewedDigest,attemptId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,ticketId);
+    if(!['BEGIN','INTERRUPT','CLOSE'].includes(action)||
+       (action==='BEGIN'&&(!['CHATGPT_WEB','GOOGLE_AI_STUDIO'].includes(provider)||
+         typeof reviewedDigest!=='string'||reviewedDigest.length!==64||!/^[a-f0-9]{64}$/.test(reviewedDigest)))||
+       (action!=='BEGIN'&&(typeof attemptId!=='string'||attemptId.length!==40||!/^attempt_[a-f0-9]{32}$/.test(attemptId))))
+      throw Error('WORKER_PROVIDER_ATTEMPT_INPUT_DENIED');
+    workerClaimBusy=true;
+    try{
+      const confirmed=await dialog.showMessageBox(setupWindow,{
+        type:'warning',buttons:['Cancel — no attempt mutation','Record reviewed metadata ONLY'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Record provider attempt '+action+' for '+ticketId+'?',
+        detail:'Agent: '+agentId+'\n'+(action==='BEGIN'?'Provider: '+provider+'\nReviewed context SHA-256: '+reviewedDigest+
+          '\nIndependently review actual provider permission, account, workspace and exact context for secrets.':
+          'Attempt: '+attemptId+(action==='CLOSE'?'\nConfirm independent review of actual external session and original local worktree, and a fresh checkpoint.':'\nRecord interruption only. Do not repeat an uncertain remote action.'))+
+          '\nNo provider request, browser automation, Git push, lease extension or task reassignment occurs.'
+      });
+      if(confirmed.response!==1)return {canceled:true};
+      const beforeMutation=()=>{
+        if(approvedWorkerOperator(agentId,ticketId,true)!==origin)
+          throw Error('WORKER_PROVIDER_CENTRAL_CHANGED');
+      };
+      beforeMutation();
+      return await recordProviderAttempt({origin,agentId,ticketId,action,provider,reviewedDigest,attemptId,
+        dir:path.join(nodeDir(),'worker'),signer,beforeMutation});
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:checkpointWorkerTask',async(event,agentId,ticketId,summary,nextAction)=>{
