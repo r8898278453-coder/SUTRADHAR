@@ -399,6 +399,8 @@ get('workerContext').addEventListener('click',async()=>{
     }
     output.textContent='MANUAL PREVIEW ONLY — '+r.utf8_bytes+' / '+r.byte_budget+
       ' UTF-8 bytes (not provider tokens).\nSHA-256: '+r.context_sha256+
+      '\nProvider mapping: '+r.provider_mapping_state+
+      '\nLocal mapping references (do not paste into provider): '+JSON.stringify(r.provider_mappings)+
       '\nReview for secrets, verify current lease and correct provider project independently. Nothing sent to provider.\n\n'+r.preview;
   }catch(error){output.textContent='Context preview blocked: '+String(error?.message||error);}
   finally{await loadStatus();}
