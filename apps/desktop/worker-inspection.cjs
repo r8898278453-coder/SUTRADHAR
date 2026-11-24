@@ -85,6 +85,20 @@ function contractDeclaration(value){
     fail('WORKER_CONTRACT_DECLARATION_INVALID');
   return [...value];
 }
+function providerAttemptMetadata(x){
+  if(x===null||x===undefined)return null;
+  if(!x||typeof x!=='object'||Array.isArray(x)||
+     Object.keys(x).sort().join('|')!=='attempt_id|checkpoint_generation|context_sha256|provider|registry_version|resolution|state'||
+     typeof x.attempt_id!=='string'||!/^attempt_[a-f0-9]{32}$/.test(x.attempt_id)||
+     !['OPEN','INTERRUPTED','CLOSED'].includes(x.state)||
+     !['CHATGPT_WEB','GOOGLE_AI_STUDIO'].includes(x.provider)||
+     !Number.isSafeInteger(x.registry_version)||x.registry_version<1||
+     !Number.isSafeInteger(x.checkpoint_generation)||x.checkpoint_generation<1||
+     typeof x.context_sha256!=='string'||!/^[a-f0-9]{64}$/.test(x.context_sha256)||
+     (x.state==='CLOSED'?!['WORKER_CHECKPOINT','OWNER_REVIEW'].includes(x.resolution):x.resolution!==null))
+    fail('WORKER_PROVIDER_ATTEMPT_INVALID');
+  return {...x};
+}
 function detailItem(x,expectedId){
   if(!x||!validId(expectedId)||x.ticket_id!==expectedId||!validId(x.project_id)||
     typeof x.repository!=='string'||typeof x.baseline_sha!=='string'||typeof x.branch_name!=='string'||
@@ -122,7 +136,7 @@ function detailItem(x,expectedId){
     acceptance_criteria:criteria,
     contract_keys:contractDeclaration(x.contract_keys),
     worker_agent_id:x.worker_agent_id||null,
-    ...providerDeclarations(x),
+    ...providerDeclarations(x),provider_attempt:providerAttemptMetadata(x.provider_attempt),
     candidate_head_sha:head,candidate_tree_sha:tree,
     latest_checkpoint:checkpoint?{
       generation:Number(checkpoint.generation),
@@ -188,6 +202,7 @@ function compactWorkerContext(task,agentId){
      !['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status)||
      !t.write_scopes.length||t.write_scopes.some(s=>!safeScopedPath(s))||
      !t.acceptance_criteria.length||t.acceptance_criteria.some(c=>!c.trim()))fail('WORKER_CONTEXT_REQUIRES_OWN_CLAIMED_TASK');
+  if(t.provider_attempt&&t.provider_attempt.state!=='CLOSED')fail('WORKER_PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED');
   const checkpoint=t.latest_checkpoint;
   if(checkpoint&&crypto.createHash('sha256').update(checkpoint.summary+'\n'+checkpoint.next_action).digest('hex')!==checkpoint.content_sha256)
     fail('WORKER_CONTEXT_CHECKPOINT_DIGEST_MISMATCH');
