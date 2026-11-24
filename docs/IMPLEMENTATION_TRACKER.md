@@ -1374,3 +1374,21 @@ Exact baseline `0fc7c7a` passed [application CI](https://github.com/r8898278453-
 Decisions: existing Desktop safeStorage and stable private read helpers; append-only encrypted intent/receipt evidence with bounded inventory, no new MySQL schema. Confirmed reviewed admission is durable; unconfirmed draft edits remain in memory. No auto-replay or non-admission inference from missing receipt. Oversized encrypted record (>65,536 bytes) or inventory (>256 entries) blocks the operation. Owner-managed reconciliation/retention and Windows DPAPI/power-cut acceptance remain open.
 
 Next priorities: exact-head CI and corrections; non-admission resolution and Owner/successor recovery of orphaned receipts, durable unconfirmed drafts and journal retention; independent verified Git baseline and source semantic discovery/autonomous decomposition, combined QA; actual provider token/quota accounting, minimal context continuation; permitted provider session verification; web/Telegram parity; ledger performance/backup/restore; Hostinger staging, production signing and physical multi-PC acceptance. G0–G7 HOLD.
+
+
+## Consolidated Owner Master admission reconciliation
+
+Exact baseline `85ae5a8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45480705079) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45480705150), including encrypted Master admission journal and signed project catalog. New Owner reconciliation batch is CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Status |
+|---|---|---|
+| Owner inspection, exact identity/receipt/order checks and permanent original request cancellation under shared leader lock | 7214649 | CODED / CI PENDING |
+| Desktop exact cancellation receipt validation and encrypted journal closure | 3fbdbfc | CODED / CI PENDING |
+| Recovered ordered identifiers and explicit historical cancellation display | 4a2e081, 908702a | CODED / CI PENDING |
+| Owner dashboard exact inspection/consent/session fencing and verified readback | 9b2dae4, db22b49 | CODED / CI PENDING |
+| MySQL receipt conflict, concurrent replay, delayed admission and Desktop/Owner UI regressions | 461b3c5, 4ab57c5, 0d81b9f | CODED / CI PENDING |
+| Reject occupied/cancelled key even on preview and corresponding regression | ca9fc66, 6eea041 | CODED / CI PENDING |
+
+Cancellation is a permanent deny marker for the exact original actor/request key, not proof of historical non-admission after database loss/restore. Owner must independently compare original local journal, ordered IDs, preview digest, database history and uncertain effects; server checks the current durable ledger and listed ticket IDs, not the full original task manifest. A wrong cancellation declaration is not automatically corrected. No existing tickets are deleted, no replacement work authorized, and an unavailable/revoked original signer cannot automatically release its local journal. Retention and physical DPAPI/power-cut acceptance remain open.
+
+Remaining priorities: latest CI and corrections; actual cancellation-vs-admission race/power-cut/restore and original signer unavailable recovery, journal retention and durable unconfirmed drafts; independent Git baseline and combined integration QA; automatic source-level semantic discovery and task decomposition; measured token/quota accounting, permitted provider continuation; web/Telegram parity; Hostinger staging, production signing and physical multi-PC acceptance. No new schema, deployment or release. G0–G7 HOLD.
