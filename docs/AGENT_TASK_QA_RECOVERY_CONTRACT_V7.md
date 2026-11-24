@@ -340,3 +340,15 @@ Verified previous baseline `93993a0`: [application CI](https://github.com/r88982
 - Signed detail returns canonical declaration or null; Desktop validates it and includes non-null keys in the existing 8 KiB compact context, never automatically transmits it.
 
 No automatic semantic inference, verified completeness of declarations, cross-repository dependency lock, measured hosting cost or combined integration acceptance is claimed. Schema v7/v8 unchanged. Original QA and G0–G7 gates remain.
+
+
+## Owner-managed provider registry — incremental alpha contract
+
+Last fully green source baseline `93993a0`; shared-contract HEAD `01ff1ce` dependency CI succeeded but application CI was cancelled. New provider-registry source is CODED / CI PENDING; verify the latest exact-head workflow results.
+
+- Owner-authenticated GET /v7/owner/provider-registry returns current source, version, non-secret declarations and digest. Version 0 is legacy fallback; it does not export environment bindings. REPLACE_PROVIDER_REGISTRY is web-owner-only, full replacement with exact expected_version; every declaration must match an active project and an approved node/agent with developer grant. Invalid input, stale versions or mismatched grants fail closed. Cluster row serialization and durable idempotency preserve one accepted replacement per version.
+- Canonical snapshots are capped at 100 bindings and 16 KiB declaration JSON. A monotonic version and SHA-256 bind sorted declarations in the append-only MySQL ledger. Once initialized, empty replacement is a tombstone; no environment fallback. Corrupt stored state refuses registry reads/returns invalid worker metadata, never grants execution.
+- Signed task detail exposes the assigned developer's own declarations only while permitted. Desktop validates registry source/version separately from compact context; metadata does not authorize execution or verify provider mapping. Explicit omission revokes a declaration; it does not revoke a real provider account/session, stop a previously opened browser or prove that a local worktree is safe. Existing project grant revocation and lease fencing remain separate.
+- Historical receipts are not fresh authorization. Regrant may make a still-stored unverified declaration visible again; Owner must explicitly remove obsolete declarations. Do not treat a stored snapshot as a live account ACL.
+
+No schema change, automatic provider actions, verified real provider mapping or live acceptance. Dedicated indexed storage, retention/restore performance, dashboard editor and provider interruption recovery remain open. See [Owner instructions](PROVIDER_WORKSPACE_DECLARATIONS_V7.md).
