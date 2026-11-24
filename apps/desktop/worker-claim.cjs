@@ -768,13 +768,18 @@ function inspectMasterSourceHints({repoDir,project,observed,tasks}){
 // Advisory planning analysis, independent of Central admission/lease policy.
 // Conservative declared resource conflicts + explicit dependency DAG.
 function analyzeMasterPlanningDraft(tasks){
+  return analyzeDeclaredGraph(tasks,10,65536);
+}
+// Private generalized graph; callers choose a fixed bounded policy, never a
+// caller-controlled size. This does not alter Central/desktop admission caps.
+function analyzeDeclaredGraph(tasks,maxTasks,maxBytes){
   const id=x=>typeof x==='string'&&ID.test(x)&&!/[\r\n]/.test(x);
   const bounded=(x,n)=>typeof x==='string'&&x.length<=n&&!/[\uD800-\uDFFF]/u.test(x);
   const list=(a,n,fn)=>Array.isArray(a)&&a.length<=n&&a.every(fn);
   const contract=x=>bounded(x,96)&&/^(?:api|db|interface|event):[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*$/.test(x);
   const overlap=(a,b,sep)=>a===b||a.startsWith(b+sep)||b.startsWith(a+sep);
-  if(!Array.isArray(tasks)||tasks.length<2||tasks.length>10||
-     Buffer.byteLength(JSON.stringify(tasks),'utf8')>65536||
+  if(!Array.isArray(tasks)||tasks.length<2||tasks.length>maxTasks||
+     Buffer.byteLength(JSON.stringify(tasks),'utf8')>maxBytes||
      tasks.some(t=>!t||Object.keys(t).sort().join('|')!=='acceptance_criteria|baseline_sha|branch_name|contract_keys|dependencies|description|risk|ticket_id|title|write_scopes'||
        !id(t.ticket_id)||typeof t.baseline_sha!=='string'||t.baseline_sha.length!==40||!SHA.test(t.baseline_sha)||
        !bounded(t.branch_name,120)||!/^ai\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(t.branch_name)||
@@ -845,6 +850,88 @@ function analyzeMasterPlanningDraft(tasks){
     semantic_discovery_verified:false,worker_availability_verified:false,
     upstream_changes_in_baseline_verified:false,automatic_execution_allowed:false};
 }
+// Developer advisory review of a larger declared backlog. This function
+// creates no tasks and grants no authority. One common baseline is required;
+// a later dependent task may need replanning after upstream merge.
+function analyzeBulkPlanningDraft(tasks){
+  const graph=analyzeDeclaredGraph(tasks,100,524288);
+  const order=(a,b)=>a<b?-1:a>b?1:0;
+  const ids=[...tasks].map(t=>t.ticket_id).sort(order);
+  const byId=new Map(tasks.map(t=>[t.ticket_id,t]));
+  const baseline=tasks[0].baseline_sha;
+  const externalAliases=new Map();
+  const canonical=[];
+  for(const id of ids){
+    const t=byId.get(id);
+    if(t.baseline_sha!==baseline)fail('BULK_PLAN_MIXED_BASELINE');
+    const unique=(list,key)=>new Set(list.map(key)).size===list.length;
+    if(!unique(t.write_scopes,x=>x.toLowerCase())||
+       !unique(t.acceptance_criteria,x=>x.trim())||
+       !unique(t.dependencies,x=>x.toLowerCase())||
+       /[\r\n]/.test(t.branch_name)||t.branch_name.toLowerCase().endsWith('.lock'))
+      fail('BULK_PLAN_DUPLICATE_OR_ALIAS');
+    for(const dep of t.dependencies){
+      const key=dep.toLowerCase();
+      if(externalAliases.has(key)&&externalAliases.get(key)!==dep)fail('BULK_PLAN_DEPENDENCY_ALIAS');
+      externalAliases.set(key,dep);
+    }
+    canonical.push({ticket_id:t.ticket_id,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
+      title:t.title,description:t.description,risk:t.risk,write_scopes:t.write_scopes,
+      acceptance_criteria:t.acceptance_criteria,dependencies:t.dependencies,contract_keys:t.contract_keys});
+  }
+  const conflictPeers=new Map(ids.map(id=>[id,new Set()]));
+  for(const conflict of graph.declared_conflicts){
+    const [a,b]=conflict.ticket_ids;
+    conflictPeers.get(a).add(b);conflictPeers.get(b).add(a);
+  }
+  const external=new Map(graph.external_dependencies_unverified.map(x=>[x.ticket_id,x.dependencies]));
+  const groups=[],groupOf=new Map();
+  // Only partition each declared wave; never combine an upstream and downstream
+  // task in a review batch. High/core and external dependencies remain single
+  // review items. Unordered conflicts are not made safe by separation.
+  for(let w=0;w<graph.declared_dependency_waves.length;w++){
+    const wave=graph.declared_dependency_waves[w],bins=[];
+    for(const id of wave){
+      const t=byId.get(id);
+      const isolated=t.risk==='HIGH'||t.risk==='CORE'||external.has(id);
+      let bin=isolated?null:bins.find(b=>!b.isolated&&b.ids.length<10&&
+        b.ids.every(other=>!conflictPeers.get(id).has(other))&&
+        Buffer.byteLength(JSON.stringify([...b.ids,id].map(k=>byId.get(k))),'utf8')<=65536);
+      if(!bin){bin={ids:[],isolated};bins.push(bin);}
+      bin.ids.push(id);
+    }
+    for(const bin of bins){
+      const group_id='review_'+String(groups.length+1).padStart(3,'0');
+      for(const id of bin.ids)groupOf.set(id,group_id);
+      const manifest_bytes=Buffer.byteLength(JSON.stringify(bin.ids.map(k=>byId.get(k))),'utf8');
+      const unresolved_conflicts=graph.declared_conflicts.filter(c=>c.requires_review&&c.ticket_ids.some(id=>bin.ids.includes(id))).length;
+      groups.push({group_id,wave:w+1,ticket_ids:bin.ids,manifest_bytes,
+        isolated_review:bin.isolated,single_task_review:bin.ids.length===1,
+        within_existing_batch_size:bin.ids.length>=2&&bin.ids.length<=10&&manifest_bytes<=65536,
+        unresolved_conflict_count:unresolved_conflicts,requires_fresh_central_preview:true,
+        automatic_admission_allowed:false});
+    }
+  }
+  const groupDependencies=new Map(groups.map(g=>[g.group_id,new Set()]));
+  for(const t of canonical)for(const d of t.dependencies)if(groupOf.has(d)){
+    const a=groupOf.get(t.ticket_id),b=groupOf.get(d);
+    if(a!==b)groupDependencies.get(a).add(b);
+  }
+  const review_groups=groups.map(g=>({...g,depends_on_review_groups:[...groupDependencies.get(g.group_id)].sort(order),
+    external_dependencies_unverified:g.ticket_ids.flatMap(id=>(external.get(id)||[]).map(dep=>({ticket_id:id,dependency:dep}))),
+    requires_upstream_baseline_review:groupDependencies.get(g.group_id).size>0}));
+  const cross_group_conflicts=graph.declared_conflicts.map(c=>({...c,
+    review_group_ids:c.ticket_ids.map(id=>groupOf.get(id))}));
+  const manifest_sha256=digest({schema:'SUTRADHAR_BULK_DECLARATIONS_V1',tasks:canonical});
+  return {schema:'SUTRADHAR_BULK_REVIEW_V1',task_count:ids.length,baseline_sha:baseline,
+    manifest_sha256,review_group_count:review_groups.length,declared_dependency_waves:graph.declared_dependency_waves,
+    connected_review_components:graph.declared_review_groups,review_groups,cross_group_conflicts,
+    unresolved_declared_conflict_count:graph.unresolved_declared_conflict_count,
+    remote_freshness_verified:false,semantic_discovery_verified:false,worker_availability_verified:false,
+    upstream_changes_in_baseline_verified:false,source_contents_returned:false,provider_sent:false,
+    automatic_admission_allowed:false,automatic_execution_allowed:false};
+}
+
 function buildMasterPlanningContext({observed,tasks}){
   const graph=analyzeMasterPlanningDraft(tasks);
   if(!observed||observed.local_tracking_ref_verified!==true||observed.remote_freshness_verified!==false||
@@ -984,4 +1071,4 @@ function createMasterBatchJournal({dir,safeStorage,nodeId}){
   }
   return {pending,begin,close};
 }
-module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal};
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,analyzeBulkPlanningDraft,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal};
