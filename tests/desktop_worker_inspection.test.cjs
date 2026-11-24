@@ -212,3 +212,25 @@ test('context rejects blank criteria, malformed identifiers and lossy checkpoint
   }
   assert.equal(JSON.parse(compactWorkerContext(t,'agent_aaa').preview).title,t.title);
 });
+
+test('compact provider payload is canonical, smaller, and retains every task field',()=>{
+  const {compactWorkerContext}=require('../apps/desktop/worker-inspection.cjs');
+  const t={ticket_id:'ticket_123',project_id:'project_aaa',title:'Feature 🌏',
+    description:'Implement scoped feature',repository:'example/repo',branch_name:'ai/ticket_123',
+    baseline_sha:'a'.repeat(40),risk:'LOW',status:'CLAIMED',version:1,
+    worker_agent_id:'agent_aaa',write_scopes:['src/z.ts','src/x.ts','src/z.ts'],
+    acceptance_criteria:['Test passes','Negative test passes']};
+  const result=compactWorkerContext(t,'agent_aaa'),parsed=JSON.parse(result.preview);
+  assert.equal(result.preview,JSON.stringify(parsed));
+  assert.ok(result.utf8_bytes<Buffer.byteLength(JSON.stringify(parsed,null,2)));
+  assert.deepEqual(parsed.write_scopes,['src/x.ts','src/z.ts']);
+  assert.deepEqual(parsed.acceptance_criteria,t.acceptance_criteria);
+  const reordered=compactWorkerContext({...t,write_scopes:['src/x.ts','src/z.ts']},'agent_aaa');
+  assert.equal(reordered.context_sha256,result.context_sha256);
+  assert.equal(result.provider_mapping_verified,false);
+  assert.equal(result.provider_sent,false);
+  for(const patch of [{repository:'../repo'},{repository:'example/.'},
+    {branch_name:'ai/task..other'},{branch_name:'ai/task.'},{branch_name:'ai/task.lock'}]){
+    assert.throws(()=>compactWorkerContext({...t,...patch},'agent_aaa'),/RESPONSE_INVALID/);
+  }
+});
