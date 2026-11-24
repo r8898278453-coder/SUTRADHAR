@@ -1175,6 +1175,7 @@ $('provider-registry-load').onclick=async()=>{
   const session=ownerSessionVersion,originalKey=key,revision=++registryRevision;
   const current=()=>key===originalKey&&ownerSessionVersion===session&&registryRevision===revision&&!$('dashboard').hidden;
   registrySnapshot=null;registryDraft=[];registryBusy=true;
+  for(const id of registryInputs)$(id).value=id==='provider-kind'?'CHATGPT_WEB':'';
   $('provider-registry-consent').checked=false;renderProviderRegistry();
   registryStatus('Loading authoritative registry…');
   try{
