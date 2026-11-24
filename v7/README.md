@@ -157,3 +157,9 @@ Desktop Master selects trusted local checkout, inspects signed project origin/ba
 Exact baseline `6c996cb` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45485717874) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45485717690), including the Desktop Git baseline preflight. New encrypted unconfirmed draft and bounded source-hint changes are CODED / EXACT-HEAD CI PENDING.
 
 Explicitly save editable task/editor data locally; reload under the same agent/Central and reinspect the baseline before fresh preview. Pending confirmed admission recovery takes priority. Relative-import hints are bounded local lexical evidence, not verified semantic dependencies or token measurements. No source upload, Git mutation or new schema. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). G0–G7 HOLD.
+
+## Master advisory dependency review and compact context
+
+Exact baseline `babd15b` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45489449293) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45489449341). Encrypted unconfirmed draft storage and lexical source hints are source-CI verified. New advisory graph, fair sampling and compact context changes are CODED / EXACT-HEAD CI PENDING.
+
+Declared internal waves and conflict review groups supplement bounded lexical source hints; external dependencies and execution eligibility remain unverified. Local compact context preserves exact task fields, reports UTF-8 bytes and digest, and never sends provider requests. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). G0–G7 HOLD.
