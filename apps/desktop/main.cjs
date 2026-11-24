@@ -48,7 +48,7 @@ const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
   require('./pilot-node-continuity.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt}=require('./worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,createMasterBatchJournal}=require('./worker-claim.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
@@ -573,6 +573,38 @@ app.whenReady().then(()=>{
       throw Error('QA_RECOVERY_CENTRAL_TASK_STATE_INVALID');
     return task.status==='RECONCILIATION_REQUIRED';
   }
+  function masterJournal(){
+    const node=vault.read();
+    if(!node)throw Error('MASTER_BATCH_JOURNAL_IDENTITY_REQUIRED');
+    return createMasterBatchJournal({dir:path.join(nodeDir(),'master-batch-journal'),safeStorage,nodeId:node.node_id});
+  }
+  ipcMain.handle('sutradhar:listMasterProjects',async(event,agentId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,'project_catalog');
+    workerClaimBusy=true;
+    try{
+      const beforeMutation=()=>{
+        if(approvedWorkerOperator(agentId,'project_catalog',true)!==origin)throw Error('WORKER_BATCH_CENTRAL_CHANGED');
+      };
+      const result=await listMasterProjects({origin,agentId,signer,beforeMutation});
+      beforeMutation();return result;
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:recoverMasterBatchDraft',async(event,agentId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,'project_recovery');
+    workerClaimBusy=true;masterBatchReview=null;
+    try{
+      const saved=masterJournal().pending();
+      if(!saved)return {pending:false};
+      const x=saved.intent;
+      if(x.origin!==origin||x.body.agent_id!==agentId)
+        throw Error('MASTER_BATCH_JOURNAL_ORIGINAL_AGENT_AND_CENTRAL_REQUIRED');
+      return {pending:true,project_id:x.body.project_id,request_id:x.body.request_id,
+        tasks:x.body.tasks,preview_sha256:x.review.preview_sha256,epoch:x.body.expected_master_epoch,
+        automatic_execution_allowed:false};
+    }finally{workerClaimBusy=false;}
+  });
   ipcMain.handle('sutradhar:previewMasterBatch',async(event,agentId,projectId,requestId,tasks)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,projectId);
@@ -584,6 +616,7 @@ app.whenReady().then(()=>{
       const beforeMutation=()=>{
         if(approvedWorkerOperator(agentId,projectId,true)!==origin)throw Error('WORKER_BATCH_CENTRAL_CHANGED');
       };
+      if(masterJournal().pending())throw Error('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
       const prepared=await previewMasterBatch({origin,agentId,projectId,requestId,tasks,signer,beforeMutation});
       beforeMutation();
       masterBatchReview={origin,prepared};
@@ -612,7 +645,14 @@ app.whenReady().then(()=>{
         if(approvedWorkerOperator(agentId,projectId,true)!==origin||masterBatchReview!==saved)
           throw Error('WORKER_BATCH_REVIEW_CHANGED');
       };
-      return await commitMasterBatch({origin,agentId,prepared:saved.prepared,signer,beforeMutation});
+      beforeMutation();
+      const journal=masterJournal();
+      const pending=journal.begin(origin,saved.prepared);
+      // Persist exact admission intent before signing/sending; a lost
+      // response or crash retains the hold across app restarts.
+      const result=await commitMasterBatch({origin,agentId,prepared:saved.prepared,signer,beforeMutation});
+      beforeMutation();
+      return journal.close(pending.key,result);
     }finally{masterBatchReview=null;workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:inspectMasterBatchReceipt',async(event,agentId,projectId,requestId,reviewedDigest)=>{
@@ -622,7 +662,14 @@ app.whenReady().then(()=>{
       throw Error('WORKER_BATCH_INPUT_DENIED');
     workerClaimBusy=true;masterBatchReview=null;
     try{
-      return await inspectMasterBatchReceipt({origin,agentId,projectId,requestId,reviewedDigest,signer});
+      const journal=masterJournal(),pending=journal.pending();
+      if(pending&&(pending.intent.origin!==origin||pending.intent.body.agent_id!==agentId||
+         pending.intent.body.project_id!==projectId||pending.intent.body.request_id!==requestId||
+         pending.intent.review.preview_sha256!==reviewedDigest))
+        throw Error('MASTER_BATCH_JOURNAL_INSPECT_EXACT_PENDING_FIRST');
+      const result=await inspectMasterBatchReceipt({origin,agentId,projectId,requestId,reviewedDigest,signer});
+      if(approvedWorkerOperator(agentId,projectId,true)!==origin)throw Error('WORKER_BATCH_CENTRAL_CHANGED');
+      return pending?journal.close(pending.key,result):result;
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:claimWorkerTask',async(event,agentId,ticketId)=>{
