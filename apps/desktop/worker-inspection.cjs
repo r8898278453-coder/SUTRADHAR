@@ -36,6 +36,31 @@ function taskItem(x){
   return {ticket_id:x.ticket_id,project_id:x.project_id,
     title:textField(x.title,220),risk:x.risk,version:Number(x.version)};
 }
+function providerDeclarations(x){
+  const state=x.provider_mapping_state??'UNCONFIGURED',list=x.provider_mappings??[];
+  if(!['NOT_APPLICABLE','UNCONFIGURED','INVALID_OWNER_CONFIGURATION','OWNER_DECLARED_UNVERIFIED'].includes(state)||
+     !Array.isArray(list)||list.length>2||
+     (state==='OWNER_DECLARED_UNVERIFIED')!==(list.length>0))
+    fail('WORKER_PROVIDER_MAPPING_INVALID');
+  const seen=new Set();
+  const mappings=list.map(m=>{
+    if(!m||typeof m!=='object'||Array.isArray(m)||
+       Object.keys(m).sort().join('|')!=='account_ref|automatic_execution_allowed|binding_sha256|provider|provider_mapping_verified|state|workspace_ref'||
+       !['CHATGPT_WEB','GOOGLE_AI_STUDIO'].includes(m.provider)||seen.has(m.provider)||
+       typeof m.account_ref!=='string'||!/^account_[A-Za-z0-9_-]{3,64}$/.test(m.account_ref)||
+       typeof m.workspace_ref!=='string'||!/^workspace_[A-Za-z0-9_-]{3,96}$/.test(m.workspace_ref)||
+       m.state!=='OWNER_DECLARED_UNVERIFIED'||m.provider_mapping_verified!==false||
+       m.automatic_execution_allowed!==false||!validId(x.worker_agent_id))
+      fail('WORKER_PROVIDER_MAPPING_INVALID');
+    const binding={project_id:x.project_id,agent_id:x.worker_agent_id,provider:m.provider,
+      account_ref:m.account_ref,workspace_ref:m.workspace_ref};
+    if(m.binding_sha256!==crypto.createHash('sha256').update(JSON.stringify(binding)).digest('hex'))
+      fail('WORKER_PROVIDER_MAPPING_INVALID');
+    seen.add(m.provider);
+    return {...m};
+  });
+  return {provider_mapping_state:state,provider_mappings:mappings};
+}
 function detailItem(x,expectedId){
   if(!x||!validId(expectedId)||x.ticket_id!==expectedId||!validId(x.project_id)||
     typeof x.repository!=='string'||typeof x.baseline_sha!=='string'||typeof x.branch_name!=='string'||
@@ -72,6 +97,7 @@ function detailItem(x,expectedId){
     version:Number(x.version),write_scopes:scopes,
     acceptance_criteria:criteria,
     worker_agent_id:x.worker_agent_id||null,
+    ...providerDeclarations(x),
     candidate_head_sha:head,candidate_tree_sha:tree,
     latest_checkpoint:checkpoint?{
       generation:Number(checkpoint.generation),
@@ -157,6 +183,7 @@ function compactWorkerContext(task,agentId){
   if(bytes>CONTEXT_MAX_BYTES)fail('WORKER_CONTEXT_BUDGET_EXCEEDED_OWNER_REVIEW');
   return {kind:'PROVIDER_ASSISTED_HANDOFF_PREVIEW',preview,utf8_bytes:bytes,
     byte_budget:CONTEXT_MAX_BYTES,context_sha256:crypto.createHash('sha256').update(preview).digest('hex'),
+    provider_mapping_state:t.provider_mapping_state,provider_mappings:t.provider_mappings,
     provider_mapping_verified:false,lease_verified:false,provider_sent:false,
     automatic_execution_allowed:false,secret_scan_verified:false};
 }
