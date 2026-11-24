@@ -4,7 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const crypto=require('node:crypto'),cp=require('node:child_process');
 const {createVault}=require('../apps/desktop/os-vault.cjs');
 const {createSignerBridge}=require('../apps/desktop/vault-bridge.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,createMasterBatchJournal}=require('../apps/desktop/worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,createMasterBatchJournal}=require('../apps/desktop/worker-claim.cjs');
 const {progressWorkerTask}=require('../apps/desktop/worker-progress.cjs');
 const {submitWorkerCandidate}=require('../apps/desktop/worker-submit.cjs');
 const available=cp.spawnSync('git',['--version'],{encoding:'utf8'}).status===0;
@@ -1114,7 +1114,7 @@ test('Master planning renderer exposes narrow reviewed admission only',()=>{
   const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
   const html=fs.readFileSync(path.join(root,'setup.html'),'utf8');
   const renderer=fs.readFileSync(path.join(root,'setup.js'),'utf8');
-  assert.match(main,/masterBatchReview=\{origin,prepared\}/);
+  assert.match(main,/masterBatchReview=\{origin,prepared,baseline\}/);
   assert.match(main,/masterBatchReview!==saved/);
   assert.match(preload,/commitMasterBatch:\(agentId,projectId,requestId,digest\)/);
   assert.doesNotMatch(preload,/signWorkerAction|private_key_pem/);
@@ -1205,4 +1205,75 @@ test('Master pending intent is journaled before the mutation and recovery IPC ca
   assert.match(preload,/recoverMasterBatchDraft:agentId=>ipcRenderer.invoke/);
   assert.match(html,/id="masterRecover"/);
   assert.match(html,/id="masterProjectChoice"/);
+});
+
+
+test('Master local tracking ref inspection observes exact commit/tree without checkout, remote action or upstream proof',{skip:!available},()=>{
+  const f=fixture();
+  try{
+    const project={project_id:'project_aaa',repository:'example/repo',base_branch:'main'};
+    const args={repoDir:f.repo,project};
+    assert.throws(()=>inspectMasterBaseline(args),/LOCAL_GIT_READ_FAILED/);
+    run(f.repo,'update-ref','refs/remotes/origin/main',f.baseline);
+    const beforeHead=run(f.repo,'rev-parse','HEAD'),beforeStatus=run(f.repo,'status','--porcelain');
+    const observed=inspectMasterBaseline(args);
+    assert.equal(observed.baseline_sha,f.baseline);
+    assert.equal(observed.tree_sha,run(f.repo,'rev-parse',f.baseline+'^{tree}'));
+    assert.equal(observed.local_tracking_ref_verified,true);
+    assert.equal(observed.remote_freshness_verified,false);
+    assert.equal(observed.baseline_verified,false);
+    assert.equal(observed.automatic_execution_allowed,false);
+    const tasks=[{ticket_id:'ticket_a',baseline_sha:f.baseline,dependencies:[]},
+      {ticket_id:'ticket_b',baseline_sha:f.baseline,dependencies:['ticket_a']}];
+    const report=requireMasterBaseline({tasks,observed,current:inspectMasterBaseline(args)});
+    assert.deepEqual(report.internal_dependencies,[{ticket_id:'ticket_b',depends_on:'ticket_a'}]);
+    assert.equal(report.upstream_changes_in_baseline_verified,false);
+    assert.throws(()=>requireMasterBaseline({tasks:[tasks[0],{...tasks[1],baseline_sha:'f'.repeat(40)}],
+      observed,current:observed}),/TASK_BASELINE_MISMATCH/);
+    assert.equal(run(f.repo,'rev-parse','HEAD'),beforeHead);
+    assert.equal(run(f.repo,'status','--porcelain'),beforeStatus);
+    assert.throws(()=>inspectMasterBaseline({...args,project:{...project,repository:'other/repo'}}),/ORIGIN_MISMATCH/);
+    assert.throws(()=>inspectMasterBaseline({...args,repoDir:path.join(f.repo,'src')}),/ROOT_MISMATCH/);
+    assert.throws(()=>inspectMasterBaseline({...args,project:{...project,base_branch:'../main'}}),/PROJECT_INVALID/);
+    fs.writeFileSync(path.join(f.repo,'src','feature.ts'),'export const feature=false;\n');
+    run(f.repo,'add','.');run(f.repo,'commit','-m','new local base');
+    run(f.repo,'update-ref','refs/remotes/origin/main',run(f.repo,'rev-parse','HEAD'));
+    const changed=inspectMasterBaseline(args);
+    assert.notEqual(changed.baseline_sha,observed.baseline_sha);
+    assert.throws(()=>requireMasterBaseline({tasks,observed,current:changed}),/BASELINE_CHANGED/);
+  }finally{f.close();}
+});
+test('exact Master project lookup signs fixed request and refuses alias or non-Master',{skip:!available},async()=>{
+  const f=fixture();
+  try{
+    let master='agent_aaa',alias=false,calls=0;
+    const project={project_id:'project_aaa',display_name:'Project A',repository:'example/repo',base_branch:'main'};
+    const fetcher=async(url,init)=>{
+      calls++;
+      const uri=new URL(url).pathname;
+      assert.equal(init.redirect,'error');assert.equal(init.credentials,'omit');
+      if(uri==='/v7/cluster/state')return new Response(JSON.stringify({phase:'READY',paused:false,epoch:7,master_agent_id:master}));
+      assert.equal(uri,'/v7/tasks/plan-batch/project');
+      assert.deepEqual(JSON.parse(init.body),{agent_id:'agent_aaa',expected_master_epoch:7,project_id:'project_aaa'});
+      return new Response(JSON.stringify({read_only:true,agent_id:'agent_aaa',epoch:7,
+        project:alias?{...project,project_id:'PROJECT_AAA'}:project,automatic_execution_allowed:false,baseline_verified:false}));
+    };
+    const args={origin:'https://central.example.com',agentId:'agent_aaa',projectId:'project_aaa',signer:f.signer,fetcher};
+    master='agent_bbb';await assert.rejects(lookupMasterProject(args),/MASTER_NOT_READY/);assert.equal(calls,1);
+    master='agent_aaa';
+    assert.deepEqual(await lookupMasterProject(args),{project:{project_id:project.project_id,repository:project.repository,base_branch:project.base_branch},epoch:7});
+    alias=true;await assert.rejects(lookupMasterProject(args),/PROJECT_INVALID/);
+    assert.throws(()=>f.signer.signWorkerAction({operation:'plan-batch-project',agent_id:args.agentId,
+      payload:{agent_id:args.agentId,expected_master_epoch:7,project_id:'project_aaa',extra:true}}),/DENIED/);
+  }finally{f.close();}
+});
+test('Master baseline is selected natively and rechecked before encrypted admission intent',()=>{
+  const root=path.join(__dirname,'../apps/desktop');
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const html=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  assert.match(main,/ipcMain\.handle\('sutradhar:inspectMasterBaseline'[\s\S]*?dialog\.showOpenDialog/);
+  assert.match(main,/await recheckMasterBaseline\(saved\.baseline,[\s\S]*?const pending=journal\.begin/);
+  assert.match(preload,/inspectMasterBaseline:\(agentId,projectId\)=>ipcRenderer\.invoke/);
+  assert.match(html,/id="masterBaselineInspect"/);
 });
