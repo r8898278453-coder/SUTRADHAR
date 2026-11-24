@@ -294,3 +294,17 @@ Exact baseline `804726e` passed [application CI](https://github.com/r8898278453-
 | V7-Q02, Q03, O11 | Declared criteria and existing separate Owner approval retained; no execution or baseline proof | Independent actual baseline and combined integration QA |
 
 Original 71 scenarios unchanged. No LIVE_ACCEPTED promotion. G0–G7 HOLD.
+
+
+## Master reviewed admission journal and catalog regression coverage
+
+Exact baseline `0fc7c7a` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325287) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325508), including the previous Desktop Master planner and historical receipt lookup. New project catalog and admission journal changes are CODED / EXACT-HEAD CI PENDING.
+
+| Requirement | New source evidence | Still required |
+|---|---|---|
+| V7-P01, T01 | Signed minimal current-Master catalog and exact ID/name/repo/base selection; no baseline claim | Physical operator usability, actual baseline and project creation approval |
+| V7-T02, O01, O03 | Encrypted append-only reviewed intent before POST, restart fixture, one unresolved intent, exact receipt closure, corrupt/mismatched evidence refused | Actual Windows DPAPI/power-cut, missing-receipt/Owner successor reconciliation and retention |
+| V7-T08, O06, O07 | Current Master catalog and exact local identity/fence guards | Actual demotion/maintenance and physical failover |
+| V7-Q02, Q03, O11 | Existing declared criteria and approvals unchanged, no execution grant | Autonomous source discovery, actual baseline proof and combined independent QA |
+
+Original 71 scenarios unchanged. No LIVE_ACCEPTED promotion. G0–G7 HOLD.
