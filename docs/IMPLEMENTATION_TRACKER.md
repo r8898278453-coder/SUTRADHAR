@@ -1210,3 +1210,25 @@ Verified previous baseline `93993a0`: [application CI](https://github.com/r88982
 - P0: G0–G7 — branch protection, signer rotation, Hostinger staging/restore, trusted installer, physical 2/3/8–10 PCs and final independent 71-case acceptance.
 
 Decision: persist declarations in existing TASK_PLANNED ledger and use ordinary path reservations, preserving pinned v7/v8 schema. This is a conservative repository-scoped foundation, not a dedicated indexed contract registry; performance on target hosting must be verified. No live deployment, merge, signing or automatic provider work.
+
+
+## Priority work update — durable provider declarations
+
+Last fully green application + dependency baseline: `93993a0`. Previous shared-contract HEAD `01ff1ce`: [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45451459381) SUCCESS; [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45451459160) CANCELLED after subsequent branch development. Shared-contract and new registry source still require exact-head application CI.
+
+| Work | Source commits | Status |
+|---|---|---|
+| Canonical snapshot, version and digest; reject malformed aliases | `8f93e4f` | CODED / CI PENDING |
+| Owner-only read and compare-and-swap replacement in MySQL ledger; exact approved project/agent/node grants; empty tombstone disables legacy fallback | `f81cb4c` | CODED / CI PENDING |
+| Desktop registry provenance, version and prompt separation | `dea9af3`, `c5b4e39` | CODED / CI PENDING |
+| Snapshot/unit, Desktop and signed HTTP/disposable MySQL concurrency/replay/revocation tests | `6a1ed0a`, `229494e`, `b6474c1` | CODED / CI PENDING |
+
+### Remaining priorities
+- P0: provider registry foundation coded; dashboard editor, dedicated indexed registry/performance and backup retention/restore review, real provider permission and account/workspace verification still open.
+- P0: automatic semantic dependency discovery, declaration completeness and combined QA.
+- P0: provider interruption, permitted continuation, durable attempt/hold evidence.
+- P1: actual token/quota usage measurement and bounded context reuse.
+- P0: web/Telegram safe parity and actual Telegram delivery.
+- P0: G0–G7 Owner prerequisites, staging/restore, production signing, physical 2/3/8–10-PC tests and independent 71-case acceptance.
+
+Decision: use a bounded versioned full snapshot in the existing append-only MySQL event ledger instead of introducing unreviewed DDL. Explicit replacement/clear is the local registry revocation mechanism, not external account/session revocation. See [Owner registry guide](PROVIDER_WORKSPACE_DECLARATIONS_V7.md). No live deployment, signing or automatic provider operation.
