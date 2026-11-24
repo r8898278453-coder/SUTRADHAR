@@ -68,7 +68,7 @@ function contractDeclaration(value){
      value.some(x=>typeof x!=='string'||x.length>96||
        !/^(?:api|db|interface|event):[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*$/.test(x))||
      value.some((x,i)=>value.some((y,j)=>j>i&&
-       (x===y||x.startsWith(y+'.')||y.startsWith(x+'.')))||
+       (x===y||x.startsWith(y+'.')||y.startsWith(x+'.'))))||
      JSON.stringify(value)!==JSON.stringify([...value].sort()))
     fail('WORKER_CONTRACT_DECLARATION_INVALID');
   return [...value];
