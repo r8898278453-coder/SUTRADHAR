@@ -62,6 +62,7 @@ async function loadStatus(){
     get('workerList').disabled=!approvedReadOnly;
     get('workerDetail').disabled=!approvedReadOnly;
     get('workerContext').disabled=!approvedReadOnly;
+    for(const id of ['workerProviderBegin','workerProviderInterrupt','workerProviderClose'])get(id).disabled=!approvedReadOnly;
     get('workerClaim').disabled=!approvedReadOnly;
     get('workerResume').disabled=!approvedReadOnly;
     get('workerCheckpoint').disabled=!approvedReadOnly;
@@ -392,21 +393,57 @@ get('workerContext').addEventListener('click',async()=>{
   button.disabled=true;
   try{
     const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+    clearProviderPreview();
     output.textContent='Preparing local read-only context preview…';
     const r=await api.previewWorkerContext(agent,ticket);
     if(ticket!==get('workerTicket').value.trim()||agent!==get('workerAgent').value){
       output.textContent='Task selection changed. Request a new preview.';return;
     }
+    get('workerProviderPreview').value=r.preview;
     output.textContent='MANUAL PREVIEW ONLY — '+r.utf8_bytes+' / '+r.byte_budget+
       ' UTF-8 bytes (not provider tokens).\nSHA-256: '+r.context_sha256+
       '\nProvider mapping: '+r.provider_mapping_state+
       '\nRegistry source/version: '+r.provider_mapping_source+' / '+(r.provider_registry_version??'unknown')+
       '\nLocal mapping references (do not paste into provider): '+JSON.stringify(r.provider_mappings)+
-      '\nReview for secrets, verify current lease and correct provider project independently. Nothing sent to provider.\n\n'+r.preview;
+      '\nReview the separate compact context field for secrets, verify current lease and correct provider project independently. Nothing sent to provider.';
   }catch(error){output.textContent='Context preview blocked: '+String(error?.message||error);}
   finally{await loadStatus();}
 });
 
+function clearProviderPreview(){
+  get('workerProviderPreview').value='';get('workerProviderDigest').value='';
+}
+for(const id of ['workerTicket','workerAgent'])get(id).addEventListener('input',()=>{
+  clearProviderPreview();get('workerProviderAttempt').value='';
+});
+for(const [buttonId,action] of [['workerProviderBegin','BEGIN'],['workerProviderInterrupt','INTERRUPT'],['workerProviderClose','CLOSE']]){
+  get(buttonId).addEventListener('click',async()=>{
+    const button=get(buttonId),output=get('workerTasks');button.disabled=true;
+    try{
+      const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+      const provider=get('workerProviderKind').value,digest=get('workerProviderDigest').value;
+      const attemptId=get('workerProviderAttempt').value;
+      if(action==='BEGIN'&&(!get('workerProviderPreview').value||!/^[a-f0-9]{64}$/.test(digest)))
+        throw Error('Preview and independently review exact compact context first; enter its SHA-256.');
+      if(action!=='BEGIN'&&!/^attempt_[a-f0-9]{32}$/.test(attemptId))
+        throw Error('Inspect current signed task details and enter exact attempt ID.');
+      output.textContent='Checking live lease, local worktree and current attempt; confirmation required…';
+      const r=await api.recordProviderAttempt(agent,ticket,action,provider,digest,attemptId);
+      if(ticket!==get('workerTicket').value.trim()||agent!==get('workerAgent').value){
+        output.textContent='Selection changed. Inspect current task before proceeding.';return;
+      }
+      if(r.canceled){output.textContent='Canceled; no attempt mutation requested.';return;}
+      clearProviderPreview();
+      get('workerProviderAttempt').value=r.attempt.attempt_id;
+      output.textContent='Recorded and read back '+r.attempt.state+' / '+r.attempt.attempt_id+
+        '. No provider action or permission verified. Inspect current signed task before another decision.';
+    }catch(error){
+      clearProviderPreview();
+      output.textContent='Provider attempt not verified: '+String(error?.message||error)+
+        '. Inspect current signed task detail; never blindly retry external work.';
+    }finally{await loadStatus();}
+  });
+}
 function exactWorkerTicket(){
   const ticket=get('workerTicket').value.trim();
   if(!/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(ticket))
