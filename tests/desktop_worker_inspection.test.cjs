@@ -259,3 +259,20 @@ test('provider declarations are bound to exact task project and worker and exclu
   assert.throws(()=>compactWorkerContext({...task,project_id:'project_bbb'},'agent_aaa'),/WORKER_PROVIDER_MAPPING_INVALID/);
   assert.throws(()=>compactWorkerContext({...task,provider_mappings:[mapping,mapping]},'agent_aaa'),/WORKER_PROVIDER_MAPPING_INVALID/);
 });
+
+test('compact task context retains canonical declared shared contracts without changing write scopes',()=>{
+  const {compactWorkerContext}=require('../apps/desktop/worker-inspection.cjs');
+  const t={ticket_id:'ticket_123',project_id:'project_aaa',title:'Feature',
+    description:'Implement scoped feature',repository:'example/repo',branch_name:'ai/ticket_123',
+    baseline_sha:'a'.repeat(40),risk:'LOW',status:'CLAIMED',version:1,
+    worker_agent_id:'agent_aaa',write_scopes:['src/x.ts'],acceptance_criteria:['Test passes']};
+  const contract_keys=['api:orders','db:orders'];
+  const result=compactWorkerContext({...t,contract_keys},'agent_aaa');
+  assert.deepEqual(JSON.parse(result.preview).contract_keys,contract_keys);
+  assert.deepEqual(JSON.parse(result.preview).write_scopes,t.write_scopes);
+  assert.notEqual(result.context_sha256,compactWorkerContext(t,'agent_aaa').context_sha256);
+  assert.equal(result.automatic_execution_allowed,false);
+  for(const keys of [['api:Orders'],['db:orders','api:orders'],
+    ['api:orders','api:orders.create'],['api:orders','api:orders'],'api:orders'])
+    assert.throws(()=>compactWorkerContext({...t,contract_keys:keys},'agent_aaa'),/WORKER_CONTRACT_DECLARATION_INVALID/);
+});
