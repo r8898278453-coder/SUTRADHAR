@@ -470,6 +470,7 @@ function updateMasterControls(){
   get('masterDraftSave').disabled=masterBusy||masterRecovered||!masterAvailable||!masterId(id.agent);
   get('masterDraftLoad').disabled=get('masterDraftSave').disabled;
   get('masterSourceHints').disabled=!eligible||masterRecovered||pending||masterDraft.length<2||!baselineMatches;
+  get('masterPlanningContext').disabled=get('masterSourceHints').disabled;
   get('masterPreview').disabled=!eligible||masterRecovered||pending||masterDraft.length<2||!baselineMatches;
   get('masterReceipt').disabled=!eligible||!masterHash(get('masterDigest').value);
   get('masterCommit').disabled=!eligible||masterRecovered||pending||!baselineMatches||!masterReview||
@@ -482,6 +483,8 @@ function updateMasterControls(){
 function invalidateMasterReview({clearDigest=true}={}){
   masterRevision++;masterReview=null;get('masterReviewed').checked=false;
   get('masterSourceStatus').textContent='Draft or review changed. Inspect source hints again if needed.';
+  get('masterPlanningContextText').value='';
+  get('masterPlanningContextStatus').textContent='Draft or review changed. Prepare fresh compact context if needed.';
   if(clearDigest)get('masterDigest').value='';
   updateMasterControls();
 }
@@ -631,8 +634,29 @@ get('masterSourceHints').addEventListener('click',async()=>{
     if(r.semantic_discovery_verified!==false||r.automatic_execution_allowed!==false||
        r.provider_sent!==false||r.source_contents_returned!==false||!Array.isArray(r.hints))
       throw Error('Invalid source hint report');
-    output.textContent='LOCAL LEXICAL HINTS ONLY — review these potential shared dependencies; no task or dependency was changed. Empty hints do not prove independence.\n'+JSON.stringify(r,null,2);
+    output.textContent='ADVISORY REVIEW ONLY — declared dependency waves, review groups and bounded lexical hints are not execution permission. External dependencies, worker availability and semantic independence are unverified.\n'+JSON.stringify(r,null,2);
   }catch(error){output.textContent='Source hint inspection blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterPlanningContext').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterPlanningContext').disabled)return;
+  const id=masterIdentity(),revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const output=get('masterPlanningContextStatus'),field=get('masterPlanningContextText');
+  field.value='';output.textContent='Preparing exact compact draft context…';
+  try{
+    const r=await api.buildMasterPlanningContext(id.agent,id.project,masterDraft);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    if(r.provider_sent!==false||r.secret_scan_verified!==false||r.token_usage_verified!==false||
+       r.automatic_execution_allowed!==false||typeof r.preview!=='string'||
+       !masterHash(r.context_sha256)||!Number.isSafeInteger(r.utf8_bytes)||r.utf8_bytes<1||r.utf8_bytes>16384||
+       !Number.isSafeInteger(r.bytes_saved)||r.bytes_saved<0)
+      throw Error('Invalid compact context');
+    field.value=r.preview;
+    output.textContent='Local only: '+r.utf8_bytes+' UTF-8 bytes; '+r.bytes_saved+
+      ' bytes saved versus expanded JSON. SHA-256: '+r.context_sha256+
+      '. No provider call, actual token measurement or secret scan. Independently review before manually sharing.';
+  }catch(error){output.textContent='Context preparation blocked: '+String(error?.message||error);}
   finally{masterBusy=false;updateMasterControls();await loadStatus();}
 });
 get('masterRecover').addEventListener('click',async()=>{
