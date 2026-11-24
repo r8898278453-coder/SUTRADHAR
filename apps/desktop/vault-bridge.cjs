@@ -189,7 +189,34 @@ function createSignerBridge(vault){
     const epoch=Number.isSafeInteger(payload.expected_master_epoch)&&
       payload.expected_master_epoch>0;
     let uri,expected;
-    if(operation==='claim'){
+    if(['plan-batch-preview','plan-batch','plan-batch-receipt'].includes(operation)){
+      uri='/v7/tasks/plan-batch'+(operation==='plan-batch-preview'?'/preview':operation==='plan-batch-receipt'?'/receipt':'');
+      expected=['agent_id','project_id','request_id'];
+      const hash=x=>typeof x==='string'&&x.length===64&&/^[a-f0-9]{64}$/.test(x);
+      const exactId=x=>id(x)&&!/[\r\n]/.test(x);
+      if(!exactId(payload.project_id)||!exactId(payload.request_id))
+        fail('VAULT_WORKER_ACTION_DENIED');
+      if(operation!=='plan-batch-preview'){
+        expected.push('preview_sha256');
+        if(!hash(payload.preview_sha256))fail('VAULT_WORKER_ACTION_DENIED');
+      }
+      if(operation!=='plan-batch-receipt'){
+        expected.push('expected_master_epoch','tasks');
+        const text=(x,max)=>typeof x==='string'&&x.length<=max&&x.trim()&&!/[\uD800-\uDFFF]/u.test(x);
+        const list=(x,max,fn)=>Array.isArray(x)&&x.length<=max&&x.every(fn);
+        if(!epoch||!Array.isArray(payload.tasks)||payload.tasks.length<2||payload.tasks.length>10||
+           Buffer.byteLength(JSON.stringify(payload.tasks),'utf8')>65536||
+           payload.tasks.some(t=>!t||typeof t!=='object'||Array.isArray(t)||
+             Object.keys(t).sort().join('|')!=='acceptance_criteria|baseline_sha|branch_name|contract_keys|dependencies|description|risk|ticket_id|title|write_scopes'||
+             !exactId(t.ticket_id)||typeof t.baseline_sha!=='string'||t.baseline_sha.length!==40||!/^[a-f0-9]{40}$/.test(t.baseline_sha)||
+             !text(t.branch_name,120)||!text(t.title,220)||!text(t.description,10000)||
+             !['LOW','MEDIUM','HIGH','CORE'].includes(t.risk)||
+             !list(t.write_scopes,30,x=>text(x,450))||!t.write_scopes.length||
+             !list(t.acceptance_criteria,30,x=>text(x,500))||!t.acceptance_criteria.length||
+             !list(t.dependencies,30,exactId)||!list(t.contract_keys,12,x=>text(x,96))))
+          fail('VAULT_WORKER_ACTION_DENIED');
+      }
+    }else if(operation==='claim'){
       uri='/v7/tasks/claim';
       expected=['request_id','agent_id','ticket_id','expected_version',
         'expected_master_epoch'];
@@ -312,7 +339,8 @@ function createSignerBridge(vault){
       fail('VAULT_WORKER_ACTION_DENIED');
     const body=JSON.stringify(payload);
     if(Buffer.byteLength(body,'utf8')>(operation==='qa-evidence'?48*1024:
-      operation==='checkpoint'?16*1024:2048))
+      operation==='checkpoint'?16*1024:
+      ['plan-batch-preview','plan-batch'].includes(operation)?70*1024:2048))
       fail('VAULT_WORKER_ACTION_DENIED');
     const key=crypto.createPrivateKey(v.private_key_pem);
     const ts=Date.now(),nonce='nonce_'+crypto.randomUUID().replace(/-/g,'');
