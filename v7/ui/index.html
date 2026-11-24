@@ -91,6 +91,20 @@
 <button id="provider-recovery-close" type="button" disabled>Record exact Owner review and close attempt ONLY</button>
 <small>On uncertain response, inspect current state again. Do not repeat an external operation. Separate normal task reconciliation and Git/QA gates remain mandatory.</small>
 </section>
+<section class="panel owner" aria-labelledby="batch-recovery-title">
+<div class="panelhead"><h2 id="batch-recovery-title">Interrupted Master admission — Owner reconciliation</h2><strong>HOLD · no automatic retry</strong></div>
+<p>Use the exact recovered Desktop journal identifiers and ordered tickets. No receipt is not proof of non-admission. Cancellation permanently reserves the original request key; it never deletes tasks or authorizes new work.</p>
+<label for="batch-recovery-agent">Original agent ID</label><input id="batch-recovery-agent" maxlength="100" autocomplete="off" spellcheck="false">
+<label for="batch-recovery-project">Exact project ID</label><input id="batch-recovery-project" maxlength="100" autocomplete="off" spellcheck="false">
+<label for="batch-recovery-request">Original batch request ID</label><input id="batch-recovery-request" maxlength="100" autocomplete="off" spellcheck="false">
+<label for="batch-recovery-digest">Original preview SHA-256</label><input id="batch-recovery-digest" maxlength="64" autocomplete="off" spellcheck="false">
+<label for="batch-recovery-order">Exact ordered ticket IDs from recovered journal (one per line)</label><textarea id="batch-recovery-order" rows="4" maxlength="1010" spellcheck="false"></textarea>
+<button id="batch-recovery-load" class="outline" type="button">Inspect historical admission</button>
+<pre id="batch-recovery-status" role="status" aria-live="polite">Not inspected. Preserve all original evidence.</pre>
+<label class="inline"><input id="batch-recovery-evidence" type="checkbox" disabled> I independently reviewed the original journal, exact ordered tickets, database history/restore and uncertain effects.</label>
+<label class="inline"><input id="batch-recovery-no-retry" type="checkbox" disabled> Permanently block this exact original request. No automatic retry, deletion, task creation or reassignment.</label>
+<button id="batch-recovery-cancel" type="button" disabled>Record permanent admission cancellation ONLY</button>
+</section>
 <section class="panel owner"><h2>Owner operations</h2><p>Every mutation has an idempotent server receipt. Protected Git merges and deployments cannot be triggered here.</p>
 <div class="flex"><button data-command="PAUSE" class="danger">Pause cluster</button>
 <button data-command="RESUME" class="outline">Resume cluster</button><button id="refresh" class="outline">Refresh</button></div>
