@@ -1408,3 +1408,20 @@ Exact baseline `a77d3a8` passed [application CI](https://github.com/r8898278453-
 Local verification observes the configured repository origin, local remote-tracking ref, commit and tree only. It is not live GitHub freshness, an independent remote attestation, source-level semantic analysis, or proof that upstream changes are included. Desktop batches now require every task to use the same inspected tracking-ref SHA; if a dependent task needs not-yet-merged code, plan it separately after upstream merge and review. Central and CLI planning contracts remain unchanged except for the additional signed project lookup; no baseline evidence is persisted in Central or the admission journal beyond the task's existing baseline SHA.
 
 Remaining priorities: exact-head CI and corrections; durable unconfirmed drafts, source-semantic discovery and autonomous task decomposition; independently verified live remote baseline and upstream merge proof, combined integration QA; measured token/quota accounting, permitted provider continuation; unavailable-signer recovery, journal/ledger retention and backup/restore; web/Telegram parity; Hostinger staging, production signing and physical multi-PC acceptance. G0–G7 HOLD.
+
+## Consolidated durable unconfirmed draft and local source hints
+
+Exact baseline `6c996cb` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45485717874) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45485717690), including the Desktop Git baseline preflight. New encrypted unconfirmed draft and bounded source-hint changes are CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Status |
+|---|---|---|
+| Encrypted unconfirmed task/editor snapshot, CAS and integrity checks; immutable source import hints | 840f9eb | CODED / CI PENDING |
+| Main-process draft identity, pending-admission barrier and local baseline-bound source inspection | 79c17e1 | CODED / CI PENDING |
+| Restricted IPC, explicit local save/restore and source hint review controls | 3fff630, 93c0fe7, b5c744a | CODED / CI PENDING |
+| Encrypted revision/restart/corruption and immutable source fixtures, scope/ref mismatch and no source-return tests | 78a12db | CODED / CI PENDING |
+
+Explicit save only; no autosave. The latest saved unconfirmed snapshot per node/Central/agent is encrypted, CAS-revisioned, and bounded to 60,000 UTF-8 JSON bytes and 65,536 encrypted bytes. A pending admission journal blocks draft save/restore. Restoring an unconfirmed snapshot never restores baseline observation, reviewed preview, Owner consent, or admission/execution authority. An interrupted/corrupt draft write remains a local Owner-review hold. Saved task content may contain sensitive material; do not enter credentials or provider secrets. Physical Windows DPAPI/power-cut and retention/recovery of corrupt snapshots remain open.
+
+Source hints are lexical, not an AST or complete dependency graph: inspect immutable Git tree/blob objects for scoped JS/TS-family regular files, at most 12 files, 16 KiB per blob, 1 MiB tree listing and 40 hints. Relative static/literal imports only; comments/strings may cause false positives, package aliases, generated code, other languages, dynamic paths and unscanned files may cause false negatives. Only paths, task IDs, counts and commit/tree IDs are returned; no source content, provider send, automatic dependency insertion, task creation or Git mutation. The report does not prove semantic independence, upstream inclusion or remote freshness; no measured provider token reduction is claimed.
+
+Remaining priorities: exact-head CI and corrections; AST/contract-level semantic discovery and intelligent task decomposition; minimum-context reuse and actual provider token/quota accounting; independent live remote baseline and upstream merge proof; combined integration QA; unavailable-signer recovery, backup/restore and retention; web/Telegram parity; Hostinger staging, signed installer and physical multi-PC acceptance. No new schema, deployment or production gate promotion. G0–G7 HOLD.
