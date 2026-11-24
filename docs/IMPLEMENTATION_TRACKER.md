@@ -1187,3 +1187,26 @@ Packaged Desktop adds an explicit read-only context preview for the selected age
 | P0 | G0–G7 | Owner branch protection/key rotation, real staging/restore, production signer, physical 2/3/8–10 PCs, rollback and all 71 acceptance receipts |
 
 Updated [blueprint](SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md), [contract](AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md), [matrix](V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md), [gap register](../GAP_REGISTER.md), [root README](../README.md) and [v7 runbook](../v7/README.md) to reflect the same verified baseline. Preserve the original historical tracking sections. Current exact-head CI and [Draft PR #1](https://github.com/r8898278453-coder/SUTRADHAR/pull/1) must be checked before further work. No merge, live deployment, signing or automatic external action.
+
+
+## Priority work update — explicit shared-contract admission
+
+Verified previous baseline `93993a0`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700768) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700737) both SUCCESS, including the fresh-checkpoint change. The new shared-contract implementation and regressions are CODED / CI PENDING at this update.
+
+| Work | Commits | Evidence status |
+|---|---|---|
+| Canonical bounded contract declaration and overlap policy | `e27d105` | CODED / CI PENDING |
+| Durable plan ledger, Owner approval and repository-wide admission | `7eb614e` | CODED / CI PENDING |
+| Desktop context validation and fidelity | `11f479e`, `e0543c7` (predicate syntax correction) | CODED / CI PENDING |
+| Unit, Desktop and disposable MySQL regression fixtures | `ede8033`, `ea282ef`, `641a0f9` | CODED / CI PENDING |
+
+### Remaining priorities
+
+- P0: Durable provider registry and revocation (reviewed additive migration; no implicit provider authorization).
+- P0: Semantic task creator: explicit declaration foundation now coded; automatic dependency discovery, completeness review, cross-repository contracts, integrated QA and bounded lookup performance remain open.
+- P0: Worker/provider interruption, permitted continuation and recovery evidence.
+- P1: Measured token/quota ledger and context reuse.
+- P0: Owner web/Telegram safe parity and actual bot delivery.
+- P0: G0–G7 — branch protection, signer rotation, Hostinger staging/restore, trusted installer, physical 2/3/8–10 PCs and final independent 71-case acceptance.
+
+Decision: persist declarations in existing TASK_PLANNED ledger and use ordinary path reservations, preserving pinned v7/v8 schema. This is a conservative repository-scoped foundation, not a dedicated indexed contract registry; performance on target hosting must be verified. No live deployment, merge, signing or automatic provider work.
