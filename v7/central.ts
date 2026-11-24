@@ -1651,6 +1651,24 @@ function parsePlanningBatch(d:any,commit:boolean){
   if(commit&&d.preview_sha256!==preview_sha256)return fault('TASK_BATCH_PREVIEW_MISMATCH',409);
   return {agentId,projectId,requestId,ordered,preview_sha256,epoch:d.expected_master_epoch as number};
 }
+// Minimal project catalog for the current Master; no Owner token, provider
+// bindings, grants, project descriptions or repository credentials returned.
+app.post('/v7/tasks/plan-batch/projects',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body;
+  if(!d||typeof d!=='object'||Array.isArray(d)||
+     Object.keys(d).sort().join('|')!=='agent_id|expected_master_epoch'||
+     !Number.isSafeInteger(d.expected_master_epoch)||d.expected_master_epoch<1)
+    return fault('TASK_BATCH_CATALOG_INPUT_INVALID',400);
+  const agentId=requireId(d.agent_id);
+  return transaction(async c=>{
+    await readyMaster(c,node.node_id,agentId,d.expected_master_epoch);
+    const projects=await rows(c,'SELECT project_id,display_name,repository,base_branch FROM v7_projects WHERE status="ACTIVE" ORDER BY project_id LIMIT 101');
+    await readyMaster(c,node.node_id,agentId,d.expected_master_epoch);
+    return {read_only:true,agent_id:agentId,epoch:d.expected_master_epoch,
+      projects:projects.slice(0,100),truncated:projects.length>100,
+      automatic_execution_allowed:false,baseline_verified:false};
+  });
+}));
 app.post('/v7/tasks/plan-batch/preview',jsonRoute(async req=>{
   const node=await nodeAuth(req),b=parsePlanningBatch(req.body,false);
   return transaction(async c=>{
