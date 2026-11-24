@@ -288,3 +288,43 @@ test('dangling manual restart attempt is evidence and blocks a second Owner rest
     /PREVIOUS_ATTEMPT_OWNER_REVIEW/);
   assert.equal(requiresReconciliation(dir),true);
 }));
+
+test('post-restart confirmation rejects coercible heartbeat ages and role identifiers',async()=>{
+  const healthy={...me,agents:[{...me.agents[0],heartbeat_age_seconds:6}]};
+  for(const age of [false,true,'',[],[6],'6e0',' 6','06',null,121,-1,0.5]){
+    const agents={...healthy,agents:[{...healthy.agents[0],heartbeat_age_seconds:age}]};
+    await assert.rejects(confirmLiveCentral({...args,epoch:21,fetcher:mock({agents}).fetcher}),
+      /AGENT_NOT_RECONCILED/);
+  }
+  await assert.rejects(confirmLiveCentral({...args,epoch:21,fetcher:mock({
+    agents:healthy,roles:{...cluster,master_agent_id:[cluster.master_agent_id]}
+  }).fetcher}),/CLUSTER_UNHEALTHY/);
+  const numericString={...healthy,agents:[{...healthy.agents[0],heartbeat_age_seconds:'6'}]};
+  assert.equal((await confirmLiveCentral({...args,epoch:21,fetcher:mock({agents:numericString}).fetcher})).reconciled,true);
+});
+test('post-restart confirmation rechecks roles, agent leases and maintenance before accepting',async()=>{
+  const healthy={...me,agents:[{...me.agents[0],heartbeat_age_seconds:6}]};
+  const good=mock({agents:healthy});
+  assert.equal((await confirmLiveCentral({...args,epoch:21,fetcher:good.fetcher})).reconciled,true);
+  assert.deepEqual(good.calls,['/v7/cluster/state','/v7/nodes/me','/v7/nodes/maintenance',
+    '/v7/nodes/me','/v7/cluster/state','/v7/nodes/maintenance']);
+  await assert.rejects(confirmLiveCentral({...args,epoch:21,fetcher:mock({
+    agents:healthy,secondRoles:{...cluster,backups:['agent_backup_3','agent_backup_2']}
+  }).fetcher}),/POST_ACK_CLUSTER_CHANGED/);
+  for(const endpoint of ['/v7/nodes/me','/v7/nodes/maintenance']){
+    let count=0;
+    const base=mock({agents:healthy});
+    const fetcher=async(url,init)=>{
+      if(new URL(url).pathname===endpoint&&++count===2){
+        const altered=endpoint.endsWith('/me')?
+          {...healthy,agents:[{...healthy.agents[0],has_live_work_lease:1}]}:
+          {node_id:nodeId,intent:{state:'DRAINING'},installer_execution_allowed:false,owner_maintenance_lease:false};
+        return new Response(JSON.stringify(altered));
+      }
+      return base.fetcher(url,init);
+    };
+    await assert.rejects(confirmLiveCentral({...args,epoch:21,fetcher}),
+      /AGENT_NOT_RECONCILED|MAINTENANCE_REAPPEARED/);
+    assert.equal(count,2);
+  }
+});
