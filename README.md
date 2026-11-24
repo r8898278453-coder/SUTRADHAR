@@ -195,3 +195,10 @@ Read the [current architecture reconciliation](docs/SUTRADHAR_ARCHITECTURE_BLUEP
 Verified previous baseline `93993a0`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700768) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700737) both SUCCESS, including the fresh-checkpoint change. The new shared-contract implementation and regressions are CODED / CI PENDING at this update.
 
 Central now supports explicit shared API/database/interface/event declarations in signed task plans, requires Owner authorization for nonempty keys, and refuses conflicting reservations across files/base branches in the same repository. Desktop includes the validated declarations in its bounded assisted context. This is not automated semantic discovery or verified production behavior. See [contract](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md), [implementation tracker](docs/IMPLEMENTATION_TRACKER.md), [acceptance matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](GAP_REGISTER.md). No schema change; G0–G7 HOLD.
+
+
+## Durable provider registry — latest development
+
+Last fully green source baseline `93993a0`; shared-contract HEAD `01ff1ce` dependency CI succeeded but application CI was cancelled. New provider-registry source is CODED / CI PENDING; verify the latest exact-head workflow results.
+
+Owner-managed provider alias snapshots now persist in MySQL with versioned replacement and explicit revocation. After initial replacement, clearing the registry does not reactivate legacy configuration. Desktop displays local provenance separately from compact context. See [Owner registry guide](docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md), [tracker](docs/IMPLEMENTATION_TRACKER.md), [acceptance matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](GAP_REGISTER.md). This is unverified declaration metadata, not live provider authentication, browser automation or token measurement. Dedicated indexed storage, target hosting restore/performance and dashboard editor remain open. G0–G7 HOLD.
