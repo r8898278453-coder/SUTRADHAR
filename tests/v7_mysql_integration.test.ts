@@ -845,6 +845,61 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(afterView.tickets.some((t:any)=>
         t.ticket_id==='ticket_owner_worker_expiry'),false);
     }finally{await ownerExpiryDb.end();}
+    // Revoking project access must fence active work even with a healthy Master.
+    // Use a separate repository so the fixture cannot interfere with QA tasks.
+    {
+      const project_id='project_revocation_fixture',ticket_id='ticket_revocation_fixture';
+      const agent_id=d.agent_id,expected_master_epoch=Number(status.epoch);
+      await owner('CREATE_PROJECT',{project_id,display_name:'Revocation fixture',repository:'example/revocation-fixture'});
+      await owner('GRANT_PROJECT_AGENT',{project_id,agent_id,can_develop:true});
+      const plan=await a.signed('/v7/tasks/plan',{request_id:'revocation_plan_'+(++count),
+        agent_id:a.agent_id,expected_master_epoch,project_id,ticket_id,
+        baseline_sha:'a'.repeat(40),branch_name:'ai/revocation_fixture',risk:'LOW',
+        title:'Project permission revocation',description:'Check old lease and checkpoint preservation',
+        write_scopes:['src/revocation.ts'],acceptance_criteria:['Old worker must lose authority']});
+      assert.equal(plan.code,200,JSON.stringify(plan.body));
+      const claimBody={request_id:'revocation_claim_'+(++count),agent_id,ticket_id,expected_master_epoch};
+      const claimed=await d.signed('/v7/tasks/claim',claimBody);
+      assert.equal(claimed.code,200,JSON.stringify(claimed.body));
+      const lease_id=claimed.body.lease_id;
+      const checkpointBody={request_id:'revocation_cp_'+(++count),agent_id,ticket_id,lease_id,expected_master_epoch,
+        summary:'Preserved verified checkpoint',next_action:'Wait for Owner review'};
+      const checkpoint=await d.signed('/v7/tasks/checkpoint',checkpointBody);
+      assert.equal(checkpoint.code,200,JSON.stringify(checkpoint.body));
+      const revoked=await owner('REVOKE_PROJECT_AGENT',{project_id,agent_id});
+      assert.equal(revoked.state.quarantined_tasks,1);
+      assert.equal(revoked.state.automatic_reassignment_allowed,false);
+      const inspect=await mysql.createConnection({host:'127.0.0.1',
+        port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,
+        password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+      try{
+        const [state]:any=await inspect.query('SELECT t.status,t.version,l.revoked FROM v7_tickets t JOIN v7_leases l ON l.ticket_id=t.ticket_id WHERE t.ticket_id=?',[ticket_id]);
+        assert.equal(state[0].status,'RECONCILIATION_REQUIRED');
+        assert.equal(Number(state[0].revoked),1);
+        assert.equal(Number(state[0].version),Number(checkpoint.body.version)+1);
+        const [cp]:any=await inspect.query('SELECT content_sha256 FROM v7_checkpoints WHERE ticket_id=?',[ticket_id]);
+        assert.equal(cp.length,1);
+        assert.equal(cp[0].content_sha256,checkpoint.body.content_sha256);
+        const [reservation]:any=await inspect.query('SELECT scope FROM v7_reservations WHERE ticket_id=?',[ticket_id]);
+        assert.equal(reservation.length,1);
+      }finally{await inspect.end();}
+      // Regranting access is not permission to reuse a revoked lease.
+      await owner('GRANT_PROJECT_AGENT',{project_id,agent_id,can_develop:true});
+      for(const [route,body] of [
+        ['/v7/tasks/claim',claimBody],
+        ['/v7/tasks/checkpoint',checkpointBody],
+        ['/v7/tasks/resume-check',{agent_id,ticket_id,lease_id,expected_master_epoch}]
+      ] as const){
+        const denied=await d.signed(route,body);
+        assert.equal(denied.code,403,JSON.stringify(denied.body));
+        assert.equal(denied.body.error_code,'WORKER_LEASE_INVALID');
+      }
+      const reviewed=await owner('RECONCILE_TICKET',{ticket_id,
+        reason:'Disposable CI: Owner reviewed external effects after access revocation',remote_checked:true});
+      assert.equal(reviewed.state.status,'READY');
+      const staleReplay=await d.signed('/v7/tasks/claim',claimBody);
+      assert.equal(staleReplay.code,403,JSON.stringify(staleReplay.body));
+    }
     const claimPayload={request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'};
     const claim=await b.signed('/v7/tasks/claim',claimPayload);
