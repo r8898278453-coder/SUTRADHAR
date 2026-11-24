@@ -48,7 +48,7 @@ const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
   require('./pilot-node-continuity.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,createMasterBatchJournal}=require('./worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,createMasterBatchJournal}=require('./worker-claim.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
@@ -73,6 +73,7 @@ let workerClaimBusy=false;
 // Tab-local review metadata only; never retain prompt text or credentials here.
 let workerContextReview=null;
 let masterBatchReview=null;
+let masterBaselineReview=null;
 let installerPreparationBusy=false;
 let installerExecutionBusy=false;
 let postInstallBusy=false;
@@ -605,6 +606,41 @@ app.whenReady().then(()=>{
         automatic_execution_allowed:false};
     }finally{workerClaimBusy=false;}
   });
+  ipcMain.handle('sutradhar:inspectMasterBaseline',async(event,agentId,projectId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,projectId);
+    workerClaimBusy=true;masterBatchReview=null;masterBaselineReview=null;
+    try{
+      if(masterJournal().pending())throw Error('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
+      const beforeMutation=()=>{
+        if(approvedWorkerOperator(agentId,projectId,true)!==origin)
+          throw Error('WORKER_BATCH_CENTRAL_CHANGED');
+      };
+      const bound=await lookupMasterProject({origin,agentId,projectId,signer,beforeMutation});
+      const picked=await dialog.showOpenDialog(setupWindow,{
+        title:'Choose the already-trusted local Git checkout for this exact project',
+        properties:['openDirectory']
+      });
+      if(picked.canceled||picked.filePaths.length!==1)return {canceled:true};
+      beforeMutation();
+      const repoDir=picked.filePaths[0];
+      const observed=inspectMasterBaseline({repoDir,project:bound.project});
+      beforeMutation();
+      masterBaselineReview={origin,agentId,projectId,epoch:bound.epoch,project:bound.project,repoDir,observed};
+      return observed;
+    }finally{workerClaimBusy=false;}
+  });
+  async function recheckMasterBaseline(saved,{origin,agentId,projectId,tasks,beforeMutation}){
+    if(!saved||masterBaselineReview!==saved||saved.origin!==origin||saved.agentId!==agentId||saved.projectId!==projectId)
+      throw Error('MASTER_BASELINE_INSPECTION_REQUIRED');
+    const fresh=await lookupMasterProject({origin,agentId,projectId,signer,beforeMutation});
+    beforeMutation();
+    if(masterBaselineReview!==saved||fresh.epoch!==saved.epoch||
+       JSON.stringify(fresh.project)!==JSON.stringify(saved.project))
+      throw Error('MASTER_BASELINE_PROJECT_OR_EPOCH_CHANGED');
+    return requireMasterBaseline({tasks,observed:saved.observed,
+      current:inspectMasterBaseline({repoDir:saved.repoDir,project:fresh.project})});
+  }
   ipcMain.handle('sutradhar:previewMasterBatch',async(event,agentId,projectId,requestId,tasks)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,projectId);
@@ -617,10 +653,14 @@ app.whenReady().then(()=>{
         if(approvedWorkerOperator(agentId,projectId,true)!==origin)throw Error('WORKER_BATCH_CENTRAL_CHANGED');
       };
       if(masterJournal().pending())throw Error('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
+      const baseline=masterBaselineReview;
+      const localBaseline=await recheckMasterBaseline(baseline,{origin,agentId,projectId,tasks,beforeMutation});
       const prepared=await previewMasterBatch({origin,agentId,projectId,requestId,tasks,signer,beforeMutation});
       beforeMutation();
-      masterBatchReview={origin,prepared};
-      return prepared.review;
+      if(prepared.body.expected_master_epoch!==baseline.epoch||masterBaselineReview!==baseline)
+        throw Error('MASTER_BASELINE_PROJECT_OR_EPOCH_CHANGED');
+      masterBatchReview={origin,prepared,baseline};
+      return {...prepared.review,local_baseline_observation:localBaseline};
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:commitMasterBatch',async(event,agentId,projectId,requestId,reviewedDigest)=>{
@@ -638,6 +678,8 @@ app.whenReady().then(()=>{
         message:'Admit '+body.tasks.length+' reviewed tasks into Central?',
         detail:'Project: '+projectId+'\nMaster: '+agentId+' / epoch '+body.expected_master_epoch+
           '\nRequest: '+requestId+'\nDigest: '+reviewedDigest+'\nOrdered tickets: '+review.plan_order.join(', ')+
+          '\nLocal tracking ref: '+saved.baseline.observed.tracking_ref+' / '+saved.baseline.observed.baseline_sha+
+          '\nRemote freshness and upstream changes are NOT verified. Internal dependencies may require later planning after upstream merge.'+
           '\nConfirm the complete reviewed task text, baseline, scope, criteria and dependency declarations. No execution, claim, provider send or Git action.'
       });
       if(confirmed.response!==1)return {canceled:true};
@@ -645,6 +687,8 @@ app.whenReady().then(()=>{
         if(approvedWorkerOperator(agentId,projectId,true)!==origin||masterBatchReview!==saved)
           throw Error('WORKER_BATCH_REVIEW_CHANGED');
       };
+      beforeMutation();
+      await recheckMasterBaseline(saved.baseline,{origin,agentId,projectId,tasks:body.tasks,beforeMutation});
       beforeMutation();
       const journal=masterJournal();
       const pending=journal.begin(origin,saved.prepared);
