@@ -59,6 +59,25 @@
 <div class="scroll"><table><thead><tr><th>Ticket</th><th>Worker</th><th>Status</th><th>Version</th></tr></thead><tbody id="tasks"></tbody></table></div></section>
 <section class="panel"><div class="panelhead"><h2>Audit events</h2><span id="auditCount"></span></div>
 <div class="scroll"><table><thead><tr><th>When (UTC)</th><th>Event</th><th>Actor</th></tr></thead><tbody id="audit"></tbody></table></div></section></div>
+<section class="panel owner" aria-labelledby="provider-registry-title">
+<div class="panelhead"><h2 id="provider-registry-title">Provider workspace registry</h2><strong id="provider-registry-version">Not loaded</strong></div>
+<p>Manage non-secret local aliases for approved project developers. This does not log into ChatGPT or Google AI Studio, verify provider permission, terminate sessions or authorize automation.</p>
+<button id="provider-registry-load" class="outline" type="button">Load current registry / discard local draft</button>
+<p id="provider-registry-status" role="status" aria-live="polite">Load current registry before editing. No automatic save.</p>
+<div class="scroll"><table><thead><tr><th>Project ID</th><th>Agent ID</th><th>Provider</th><th>Account alias</th><th>Workspace alias</th><th>Draft action</th></tr></thead><tbody id="provider-registry-rows"></tbody></table></div>
+<div class="formgrid">
+<div><label for="provider-project">Exact project ID</label><input id="provider-project" maxlength="100" autocomplete="off" spellcheck="false" placeholder="project_example">
+<label for="provider-agent">Exact developer agent ID</label><input id="provider-agent" maxlength="100" autocomplete="off" spellcheck="false" placeholder="agent_pc01">
+<label for="provider-kind">Provider</label><select id="provider-kind"><option value="CHATGPT_WEB">ChatGPT Web</option><option value="GOOGLE_AI_STUDIO">Google AI Studio</option></select></div>
+<div><label for="provider-account">Local account alias (not email)</label><input id="provider-account" maxlength="72" autocomplete="off" spellcheck="false" placeholder="account_operator01">
+<label for="provider-workspace">Local workspace alias (not URL)</label><input id="provider-workspace" maxlength="106" autocomplete="off" spellcheck="false" placeholder="workspace_project01">
+<button id="provider-registry-add" class="outline" type="button" disabled>Add to local draft</button></div>
+</div>
+<p>To change an existing binding, remove it from the local draft and add its replacement. Nothing changes in MySQL until you save the entire reviewed list. Removing all rows and saving revokes all local declarations.</p>
+<label class="inline" for="provider-registry-consent"><input id="provider-registry-consent" type="checkbox"> I reviewed the complete replacement list, including any removals. At version 0 this permanently supersedes ALL legacy environment declarations, which are not displayed here.</label>
+<div class="flex"><button id="provider-registry-save" type="button" disabled>Save exact reviewed registry</button></div>
+<small>Never enter credentials, emails, URLs, cookies or provider tokens. If a response is uncertain, reload current Central state before another edit; an accepted command is not necessarily the current revision. No automatic retry.</small>
+</section>
 <section class="panel owner"><h2>Owner operations</h2><p>Every mutation has an idempotent server receipt. Protected Git merges and deployments cannot be triggered here.</p>
 <div class="flex"><button data-command="PAUSE" class="danger">Pause cluster</button>
 <button data-command="RESUME" class="outline">Resume cluster</button><button id="refresh" class="outline">Refresh</button></div>
