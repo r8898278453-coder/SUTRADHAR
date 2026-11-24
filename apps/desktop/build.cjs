@@ -8,6 +8,8 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const cp=require('node:child_process');
 const esbuild=require('esbuild');
+const {inspectBuildOutput}=require('../../scripts/build-output-guard.cjs');
+
 const root=path.resolve(__dirname,'../..'),dest=path.join(__dirname,'dist');
 const digest=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const gitSha=()=>{
@@ -16,6 +18,7 @@ const gitSha=()=>{
     return /^[a-f0-9]{40}$/.test(s)?s:null;
   }catch{return null;}
 };
+inspectBuildOutput(dest,'desktop');
 fs.mkdirSync(dest,{recursive:true});
 for(const [entry,outfile] of [
   ['v7/agent.ts','edge-agent.cjs'],
@@ -47,4 +50,5 @@ fs.writeFileSync(path.join(dest,'release-manifest.json'),JSON.stringify(manifest
 for(const banned of ['server.cjs','schema.sql','index.html']){
   if(fs.existsSync(path.join(dest,banned)))throw Error('Desktop bundle includes Central artifact: '+banned);
 }
+inspectBuildOutput(dest,'desktop',{complete:true});
 console.log('Desktop staging agent/worker build ready. No signed installer was published.');

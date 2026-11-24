@@ -15,6 +15,9 @@ const get=rel=>path.join(root,rel);
 const exists=rel=>fs.existsSync(get(rel));
 const json=rel=>JSON.parse(fs.readFileSync(get(rel),'utf8'));
 const sha=rel=>crypto.createHash('sha256').update(fs.readFileSync(get(rel))).digest('hex');
+const {inspectBuildOutput}=require('./build-output-guard.cjs');
+inspectBuildOutput(central,'central',{complete:true});
+inspectBuildOutput(desktop,'desktop',{complete:true});
 const contract=json('packages/shared/contract.json');
 const cm=json('apps/central/dist/release-manifest.json');
 const dm=json('apps/desktop/dist/release-manifest.json');
@@ -69,6 +72,10 @@ for(const rel of [
 ])assert(!exists(rel),'Cross-app packaging boundary violation: '+rel);
 assert.equal(cm.bundle_sha256,sha('apps/central/dist/server.cjs'));
 assert.equal(cm.schema_sha256,sha('apps/central/dist/v7/schema.sql'));
+for(const name of ['index.html','dashboard.js','app.css']){
+  assert.equal(cm.ui_sha256[name],sha('apps/central/dist/'+name));
+  assert.equal(cm.ui_sha256[name],sha('v7/ui/'+name));
+}
 assert.equal(dm.agent_bundle_sha256,sha('apps/desktop/dist/edge-agent.cjs'));
 assert.equal(dm.secure_agent_sha256,sha('apps/desktop/dist/secure-agent.cjs'));
 const secureAgentText=fs.readFileSync(get('apps/desktop/dist/secure-agent.cjs'),'utf8');

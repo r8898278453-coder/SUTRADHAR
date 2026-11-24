@@ -9,6 +9,8 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const cp=require('node:child_process');
 const esbuild=require('esbuild');
+const {inspectBuildOutput}=require('../../scripts/build-output-guard.cjs');
+
 const root=path.resolve(__dirname,'../..');
 const dest=path.join(__dirname,'dist');
 const rootFile=rel=>path.join(root,rel);
@@ -25,6 +27,7 @@ function sourceSha(){
   }catch{return null;}
 }
 function main(){
+  inspectBuildOutput(dest,'central');
   fs.mkdirSync(dest,{recursive:true});
   const target=path.join(dest,'server.cjs');
   esbuild.buildSync({
@@ -42,6 +45,7 @@ function main(){
     version:pkg.version,source_sha:sourceSha(),api_protocol:contract.api_protocol,
     mysql_schema_version:7,
     bundle_sha256:sha(target),schema_sha256:sha(path.join(dest,'v7/schema.sql')),
+    ui_sha256:Object.fromEntries(['index.html','dashboard.js','app.css'].map(name=>[name,sha(path.join(dest,name))])),
     production_approved:false
   };
   fs.writeFileSync(path.join(dest,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n');
@@ -49,6 +53,7 @@ function main(){
     if(fs.existsSync(path.join(dest,forbidden)))throw Error('Central package contains forbidden worker/identity artifact: '+forbidden);
   }
   if(!fs.existsSync(path.join(dest,'index.html')))throw Error('Missing dashboard');
+  inspectBuildOutput(dest,'central',{complete:true});
   console.log('Central staging bundle ready (not deployed): apps/central/dist/server.cjs');
 }
 main();
