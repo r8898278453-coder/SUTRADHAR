@@ -105,6 +105,19 @@
 <label class="inline"><input id="batch-recovery-no-retry" type="checkbox" disabled> Permanently block this exact original request. No automatic retry, deletion, task creation or reassignment.</label>
 <button id="batch-recovery-cancel" type="button" disabled>Record permanent admission cancellation ONLY</button>
 </section>
+<section class="panel owner" aria-labelledby="provider-usage-title">
+<div class="panelhead"><h2 id="provider-usage-title">Provider usage — independently observed counts</h2><strong>Not provider API verified</strong></div>
+<p>Record actual displayed per-attempt input/output counts only if the provider exposes them and you independently matched them to the exact closed attempt. Do not guess from context bytes. Missing readings remain unknown. No quota or spending authorization.</p>
+<label for="usage-ticket">Exact ticket ID</label><input id="usage-ticket" maxlength="100" autocomplete="off" spellcheck="false">
+<button id="usage-load" class="outline" type="button">Inspect historical attempts and recorded totals</button>
+<pre id="usage-status" role="status" aria-live="polite">Not inspected.</pre>
+<label for="usage-attempt">Exact eligible closed attempt ID</label><select id="usage-attempt" disabled><option value="">Inspect ticket first</option></select>
+<label for="usage-input">Displayed input token count</label><input id="usage-input" inputmode="numeric" maxlength="10" autocomplete="off" disabled>
+<label for="usage-output">Displayed output token count</label><input id="usage-output" inputmode="numeric" maxlength="10" autocomplete="off" disabled>
+<label for="usage-cached">Displayed cached input count (blank = unknown; subset of input, never additional)</label><input id="usage-cached" inputmode="numeric" maxlength="10" autocomplete="off" disabled>
+<label class="inline"><input id="usage-reviewed" type="checkbox" disabled> I independently matched the actual provider display to this exact attempt and context digest. This is a permanent Owner-attested reading, not a provider-verified receipt.</label>
+<button id="usage-save" type="button" disabled>Record exact observed usage once</button>
+</section>
 <section class="panel owner"><h2>Owner operations</h2><p>Every mutation has an idempotent server receipt. Protected Git merges and deployments cannot be triggered here.</p>
 <div class="flex"><button data-command="PAUSE" class="danger">Pause cluster</button>
 <button data-command="RESUME" class="outline">Resume cluster</button><button id="refresh" class="outline">Refresh</button></div>
