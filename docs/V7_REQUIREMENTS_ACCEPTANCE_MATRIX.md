@@ -265,3 +265,18 @@ Verified exact baseline `1193b3b`: [application CI](https://github.com/r88982784
 | V7-P03, T02 | Disposable MySQL fixture for stale expected_task_version rejection, coordinated client/signer admission | Exact-head CI and independent acceptance |
 
 Original 71 acceptance scenarios retained; no LIVE_ACCEPTED promotion. G0–G7 HOLD.
+
+
+## Consolidated Master batch planning regression coverage
+
+Previous exact HEAD `8145c64`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45461963696) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45461963719) were cancelled. Before cancellation the real MySQL and Python/shell/state jobs passed, while the TypeScript/unit/build job failed at Desktop security validation: obsolete static regex expected a ternary that had been replaced by the reviewed-context guard. Test correction `b4ec4ae` preserves the security assertions. Last fully green combined baseline `1193b3b`. New planner and correction are CODED / EXACT-HEAD CI PENDING.
+
+| Requirement | New source evidence | Still required |
+|---|---|---|
+| V7-T01, T04, T05 | Deterministic explicit task DAG; reject duplicate/cyclic/aliased nodes and unordered declared path or contract conflict | Autonomous task decomposition, actual code-level semantic discovery, combined QA |
+| V7-T02, O01 | Signed preview digest, atomic MySQL batch/approval/edge/event/receipt admission, concurrent identical replay, late collision rollback | Physical Master crash and successor recovery of committed batch |
+| V7-T06, T08 | Exact existing dependency/project and DONE claim gate; current Master epoch and final DB-clock lease recheck | Physical failover and expiry-at-commit acceptance |
+| V7-T03, Q02, Q03, O11 | Explicit bounded declarations, existing criteria and protected Owner approvals retained; no baseline proof or automatic execution | Unknown requirement clarification, negative/combined tests, actual baseline proof, independent approval |
+| V7-B05, B06 | Prior Desktop static assertion corrected to check main-process reviewed context guard | Combined exact-head CI, physical provider/Windows acceptance |
+
+Original 71 scenarios unchanged. No LIVE_ACCEPTED promotion. G0–G7 HOLD.
