@@ -27,7 +27,7 @@ import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,Q
 import sharedContract from '../packages/shared/contract.json';
 import {publicCentralFiles} from './public_files.ts';
 import {parseOwnerTelegram,telegramReceiptText} from './telegram_owner.ts';
-import {declaredProviderMappings} from './provider_mappings.ts';
+import {declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot} from './provider_mappings.ts';
 import {verifyRecoverySnapshot} from './recovery_validation.ts';
 
 const app=express();
@@ -318,6 +318,17 @@ async function evaluate(c:PoolConnection,reason='heartbeat'){
   }
   return await leader(c,false);
 }
+// The append-only MySQL event ledger is the authority for the current
+// registry after the first Owner replacement. An empty snapshot is a durable
+// tombstone: NEVER reactivate the legacy environment configuration on clear.
+async function currentProviderRegistry(c:PoolConnection){
+  const row=await one(c,'SELECT payload_json FROM v7_events WHERE event_type="PROVIDER_REGISTRY_REPLACED" '+
+    'AND resource_id="provider_registry_v1" ORDER BY event_id DESC LIMIT 1');
+  if(!row)return null;
+  try{
+    return verifyProviderRegistrySnapshot(typeof row.payload_json==='string'?JSON.parse(row.payload_json):row.payload_json);
+  }catch{fault('PROVIDER_REGISTRY_LEDGER_INVALID',423);}
+}
 async function ownerCommand(c:PoolConnection,actor:string,body:any,onFresh?:()=>void){
   const command=requireStr(body.command,40);
   const payload=body.payload||{};
@@ -453,6 +464,30 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any,onFresh?:()=>
       await c.query('INSERT INTO v7_projects(project_id,display_name,repository,base_branch) VALUES(?,?,?,?)',
         [id,name,repo,base]);
       result={project_id:id,created:true};
+    }else if(command==='REPLACE_PROVIDER_REGISTRY'){
+      if(actor!=='owner:web')fault('PROVIDER_REGISTRY_WEB_OWNER_REQUIRED',403);
+      if(!payload||typeof payload!=='object'||Array.isArray(payload)||
+         Object.keys(payload).sort().join('|')!=='bindings|expected_version'||
+         !Number.isSafeInteger(payload.expected_version)||payload.expected_version<0)
+        fault('PROVIDER_REGISTRY_INPUT_INVALID',400);
+      const current=await currentProviderRegistry(c);
+      const version=current?.version??0;
+      if(payload.expected_version!==version)fault('PROVIDER_REGISTRY_VERSION_CONFLICT',409);
+      let next:ReturnType<typeof providerRegistrySnapshot>;
+      try{next=providerRegistrySnapshot(version+1,payload.bindings);}
+      catch{fault('PROVIDER_REGISTRY_INPUT_INVALID',400);}
+      for(const binding of next!.bindings){
+        const grant=await one(c,'SELECT p.project_id,a.agent_id FROM v7_projects p '+
+          'JOIN v7_project_agents g ON g.project_id=p.project_id '+
+          'JOIN v7_agents a ON a.agent_id=g.agent_id JOIN v7_nodes n ON n.node_id=a.node_id '+
+          'WHERE p.project_id=? AND a.agent_id=? AND p.status="ACTIVE" AND g.can_develop=1 '+
+          'AND a.state="APPROVED" AND n.state="APPROVED"', [binding.project_id,binding.agent_id]);
+        if(!grant||grant.project_id!==binding.project_id||grant.agent_id!==binding.agent_id)
+          fault('PROVIDER_REGISTRY_GRANT_REQUIRED',409);
+      }
+      await event(c,'PROVIDER_REGISTRY_REPLACED',actor,Number(ld.epoch),'provider_registry_v1',next!);
+      result={registry_version:next!.version,registry_sha256:next!.registry_sha256,
+        binding_count:next!.bindings.length,provider_mapping_verified:false,automatic_execution_allowed:false};
     }else if(command==='GRANT_PROJECT_AGENT'||command==='REVOKE_PROJECT_AGENT'){
       const projectId=requireId(payload.project_id),agentId=requireId(payload.agent_id);
       const project=await one(c,'SELECT project_id FROM v7_projects WHERE project_id=? FOR UPDATE',[projectId]);
@@ -765,6 +800,17 @@ app.post('/v7/nodes/enroll',jsonRoute(async req=>{
       [node_id,public_key_pem,display_name,typeof general_location==='string'?general_location.slice(0,150):null]);
     await event(c,'NODE_ENROLL_REQUEST','enrollment',0,node_id);
     return {accepted:true,node_id,state:'PENDING',owner_approval_required:true};
+  });
+}));
+app.get('/v7/owner/provider-registry',jsonRoute(async req=>{
+  admin(req);
+  return transaction(async c=>{
+    await leader(c,false);
+    const snapshot=await currentProviderRegistry(c);
+    return {source:snapshot?'MYSQL_OWNER_REGISTRY':'LEGACY_ENV_CONFIGURATION',
+      version:snapshot?.version??0,bindings:snapshot?.bindings??[],
+      registry_sha256:snapshot?.registry_sha256??null,
+      legacy_fallback_active:!snapshot,provider_mapping_verified:false,automatic_execution_allowed:false};
   });
 }));
 app.post('/v7/owner/command',jsonRoute(async req=>{
@@ -1341,11 +1387,15 @@ app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
     // Missing or malformed mapping never prevents ordinary task inspection.
     let providerMappings:ReturnType<typeof declaredProviderMappings>=[];
     let providerMappingState='NOT_APPLICABLE';
+    let providerMappingSource='NOT_APPLICABLE',providerRegistryVersion:number|null=null;
     if(Number(access.can_develop)===1&&t.worker_agent_id===agentId){
       try{
-        providerMappings=declaredProviderMappings(process.env.SUTRADHAR_PROVIDER_MAPPINGS_JSON,t.project_id,agentId);
+        const snapshot=await currentProviderRegistry(c);
+        providerMappingSource=snapshot?'MYSQL_OWNER_REGISTRY':'LEGACY_ENV_CONFIGURATION';
+        providerRegistryVersion=snapshot?.version??0;
+        providerMappings=declaredProviderMappings(snapshot?JSON.stringify(snapshot.bindings):process.env.SUTRADHAR_PROVIDER_MAPPINGS_JSON,t.project_id,agentId);
         providerMappingState=providerMappings.length?'OWNER_DECLARED_UNVERIFIED':'UNCONFIGURED';
-      }catch{providerMappingState='INVALID_OWNER_CONFIGURATION';}
+      }catch{providerMappingState='INVALID_OWNER_CONFIGURATION';providerMappingSource='INVALID';providerRegistryVersion=null;}
     }
     const contractKeys=(await taskContractDeclarations(c,[t.ticket_id])).get(t.ticket_id)??null;
     return {ticket_id:t.ticket_id,project_id:t.project_id,repository:p.repository,base_branch:p.base_branch,
@@ -1355,7 +1405,8 @@ app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
       acceptance_criteria:t.criteria_json,worker_agent_id:t.worker_agent_id,
       candidate_head_sha:t.candidate_head_sha,candidate_tree_sha:t.candidate_tree_sha,
       latest_checkpoint:latest,provider_mapping_state:providerMappingState,
-      provider_mappings:providerMappings};
+      provider_mappings:providerMappings,provider_mapping_source:providerMappingSource,
+      provider_registry_version:providerRegistryVersion};
   });
 }));
 async function recoveryManifest(c:PoolConnection){
