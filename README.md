@@ -202,3 +202,10 @@ Central now supports explicit shared API/database/interface/event declarations i
 Last fully green source baseline `93993a0`; shared-contract HEAD `01ff1ce` dependency CI succeeded but application CI was cancelled. New provider-registry source is CODED / CI PENDING; verify the latest exact-head workflow results.
 
 Owner-managed provider alias snapshots now persist in MySQL with versioned replacement and explicit revocation. After initial replacement, clearing the registry does not reactivate legacy configuration. Desktop displays local provenance separately from compact context. See [Owner registry guide](docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md), [tracker](docs/IMPLEMENTATION_TRACKER.md), [acceptance matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](GAP_REGISTER.md). This is unverified declaration metadata, not live provider authentication, browser automation or token measurement. Dedicated indexed storage, target hosting restore/performance and dashboard editor remain open. G0–G7 HOLD.
+
+
+## Owner provider registry dashboard — latest development
+
+Verified previous source baseline `215e5ee`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116654) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116645) both SUCCESS. New Owner registry editor is CODED / CI PENDING at this update.
+
+Non-developer Owner can now load current alias declarations, add/remove local draft rows, review the entire replacement and save explicitly with current-version readback. No API command composition needed for this dashboard workflow. See [step-by-step Owner guide](docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md), [tracker](docs/IMPLEMENTATION_TRACKER.md), [matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](GAP_REGISTER.md). Uncertain responses require fresh load; aliases are not provider credentials or permission proof. No actual provider action, schema migration, deployment or production acceptance. G0–G7 HOLD.
