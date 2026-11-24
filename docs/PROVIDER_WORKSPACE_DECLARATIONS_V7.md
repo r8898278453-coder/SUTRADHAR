@@ -1,6 +1,6 @@
 # Owner-declared provider workspace bindings (v7 alpha)
 
-This alpha supports both legacy environment declarations and an Owner-managed versioned registry persisted in the existing MySQL event ledger. Neither is live provider authorization. The registry is coded, CI pending; no schema change. Do not alter the reviewed v7/v8 migration files.
+This alpha supports both legacy environment declarations and an Owner-managed versioned registry persisted in the existing MySQL event ledger. Neither is live provider authorization. The registry source passed CI at 215e5ee; no schema change. The new dashboard editor is coded, CI pending. Do not alter the reviewed v7/v8 migration files.
 
 ## Legacy bootstrap setup (staging only)
 
@@ -39,7 +39,7 @@ Real account/workspace verification, target-hosting ledger performance and reten
 
 Last fully green application + dependency baseline: `93993a0`. Previous shared-contract HEAD `01ff1ce`: [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45451459381) SUCCESS; [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45451459160) CANCELLED after subsequent branch development. Shared-contract and new registry source still require exact-head application CI.
 
-Use authenticated Owner HTTPS routes on a disposable/staging environment; a non-developer dashboard editor is not yet implemented. Never put an admin credential in a URL, Git, chat or browser console history.
+Use authenticated Owner HTTPS routes on a disposable/staging environment; the API workflow below remains available for reviewed operator diagnostics. The new dashboard editor is described at the end. Never put an admin credential in a URL, Git, chat or browser console history.
 
 1. GET `/v7/owner/provider-registry` with Owner authentication. Version 0 means legacy environment fallback is active; the returned empty bindings at version 0 are not an export of the environment.
 2. Review the complete intended set of non-secret alias bindings independently. Every binding must reference an exact active project and an approved agent/node with development permission.
@@ -67,3 +67,17 @@ Use authenticated Owner HTTPS routes on a disposable/staging environment; a non-
 6. Review the assigned developer's signed task detail and Desktop registry source/version. Losing project grants removes task-detail access; regrant alone does not prove provider authorization. Remove obsolete alias declarations explicitly in the registry. The registry does not revoke external provider sessions or accounts.
 
 The canonical full snapshot has a maximum of 100 bindings / 16 KiB configuration JSON, monotonically increasing safe integer version and SHA-256 digest. Invalid persisted snapshot fails closed rather than using the environment. Current implementation uses an append-only event lookup, not a dedicated indexed registry table; retention policy must preserve the registry history and restore the latest authoritative snapshot. Actual provider identity, provider permissions, automatic continuation, real token accounting and live acceptance remain OPEN.
+
+
+## Non-developer Owner dashboard workflow (staging alpha)
+
+Verified baseline `215e5ee`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116654) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116645) both SUCCESS. This includes the shared-contract and durable provider registry source/regressions. The new dashboard editor is CODED / CI PENDING at this update.
+
+1. Sign in to the Central dashboard using the Owner API key over independently verified HTTPS. Find **Provider workspace registry** and click **Load current registry / discard local draft**.
+2. Read the current revision. Version 0 does not display legacy environment aliases; independently inventory the entire intended set first. Initial save supersedes every legacy declaration, including ones not shown.
+3. Enter exact project and developer agent IDs, choose ChatGPT Web or Google AI Studio, and enter local non-secret account/workspace aliases. Click **Add to local draft**. Invalid, duplicate, ambiguous and oversized declarations are refused. Remove an existing draft row and add its replacement to edit it. Draft changes do not write to MySQL.
+4. Review the complete table and all removals. Check the explicit review box, click **Save exact reviewed registry**, and confirm the replacement. Unadded form input blocks saving. Removing every row and saving is an explicit local declaration revocation, not provider logout.
+5. Central independently validates grants and expected version. The dashboard sends one replacement request, then reads current Central state and compares version, digest and full binding list before showing a saved status. If another Owner changed it, the response was lost, or verification fails, the editor is disabled until explicitly reloaded. Never blindly retry or assume a failed response means nothing was committed.
+6. Disconnect clears in-tab registry data and blocks stale responses from earlier Owner sessions. A previously accepted command may still have committed. No automatic refresh of the editor, automatic save, provider login, live permission verification or external session revocation occurs.
+
+The dashboard uses existing Owner routes; no new credential stores or schema changes. VM/browser-model regressions are not real-browser/Hostinger acceptance. Independently verify real provider identity and permissions, retention/restore, target hosting performance and physical assisted operation before acceptance. G0–G7 HOLD.
