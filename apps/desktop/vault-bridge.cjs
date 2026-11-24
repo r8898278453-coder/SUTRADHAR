@@ -189,7 +189,11 @@ function createSignerBridge(vault){
     const epoch=Number.isSafeInteger(payload.expected_master_epoch)&&
       payload.expected_master_epoch>0;
     let uri,expected;
-    if(['plan-batch-preview','plan-batch','plan-batch-receipt'].includes(operation)){
+    if(operation==='plan-batch-projects'){
+      uri='/v7/tasks/plan-batch/projects';
+      expected=['agent_id','expected_master_epoch'];
+      if(!epoch)fail('VAULT_WORKER_ACTION_DENIED');
+    }else if(['plan-batch-preview','plan-batch','plan-batch-receipt'].includes(operation)){
       uri='/v7/tasks/plan-batch'+(operation==='plan-batch-preview'?'/preview':operation==='plan-batch-receipt'?'/receipt':'');
       expected=['agent_id','project_id','request_id'];
       const hash=x=>typeof x==='string'&&x.length===64&&/^[a-f0-9]{64}$/.test(x);
