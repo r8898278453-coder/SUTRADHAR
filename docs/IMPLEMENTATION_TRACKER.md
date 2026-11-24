@@ -1425,3 +1425,20 @@ Explicit save only; no autosave. The latest saved unconfirmed snapshot per node/
 Source hints are lexical, not an AST or complete dependency graph: inspect immutable Git tree/blob objects for scoped JS/TS-family regular files, at most 12 files, 16 KiB per blob, 1 MiB tree listing and 40 hints. Relative static/literal imports only; comments/strings may cause false positives, package aliases, generated code, other languages, dynamic paths and unscanned files may cause false negatives. Only paths, task IDs, counts and commit/tree IDs are returned; no source content, provider send, automatic dependency insertion, task creation or Git mutation. The report does not prove semantic independence, upstream inclusion or remote freshness; no measured provider token reduction is claimed.
 
 Remaining priorities: exact-head CI and corrections; AST/contract-level semantic discovery and intelligent task decomposition; minimum-context reuse and actual provider token/quota accounting; independent live remote baseline and upstream merge proof; combined integration QA; unavailable-signer recovery, backup/restore and retention; web/Telegram parity; Hostinger staging, signed installer and physical multi-PC acceptance. No new schema, deployment or production gate promotion. G0–G7 HOLD.
+
+## Consolidated advisory planning graph and compact context
+
+Exact baseline `babd15b` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45489449293) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45489449341). Encrypted unconfirmed draft storage and lexical source hints are source-CI verified. New advisory graph, fair sampling and compact context changes are CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Status |
+|---|---|---|
+| Bounded exact task validation, dependency waves, declared conflict review groups and compact lossless context | dc1c44d | CODED / CI PENDING |
+| Round-robin immutable source sampling and per-task coverage | e62e38d | CODED / CI PENDING |
+| Main-only baseline/pending-admission gates, fixed IPC and explicit review UI | 08a1347, 28eeff1, 1c3a551, 246d18e | CODED / CI PENDING |
+| Graph/alias/cycle/transitive conflict, context byte/digest/Unicode/size and sampling regressions | 82c583a | CODED / CI PENDING |
+
+Declared dependency waves are a topological view of internal declared edges only, not dispatch waves. External dependencies remain unverified, unordered path/contract conflicts require review, and connected review groups are not a safe parallel execution guarantee. Source hints remain bounded lexical evidence, not AST or semantic proof; round-robin sampling improves task coverage but does not guarantee complete coverage. No task decomposition, automatic edge insertion, claim, Git mutation or provider action is authorized.
+
+Explicit local compact planning preview hoists one shared baseline SHA and retains all exact task strings, order, scope, risk, contracts, dependencies and criteria. It reports exact UTF-8 bytes, difference versus expanded compact JSON and SHA-256; cap 16,384 bytes, fail closed rather than truncate. No token count or actual provider savings verified, no secret scan, no automatic transmission. Independent secret review is required before any manual sharing. Draft/review changes invalidate the displayed preview. Existing signed Central admission, approval, dependency and worker reservations remain authoritative.
+
+Remaining: exact-head CI and corrections; AST/semantic and contract discovery, actual task decomposition and verified combined QA; independently verified live baseline/upstream merge; measured provider token/quota accounting and permitted continuation; autosave, unavailable-signer recovery and retention; web/Telegram parity; Hostinger staging, production signing and physical multi-PC acceptance. G0–G7 HOLD.
