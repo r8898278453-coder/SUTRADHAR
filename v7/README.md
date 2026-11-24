@@ -138,3 +138,10 @@ Use the existing approved Master PC, exact project ID and unique request ID. Add
 Exact baseline `0fc7c7a` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325287) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325508), including the previous Desktop Master planner and historical receipt lookup. New project catalog and admission journal changes are CODED / EXACT-HEAD CI PENDING.
 
 Desktop Master may load signed active project identities (up to 100, explicit truncation). Exact native-confirmed reviewed batch is encrypted and journaled before POST; one unresolved local intent blocks further admission. Restore pending original draft after restart and inspect historical receipt; do not resubmit or infer non-admission from a missing receipt. Unconfirmed drafts remain in memory. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). Actual baseline/source analysis, Owner reconciliation, journal retention and physical acceptance remain open. G0–G7 HOLD.
+
+
+## Interrupted Master admission Owner reconciliation
+
+Exact baseline `85ae5a8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45480705079) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45480705150), including encrypted Master admission journal and signed project catalog. New Owner reconciliation batch is CODED / EXACT-HEAD CI PENDING.
+
+Use exact recovered agent/project/request/digest/order in Owner dashboard. Existing admission or listed ticket conflict blocks cancellation. After independently reviewing journal and DB history, Owner may permanently block the original request key; no new work is authorized. Original approved Desktop reads exact cancellation resolution and closes the encrypted hold. Missing receipt is not non-admission proof. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). No new schema/release. G0–G7 HOLD.
