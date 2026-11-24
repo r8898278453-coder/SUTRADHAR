@@ -51,3 +51,28 @@ test('refuses malformed Git ledger and forged event high-water cursor',()=>{
     snapshot({event_high_watermark:-1})
   ])assert.throws(()=>verifyRecoverySnapshot(s,3));
 });
+
+test('recovery rejects orphan checkpoints, case aliases and invalid payload fields',()=>{
+  const cp=snapshot().checkpoints[0];
+  for(const s of [
+    snapshot({checkpoints:[{...cp,ticket_id:'other_task'}]}),
+    snapshot({checkpoints:[{...cp,ticket_id:'TASK1'}]}),
+    snapshot({tickets:[{ticket_id:'task1',status:'READY'},{ticket_id:'TASK1',status:'READY'}]}),
+    snapshot({tickets:[{ticket_id:'task1',status:'UNKNOWN_STATE'}]}),
+    snapshot({checkpoints:[{...cp,summary:'',content_sha256:digest('\nresume')}]}),
+    snapshot({checkpoints:[{...cp,summary:'\uD800',content_sha256:digest('\uD800\nresume')}]}),
+    snapshot({checkpoints:[{...cp,content_sha256:[cp.content_sha256]}]})
+  ])assert.throws(()=>verifyRecoverySnapshot(s,3),/INVALID_RECOVERY_(TICKET|CHECKPOINT)/);
+});
+test('recovery requires descending exact event window and high-water cursor',()=>{
+  for(const s of [
+    snapshot({events:[{event_id:true}],event_high_watermark:1}),
+    snapshot({events:[{event_id:'7e0'}]}),
+    snapshot({events:[{event_id:6},{event_id:7}]}),
+    snapshot({events:[{event_id:7}],event_high_watermark:8}),
+    snapshot({events:[],event_high_watermark:7})
+  ])assert.throws(()=>verifyRecoverySnapshot(s,3),/INVALID_EVENT_/);
+  for(const s of [snapshot({events:[{event_id:'7'},{event_id:3}]}),
+    snapshot({events:[],event_high_watermark:0})])
+    assert.equal(verifyRecoverySnapshot(s,3),s.manifest_sha256);
+});
