@@ -1800,7 +1800,7 @@ app.post('/v7/tasks/provider-attempt',jsonRoute(async req=>{
   const action=d.action;
   if(!['BEGIN','INTERRUPT','CLOSE'].includes(action))fault('PROVIDER_ATTEMPT_INPUT_INVALID',400);
   const common='action|agent_id|expected_master_epoch|lease_id|request_id|ticket_id';
-  const fields=(action==='BEGIN'?[...common.split('|'),'binding_sha256','checkpoint_generation','checkpoint_sha256','context_sha256','provider','registry_version']:
+  const fields=(action==='BEGIN'?[...common.split('|'),'binding_sha256','checkpoint_generation','checkpoint_sha256','context_sha256','expected_task_version','provider','registry_version']:
     action==='CLOSE'?[...common.split('|'),'attempt_id','external_session_reviewed','worktree_reviewed']:
     [...common.split('|'),'attempt_id']).sort().join('|');
   if(Object.keys(d).sort().join('|')!==fields)fault('PROVIDER_ATTEMPT_INPUT_INVALID',400);
@@ -1813,6 +1813,8 @@ app.post('/v7/tasks/provider-attempt',jsonRoute(async req=>{
       if(action==='BEGIN'){
         if(prior&&prior.state!=='CLOSED')fault('PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED',423);
         if(t.status!=='CHECKPOINTED')fault('CHECKPOINT_REQUIRED',409);
+        if(!Number.isSafeInteger(d.expected_task_version)||d.expected_task_version!==Number(t.version))
+          return fault('PROVIDER_ATTEMPT_TASK_VERSION_CONFLICT',409);
         const registry=await currentProviderRegistry(c);
         if(!registry||registry.version!==d.registry_version)return fault('PROVIDER_REGISTRY_VERSION_CONFLICT',409);
         const mapping=declaredProviderMappings(JSON.stringify(registry.bindings),t.project_id,id)
