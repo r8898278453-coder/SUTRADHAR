@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chooseLeader,chooseBackups,firstElectionOpen,scopesOverlap,safeScope,LEASE_SECONDS,HEARTBEAT_SECONDS,validTaskBranch,isProtectedScope,parseContractKeys,contractReservationConflicts,orderTaskBatch} from '../v7/rules.ts';
-import {parseProviderMappings,declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot,validateProviderAttempt} from '../v7/provider_mappings.ts';
+import {parseProviderMappings,declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot,validateProviderAttempt,validateProviderUsageReading,providerUsageRecord,verifyProviderUsageRecord,summarizeProviderUsage} from '../v7/provider_mappings.ts';
 const day=Date.parse('2026-11-11T00:00:00Z');
 const ts=(hour:number,minute=0)=>day+hour*3600000+minute*60000;
 const candidate=(id:string,node:string,arrival:number,seen:number)=>({
@@ -279,4 +279,105 @@ test('Master batch order is deterministic; independent nodes can be parallel, co
   assert.throws(()=>orderTaskBatch([x,y]),/CONFLICT_REQUIRES_DEPENDENCY/);
   assert.deepEqual(orderTaskBatch([x,{...y,deps:['ticket_a']}]).map(p=>p.ticketId),['ticket_a','ticket_c']);
   assert.throws(()=>orderTaskBatch([a]),/SIZE_INVALID/);
+});
+
+
+const usageAttempt={attempt_id:'attempt_'+'a'.repeat(32),ticket_id:'ticket_usage',agent_id:'agent_usage',
+  lease_id:'lease_usage',epoch:7,registry_version:2,provider:'CHATGPT_WEB',binding_sha256:'b'.repeat(64),
+  checkpoint_generation:1,checkpoint_sha256:'c'.repeat(64),context_sha256:'d'.repeat(64),
+  state:'CLOSED',resolution:'WORKER_CHECKPOINT'};
+const usageReading={ticket_id:usageAttempt.ticket_id,attempt_id:usageAttempt.attempt_id,
+  context_sha256:usageAttempt.context_sha256,input_tokens:120,output_tokens:30,cached_input_tokens:20,evidence_reviewed:true};
+const invalidCounts:unknown[]=[-1,-0,0.1,1.5,NaN,Infinity,-Infinity,1000000001,Number.MAX_SAFE_INTEGER,
+  '0','120','1e3',' 1',true,false,{},[],undefined];
+for(const field of ['input_tokens','output_tokens','cached_input_tokens'] as const){
+  for(const [index,bad] of invalidCounts.entries())test('Provider reading rejects '+field+' invalid numeric representation #'+index,()=>{
+    assert.throws(()=>validateProviderUsageReading({...usageReading,[field]:bad}),/READING_INVALID/);
+  });
+}
+for(const field of ['ticket_id','attempt_id','context_sha256'] as const){
+  const invalid=[null,undefined,123,'','a',' '+usageReading[field],usageReading[field]+'\n',
+    usageReading[field]+'\r',usageReading[field]+' '.repeat(100),'../'+usageReading[field]];
+  for(const [index,bad] of invalid.entries())test('Provider reading rejects '+field+' malformed exact identity #'+index,()=>{
+    assert.throws(()=>validateProviderUsageReading({...usageReading,[field]:bad}),/READING_INVALID/);
+  });
+}
+for(const field of ['prompt','response','session_id','api_key','cookie','password','provider','agent_id','registry_version','quota_remaining','cost','estimated_tokens']){
+  test('Provider reading rejects undeclared field '+field,()=>{
+    assert.throws(()=>validateProviderUsageReading({...usageReading,[field]:'forbidden'}),/READING_INVALID/);
+  });
+}
+for(const field of Object.keys(usageReading)){
+  test('Provider reading requires field '+field,()=>{
+    const copy:Record<string,unknown>={...usageReading};delete copy[field];
+    assert.throws(()=>validateProviderUsageReading(copy),/READING_INVALID/);
+  });
+}
+test('Provider reading accepts explicit zero and maximum counts without double counting cached input',()=>{
+  assert.equal(validateProviderUsageReading({...usageReading,input_tokens:0,output_tokens:0,cached_input_tokens:0}).input_tokens,0);
+  assert.equal(validateProviderUsageReading({...usageReading,input_tokens:1000000000,output_tokens:1000000000,cached_input_tokens:1000000000}).cached_input_tokens,1000000000);
+  assert.equal(validateProviderUsageReading({...usageReading,cached_input_tokens:null}).cached_input_tokens,null);
+  assert.throws(()=>validateProviderUsageReading({...usageReading,cached_input_tokens:121}),/READING_INVALID/);
+  assert.throws(()=>validateProviderUsageReading({...usageReading,evidence_reviewed:false}),/READING_INVALID/);
+  assert.throws(()=>validateProviderUsageReading({...usageReading,input_tokens:null}),/READING_INVALID/);
+  assert.throws(()=>validateProviderUsageReading({...usageReading,output_tokens:null}),/READING_INVALID/);
+});
+for(const patch of [{ticket_id:'ticket_other'},{attempt_id:'attempt_'+'f'.repeat(32)},{context_sha256:'f'.repeat(64)}]){
+  test('Provider usage record binds exact attempt '+Object.keys(patch)[0],()=>{
+    assert.throws(()=>providerUsageRecord({...usageReading,...patch},usageAttempt),/ATTEMPT_MISMATCH/);
+  });
+}
+for(const state of ['OPEN','INTERRUPTED']){
+  test('Provider usage denies nonclosed '+state,()=>{
+    assert.throws(()=>providerUsageRecord(usageReading,{...usageAttempt,state,resolution:null}),/ATTEMPT_MISMATCH/);
+  });
+}
+const usageRecord=providerUsageRecord(usageReading,usageAttempt);
+for(const [field,bad] of Object.entries({provider:'GOOGLE_AI_STUDIO',agent_id:'agent_other',registry_version:3,
+  binding_sha256:'f'.repeat(64),attempt_epoch:8,source:'PROVIDER_VERIFIED',provider_usage_verified:true,
+  quota_verified:true,automatic_execution_allowed:true,usage_sha256:'f'.repeat(64),input_tokens:121,output_tokens:31,
+  cached_input_tokens:null,evidence_reviewed:false,ticket_id:'ticket_other',context_sha256:'f'.repeat(64)})){
+  test('Provider usage digest rejects changed '+field,()=>{
+    assert.throws(()=>verifyProviderUsageRecord({...usageRecord,[field]:bad},usageAttempt));
+  });
+}
+const openUsage={...usageAttempt,state:'OPEN',resolution:null};
+const interruptedUsage={...usageAttempt,state:'INTERRUPTED',resolution:null};
+const otherUsage={...usageAttempt,attempt_id:'attempt_'+'e'.repeat(32),provider:'GOOGLE_AI_STUDIO',state:'OPEN',resolution:null};
+test('Usage summary distinguishes unknown attempts, recorded zero and cached subset',()=>{
+  const summary=summarizeProviderUsage(usageAttempt.ticket_id,[openUsage,interruptedUsage,usageAttempt,otherUsage],[usageRecord]);
+  assert.deepEqual(summary.totals,[
+    {provider:'CHATGPT_WEB',attempt_count:1,recorded_attempt_count:1,unknown_attempt_count:0,recorded_input_tokens:120,
+      recorded_output_tokens:30,recorded_cached_input_tokens:20,cached_input_unknown_record_count:0},
+    {provider:'GOOGLE_AI_STUDIO',attempt_count:1,recorded_attempt_count:0,unknown_attempt_count:1,recorded_input_tokens:0,
+      recorded_output_tokens:0,recorded_cached_input_tokens:0,cached_input_unknown_record_count:0}]);
+  assert.equal(summary.attempts[1].usage,null);assert.equal(summary.attempts[1].owner_recording_eligible,false);
+  assert.equal(summary.provider_usage_verified,false);assert.equal(summary.quota_verified,false);
+  assert.equal(summarizeProviderUsage(usageAttempt.ticket_id,[openUsage,usageAttempt],[]).attempts[0].owner_recording_eligible,true);
+  const zero=providerUsageRecord({...usageReading,input_tokens:0,output_tokens:0,cached_input_tokens:null},usageAttempt);
+  const z=summarizeProviderUsage(usageAttempt.ticket_id,[openUsage,usageAttempt],[zero]);
+  assert.equal(z.totals[0].unknown_attempt_count,0);assert.equal(z.totals[0].cached_input_unknown_record_count,1);
+});
+const invalidHistories=[
+  [usageAttempt],[interruptedUsage],[openUsage,openUsage],[openUsage,interruptedUsage,interruptedUsage],
+  [openUsage,usageAttempt,openUsage],[openUsage,otherUsage],[openUsage,usageAttempt,otherUsage,usageAttempt],
+  [openUsage,{...usageAttempt,epoch:8}],[openUsage,{...usageAttempt,provider:'GOOGLE_AI_STUDIO'}],
+  [openUsage,{...usageAttempt,context_sha256:'f'.repeat(64)}],
+  [openUsage,{...usageAttempt,agent_id:'agent_other'}],[openUsage,{...usageAttempt,ticket_id:'ticket_other'}],
+  [openUsage,{...usageAttempt,registry_version:3}],[openUsage,{...usageAttempt,binding_sha256:'f'.repeat(64)}],
+  Array(301).fill(openUsage)
+];
+for(const [i,history] of invalidHistories.entries())test('Provider usage history rejects invalid transition or limit #'+i,()=>{
+  assert.throws(()=>summarizeProviderUsage(usageAttempt.ticket_id,history,[]));
+});
+test('Usage history denies duplicate, orphan, open-attempt and oversized readings',()=>{
+  assert.throws(()=>summarizeProviderUsage(usageAttempt.ticket_id,[openUsage,usageAttempt],[usageRecord,usageRecord]));
+  assert.throws(()=>summarizeProviderUsage(usageAttempt.ticket_id,[],[usageRecord]));
+  assert.throws(()=>summarizeProviderUsage(usageAttempt.ticket_id,[openUsage],[usageRecord]));
+  assert.throws(()=>summarizeProviderUsage(usageAttempt.ticket_id,[openUsage,usageAttempt],Array(101).fill(usageRecord)));
+  const history=Array.from({length:101},(_,i)=>{
+    const a={...usageAttempt,attempt_id:'attempt_'+i.toString(16).padStart(32,'0')};
+    return [{...a,state:'OPEN',resolution:null},a];
+  }).flat();
+  assert.throws(()=>summarizeProviderUsage(usageAttempt.ticket_id,history,[]),/HISTORY_LIMIT/);
 });
