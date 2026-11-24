@@ -10,7 +10,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {spawnSync}=require('node:child_process');
-const {loadWorkerReceipt,localWorktree,resumeApprovedTask,signedRequest}
+const {assertDisabledHooks,loadWorkerReceipt,localWorktree,resumeApprovedTask,signedRequest}
   =require('./worker-claim.cjs');
 const {inspectWorkerTasks}=require('./worker-inspection.cjs');
 const {readEvidenceBytes,evidenceEntryPresent}=require('./local-evidence-file.cjs');
@@ -22,6 +22,7 @@ const fail=code=>{throw Error(code);};
 const hash=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
 function git(dir,hooks,...args){
+  assertDisabledHooks(hooks);
   const p=spawnSync('git',['-c','core.hooksPath='+hooks,
     '-c','core.fsmonitor=false','-c','diff.external=',
     '-C',dir,...args],
@@ -69,6 +70,7 @@ function inspectCommittedCandidate(local,dir){
   if(status.length)fail('SUBMIT_UNCOMMITTED_OR_UNTRACKED_CHANGES');
   if(head===local.baseline_sha)
     fail('SUBMIT_NO_COMMITTED_CHANGE_OR_INVALID_SHA');
+  assertDisabledHooks(hooks);
   const ancestor=spawnSync('git',['-c','core.hooksPath='+hooks,
     '-c','core.fsmonitor=false','-C',local.worktree,
     'merge-base','--is-ancestor',local.baseline_sha,head],
@@ -99,6 +101,7 @@ function inspectCommittedCandidate(local,dir){
   // Claim-time attribute checks only covered paths already tracked at the
   // baseline. New scoped files may match dormant wildcard filters from a
   // previously committed .gitattributes, so inspect the candidate's own tree.
+  assertDisabledHooks(hooks);
   const attr=spawnSync('git',['-c','core.hooksPath='+hooks,
     '-c','core.fsmonitor=false','-C',local.worktree,
     'check-attr','--source='+head,'--all','-z','--stdin'],

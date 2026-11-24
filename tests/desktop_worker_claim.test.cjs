@@ -895,3 +895,31 @@ test('broad Central scope cannot submit nested secret or build-execution files',
       }finally{f.close();}
     }
   });
+
+test('nonempty disabled hooks directory holds worker claim before branch creation or Central mutation', {skip:!available},async()=>{
+  const f=fixture(),r=remote(f);
+  try{
+    const hooks=path.join(f.worker,'disabled-git-hooks');fs.mkdirSync(hooks);
+    const hook=path.join(hooks,'post-checkout');
+    // A benign sentinel is sufficient; the test must not execute a hook.
+    const bytes='# fixture: this file must never be used as a Git hook\\n';
+    fs.writeFileSync(hook,bytes,{mode:0o700});
+    await assert.rejects(claimApprovedTask(args(f,r.fetcher)),/WORKER_DISABLED_GIT_HOOKS_NOT_EMPTY/);
+    assert.equal(r.claims(),0);
+    assert.equal(run(f.repo,'branch','--list','ai/ticket_abc'),'');
+    assert.equal(fs.existsSync(path.join(f.worker,'claim_ticket_abc.json')),false);
+    assert.equal(fs.readFileSync(hook,'utf8'),bytes);
+  }finally{f.close();}
+});
+test('nonempty disabled hooks directory holds resume without changing prior lease receipt', {skip:!available},async()=>{
+  const f=fixture(),r=remote(f);
+  try{
+    await claimApprovedTask(args(f,r.fetcher));
+    const receipt=path.join(f.worker,'receipt_ticket_abc.json');
+    const before=fs.readFileSync(receipt);
+    fs.writeFileSync(path.join(f.worker,'disabled-git-hooks','post-checkout'),'sentinel');
+    await assert.rejects(resumeApprovedTask(args(f,r.fetcher)),/WORKER_DISABLED_GIT_HOOKS_NOT_EMPTY/);
+    assert.deepEqual(fs.readFileSync(receipt),before);
+    assert.equal(r.claims(),1);
+  }finally{f.close();}
+});

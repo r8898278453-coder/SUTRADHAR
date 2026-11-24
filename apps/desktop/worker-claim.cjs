@@ -80,8 +80,15 @@ function validateTask(t,agentId,ticketId){
     fail('WORKER_TASK_NOT_CLAIMABLE_OR_INVALID');
   return t;
 }
+// An existing nonempty hooksPath is not a disabled hooks directory.
+// Refuse it without deleting evidence or running any contained hook.
+function assertDisabledHooks(dir){
+  assertDirectory(dir);
+  if(fs.readdirSync(dir).length!==0)fail('WORKER_DISABLED_GIT_HOOKS_NOT_EMPTY');
+}
 function git(root,hooks,...args){
-  const p=spawnSync('git',['-c','core.hooksPath='+hooks,'-C',root,...args],
+  assertDisabledHooks(hooks);
+  const p=spawnSync('git',['-c','core.hooksPath='+hooks,'-c','core.fsmonitor=false','-C',root,...args],
     {encoding:'utf8',timeout:20000,maxBuffer:1024*1024,windowsHide:true});
   if(p.error||p.status!==0)fail('WORKER_TRUSTED_GIT_PREFLIGHT_FAILED');
   return p.stdout.trim();
@@ -95,7 +102,7 @@ function localWorktree({repoDir,t,workerDir}){
     fs.mkdirSync(workRoot,{recursive:true,mode:0o700});
   if(!evidenceEntryPresent(hookRoot))
     fs.mkdirSync(hookRoot,{recursive:true,mode:0o700});
-  assertDirectory(workRoot);assertDirectory(hookRoot);
+  assertDirectory(workRoot);assertDisabledHooks(hookRoot);
   if(!sameRealDirectory(git(repo,hookRoot,'rev-parse','--show-toplevel'),repo))
     fail('WORKER_REPOSITORY_ROOT_MISMATCH');
   let remote=git(repo,hookRoot,'remote','get-url','origin');
@@ -110,14 +117,16 @@ function localWorktree({repoDir,t,workerDir}){
   // Instead inspect effective attributes for *every tracked file* at the
   // exact immutable approved baseline, including nested .gitattributes and
   // local/global attributes. Git check-attr does not run smudge programs.
-  const tree=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-C',repo,
+  assertDisabledHooks(hookRoot);
+  const tree=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-c','core.fsmonitor=false','-C',repo,
     'ls-tree','-r','--name-only','-z',t.baseline_sha],
     {encoding:null,timeout:15000,maxBuffer:2*1024*1024,windowsHide:true});
   if(tree.error||tree.status!==0||!Buffer.isBuffer(tree.stdout)||
      tree.stdout.length===0||tree.stdout.length>2*1024*1024)
     fail('WORKER_GIT_FILE_INVENTORY_UNTRUSTED');
   const paths=tree.stdout;
-  const attr=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-C',repo,
+  assertDisabledHooks(hookRoot);
+  const attr=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-c','core.fsmonitor=false','-C',repo,
     'check-attr','--source='+t.baseline_sha,'--all','-z','--stdin'],
     {input:paths,encoding:null,timeout:20000,maxBuffer:4*1024*1024,windowsHide:true});
   if(attr.error||attr.status!==0||!Buffer.isBuffer(attr.stdout)||
@@ -142,12 +151,14 @@ function localWorktree({repoDir,t,workerDir}){
       fail('WORKER_EXISTING_WORKTREE_MISMATCH');
   }else{
     // No remote interaction. If the branch exists elsewhere, never overwrite.
-    const branch=spawnSync('git',['-c','core.hooksPath='+hookRoot,
+    assertDisabledHooks(hookRoot);
+    const branch=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-c','core.fsmonitor=false',
       '-C',repo,'show-ref','--verify','--quiet','refs/heads/'+t.branch_name],
       {timeout:10000,windowsHide:true});
     if(branch.error||![0,1].includes(branch.status)||branch.status===0)
       fail('WORKER_BRANCH_ALREADY_EXISTS_OR_UNCERTAIN');
-    const added=spawnSync('git',['-c','core.hooksPath='+hookRoot,
+    assertDisabledHooks(hookRoot);
+    const added=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-c','core.fsmonitor=false',
       '-C',repo,'worktree','add','-b',t.branch_name,target,t.baseline_sha],
       {encoding:'utf8',timeout:30000,maxBuffer:128*1024,windowsHide:true});
     if(added.error||added.status!==0)
@@ -318,4 +329,4 @@ async function resumeApprovedTask({origin,agentId,ticketId,dir,signer,fetcher=fe
     epoch:local.epoch,status:proof.status,resume_allowed:true,
     automatic_execution_allowed:false,git_push_allowed:false};
 }
-module.exports={claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume};
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume};
