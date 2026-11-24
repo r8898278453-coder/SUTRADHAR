@@ -187,3 +187,20 @@ Starting exact HEAD `d1daa265` independently passed [application CI](https://git
 - `537f10c`: integrated regression suite into `npm run test:v7`; added `npm run ops:master-ast-hints`.
 
 **CODED / EXACT-HEAD CI PENDING** until an independently observed successful run on the final source. Developer-only: relies on locked TypeScript dev dependency, not installed Electron runtime; existing Desktop lexical hints are unchanged. This is syntactic evidence, not type-checker resolution, scope binding, contract inference or semantic independence. V7-GAP-05/07/08 remain PARTIAL/OPEN; autonomous task decomposition, integrated Desktop AST, upstream proof, combined QA remain open. No production gate promoted. See [AST operator instructions](docs/MASTER_AST_HINTS_V7.md). G0–G7 HOLD.
+
+
+## 25 November 2026 — bulk advisory backlog review and exact group extraction
+
+Previous exact HEAD `574f2f4` independently verified [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45498263195) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45498263106) SUCCESS, including developer AST inspection. New bulk review changes are CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Status |
+|---|---|---|
+| Global declared DAG, 2–100 tasks, shared baseline, deterministic review groups, cross-group dependencies and full conflict pairs | f446be1, 5a3be59 | CODED / CI PENDING |
+| Strict bounded offline JSON command and CI integration | e65c5d0, 5af6c05 | CODED / CI PENDING |
+| Exact digest-bound group selection and local export, preserving fields and related conflicts | c2d9394, 0718f05 | CODED / CI PENDING |
+| 86 regression scenarios including 50/100 tasks, 4950 conflicts, stale digest and CLI subprocesses | 13c0a56, 056d5ec | CODED / CI PENDING |
+
+Advisory only: existing Desktop/Central admission cap of 2–10 tasks remains unchanged. Same-wave groups are bounded to 10 and 65536 serialized manifest bytes; protected risk and directly declared external dependencies isolated, unresolved conflicts remain visible, singletons are not multi-task admission batches. No remote freshness, verified worker capacity, semantic independence, source inspection, provider send, automatic task creation, admission or execution. Default report excludes task descriptions and criteria; explicit group extraction emits sensitive exact declared content and requires separate secret review. Digest detects changed declarations, not a signed authorization. Fresh Central preview and separate upstream baseline review remain mandatory. Test cases are not completed feature tasks; the 50–100 development-task completion target is not achieved in this slice.
+
+V7-GAP-05/07/08 remain PARTIAL/OPEN: actual automatic decomposition, Desktop AST integration, semantic/contract inference, upstream proof and combined QA; V7-GAP-06/09/11 remain open for provider permissions, recovery, retention and measured token/quota accounting. Hostinger staging, signing, branch protection and physical PC acceptance remain independent release gates. G0–G7 HOLD.
+Operator guide: [Bulk Master backlog review](docs/MASTER_BULK_REVIEW_V7.md).
