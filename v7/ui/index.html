@@ -78,6 +78,19 @@
 <div class="flex"><button id="provider-registry-save" type="button" disabled>Save exact reviewed registry</button></div>
 <small>Never enter credentials, emails, URLs, cookies or provider tokens. If a response is uncertain, reload current Central state before another edit; an accepted command is not necessarily the current revision. No automatic retry.</small>
 </section>
+<section class="panel owner" aria-labelledby="provider-recovery-title">
+<div class="panelhead"><h2 id="provider-recovery-title">Interrupted provider attempt — Owner review</h2><strong>HOLD · no automatic retry</strong></div>
+<p>Inspect the recorded attempt for an exact ticket. Only an unresolved attempt on a revoked original lease and a ticket already in RECONCILIATION_REQUIRED may be closed here. Closure is not provider logout, task requeue, lease renewal or proof of external effects.</p>
+<label for="provider-recovery-ticket">Exact ticket ID</label><input id="provider-recovery-ticket" maxlength="100" autocomplete="off" spellcheck="false" placeholder="ticket_example">
+<button id="provider-recovery-load" class="outline" type="button">Inspect current attempt</button>
+<pre id="provider-recovery-status" role="status" aria-live="polite">Not inspected. Preserve the original session and worktree evidence.</pre>
+<label for="provider-recovery-attempt">Retype the exact displayed attempt ID</label><input id="provider-recovery-attempt" maxlength="40" autocomplete="off" spellcheck="false" disabled>
+<label class="inline" for="provider-recovery-session"><input id="provider-recovery-session" type="checkbox" disabled> Independently reviewed the actual external provider session and uncertain effects.</label>
+<label class="inline" for="provider-recovery-worktree"><input id="provider-recovery-worktree" type="checkbox" disabled> Independently reviewed the original local worktree and checkpoint evidence.</label>
+<label class="inline" for="provider-recovery-no-retry"><input id="provider-recovery-no-retry" type="checkbox" disabled> I understand this records closure only; no automatic retry or reassignment.</label>
+<button id="provider-recovery-close" type="button" disabled>Record exact Owner review and close attempt ONLY</button>
+<small>On uncertain response, inspect current state again. Do not repeat an external operation. Separate normal task reconciliation and Git/QA gates remain mandatory.</small>
+</section>
 <section class="panel owner"><h2>Owner operations</h2><p>Every mutation has an idempotent server receipt. Protected Git merges and deployments cannot be triggered here.</p>
 <div class="flex"><button data-command="PAUSE" class="danger">Pause cluster</button>
 <button data-command="RESUME" class="outline">Resume cluster</button><button id="refresh" class="outline">Refresh</button></div>
