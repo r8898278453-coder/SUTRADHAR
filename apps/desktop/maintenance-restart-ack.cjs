@@ -9,29 +9,42 @@ const {readStableLocalFile}=require('./os-vault.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const NODE=/^node_[0-9a-f]{32}$/;
 function fail(code){throw Error(code);}
+function validId(v){return typeof v==='string'&&ID.test(v);}
+function validAgentIds(v){return Array.isArray(v)&&v.length>=1&&v.length<=4&&
+  v.every(validId)&&new Set(v).size===v.length;}
+function utcMs(v){
+  // Central and the local status writer emit canonical ISO UTC timestamps.
+  if(typeof v!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v))return NaN;
+  const n=Date.parse(v);
+  return Number.isFinite(n)&&new Date(n).toISOString()===v?n:NaN;
+}
 function inspectFreshAck(raw,{nodeId,agentIds,epoch,startedAtMs,now=Date.now()}){
-  if(!raw||typeof raw!=='object'||Array.isArray(raw)||
+  if(typeof nodeId!=='string'||!NODE.test(nodeId)||!validAgentIds(agentIds)||
+     !Number.isSafeInteger(epoch)||epoch<1||!Number.isSafeInteger(startedAtMs)||
+     startedAtMs<0||!Number.isSafeInteger(now)||now<startedAtMs||
+     !raw||typeof raw!=='object'||Array.isArray(raw)||
      raw.node_id!==nodeId||raw.connection!=='ACKNOWLEDGED'||
      raw.epoch!==epoch||raw.phase!=='READY'||
-     !ID.test(raw.master_agent_id||'')||
+     !validId(raw.master_agent_id)||
      !Array.isArray(raw.backups)||raw.backups.length!==2||
-     raw.backups.some(x=>!ID.test(x))||
+     raw.backups.some(x=>!validId(x))||
      new Set([raw.master_agent_id,...raw.backups]).size!==3||
-     !Array.isArray(raw.agent_ids)||raw.agent_ids.length!==agentIds.length||
-     new Set(raw.agent_ids).size!==agentIds.length||
+     !validAgentIds(raw.agent_ids)||raw.agent_ids.length!==agentIds.length||
      raw.agent_ids.some(x=>!agentIds.includes(x))||
      agentIds.some(x=>[raw.master_agent_id,...raw.backups].includes(x)))
     return false;
-  const observed=Date.parse(raw.observed_at||'');
-  const accepted=Date.parse(raw.last_accepted_at||'');
+  const observed=utcMs(raw.observed_at);
+  const accepted=utcMs(raw.last_accepted_at);
   return Number.isFinite(observed)&&Number.isFinite(accepted)&&
     observed>=startedAtMs&&accepted>=startedAtMs-10000&&
-    observed<=now+60000&&accepted<=now+60000;
+    // Preserve the existing ten-second clock tolerance for the server, but
+    // reject impossible ordering and locally future-dated observations.
+    observed<=now&&accepted<=observed+10000;
 }
 async function waitForFreshAck({dir,nodeId,agentIds,epoch,startedAtMs,
   isChildActive,timeoutMs=75000,pollMs=1000,readStatus}={}){
   if(typeof dir!=='string'||!path.isAbsolute(dir)||!NODE.test(nodeId||'')||
-     !Array.isArray(agentIds)||agentIds.some(x=>!ID.test(x))||
+     !validAgentIds(agentIds)||
      !Number.isSafeInteger(epoch)||epoch<1||
      !Number.isSafeInteger(startedAtMs)||startedAtMs<0||
      typeof isChildActive!=='function'||!Number.isSafeInteger(timeoutMs)||
@@ -59,18 +72,23 @@ async function waitForFreshAck({dir,nodeId,agentIds,epoch,startedAtMs,
     try{data=get();}catch{
       return {confirmed:false,reason:'STATUS_CORRUPT_OWNER_REVIEW'};
     }
-    if(inspectFreshAck(data,{nodeId,agentIds,epoch,startedAtMs}))
+    if(inspectFreshAck(data,{nodeId,agentIds,epoch,startedAtMs})){
+      if(!isChildActive())return {confirmed:false,reason:'CHILD_EXITED_OWNER_REVIEW'};
       return {confirmed:true,node_id:nodeId,epoch,
         last_accepted_at:data.last_accepted_at,
         observed_at:data.observed_at,installer_execution_allowed:false};
+    }
     await new Promise(resolve=>setTimeout(resolve,Math.min(pollMs,
       Math.max(1,deadline-Date.now()))));
   }
   return {confirmed:false,reason:'ACK_TIMEOUT_OWNER_REVIEW'};
 }
 function recordFreshAck({dir,nodeId,grantId,ack}={}){
-  if(!NODE.test(nodeId||'')||!/^[0-9a-f]{64}$/.test(grantId||'')||
-     !ack?.confirmed||ack.node_id!==nodeId)
+  if(typeof dir!=='string'||!path.isAbsolute(dir)||typeof nodeId!=='string'||!NODE.test(nodeId)||
+     typeof grantId!=='string'||!/^[0-9a-f]{64}$/.test(grantId)||
+     ack?.confirmed!==true||ack.node_id!==nodeId||!Number.isSafeInteger(ack.epoch)||ack.epoch<1||
+     !Number.isFinite(utcMs(ack.last_accepted_at))||!Number.isFinite(utcMs(ack.observed_at))||
+     utcMs(ack.observed_at)>Date.now()||utcMs(ack.last_accepted_at)>utcMs(ack.observed_at)+10000)
     fail('MAINTENANCE_RESTART_ACK_RECORD_INVALID');
   const file=path.join(dir,'maintenance-restart-ack.json');
   const record={schema:1,state:'HEARTBEAT_ACK_OBSERVED',
