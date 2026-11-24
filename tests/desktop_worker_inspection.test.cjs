@@ -168,7 +168,10 @@ test('compact context preview uses existing bounded inspection IPC, never automa
   const root=path.resolve(__dirname,'../apps/desktop');
   const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8'),preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
   const html=fs.readFileSync(path.join(root,'setup.html'),'utf8'),js=fs.readFileSync(path.join(root,'setup.js'),'utf8');
-  assert.match(main,/mode==='context'\?compactWorkerContext/);
+  assert.match(main,/if\(mode!=='context'\)return result;/);
+  assert.match(main,/const preview=compactWorkerContext\(result\.task,agentId\)/);
+  assert.match(main,/workerContextReview=\{origin,agentId,ticketId,digest:preview\.context_sha256/);
+  assert.match(main,/workerContextReview!==review/);
   assert.match(preload,/previewWorkerContext:\(agentId,ticketId\)=>ipcRenderer.invoke\('sutradhar:inspectWorkerTasks',agentId,ticketId,'context'\)/);
   assert.match(html,/id="workerContext"/);
   assert.match(js,/Nothing sent to provider/);
