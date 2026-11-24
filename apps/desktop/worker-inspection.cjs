@@ -41,8 +41,10 @@ function detailItem(x,expectedId){
     typeof x.repository!=='string'||typeof x.baseline_sha!=='string'||typeof x.branch_name!=='string'||
     (x.worker_agent_id!=null&&!validId(x.worker_agent_id))||
     !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(x.repository||'')||
+    x.repository.split('/').some(part=>part==='.'||part==='..')||
     !SHA.test(x.baseline_sha||'')||
     !/^ai\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(x.branch_name||'')||
+    x.branch_name.includes('..')||x.branch_name.endsWith('.')||x.branch_name.endsWith('.lock')||
     !['LOW','MEDIUM','HIGH','CORE'].includes(x.risk)||
     !validVersion(x.version))
     return fail('WORKER_INSPECTION_RESPONSE_INVALID');
@@ -148,7 +150,9 @@ function compactWorkerContext(task,agentId){
     checkpoint:checkpoint?{generation:checkpoint.generation,summary:checkpoint.summary,
       next_action:checkpoint.next_action,content_sha256:checkpoint.content_sha256}:null
   };
-  const preview=JSON.stringify(context,null,2);
+  // Compact serialization eliminates formatting bytes without changing any
+  // task field or dropping acceptance criteria. A digest binds exact bytes.
+  const preview=JSON.stringify(context);
   const bytes=Buffer.byteLength(preview,'utf8');
   if(bytes>CONTEXT_MAX_BYTES)fail('WORKER_CONTEXT_BUDGET_EXCEEDED_OWNER_REVIEW');
   return {kind:'PROVIDER_ASSISTED_HANDOFF_PREVIEW',preview,utf8_bytes:bytes,
