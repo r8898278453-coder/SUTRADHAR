@@ -66,7 +66,26 @@ export function evaluateGithubReviewPolicy(x:GithubReviewPolicyInput):GithubRevi
         return dateDiff || (Number(a.id||0)-Number(b.id||0));
       });
     const latest=new Map<string,any>();
-    for(const review of chronological)latest.set(review.user.login.toLowerCase(),review);
+    // A comment is not an approval, dismissal or withdrawal of an active
+    // change request. Preserve the last decisive review for each login.
+    let ambiguous=false;
+    for(const review of chronological){
+      if(review.state==='COMMENTED'||review.state==='PENDING')continue;
+      const user=review.user.login.toLowerCase();
+      const prior=latest.get(user);
+      if(prior&&Date.parse(prior.submitted_at)===Date.parse(review.submitted_at)&&
+         (!Number.isSafeInteger(prior.id)||prior.id<1||
+          !Number.isSafeInteger(review.id)||review.id<1||prior.id===review.id)){
+        ambiguous=true;break;
+      }
+      latest.set(user,review);
+    }
+    if(ambiguous){
+      blockers.push('GITHUB_APPROVAL_NOT_VERIFIED');
+      return {checks_passed:checksPassed,independent_reviews_passed:false,
+        independent_approvals:0,required_approvals:x.requiredApprovals,
+        required_checks:[...checkNames],blocks:blockers};
+    }
     for(const [user,review] of latest){
       if(user===x.prAuthor.toLowerCase())continue;
       if(review.state==='CHANGES_REQUESTED')changesRequested=true;

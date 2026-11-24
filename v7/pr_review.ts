@@ -80,7 +80,8 @@ export async function inspectGithubPrReview(input:PrReviewInput){
       return blocked('GITHUB_PR_HEAD_TREE_NOT_TESTED');
     const allowed=new Set(input.changedFiles);
     const exactFiles=(entries:any[])=>entries.length===allowed.size&&
-      entries.length<100&&entries.every((f:any)=>SAFE_PATH(f?.filename)&&
+      entries.length<100&&new Set(entries.map((f:any)=>f?.filename)).size===entries.length&&
+      entries.every((f:any)=>SAFE_PATH(f?.filename)&&
         safeScope(f.filename)&&
         allowed.has(f.filename)&&
         ['added','modified'].includes(f.status)&&!f.previous_filename);

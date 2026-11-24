@@ -1134,3 +1134,8 @@ Desktop claim/resume/submit now reject a populated disabled hooks directory befo
 ### 24 November — Central public HTTP asset isolation
 
 Replaced the production-wide Express static-directory exposure and wildcard HTML fallback with a fixed dashboard/manifest HTTP allowlist. Local HTTP regression tests verify intended assets and health routing, missing-script failures, no-store, denied internal bundles/schema/identity paths, and symlink refusal. Hostinger external static hosting configuration must still be checked separately in staging (G1 HOLD).
+
+
+### 24 November — independent review decision integrity
+
+Shared pre/post-merge review policy preserves the last decisive review instead of allowing ordinary comments to clear change requests. Ambiguous equal-time decisive votes without valid distinct IDs fail closed. PR readiness rejects duplicate filenames in either remote comparison or PR file list, preventing repeated entries from concealing missing expected paths. Regression tests exercise both protections. No merge is performed or authorized by these checks.

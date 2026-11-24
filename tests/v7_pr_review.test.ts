@@ -176,3 +176,35 @@ test('read-only Owner PR cannot show manual merge readiness for nested secret pa
   assert.equal(result.ready_for_manual_merge,false);
   assert.equal(x.calls.length,0,'Reject unsafe planned scope before reading GitHub');
 });
+
+test('ordinary comments cannot clear a change request or remove a valid decisive approval',()=>{
+  const context={checks:{total_count:1,check_runs:[{name:'CI / tests',head_sha:HEAD,app:{slug:'github-actions'},status:'completed',conclusion:'success'}]},
+    headSha:HEAD,prAuthor:'author',requiredChecks:['CI / tests'],requiredApprovals:1,checkAppSlug:'github-actions',cutoff:'2026-11-20T13:00:00Z'};
+  const vote=(id:number,login:string,state:string,submitted_at:string)=>({id,user:{login,type:'User'},state,commit_id:HEAD,submitted_at});
+  const approval=vote(1,'approver','APPROVED','2026-11-18T10:00:00Z');
+  const objection=vote(2,'reviewer','CHANGES_REQUESTED','2026-11-18T11:00:00Z');
+  const comment=vote(3,'Reviewer','COMMENTED','2026-11-19T12:00:00Z');
+  const result=evaluateGithubReviewPolicy({...context,reviews:[approval,objection,comment]});
+  assert.equal(result.independent_reviews_passed,false);
+  assert.ok(result.blocks.includes('GITHUB_REVIEW_CHANGES_REQUESTED'));
+  assert.equal(evaluateGithubReviewPolicy({...context,reviews:[approval,{...comment,user:{login:'Approver',type:'User'}}]}).independent_reviews_passed,true);
+  assert.equal(evaluateGithubReviewPolicy({...context,reviews:[approval,objection,{...comment,state:'APPROVED'}]}).independent_reviews_passed,true);
+  assert.equal(evaluateGithubReviewPolicy({...context,reviews:[approval,{...approval,id:undefined,state:'DISMISSED'}]}).independent_reviews_passed,false);
+});
+test('duplicate PR or comparison paths cannot conceal a missing authorized file',async()=>{
+  for(const target of ['files','compare']){
+    const x=scenario(),original=x.input.fetcher;
+    const result=await inspectGithubPrReview({...x.input,changedFiles:['src/feature.ts','src/other.ts'],fetcher:async(url,init)=>{
+      const response=await original(url,init),pathname=new URL(url).pathname;
+      if(pathname.endsWith('/pulls/41'))return new Response(JSON.stringify({...await response.json(),changed_files:2}));
+      if(pathname.endsWith('/pulls/41/files')||pathname.includes('/compare/')){
+        const files=[{filename:'src/feature.ts',status:'modified'},{filename:pathname.includes(target)?'src/feature.ts':'src/other.ts',status:'modified'}];
+        if(pathname.includes('/compare/'))return new Response(JSON.stringify({...await response.json(),files}));
+        return new Response(JSON.stringify(files));
+      }
+      return response;
+    }});
+    assert.equal(result.ready_for_manual_merge,false);
+    assert.ok(result.blocks.includes('GITHUB_PR_FILES_CHANGED'),JSON.stringify(result));
+  }
+});
