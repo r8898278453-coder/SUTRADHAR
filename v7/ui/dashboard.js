@@ -743,6 +743,7 @@ $('connect').onclick=async()=>{
   $('dashboard').hidden=true;
   clearPrCreation();clearPrRecovery();clearGitRecoveryReview();
   clearWorkerExpiryIntent();clearQaOwnerAttempt();
+  resetProviderRegistry('Owner session changed. Load current registry.');
   key=$('key').value;$('key').value='';
   try{
     await refresh();
@@ -764,6 +765,7 @@ $('disconnect').onclick=()=>{
   ownerSessionVersion++;ownerRefreshVersion++;
   key='';clearPrCreation();clearPrRecovery();clearGitRecoveryReview();
   clearWorkerExpiryIntent();clearQaOwnerAttempt();
+  resetProviderRegistry('Owner session changed. Load current registry.');
   gitRecoverySnapshot=null;
   $('node-recovery-local-json').value='';$('node-recovery-pin').value='';
   invalidateOwnerRecoveryDisplay(
@@ -1077,4 +1079,156 @@ $('git-recovery-verify').onclick=async()=>{
     message('Git recovery not confirmed: '+e.message,true);
     updateGitRecoveryAction();
   }
+};
+
+
+// Explicit, tab-local full-replacement editor. No automatic read or write
+// from the periodic dashboard refresh; no persistence of credentials/drafts.
+let registrySnapshot=null,registryDraft=[],registryBusy=false,registryRevision=0;
+const registryInputs=['provider-project','provider-agent','provider-kind','provider-account','provider-workspace'];
+function registryStatus(message){value('provider-registry-status',message);}
+function canonicalRegistryBindings(bindings){
+  if(!Array.isArray(bindings)||bindings.length>100)throw Error('INVALID_REGISTRY_BINDINGS');
+  const id=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
+  const account=/^account_[A-Za-z0-9_-]{3,64}$/;
+  const workspace=/^workspace_[A-Za-z0-9_-]{3,96}$/;
+  const unique=new Set(),workspaces=new Map(),accounts=new Map();
+  const valid=(x,re)=>typeof x==='string'&&!/[\r\n]/.test(x)&&re.test(x);
+  const canonical=bindings.map(b=>{
+    if(!b||typeof b!=='object'||Array.isArray(b)||
+       Object.keys(b).sort().join('|')!=='account_ref|agent_id|project_id|provider|workspace_ref'||
+       !valid(b.project_id,id)||!valid(b.agent_id,id)||
+       !['CHATGPT_WEB','GOOGLE_AI_STUDIO'].includes(b.provider)||
+       !valid(b.account_ref,account)||!valid(b.workspace_ref,workspace))
+      throw Error('INVALID_REGISTRY_BINDING');
+    const assignment=[b.project_id,b.agent_id,b.provider].join('|').toLowerCase();
+    const w=[b.provider,b.account_ref,b.workspace_ref].join('|').toLowerCase();
+    const a=[b.project_id,b.provider,b.account_ref].join('|').toLowerCase();
+    if(unique.has(assignment)||(workspaces.has(w)&&workspaces.get(w)!==b.project_id)||
+       (accounts.has(a)&&accounts.get(a)!==b.workspace_ref))throw Error('CONFLICTING_REGISTRY_BINDING');
+    unique.add(assignment);workspaces.set(w,b.project_id);accounts.set(a,b.workspace_ref);
+    return {project_id:b.project_id,agent_id:b.agent_id,provider:b.provider,
+      account_ref:b.account_ref,workspace_ref:b.workspace_ref};
+  }).sort((a,b)=>{
+    const x=[a.project_id,a.agent_id,a.provider].join('|'),y=[b.project_id,b.agent_id,b.provider].join('|');
+    return x<y?-1:x>y?1:0;
+  });
+  // All accepted fields are ASCII, so JSON length is its UTF-8 byte count.
+  if(JSON.stringify(canonical).length>16384)throw Error('REGISTRY_BYTE_LIMIT');
+  return canonical;
+}
+function validatedRegistryRead(data){
+  if(!data||typeof data!=='object'||Array.isArray(data)||
+     !Number.isSafeInteger(data.version)||data.version<0||
+     data.provider_mapping_verified!==false||data.automatic_execution_allowed!==false)
+    throw Error('UNTRUSTED_REGISTRY_RESPONSE');
+  const bindings=canonicalRegistryBindings(data.bindings);
+  if(data.version===0){
+    if(data.source!=='LEGACY_ENV_CONFIGURATION'||data.legacy_fallback_active!==true||
+       data.registry_sha256!==null||bindings.length)throw Error('UNTRUSTED_REGISTRY_RESPONSE');
+  }else if(data.source!=='MYSQL_OWNER_REGISTRY'||data.legacy_fallback_active!==false||
+    typeof data.registry_sha256!=='string'||!/^[a-f0-9]{64}$/.test(data.registry_sha256))
+    throw Error('UNTRUSTED_REGISTRY_RESPONSE');
+  return {version:data.version,bindings,source:data.source,digest:data.registry_sha256};
+}
+function registryControls(){
+  const editable=Boolean(key&&registrySnapshot&&!registryBusy&&!$('dashboard').hidden);
+  $('provider-registry-load').disabled=registryBusy;
+  for(const id of registryInputs)$(id).disabled=!editable;
+  $('provider-registry-add').disabled=!editable;
+  $('provider-registry-consent').disabled=!editable;
+  const changed=registrySnapshot&&(registrySnapshot.version===0||
+    JSON.stringify(registryDraft)!==JSON.stringify(registrySnapshot.bindings));
+  $('provider-registry-save').disabled=!editable||!changed||!$('provider-registry-consent').checked;
+}
+function renderProviderRegistry(){
+  const body=$('provider-registry-rows');body.replaceChildren();
+  value('provider-registry-version',registrySnapshot?
+    'Version '+registrySnapshot.version+' · '+registryDraft.length+' draft bindings':'Not loaded');
+  for(const [i,b] of registryDraft.entries()){
+    const tr=document.createElement('tr');
+    for(const v of [b.project_id,b.agent_id,b.provider,b.account_ref,b.workspace_ref])cell(tr,v);
+    const td=document.createElement('td'),button=document.createElement('button');
+    button.type='button';button.textContent='Remove from draft';button.className='outline';
+    button.disabled=registryBusy||!registrySnapshot;
+    const selectedRevision=registryRevision;
+    button.onclick=()=>{
+      if(registryBusy||!registrySnapshot||registryRevision!==selectedRevision)return;
+      registryDraft=registryDraft.filter((_,index)=>index!==i);
+      registryRevision++;$('provider-registry-consent').checked=false;
+      registryStatus('Local draft changed. Review the entire list before saving.');
+      renderProviderRegistry();
+    };
+    td.append(button);tr.append(td);body.append(tr);
+  }
+  registryControls();
+}
+function resetProviderRegistry(reason){
+  registryRevision++;registryBusy=false;registrySnapshot=null;registryDraft=[];
+  for(const id of registryInputs)$(id).value=id==='provider-kind'?'CHATGPT_WEB':'';
+  $('provider-registry-consent').checked=false;registryStatus(reason);renderProviderRegistry();
+}
+$('provider-registry-load').onclick=async()=>{
+  if(!key||registryBusy||$('dashboard').hidden)return;
+  if(registrySnapshot&&!confirm('Discard the local draft and load the current Central registry?'))return;
+  const session=ownerSessionVersion,originalKey=key,revision=++registryRevision;
+  const current=()=>key===originalKey&&ownerSessionVersion===session&&registryRevision===revision&&!$('dashboard').hidden;
+  registrySnapshot=null;registryDraft=[];registryBusy=true;
+  $('provider-registry-consent').checked=false;renderProviderRegistry();
+  registryStatus('Loading authoritative registry…');
+  try{
+    const data=validatedRegistryRead(await request('/v7/owner/provider-registry',{redirect:'error'}));
+    if(!current())return;
+    registrySnapshot=data;registryDraft=data.bindings.map(b=>({...b}));
+    registryStatus(data.version===0?
+      'Version 0: legacy declarations are NOT listed. Build the entire intended list before initialization.':
+      'Current Central revision loaded. All changes remain local until explicitly saved.');
+  }catch{if(current())registryStatus('Registry unavailable or invalid. No edit or save allowed.');}
+  finally{if(current()){registryBusy=false;renderProviderRegistry();}}
+};
+$('provider-registry-add').onclick=()=>{
+  if(!key||registryBusy||!registrySnapshot||$('dashboard').hidden)return;
+  const b={project_id:$('provider-project').value,agent_id:$('provider-agent').value,
+    provider:$('provider-kind').value,account_ref:$('provider-account').value,
+    workspace_ref:$('provider-workspace').value};
+  try{
+    registryDraft=canonicalRegistryBindings([...registryDraft,b]);
+    registryRevision++;$('provider-registry-consent').checked=false;
+    for(const id of registryInputs)if(id!=='provider-kind')$(id).value='';
+    registryStatus('Added to local draft only. Review entire list before saving.');
+    renderProviderRegistry();
+  }catch{registryStatus('Invalid, duplicate, conflicting or oversized binding. Draft unchanged.');}
+};
+$('provider-registry-consent').addEventListener('change',registryControls);
+$('provider-registry-save').onclick=async()=>{
+  registryControls();if($('provider-registry-save').disabled)return;
+  const expected=registrySnapshot.version,bindings=canonicalRegistryBindings(registryDraft);
+  const warning=expected===0?' This supersedes ALL legacy declarations.':'';
+  if(!confirm('Replace registry version '+expected+' with '+bindings.length+' bindings?'+warning+
+    (bindings.length===0?' This removes all local declarations.':'')+' No provider sessions are changed.'))return;
+  const session=ownerSessionVersion,originalKey=key,revision=++registryRevision;
+  const current=()=>key===originalKey&&ownerSessionVersion===session&&registryRevision===revision&&!$('dashboard').hidden;
+  const request_id='provider_'+crypto.randomUUID().replaceAll('-','');
+  registryBusy=true;$('provider-registry-consent').checked=false;renderProviderRegistry();
+  registryStatus('Saving reviewed replacement once; verifying current revision…');
+  try{
+    const receipt=await request('/v7/owner/command',{method:'POST',redirect:'error',
+      body:JSON.stringify({request_id,command:'REPLACE_PROVIDER_REGISTRY',payload:{expected_version:expected,bindings}})});
+    if(!current())return;
+    const state=receipt?.state;
+    if(receipt?.accepted!==true||receipt.receipt_id!==request_id||state?.registry_version!==expected+1||
+       state.binding_count!==bindings.length||state.provider_mapping_verified!==false||
+       state.automatic_execution_allowed!==false||typeof state.registry_sha256!=='string'||
+       !/^[a-f0-9]{64}$/.test(state.registry_sha256))throw Error('REGISTRY_RECEIPT_MISMATCH');
+    const readback=validatedRegistryRead(await request('/v7/owner/provider-registry',{redirect:'error'}));
+    if(!current())return;
+    if(readback.version!==state.registry_version||readback.digest!==state.registry_sha256||
+       JSON.stringify(readback.bindings)!==JSON.stringify(bindings))throw Error('REGISTRY_CHANGED_AFTER_SAVE');
+    registrySnapshot=readback;registryDraft=readback.bindings.map(b=>({...b}));
+    registryStatus('Saved and read back exact version '+readback.version+'. Local declarations only; no provider permission verified.');
+  }catch{
+    if(!current())return;
+    registrySnapshot=null;registryDraft=[];
+    registryStatus('Save not verified. It may have committed or been rejected. Reload current registry before any new change. No automatic retry.');
+  }finally{if(current()){registryBusy=false;renderProviderRegistry();}}
 };
