@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chooseLeader,chooseBackups,firstElectionOpen,scopesOverlap,safeScope,LEASE_SECONDS,HEARTBEAT_SECONDS,validTaskBranch,isProtectedScope} from '../v7/rules.ts';
+import {chooseLeader,chooseBackups,firstElectionOpen,scopesOverlap,safeScope,LEASE_SECONDS,HEARTBEAT_SECONDS,validTaskBranch,isProtectedScope,parseContractKeys,contractReservationConflicts} from '../v7/rules.ts';
 import {parseProviderMappings,declaredProviderMappings} from '../v7/provider_mappings.ts';
 const day=Date.parse('2026-11-11T00:00:00Z');
 const ts=(hour:number,minute=0)=>day+hour*3600000+minute*60000;
@@ -211,4 +211,22 @@ test('provider registry is scoped to exact project and agent and never attests p
     [{...binding,provider:'UNKNOWN'}]
   ])assert.throws(()=>parseProviderMappings(JSON.stringify(invalid)),/PROVIDER_MAPPING_(CONFIG_INVALID|CONFLICT)/);
   assert.throws(()=>parseProviderMappings(' '.repeat(16385)),/CONFIG_INVALID/);
+});
+
+test('declared shared contract keys are canonical, bounded and hierarchically exclusive',()=>{
+  assert.deepEqual(parseContractKeys(['event:orders.created','api:orders']),['api:orders','event:orders.created']);
+  assert.deepEqual(parseContractKeys([]),[]);
+  assert.equal(parseContractKeys(undefined),null);
+  for(const value of [null,'api:orders',['api:Orders'],['api:orders..create'],
+    ['api:orders','api:orders.create'],['db:orders','db:orders'],['git:orders'],
+    ['api:orders/create'],['api:orders '],Array.from({length:13},(_,i)=>'db:table'+i)])
+    assert.throws(()=>parseContractKeys(value),/INVALID_TASK_CONTRACT_KEYS/);
+  assert.equal(contractReservationConflicts(['api:orders'],['api:orders.create']),true);
+  assert.equal(contractReservationConflicts(['api:orders.create'],['api:orders']),true);
+  assert.equal(contractReservationConflicts(['api:orders'],['api:orders2']),false);
+  assert.equal(contractReservationConflicts(['api:orders'],['db:orders']),false);
+  assert.equal(contractReservationConflicts(null,['api:orders']),true);
+  assert.equal(contractReservationConflicts(['api:orders'],null),true);
+  assert.equal(contractReservationConflicts([],['api:orders']),false);
+  assert.equal(contractReservationConflicts(null,null),false);
 });
