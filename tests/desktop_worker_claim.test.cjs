@@ -930,7 +930,7 @@ test('provider-attempt signer only permits exact metadata and never generic hear
   try{
     const body={request_id:'provider_abc123',agent_id:'agent_aaa',ticket_id:'ticket_abc',
       lease_id:'11111111-1111-4111-8111-111111111111',expected_master_epoch:7,action:'BEGIN',
-      provider:'CHATGPT_WEB',registry_version:1,binding_sha256:'b'.repeat(64),
+      provider:'CHATGPT_WEB',registry_version:1,expected_task_version:3,binding_sha256:'b'.repeat(64),
       checkpoint_generation:1,checkpoint_sha256:'c'.repeat(64),context_sha256:'d'.repeat(64)};
     const sign=payload=>f.signer.signWorkerAction({operation:'provider-attempt',agent_id:'agent_aaa',payload});
     const signed=sign(body);
@@ -940,7 +940,7 @@ test('provider-attempt signer only permits exact metadata and never generic hear
       {...body,context_sha256:'bad'},{...body,provider:'UNKNOWN'},{...body,agent_id:'agent_foreign'}])
       assert.throws(()=>sign(forged),/DENIED/);
     assert.throws(()=>f.signer.sign({kind:'node_api',method:'POST',uri:signed.uri,body:signed.body}),/DENIED/);
-    const {provider,registry_version,binding_sha256,checkpoint_generation,checkpoint_sha256,context_sha256,...common}=body;
+    const {provider,registry_version,expected_task_version,binding_sha256,checkpoint_generation,checkpoint_sha256,context_sha256,...common}=body;
     const close={...common,action:'CLOSE',attempt_id:'attempt_'+'a'.repeat(32),
       external_session_reviewed:true,worktree_reviewed:true};
     assert.equal(sign(close).uri,signed.uri);
@@ -988,6 +988,7 @@ test('signed Desktop manual provider lifecycle recomputes reviewed context and v
       else if(uri==='/v7/tasks/detail/'+ticket_id)value={...task,provider_attempt:metadata()};
       else if(uri==='/v7/tasks/provider-attempt'){
         posts++;const b=JSON.parse(raw);
+        if(b.action==='BEGIN')assert.equal(b.expected_task_version,task.version);
         if(b.action==='BEGIN')ledger={attempt_id:'attempt_'+'a'.repeat(32),ticket_id,agent_id,lease_id,
           epoch:7,registry_version:b.registry_version,provider:b.provider,binding_sha256:b.binding_sha256,
           checkpoint_generation:b.checkpoint_generation,checkpoint_sha256:b.checkpoint_sha256,
