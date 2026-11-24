@@ -1325,3 +1325,20 @@ Decision: extend existing packaged modules, rather than add another deployment a
 
 
 Additional safeguards `5432a9a`, `2651e1e`, `7768fb2`: main retains only the reviewed preview's in-memory task/origin/digest/registry-version/binding-digest metadata; a changed registry revision or binding blocks BEGIN even when compact context bytes match. Recovery refuses a missing original worktree rather than recreating it. These safeguards and regression fixtures also await exact-head CI.
+
+
+## Consolidated Master task batch planning and CI correction
+
+Previous exact HEAD `8145c64`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45461963696) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45461963719) were cancelled. Before cancellation the real MySQL and Python/shell/state jobs passed, while the TypeScript/unit/build job failed at Desktop security validation: obsolete static regex expected a ternary that had been replaced by the reviewed-context guard. Test correction `b4ec4ae` preserves the security assertions. Last fully green combined baseline `1193b3b`. New planner and correction are CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Status |
+|---|---|---|
+| Correct outdated Desktop preview static security assertion | `b4ec4ae` | CODED / CI PENDING |
+| Deterministic bounded task DAG; duplicate/alias/cycle checks and transitive conflict ordering | `3781e89` | CODED / CI PENDING |
+| Signed Master batch preview and atomic admission; shared single-ticket validation; exact project/node/dependency identities; receipt and rollback | `952e9f0` | CODED / CI PENDING |
+| Reviewed manifest preview/commit CLI with bounded UTF-8 file, digest confirmation, no redirect or blind retry | `4dfbc6e` | CODED / CI PENDING |
+| Pure DAG and disposable MySQL atomicity/replay/late collision fixtures | `86d2efd`, `62acf78` | CODED / CI PENDING |
+| Final database-clock Master lease recheck before admission receipt | `66246fa` | CODED / CI PENDING |
+| Operator manifest and safe workflow | [MASTER_TASK_BATCH_PLANNING_V7.md](MASTER_TASK_BATCH_PLANNING_V7.md) | DOCUMENTED |
+
+Next priorities: exact-head CI and correction; non-developer Master planning UI, autonomous architecture/task decomposition and actual source-level semantic completeness, baseline refresh/independent combined QA; measured provider token/quota accounting and minimal-context continuation; permitted provider session verification and physical acceptance; website/Telegram parity, ledger retention/backup/restore, Hostinger staging, signed Windows installer, 2/3/8–10-PC failover and G0–G7 independent acceptance. No release gate promoted. Batch conflict order is declaration-based, not code analysis or automatic task execution; immutable baselines require independent review. No new schema/deployment.
