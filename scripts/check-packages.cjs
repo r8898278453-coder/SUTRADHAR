@@ -39,6 +39,7 @@ for(const rel of [
   'apps/central/dist/index.html',
   'apps/central/dist/app.css',
   'apps/central/dist/dashboard.js',
+  'apps/central/dist/owner-crash-crosscheck.js',
   'apps/central/dist/v7/schema.sql',
   'apps/desktop/dist/edge-agent.cjs',
   'apps/desktop/dist/secure-agent.cjs',
@@ -72,9 +73,14 @@ for(const rel of [
 ])assert(!exists(rel),'Cross-app packaging boundary violation: '+rel);
 assert.equal(cm.bundle_sha256,sha('apps/central/dist/server.cjs'));
 assert.equal(cm.schema_sha256,sha('apps/central/dist/v7/schema.sql'));
-for(const name of ['index.html','dashboard.js','app.css']){
+for(const name of ['index.html','dashboard.js','app.css','owner-crash-crosscheck.js']){
   assert.equal(cm.ui_sha256[name],sha('apps/central/dist/'+name));
   assert.equal(cm.ui_sha256[name],sha('v7/ui/'+name));
+}
+// Every root-relative script/style loaded by the actual dashboard must exist.
+const dashboard=fs.readFileSync(path.join(central,'index.html'),'utf8');
+for(const match of dashboard.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)="\/([^"?#]+)"/gi)){
+  assert(Object.hasOwn(cm.ui_sha256,match[1]),'Dashboard asset missing from Central manifest: '+match[1]);
 }
 assert.equal(dm.agent_bundle_sha256,sha('apps/desktop/dist/edge-agent.cjs'));
 assert.equal(dm.secure_agent_sha256,sha('apps/desktop/dist/secure-agent.cjs'));
@@ -98,6 +104,7 @@ assert.equal(fs.readFileSync(path.join(desktop,'release-manifest.json'),'utf8').
 for(const rel of ['apps/central/dist/server.cjs',
   'v7/ui/dashboard.js',
   'apps/central/dist/dashboard.js',
+  'apps/central/dist/owner-crash-crosscheck.js',
   'apps/desktop/dist/edge-agent.cjs',
   'apps/desktop/main.cjs',
   'apps/desktop/preload.cjs',

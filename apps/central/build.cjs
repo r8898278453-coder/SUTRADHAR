@@ -35,7 +35,7 @@ function main(){
     bundle:true,platform:'node',format:'cjs',target:'node22',
     packages:'external',outfile:target,logLevel:'warning'
   });
-  for(const name of ['index.html','dashboard.js','app.css'])
+  for(const name of ['index.html','dashboard.js','app.css','owner-crash-crosscheck.js'])
     copy(rootFile('v7/ui/'+name),path.join(dest,name));
   copy(rootFile('v7/schema.sql'),path.join(dest,'v7/schema.sql'));
   const pkg=JSON.parse(fs.readFileSync(rootFile('package.json'),'utf8'));
@@ -45,7 +45,7 @@ function main(){
     version:pkg.version,source_sha:sourceSha(),api_protocol:contract.api_protocol,
     mysql_schema_version:7,
     bundle_sha256:sha(target),schema_sha256:sha(path.join(dest,'v7/schema.sql')),
-    ui_sha256:Object.fromEntries(['index.html','dashboard.js','app.css'].map(name=>[name,sha(path.join(dest,name))])),
+    ui_sha256:Object.fromEntries(['index.html','dashboard.js','app.css','owner-crash-crosscheck.js'].map(name=>[name,sha(path.join(dest,name))])),
     production_approved:false
   };
   fs.writeFileSync(path.join(dest,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n');

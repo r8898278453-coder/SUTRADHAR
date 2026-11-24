@@ -36,3 +36,10 @@ test('dangling and regular output symlinks fail closed', {skip:process.platform=
   fs.symlinkSync(path.join(root,'external'),file);
   assert.throws(()=>inspectBuildOutput(dir,'desktop'),/BUILD_OUTPUT_UNTRUSTED/);
 }));
+
+test('Central build inventory covers all dashboard HTML script/style references',()=>{
+  const html=fs.readFileSync(path.resolve(__dirname,'../v7/ui/index.html'),'utf8');
+  const assets=[...html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)="\/([^"?#]+)"/gi)].map(m=>m[1]);
+  assert.ok(assets.includes('owner-crash-crosscheck.js'));
+  for(const asset of assets)assert.ok(inventories.central.includes(asset),asset);
+});

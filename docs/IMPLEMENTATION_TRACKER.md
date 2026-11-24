@@ -1114,3 +1114,8 @@ review, not a worker's broad automated scope.
 ### 24 November — Windows path alias containment
 
 Central and packaged Desktop scoped-path policies now reject trailing-dot segments and reserved DOS device basenames (including extensions) on every platform. Central task scope overlap is case-insensitive, preventing simultaneous reservations of case variants on Windows. Regression coverage is source-level; physical Windows acceptance remains separate.
+
+
+### 24 November — separate build inventory and missing dashboard asset
+
+Central and Desktop build outputs now have closed inventories with regular-file, no-symlink and single-link checks before and after build. Unexpected files are refused without deletion. Central manifests bind all four UI assets by SHA-256; post-build checks compare their bytes to the current source and validate the actual HTML script/style references. In particular `owner-crash-crosscheck.js` was previously copied only by the legacy combined build, even though the dashboard imports it. It is now included in the Hostinger Central-only bundle. CI tests cover missing assets, stale files, aliases and hard links. Real staging deployment remains G1 HOLD.
