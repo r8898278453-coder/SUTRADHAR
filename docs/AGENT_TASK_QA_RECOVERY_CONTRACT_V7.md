@@ -1,7 +1,7 @@
 # SUTRADHAR v7.0 — Authoritative Agent, Task, QA & Recovery Contract
 
 **Date:** 2026-11-11  
-**Status:** TARGET CONTRACT / DESIGN ONLY; current code does not implement all endpoints, tables, statuses or guarantees.  
+**Status:** TARGET CONTRACT / PARTIAL ALPHA IMPLEMENTATION; current code does not implement all endpoints, tables, statuses or guarantees. See dated implementation reconciliation below.  
 **Authority:** This specification is the canonical proposed *behavioral contract* for Master, Backup, Developer, QA, Git Integrator, Watchdog and Owner. It accompanies [Architecture Blueprint v7](./SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md) and [Test Matrix](./V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md). It supersedes older conflicting specifications **as target behavior** while preserving the existing security and no-direct-main safety gates.
 
 ## 1. Invariants — MUST always hold
@@ -313,3 +313,17 @@ The signed Master Task Planner now refuses overlapping write scope entries withi
 ## 23 November 2026 — repository-wide claim scope isolation
 
 MySQL `v7_reservations` retains its existing per-project keys and pinned v7 schema, but `POST /v7/tasks/claim` now locks all projects sharing the same GitHub repository in deterministic order and reads **all their reserved scopes**, including those attached to a different base branch. A same-repository nested or overlapping scope claim is refused with `SCOPE_CONFLICT` before issuing a lease, even if the two tasks belong to separate Owner-created projects. This extends the earlier repository-wide `ai/*` branch reservation policy to actual worker admission. Signed HTTP + disposable MySQL tests cover two distinct project/base-branch configurations with overlapping paths, an independent worker, and preservation of the original claim. It does **not** constitute semantic API-contract conflict detection or real GitHub combined integration acceptance. Owner-approved protected changes and physical acceptance remain HOLD.
+
+
+## 24 November 2026 — Worker authority, context and recovery contract reconciliation
+
+Source baseline `3465af4` passed application and dependency CI; later `ee2e62f` / `8684dfe` fresh-checkpoint changes await exact-head CI.
+
+- Planning rejects blank, duplicate or malformed acceptance criteria, case-aliased/self dependencies and caller-supplied initial approval IDs. Protected tasks receive a fresh Central-created Owner approval. Eligible dependency-ready tasks are filtered before the 50-row discovery limit.
+- Initial provider aliases are Owner-declared, unverified configuration only. Signed task detail exposes only the assigned developer's own binding; Desktop validates digest and excludes mapping metadata from the prompt. Missing/malformed configuration is a hold for provider use. The target durable MySQL mapping registry and provider permission proof are not implemented by this configuration.
+- Compact handoff retains exact baseline, ticket version, scope, criteria and latest checkpoint digest under 8 KiB UTF-8; no automatic provider transmission or claim of token count, secret scanning or verified live lease.
+- Removing project developer access quarantines unfinished leased work, revokes the lease, preserves checkpoint/candidate/Git/reservations and requires Owner reconciliation. Regrant does not restore old authority. Claim replay and worker mutations recheck current lease and grants.
+- Both agent builds and Central validate recovery manifests: exact checkpoint membership and hashes, recognized lifecycle, descending audit event IDs and exact high-water mark; unresolved work/Git holds remain.
+- **New submission precondition (coded, CI pending):** after claim/reclaim or failed QA, the worker must save a fresh checkpoint transition to CHECKPOINTED before candidate submission. Central checks latest checkpoint agent, epoch and digest; malformed Unicode is rejected before persistence. Historical checkpoints remain available as handoff, not new authorization. Exact valid submit retries remain idempotent.
+
+No schema alteration, automatic reassignment, provider authorization or release permission is introduced. All original invariants and physical acceptance requirements remain binding.
