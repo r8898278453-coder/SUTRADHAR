@@ -328,3 +328,36 @@ test('post-restart confirmation rechecks roles, agent leases and maintenance bef
     assert.equal(count,2);
   }
 });
+
+test('restart ACK accepts canonical UTC only and refuses invalid or future chronology',async()=>{
+  const now=Date.now(),startedAtMs=now-1000;
+  const stamp=n=>new Date(n).toISOString();
+  const params={nodeId,agentIds:[agentId],epoch:21,startedAtMs,now};
+  const valid={node_id:nodeId,connection:'ACKNOWLEDGED',epoch:21,phase:'READY',
+    master_agent_id:cluster.master_agent_id,backups:cluster.backups,agent_ids:[agentId],
+    last_accepted_at:stamp(now-100),observed_at:stamp(now)};
+  assert.equal(inspectFreshAck(valid,params),true);
+  for(const patch of [
+    {master_agent_id:[cluster.master_agent_id]},{backups:[[cluster.backups[0]],cluster.backups[1]]},
+    {observed_at:[stamp(now)]},{observed_at:stamp(now+1000)},
+    {last_accepted_at:stamp(now+11000)},{last_accepted_at:'2026-02-30T00:00:00.000Z'},
+    {last_accepted_at:stamp(now).replace('Z','+00:00')}
+  ])assert.equal(inspectFreshAck({...valid,...patch},params),false);
+  assert.equal(inspectFreshAck(valid,{...params,agentIds:[agentId,agentId]}),false);
+  let checks=0;
+  const refused=await waitForFreshAck({dir:os.tmpdir(),...params,
+    isChildActive:()=>++checks===1,timeoutMs:150,pollMs:5,readStatus:()=>valid});
+  assert.deepEqual(refused,{confirmed:false,reason:'CHILD_EXITED_OWNER_REVIEW'});
+});
+test('malformed ACK records cannot create a durable reconciliation receipt',()=>fixture(dir=>{
+  const now=Date.now();
+  const ack={confirmed:true,node_id:nodeId,epoch:21,
+    last_accepted_at:new Date(now-100).toISOString(),observed_at:new Date(now).toISOString()};
+  for(const patch of [{confirmed:1},{epoch:0},{epoch:'21'},{last_accepted_at:[]},
+    {last_accepted_at:new Date(now+20000).toISOString()},{observed_at:new Date(now+20000).toISOString()}]){
+    assert.throws(()=>recordFreshAck({dir,nodeId,grantId:restartId,ack:{...ack,...patch}}),
+      /ACK_RECORD_INVALID/);
+  }
+  assert.equal(fs.existsSync(path.join(dir,'maintenance-restart-ack.json')),false);
+  assert.equal(recordFreshAck({dir,nodeId,grantId:restartId,ack}).recorded,true);
+}));
