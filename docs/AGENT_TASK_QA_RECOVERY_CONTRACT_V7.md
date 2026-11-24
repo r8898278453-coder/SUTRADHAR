@@ -364,3 +364,16 @@ Verified previous source baseline `215e5ee`: [application CI](https://github.com
 - Session generation/key/revision checks discard late GET/POST results after disconnect/reconnect. Credentials, aliases and drafts are not stored persistently by the editor. Disconnect cannot cancel a command already committed. No external login, session revocation, provider authorization or execution; real provider and physical acceptance remain open.
 
 Tests in tests/v7_owner_dashboard_session.test.cjs model local draft, explicit consent, CAS, concurrent revision, malformed response and stale session. No real-browser acceptance claimed; G0–G7 HOLD.
+
+
+## Manual provider attempt and interruption contract — incremental alpha
+
+Verified previous baseline `e935cef`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765773) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765743) both SUCCESS. New manual attempt source is CODED / CI PENDING at this update.
+
+- POST /v7/tasks/provider-attempt uses node signature, current live original lease, Master epoch, exact agent and ticket, and durable command receipt. BEGIN requires CHECKPOINTED, current durable registry version and matching declaration digest, exact latest checkpoint generation/hash and non-secret operator-supplied context SHA-256. Strict field allowlist; no raw prompt, response, provider chat ID, credentials or quota claim. Only one unresolved recorded attempt per ticket.
+- INTERRUPT changes OPEN to INTERRUPTED on the same lease; absent crash report leaves OPEN. CLOSE requires same live lease and epoch, exact attempt ID, independently reviewed worktree/session assertions and a strictly newer valid checkpoint generation. Neither action triggers provider calls. Historical receipt is not fresh authorization; read current task detail.
+- Unresolved state holds new BEGIN, claim, TASK_SUBMIT, normal RECONCILE_TICKET and Desktop compact handoff. Lease renewal/checkpoint remain possible. Existing lease and Git/QA fences remain independent; a closed record never creates a lease or QA receipt.
+- Owner-only GET /v7/owner/provider-attempt/:ticketId observes latest attempt; RESOLVE_PROVIDER_ATTEMPT requires RECONCILIATION_REQUIRED and revoked original lease, matching attempt ID and explicit external-session/worktree/no-auto-retry review. Closure alone does not release reservation or reassign. Normal reconciliation still requires existing external Git review and no frozen candidate/QA artifact.
+- Trusted developer CLI uses explicit signed mutation followed by current detail readback and refuses automatic retry. Packaged Desktop task detail validates non-secret attempt metadata and blocks new compact handoff while unresolved. Record history is opt-in; absence of record is not proof of absence of external activity. Context digest is not verified against transmitted bytes. No provider login, session restoration, automatic continuation or external side effects.
+
+Existing MySQL event ledger reused without schema migration. Dedicated indexed storage, backup/restore and retention review, actual provider verification, packaged Desktop mutation controls, Owner resolution UI, physical acceptance and token accounting remain open. G0–G7 HOLD.
