@@ -1127,9 +1127,12 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       const path='/v7/tasks/detail/'+ticket_id;
       const detail=await d.signed(path,undefined,'GET');
       assert.equal(detail.code,200);
-      const begin={...common,action:'BEGIN',request_id:'provider_begin_'+(++count),registry_version:3,
+      const begin={...common,action:'BEGIN',request_id:'provider_begin_'+(++count),registry_version:3,expected_task_version:Number(detail.body.version),
         provider:binding.provider,binding_sha256:detail.body.provider_mappings[0].binding_sha256,
         checkpoint_generation:first.body.generation,checkpoint_sha256:first.body.content_sha256,context_sha256:'d'.repeat(64)};
+      const staleVersion=await d.signed('/v7/tasks/provider-attempt',{...begin,expected_task_version:begin.expected_task_version-1});
+      assert.equal(staleVersion.code,409,JSON.stringify(staleVersion.body));
+      assert.equal(staleVersion.body.error_code,'PROVIDER_ATTEMPT_TASK_VERSION_CONFLICT');
       const wrong=await d.signed('/v7/tasks/provider-attempt',{...begin,registry_version:2});
       assert.equal(wrong.code,409,JSON.stringify(wrong.body));
       const opened=await d.signed('/v7/tasks/provider-attempt',begin);
@@ -1163,7 +1166,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(closed.code,200,JSON.stringify(closed.body));
       assert.equal(closed.body.attempt.resolution,'WORKER_CHECKPOINT');
       const again=await d.signed('/v7/tasks/provider-attempt',{...begin,request_id:'provider_second_'+(++count),
-        checkpoint_generation:fresh.body.generation,checkpoint_sha256:fresh.body.content_sha256});
+        expected_task_version:Number(fresh.body.version),checkpoint_generation:fresh.body.generation,checkpoint_sha256:fresh.body.content_sha256});
       assert.equal(again.code,200,JSON.stringify(again.body));
       await owner('REVOKE_PROJECT_AGENT',{project_id,agent_id});
       const reconcile={ticket_id,reason:'Disposable CI: reconcile interrupted provider record',remote_checked:true};
