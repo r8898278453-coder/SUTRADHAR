@@ -41,3 +41,33 @@ test('Owner-initiated Draft PR POST retains exact JSON body with no redirect',as
     },{method:'POST',data:{draft:true}});
   assert.equal(data.created,true);
 });
+
+test('noncanonical repository paths and encoded separators never receive bearer authorization',async()=>{
+  for(const value of [
+    'https://api.github.com/repos/example/../repo/branches/main',
+    'https://api.github.com/repos/../example/branches/main',
+    'https://api.github.com/repos/example/%2e%2e/branches/main',
+    'https://api.github.com/repos/example/repo/branches/%2fmain',
+    'https://api.github.com/repos/example/repo/branches/%5cmain',
+    'https://api.github.com/repos/example/repo/branches/%252e%252e',
+    'https://api.github.com/repos/example/repo//branches/main',
+    'https://api.github.com/repos/example/repo/branches/main#fragment',
+    'https://api.github.com/repos/example/repo/branches/main\n',
+    'https://api.github.com/repos/example/repo/branches/../main'
+  ]){
+    let called=0;
+    await assert.rejects(githubApiJson(value,'test-only-token',async()=>{called++;return new Response('{}');}),/GITHUB_BOUNDED_REQUEST_INVALID/,value);
+    assert.equal(called,0,value);
+  }
+});
+test('normal nested task branch, compare and query URLs remain supported',async()=>{
+  for(const value of [
+    'https://api.github.com/repos/example/repo/branches/ai/task_abc',
+    'https://api.github.com/repos/example/repo/compare/'+'a'.repeat(40)+'...'+'b'.repeat(40),
+    'https://api.github.com/repos/example/repo/pulls?state=closed&head=example%3Aai%2Ftask_abc&per_page=100'
+  ]){
+    assert.deepEqual(await githubApiJson(value,'test-only-token',async(actual)=>{
+      assert.equal(actual,value);return new Response('{"accepted":true}');
+    }),{accepted:true});
+  }
+});

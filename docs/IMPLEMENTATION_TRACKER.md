@@ -1139,3 +1139,8 @@ Replaced the production-wide Express static-directory exposure and wildcard HTML
 ### 24 November — independent review decision integrity
 
 Shared pre/post-merge review policy preserves the last decisive review instead of allowing ordinary comments to clear change requests. Ambiguous equal-time decisive votes without valid distinct IDs fail closed. PR readiness rejects duplicate filenames in either remote comparison or PR file list, preventing repeated entries from concealing missing expected paths. Regression tests exercise both protections. No merge is performed or authorized by these checks.
+
+
+### 24 November — GitHub proof chronology and transport canonicalization
+
+Required checks now need valid UTC start/completion timestamps in chronological order, completed no later than the review snapshot or historical merge timestamp. A later CI rerun cannot retrospectively establish pre-merge proof. All affected HTTP/MySQL fixtures were updated. Shared GitHub transport rejects ambiguous repository path segments, encoded separators, fragments and URL normalization before attaching authorization. These are conservative read-only proof checks, not a substitute for actual branch protection or independent review.

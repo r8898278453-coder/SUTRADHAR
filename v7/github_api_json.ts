@@ -4,10 +4,31 @@
  * Never logs a bearer token or treats an incomplete response as proof.
  */
 export type GithubApiFetcher=(url:string,init?:RequestInit)=>Promise<Response>;
+// Reject URL normalization/traversal before a bearer credential is attached.
+// The repo and endpoint path are deliberately narrower than arbitrary URLs.
+function validRepositoryApiUrl(value:unknown):value is string{
+  if(typeof value!=='string'||value.length>4096||
+    !value.startsWith('https://api.github.com/repos/')||
+    /[\u0000-\u0020\u007f\\#]/.test(value))return false;
+  try{
+    const url=new URL(value);
+    if(url.origin!=='https://api.github.com'||url.username||url.password||
+      url.hash||url.href!==value)return false;
+    const raw=value.slice('https://api.github.com/repos/'.length).split('?')[0];
+    const parts=raw.split('/');
+    if(parts.length<3||!parts.slice(0,2).every(p=>
+      /^[A-Za-z0-9_.-]+$/.test(p)&&p!=='.'&&p!=='..'))return false;
+    return parts.slice(2).every(p=>{
+      const decoded=decodeURIComponent(p);
+      return /^[A-Za-z0-9._~-]+$/.test(decoded)&&decoded!=='.'&&decoded!=='..';
+    });
+  }catch{return false;}
+}
+
 export async function githubApiJson(url:string,token:string,fetcher:GithubApiFetcher,{
   method='GET',data
 }:{method?:'GET'|'POST';data?:unknown}={}):Promise<any>{
-  if(typeof url!=='string'||!url.startsWith('https://api.github.com/repos/')||
+  if(!validRepositoryApiUrl(url)||
      typeof token!=='string'||!token.trim()||token.length>8192||
      (method!=='GET'&&method!=='POST')||
      (method==='GET'&&data!==undefined))
