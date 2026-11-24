@@ -10,6 +10,7 @@ const {spawnSync}=require('node:child_process');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
 const {evidenceEntryPresent}=require('./local-evidence-file.cjs');
 const {readEvidenceBytes}=require('./local-evidence-file.cjs');
+const {readStableLocalFile}=require('./os-vault.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const SHA=/^[a-f0-9]{40}$/;
 const LEASE=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -193,7 +194,7 @@ async function signedRequest({origin,signer,method,uri,agentId,payload,fetcher})
   let headers,body;
   if(method==='GET'&&uri==='/v7/cluster/state'){
     headers=signer.sign({kind:'node_api',method:'GET',uri,body:''});body=undefined;
-  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint','submit','provider-attempt','plan-batch-preview','plan-batch','plan-batch-receipt'].includes(uri)){
+  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint','submit','provider-attempt','plan-batch-preview','plan-batch','plan-batch-receipt','plan-batch-projects'].includes(uri)){
     const prepared=signer.signWorkerAction({operation:uri,agent_id:agentId,payload});
     headers=prepared.headers;body=prepared.body;uri=prepared.uri;
   }else fail('WORKER_REQUEST_NOT_ALLOWLISTED');
@@ -482,4 +483,137 @@ async function inspectMasterBatchReceipt({origin,agentId,projectId,requestId,rev
     fail('WORKER_BATCH_RECEIPT_INVALID');
   return {...validateBatchReceipt(reply.receipt,body,{historical:true}),historical_receipt:true};
 }
-module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt};
+async function listMasterProjects({origin,agentId,signer,fetcher=fetch,beforeMutation=()=>{}}){
+  if(!ORIGIN.test(origin||'')||typeof agentId!=='string'||!ID.test(agentId)||/[\r\n]/.test(agentId))
+    fail('WORKER_BATCH_INPUT_DENIED');
+  const cluster=await signedRequest({origin,signer,method:'GET',uri:'/v7/cluster/state',agentId,fetcher});
+  if(cluster?.phase!=='READY'||cluster.paused!==false||cluster.master_agent_id!==agentId||
+     !Number.isSafeInteger(cluster.epoch)||cluster.epoch<1)fail('WORKER_BATCH_MASTER_NOT_READY');
+  beforeMutation();
+  const r=await signedRequest({origin,signer,method:'POST',uri:'plan-batch-projects',agentId,
+    payload:{agent_id:agentId,expected_master_epoch:cluster.epoch},fetcher});
+  if(r?.read_only!==true||r.agent_id!==agentId||r.epoch!==cluster.epoch||
+     r.automatic_execution_allowed!==false||r.baseline_verified!==false||
+     typeof r.truncated!=='boolean'||!Array.isArray(r.projects)||r.projects.length>100)
+    fail('WORKER_BATCH_CATALOG_INVALID');
+  const seen=new Set();
+  const projects=r.projects.map(p=>{
+    if(!p||Object.keys(p).sort().join('|')!=='base_branch|display_name|project_id|repository'||
+       typeof p.project_id!=='string'||!ID.test(p.project_id)||/[\r\n]/.test(p.project_id)||
+       seen.has(p.project_id.toLowerCase())||
+       typeof p.display_name!=='string'||!p.display_name.trim()||p.display_name.length>170||
+       typeof p.repository!=='string'||p.repository.length>190||! /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(p.repository)||
+       typeof p.base_branch!=='string'||p.base_branch.length>80||! /^[A-Za-z0-9._/-]+$/.test(p.base_branch))
+      fail('WORKER_BATCH_CATALOG_INVALID');
+    seen.add(p.project_id.toLowerCase());
+    return {project_id:p.project_id,display_name:p.display_name,repository:p.repository,base_branch:p.base_branch};
+  });
+  return {projects,truncated:r.truncated,epoch:r.epoch,baseline_verified:false};
+}
+
+// Append-only encrypted admission evidence, one unresolved intent per PC.
+// No private keys, arbitrary paths, automated replay or automatic deletion.
+// A Windows filesystem power-cut guarantee still requires physical acceptance.
+function createMasterBatchJournal({dir,safeStorage,nodeId}){
+  if(typeof dir!=='string'||!path.isAbsolute(dir)||typeof nodeId!=='string'||!/^node_[a-f0-9]{32}$/.test(nodeId)||
+     !safeStorage||safeStorage.isEncryptionAvailable()!==true||
+     (typeof safeStorage.getSelectedStorageBackend==='function'&&safeStorage.getSelectedStorageBackend()==='basic_text'))
+    fail('MASTER_BATCH_JOURNAL_ENCRYPTION_REQUIRED');
+  if(!evidenceEntryPresent(dir))fs.mkdirSync(dir,{recursive:true,mode:0o700});
+  const folder=fs.lstatSync(dir);
+  if(!folder.isDirectory()||folder.isSymbolicLink()||(process.platform!=='win32'&&(folder.mode&0o077)!==0))
+    fail('MASTER_BATCH_JOURNAL_DIRECTORY_UNSAFE');
+  const hash=x=>typeof x==='string'&&x.length===64&&/^[a-f0-9]{64}$/.test(x);
+  const exactId=x=>typeof x==='string'&&ID.test(x)&&!/[\r\n]/.test(x);
+  const keyFor=x=>digest([nodeId,x.origin,x.body.agent_id,x.body.project_id,x.body.request_id]);
+  function validateIntent(x,key){
+    if(!x||Object.keys(x).sort().join('|')!=='body|node_id|origin|review|schema'||
+       x.schema!==1||x.node_id!==nodeId||!ORIGIN.test(x.origin||'')||
+       !x.body||Object.keys(x.body).sort().join('|')!=='agent_id|expected_master_epoch|project_id|request_id|tasks'||
+       ![x.body.agent_id,x.body.project_id,x.body.request_id].every(exactId)||
+       !Number.isSafeInteger(x.body.expected_master_epoch)||x.body.expected_master_epoch<1||
+       !Array.isArray(x.body.tasks)||x.body.tasks.length<2||x.body.tasks.length>10||
+       Buffer.byteLength(JSON.stringify(x.body.tasks),'utf8')>65536||
+       !x.review||!hash(x.review.preview_sha256)||keyFor(x)!==key)
+      fail('MASTER_BATCH_JOURNAL_INTENT_INVALID');
+    // Reuse the exact receipt validation without treating it as a live grant.
+    const v=validateBatchReceipt({...x.review,accepted:true}, {...x.body,preview_sha256:x.review.preview_sha256});
+    if(JSON.stringify(v)!==JSON.stringify(x.review))fail('MASTER_BATCH_JOURNAL_REVIEW_INVALID');
+    return x;
+  }
+  function read(kind,key){
+    try{
+      const ciphertext=readStableLocalFile(path.join(dir,kind+'_'+key+'.bin'),{maxBytes:65536});
+      const envelope=JSON.parse(safeStorage.decryptString(ciphertext));
+      if(!envelope||Object.keys(envelope).sort().join('|')!=='kind|payload|sha256'||
+         envelope.kind!==kind||digest({kind,payload:envelope.payload})!==envelope.sha256)
+        fail('MASTER_BATCH_JOURNAL_DIGEST_INVALID');
+      return envelope.payload;
+    }catch{fail('MASTER_BATCH_JOURNAL_CORRUPT_OWNER_REVIEW');}
+  }
+  function write(kind,key,payload){
+    const sealed={kind,payload};
+    const bytes=safeStorage.encryptString(JSON.stringify({...sealed,sha256:digest(sealed)}));
+    if(!Buffer.isBuffer(bytes)||bytes.length<1||bytes.length>65536)
+      fail('MASTER_BATCH_JOURNAL_TOO_LARGE_USE_SMALLER_BATCH');
+    const file=path.join(dir,kind+'_'+key+'.bin');
+    // Exclusive write; even partial evidence remains a blocking incident.
+    const fd=fs.openSync(file,'wx',0o600);
+    try{
+      let offset=0;while(offset<bytes.length){
+        const n=fs.writeSync(fd,bytes,offset,bytes.length-offset,offset);
+        if(!Number.isSafeInteger(n)||n<1)fail('MASTER_BATCH_JOURNAL_SHORT_WRITE');
+        offset+=n;
+      }
+      fs.fsyncSync(fd);
+    }finally{fs.closeSync(fd);}
+    if(process.platform!=='win32'){
+      const dfd=fs.openSync(dir,fs.constants.O_RDONLY|(fs.constants.O_DIRECTORY||0)|(fs.constants.O_NOFOLLOW||0));
+      try{fs.fsyncSync(dfd);}finally{fs.closeSync(dfd);}
+    }
+  }
+  function validatedReceipt(intent,r){
+    const v=validateBatchReceipt({...r,accepted:true}, {...intent.body,preview_sha256:intent.review.preview_sha256});
+    if(JSON.stringify(v)!==JSON.stringify(intent.review)||r.historical_receipt!==true)
+      fail('MASTER_BATCH_JOURNAL_RECEIPT_MISMATCH');
+    return {...v,historical_receipt:true};
+  }
+  function pending(){
+    const names=fs.readdirSync(dir);
+    if(names.length>256||names.some(n=>! /^(intent|receipt)_[a-f0-9]{64}\.bin$/.test(n)))
+      fail('MASTER_BATCH_JOURNAL_INVENTORY_OWNER_REVIEW');
+    const set=new Set(names),open=[];
+    for(const name of names){
+      if(!name.startsWith('intent_')){
+        if(!set.has(name.replace('receipt_','intent_')))fail('MASTER_BATCH_JOURNAL_ORPHAN_RECEIPT');
+        continue;
+      }
+      const key=name.slice(7,-4),intent=validateIntent(read('intent',key),key);
+      if(set.has('receipt_'+key+'.bin'))validatedReceipt(intent,read('receipt',key));
+      else open.push({key,intent});
+    }
+    if(open.length>1)fail('MASTER_BATCH_JOURNAL_MULTIPLE_PENDING_OWNER_REVIEW');
+    return open[0]||null;
+  }
+  function begin(origin,prepared){
+    if(pending())fail('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
+    const intent={schema:1,node_id:nodeId,origin,body:prepared.body,review:prepared.review};
+    const key=keyFor(intent);
+    validateIntent(intent,key);
+    write('intent',key,intent);
+    const saved=pending();
+    if(!saved||saved.key!==key||JSON.stringify(saved.intent)!==JSON.stringify(intent))
+      fail('MASTER_BATCH_JOURNAL_READBACK_REQUIRED');
+    return saved;
+  }
+  function close(key,receipt){
+    const saved=pending();
+    if(!saved||saved.key!==key)fail('MASTER_BATCH_JOURNAL_PENDING_MISMATCH');
+    const verified=validatedReceipt(saved.intent,receipt);
+    write('receipt',key,verified);
+    if(pending())fail('MASTER_BATCH_JOURNAL_CLOSE_UNCERTAIN');
+    return verified;
+  }
+  return {pending,begin,close};
+}
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,createMasterBatchJournal};
