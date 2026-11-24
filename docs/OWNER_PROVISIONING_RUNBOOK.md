@@ -174,3 +174,8 @@ OS-vault identity. A syntactically public hostname can still resolve to
 a private address or be DNS-rebound; this does **not** prove Hostinger
 domain control or provide a pinned network firewall. Owner networking,
 real HTTPS staging and G0–G7 acceptance are still required.
+
+
+### G0 audit — complete CI context coverage
+
+The read-only audit now requires all seven source/PR/dependency job contexts, including Python and Ubuntu lockfile verification, and rechecks the pinned main SHA and protected flag after the rule observation. Repository dot segments are rejected before network access. A compatible snapshot remains HOLD: it does not independently verify classic protection, ruleset bypass actors, environment review, or actual approval.

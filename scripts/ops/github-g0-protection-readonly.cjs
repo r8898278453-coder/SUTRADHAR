@@ -7,13 +7,19 @@
  */
 'use strict';
 const SHA=/^[a-f0-9]{40}$/,REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const REQUIRED=[
+function validRepository(value){
+  return typeof value==='string'&&value.length<=200&&REPO.test(value)&&
+    value.split('/').every(part=>part!=='.'&&part!=='..');
+}
+const REQUIRED=Object.freeze([
   'TypeScript, unit checks, and build',
   'V7 real MySQL API integration (disposable database)',
   'Windows Desktop unsigned installer smoke (internal QA only)',
   'Review high/critical npm advisories',
-  'Verify committed lockfile on windows-latest'
-];
+  'Verify committed lockfile on windows-latest',
+  'Verify committed lockfile on ubuntu-latest',
+  'Python syntax, shell syntax, state tests'
+]);
 function hold(code,detail){
   return {accepted:false,g0_release_gate:'HOLD',
     error_code:code,...(detail?{detail}:{}),
@@ -21,7 +27,7 @@ function hold(code,detail){
     production_release_authorized:false};
 }
 function inspect({repository,expectedMainSha,branch,rules}={}){
-  if(!REPO.test(repository||'')||!SHA.test(expectedMainSha||''))
+  if(!validRepository(repository)||!SHA.test(expectedMainSha||''))
     return hold('G0_AUDIT_INPUT_INVALID');
   if(!branch||branch.name!=='main'||!branch.commit||
     !SHA.test(branch.commit.sha||'')||branch.commit.sha!==expectedMainSha)
@@ -88,18 +94,25 @@ async function boundedGithubJson(url,{fetcher=fetch,token}={}){
     Buffer.concat(parts)));
 }
 async function audit({repository,expectedMainSha,fetcher=fetch,token}={}){
-  if(!REPO.test(repository||'')||!SHA.test(expectedMainSha||'')||
+  if(!validRepository(repository)||!SHA.test(expectedMainSha||'')||
      (token!==undefined&&(typeof token!=='string'||token.length>1024)))
     return hold('G0_AUDIT_INPUT_INVALID');
   try{
     const base='https://api.github.com/repos/'+repository;
-    // Effective branch rules include classic branch protection + applicable
-    // rulesets. A missing/403 response is HOLD, not an empty approved ruleset.
+    // The branch rules endpoint provides visible applicable rules. Do not
+    // assume it exhaustively proves classic protection or bypass settings.
+    // A missing/403 response remains HOLD.
     const [branch,rules]=await Promise.all([
       boundedGithubJson(base+'/branches/main',{fetcher,token}),
       boundedGithubJson(base+'/rules/branches/main',{fetcher,token})
     ]);
-    return inspect({repository,expectedMainSha,branch,rules});
+    const result=inspect({repository,expectedMainSha,branch,rules});
+    if(!result.accepted)return result;
+    const after=await boundedGithubJson(base+'/branches/main',{fetcher,token});
+    if(after?.name!=='main'||after?.protected!==true||
+      after?.commit?.sha!==expectedMainSha)
+      return hold('G0_MAIN_CHANGED_DURING_AUDIT');
+    return result;
   }catch{return hold('G0_GITHUB_READ_ONLY_AUDIT_UNAVAILABLE');}
 }
 async function main(){

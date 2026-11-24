@@ -62,8 +62,9 @@ test('read-only GitHub API calls have exact GET URLs and no mutation rights',asy
   };
   const result=await audit({repository,expectedMainSha:sha,fetcher});
   assert.equal(result.accepted,true);
-  assert.equal(sent.length,2);
+  assert.equal(sent.length,3);
   assert.deepEqual(sent.map(x=>x.url).sort(),[
+    'https://api.github.com/repos/'+repository+'/branches/main',
     'https://api.github.com/repos/'+repository+'/branches/main',
     'https://api.github.com/repos/'+repository+'/rules/branches/main'
   ].sort());
@@ -88,6 +89,34 @@ test('private token is used only as bearer header on read-only requests',async()
         x.branch:x.rules),{status:200});
     }});
   assert.equal(result.accepted,true);
-  assert.deepEqual(seen,['Bearer test-only-token','Bearer test-only-token']);
+  assert.deepEqual(seen,['Bearer test-only-token','Bearer test-only-token','Bearer test-only-token']);
   assert.equal(JSON.stringify(result).includes('test-only-token'),false);
+});
+
+test('all seven current CI job names must be present, not only a subset',()=>{
+  assert.equal(REQUIRED.length,7);
+  for(const name of REQUIRED){
+    const x=valid(),p=x.rules.find(r=>r.type==='required_status_checks').parameters;
+    p.required_status_checks=p.required_status_checks.filter(c=>c.context!==name);
+    p.required_status_checks.push({context:'unrelated check'});
+    assert.equal(inspect(x).error_code,'G0_REQUIRED_EXACT_HEAD_CHECKS_MISSING',name);
+  }
+});
+test('dot-segment repository names never perform any network read',async()=>{
+  for(const repository of ['owner/..','./repo','../repo','owner/.']){
+    const r=await audit({repository,expectedMainSha:sha,fetcher:async()=>assert.fail('unexpected fetch')});
+    assert.equal(r.error_code,'G0_AUDIT_INPUT_INVALID');
+  }
+});
+test('main moving or losing protection during read-only inspection fails closed',async()=>{
+  for(const changed of [{commit:{sha:'b'.repeat(40)}},{protected:false}]){
+    const x=valid();let branchReads=0;
+    const result=await audit({repository,expectedMainSha:sha,fetcher:async url=>{
+      if(url.endsWith('/rules/branches/main'))return new Response(JSON.stringify(x.rules));
+      return new Response(JSON.stringify(++branchReads===1?x.branch:{...x.branch,...changed}));
+    }});
+    assert.equal(branchReads,2);
+    assert.equal(result.error_code,'G0_MAIN_CHANGED_DURING_AUDIT');
+    assert.equal(result.production_release_authorized,false);
+  }
 });
