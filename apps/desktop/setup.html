@@ -52,6 +52,8 @@
 <details>
 <summary>Master task batch planner (2–10 tasks, manual review)</summary>
 <p class="hint">Use the selected local agent only if it is the current Master. Enter a unique request ID; retain the exact project, request ID, task draft and reviewed digest until admission is reconciled. No automatic task generation or execution.</p>
+<button id="masterCatalog" class="secondary" type="button" disabled>Load active projects (current Master only)</button>
+<label for="masterProjectChoice">Choose a project by name, repository and base branch</label><select id="masterProjectChoice" disabled><option value="">Load active projects first</option></select>
 <label for="masterProject">Existing exact project ID</label><input id="masterProject" maxlength="100" autocomplete="off" spellcheck="false">
 <label for="masterRequest">Unique batch request ID</label><input id="masterRequest" maxlength="100" autocomplete="off" spellcheck="false">
 <label for="masterTicket">Task ID</label><input id="masterTicket" maxlength="100" autocomplete="off">
@@ -66,6 +68,8 @@
 <label for="masterContracts">Declared shared contract keys, one per line (empty = none)</label><textarea id="masterContracts" rows="2"></textarea>
 <div class="actions"><button id="masterAdd" class="secondary" type="button">Add task to local draft</button><button id="masterUndo" class="secondary" type="button">Remove last draft task</button></div>
 <label for="masterDraft">Review all task fields (local draft, not yet admitted)</label><textarea id="masterDraft" rows="8" readonly spellcheck="false"></textarea>
+<button id="masterRecover" class="secondary" type="button" disabled>Recover pending reviewed batch after restart</button>
+<p class="hint">A confirmed admission is encrypted locally before sending. If interrupted, recover its exact draft and inspect its receipt. Unresolved admission blocks new batches on this PC. Unconfirmed drafts are not saved.</p>
 <button id="masterPreview" class="secondary" type="button" disabled>Validate and preview exact batch</button>
 <label for="masterDigest">Reviewed preview digest (retain for receipt lookup)</label><input id="masterDigest" maxlength="64" autocomplete="off" spellcheck="false">
 <label><input id="masterReviewed" type="checkbox"> I independently reviewed every task, baseline, dependency, scope, contract and criterion; no provider or Git work is authorized by admission.</label>
