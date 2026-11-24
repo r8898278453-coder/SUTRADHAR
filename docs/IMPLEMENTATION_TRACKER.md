@@ -1357,3 +1357,20 @@ Exact baseline `804726e` passed [application CI](https://github.com/r8898278453-
 | Signed Desktop fixture and disposable MySQL receipt isolation regression | 022e5d2, 40bf372 | CODED / CI PENDING |
 
 Remaining P0/P1 priorities: exact-head CI; physical Windows/Hostinger Master workflow and independent QA; autonomous task decomposition/source semantic discovery and verified baseline/combined integration QA; durable Desktop draft recovery and no-code project selection; measured provider token/quota accounting and context reuse; permitted provider session continuation; Owner web/Telegram parity; ledger retention/backup/restore; production signing and physical 2/3/8–10-PC acceptance. Decision: use existing Desktop signer/client and command ledger, no new schema or provider integration. A historical receipt cannot grant current execution authority. G0–G7 HOLD.
+
+
+## Consolidated restart-safe Master admission and project catalog
+
+Exact baseline `0fc7c7a` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325287) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325508), including the previous Desktop Master planner and historical receipt lookup. New project catalog and admission journal changes are CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Status |
+|---|---|---|
+| Current-Master minimal signed active-project catalog; epoch, approval, maintenance checks | e112928 | CODED / CI PENDING |
+| Narrow vault catalog signer, bounded validated catalog and encrypted append-only admission journal | aa05f49, 2912ae4 | CODED / CI PENDING |
+| Persist/read back exact reviewed intent before admission, one unresolved intent per PC, exact receipt closure and original-agent restart recovery | 8647107 | CODED / CI PENDING |
+| Restricted IPC, project picker and pending reviewed draft recovery UI | 242758a, a66f72c, f429d73 | CODED / CI PENDING |
+| Restart/corruption/duplicate/receipt/catalog fixtures and MySQL current-Master catalog access tests | b3f2c03, b4688c3 | CODED / CI PENDING |
+
+Decisions: existing Desktop safeStorage and stable private read helpers; append-only encrypted intent/receipt evidence with bounded inventory, no new MySQL schema. Confirmed reviewed admission is durable; unconfirmed draft edits remain in memory. No auto-replay or non-admission inference from missing receipt. Oversized encrypted record (>65,536 bytes) or inventory (>256 entries) blocks the operation. Owner-managed reconciliation/retention and Windows DPAPI/power-cut acceptance remain open.
+
+Next priorities: exact-head CI and corrections; non-admission resolution and Owner/successor recovery of orphaned receipts, durable unconfirmed drafts and journal retention; independent verified Git baseline and source semantic discovery/autonomous decomposition, combined QA; actual provider token/quota accounting, minimal context continuation; permitted provider session verification; web/Telegram parity; ledger performance/backup/restore; Hostinger staging, production signing and physical multi-PC acceptance. G0–G7 HOLD.
