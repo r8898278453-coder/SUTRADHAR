@@ -296,3 +296,20 @@ test('registry source/version is local metadata only and cannot assert verified 
     assert.throws(()=>compactWorkerContext({...t,provider_mapping_state:'UNCONFIGURED',
       provider_mapping_source:'MYSQL_OWNER_REGISTRY',provider_registry_version:2,...patch},'agent_aaa'),/WORKER_PROVIDER_MAPPING_INVALID/);
 });
+
+test('unresolved provider attempt holds new compact handoff; closed metadata stays outside prompt',()=>{
+  const {compactWorkerContext}=require('../apps/desktop/worker-inspection.cjs');
+  const t={ticket_id:'ticket_123',project_id:'project_aaa',title:'Feature',
+    description:'Implement scoped feature',repository:'example/repo',branch_name:'ai/ticket_123',
+    baseline_sha:'a'.repeat(40),risk:'LOW',status:'CHECKPOINTED',version:2,
+    worker_agent_id:'agent_aaa',write_scopes:['src/x.ts'],acceptance_criteria:['Test passes']};
+  const attempt={attempt_id:'attempt_'+'a'.repeat(32),state:'OPEN',registry_version:1,
+    checkpoint_generation:1,context_sha256:'d'.repeat(64),provider:'CHATGPT_WEB',resolution:null};
+  for(const state of ['OPEN','INTERRUPTED'])
+    assert.throws(()=>compactWorkerContext({...t,provider_attempt:{...attempt,state}},'agent_aaa'),/WORKER_PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED/);
+  const closed={...attempt,state:'CLOSED',resolution:'WORKER_CHECKPOINT'};
+  const result=compactWorkerContext({...t,provider_attempt:closed},'agent_aaa');
+  assert.equal(result.context_sha256,compactWorkerContext(t,'agent_aaa').context_sha256);
+  assert.doesNotMatch(result.preview,/attempt_id|WORKER_CHECKPOINT/);
+  assert.throws(()=>compactWorkerContext({...t,provider_attempt:{...attempt,prompt:'SENTINEL'}},'agent_aaa'),/WORKER_PROVIDER_ATTEMPT_INVALID/);
+});
