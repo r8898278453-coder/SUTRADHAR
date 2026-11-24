@@ -41,7 +41,7 @@ async function request(pathname:string,payload?:any,method='POST'){
     'content-type':'application/json','x-sutradhar-node':state.node_id,
     'x-sutradhar-timestamp':String(ts),'x-sutradhar-nonce':nonce,
     'x-sutradhar-signature':sig,'x-sutradhar-agent':agentId
-  },body:method==='POST'?body:undefined,signal:AbortSignal.timeout(20000)});
+  },body:method==='POST'?body:undefined,redirect:'error',credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(20000)});
   const out=await res.json() as any;
   if(!res.ok)throw new Error(out.error_code||'HTTP_'+res.status);
   return out;
@@ -406,8 +406,66 @@ async function providerAttempt(id:string){
     throw Error('PROVIDER_ATTEMPT_OUTCOME_UNCERTAIN: inspect signed task detail and review before another command; no automatic retry');
   }
 }
+// Master-only manual planning workflow. The reviewed local manifest is
+// immutable input; Central remains authoritative for all approvals and claims.
+async function planTaskBatch(file:string,commit:boolean){
+  if(typeof file!=='string'||!file)throw Error('TASK_BATCH_MANIFEST_REQUIRED');
+  const st=fs.lstatSync(file);
+  if(!st.isFile()||st.isSymbolicLink()||st.size<2||st.size>70000)
+    throw Error('TASK_BATCH_MANIFEST_INVALID');
+  const fd=fs.openSync(file,'r');
+  let raw:Buffer;
+  try{
+    const actual=fs.fstatSync(fd);
+    if(!actual.isFile()||actual.size!==st.size||actual.ino!==st.ino||actual.dev!==st.dev)
+      throw Error('TASK_BATCH_MANIFEST_CHANGED');
+    const buf=Buffer.alloc(70001);let n=0;
+    while(n<buf.length){const got=fs.readSync(fd,buf,n,buf.length-n,null);if(!got)break;n+=got;}
+    if(n!==st.size||n>70000)throw Error('TASK_BATCH_MANIFEST_CHANGED');
+    raw=buf.subarray(0,n);
+  }finally{fs.closeSync(fd);}
+  let manifest:any;
+  try{manifest=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}
+  catch{throw Error('TASK_BATCH_MANIFEST_INVALID');}
+  if(!manifest||typeof manifest!=='object'||Array.isArray(manifest)||
+     Object.keys(manifest).sort().join('|')!=='expected_master_epoch|project_id|request_id|tasks'||
+     typeof manifest.project_id!=='string'||!ID_RE.test(manifest.project_id)||
+     typeof manifest.request_id!=='string'||!ID_RE.test(manifest.request_id)||
+     !Number.isSafeInteger(manifest.expected_master_epoch)||manifest.expected_master_epoch<1||
+     !Array.isArray(manifest.tasks)||manifest.tasks.length<2||manifest.tasks.length>10)
+    throw Error('TASK_BATCH_MANIFEST_INVALID');
+  const body={agent_id:agentId,project_id:manifest.project_id,request_id:manifest.request_id,
+    expected_master_epoch:manifest.expected_master_epoch,tasks:manifest.tasks};
+  const reviewed=process.argv[5];
+  if(commit&&(!reviewed||!/^[a-f0-9]{64}$/.test(reviewed)||process.argv[6]!=='CONFIRM_PLAN'))
+    throw Error('Review preview and exact manifest before commit: plan-batch-commit AGENT_ID MANIFEST_FILE PREVIEW_SHA256 CONFIRM_PLAN');
+  const ids=manifest.tasks.map((t:any)=>t?.ticket_id);
+  let reply:any;
+  try{
+    reply=await request(commit?'/v7/tasks/plan-batch':'/v7/tasks/plan-batch/preview',
+      commit?{...body,preview_sha256:reviewed}:body);
+    if(reply?.project_id!==body.project_id||reply.request_id!==body.request_id||
+       reply.epoch!==body.expected_master_epoch||reply.automatic_execution_allowed!==false||
+       reply.semantic_discovery_verified!==false||reply.baseline_verified!==false||
+       typeof reply.preview_sha256!=='string'||!/^[a-f0-9]{64}$/.test(reply.preview_sha256)||
+       !Array.isArray(reply.plan_order)||JSON.stringify([...reply.plan_order].sort())!==JSON.stringify([...ids].sort())||
+       !Array.isArray(reply.tickets)||reply.tickets.length!==ids.length||
+       reply.tickets.some((t:any,i:number)=>t?.ticket_id!==reply.plan_order[i]||
+         !['READY','WAITING_AUTHORIZATION'].includes(t.status)||t.version!==1||
+         t.owner_approval_required!==(t.status==='WAITING_AUTHORIZATION'))||
+       (commit?(reply.accepted!==true||reply.preview_sha256!==reviewed):reply.read_only!==true))
+      throw Error('TASK_BATCH_RECEIPT_INVALID');
+  }catch(e:any){
+    if(commit)throw Error('TASK_BATCH_OUTCOME_UNCERTAIN: preserve manifest/request ID and reviewed digest; inspect Central before an identical replay. '+String(e?.message||''));
+    throw e;
+  }
+  console.log(JSON.stringify({...reply,manual_only:true,
+    note:commit?'Batch admission recorded. Separate Owner approvals, dependencies, live worker leases and QA remain required.':
+      'Preview only. Review the complete local manifest and digest; no ticket reservation or execution authorized.'},null,2));
+}
 async function main(){
-  if(action==='list')console.log(JSON.stringify(await request('/v7/tasks/available',undefined,'GET'),null,2));
+  if(action==='plan-batch-preview'||action==='plan-batch-commit')await planTaskBatch(ticketId,action==='plan-batch-commit');
+  else if(action==='list')console.log(JSON.stringify(await request('/v7/tasks/available',undefined,'GET'),null,2));
   else if(action==='detail')console.log(JSON.stringify(await request('/v7/tasks/detail/'+ticketId,undefined,'GET'),null,2));
   else if(action==='prepare')await prepare(ticketId);
   else if(action==='resume')await resume(ticketId);
@@ -419,6 +477,6 @@ async function main(){
   else if(action==='qa-review')await qaReviewStatus(ticketId);
   else if(action==='publish')await publish(ticketId,false);
   else if(action==='reconcile-push')await publish(ticketId,true);
-  else throw new Error('Usage: worker {list|detail|prepare|resume|renew|checkpoint|provider-attempt|submit|qa-review|publish|reconcile-push} AGENT_ID [TICKET_ID] [reason|summary_file] [next_action]');
+  else throw new Error('Usage: worker {plan-batch-preview|plan-batch-commit|list|detail|prepare|resume|renew|checkpoint|provider-attempt|submit|qa-review|publish|reconcile-push} AGENT_ID [TICKET_ID] [reason|summary_file] [next_action]');
 }
 main().catch(e=>{console.error('Worker failed closed:',e.message);process.exitCode=1;});
