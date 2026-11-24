@@ -1761,6 +1761,9 @@ app.post('/v7/tasks/plan-batch/preview',jsonRoute(async req=>{
   const node=await nodeAuth(req),b=parsePlanningBatch(req.body,false);
   return transaction(async c=>{
     await readyMaster(c,node.node_id,b.agentId,b.epoch);
+    const prior=await batchRecoveryRow(c,{agent_id:b.agentId,project_id:b.projectId,
+      request_id:b.requestId,preview_sha256:b.preview_sha256});
+    if(prior)fault('IDEMPOTENCY_KEY_REUSED',409);
     const seen=new Set<string>();
     for(const p of b.ordered){await checkTaskPlan(c,p,seen);seen.add(p.ticketId);}
     await readyMaster(c,node.node_id,b.agentId,b.epoch);
