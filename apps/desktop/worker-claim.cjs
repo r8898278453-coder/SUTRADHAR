@@ -171,9 +171,9 @@ function localWorktree({repoDir,t,workerDir,requireExisting=false}){
   }
   return {repository_dir:repo,worktree:target};
 }
-async function boundedJson(response){
+async function boundedJson(response,maxBytes=16384){
   const rawLength=response.headers?.get('content-length');
-  if(rawLength&&Number(rawLength)>16384)fail('WORKER_CENTRAL_RESPONSE_TOO_LARGE');
+  if(rawLength&&Number(rawLength)>maxBytes)fail('WORKER_CENTRAL_RESPONSE_TOO_LARGE');
   if(!response.body?.getReader)fail('WORKER_CENTRAL_RESPONSE_INVALID');
   const reader=response.body.getReader(),chunks=[];
   let total=0;
@@ -182,7 +182,7 @@ async function boundedJson(response){
       const v=await reader.read();
       if(v.done)break;
       total+=v.value.byteLength;
-      if(total>16384)fail('WORKER_CENTRAL_RESPONSE_TOO_LARGE');
+      if(total>maxBytes)fail('WORKER_CENTRAL_RESPONSE_TOO_LARGE');
       chunks.push(Buffer.from(v.value));
     }
   }finally{try{await reader.cancel();}catch{}reader.releaseLock();}
@@ -193,7 +193,7 @@ async function signedRequest({origin,signer,method,uri,agentId,payload,fetcher})
   let headers,body;
   if(method==='GET'&&uri==='/v7/cluster/state'){
     headers=signer.sign({kind:'node_api',method:'GET',uri,body:''});body=undefined;
-  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint','submit','provider-attempt'].includes(uri)){
+  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint','submit','provider-attempt','plan-batch-preview','plan-batch','plan-batch-receipt'].includes(uri)){
     const prepared=signer.signWorkerAction({operation:uri,agent_id:agentId,payload});
     headers=prepared.headers;body=prepared.body;uri=prepared.uri;
   }else fail('WORKER_REQUEST_NOT_ALLOWLISTED');
@@ -203,7 +203,7 @@ async function signedRequest({origin,signer,method,uri,agentId,payload,fetcher})
     body,cache:'no-store',credentials:'omit',redirect:'error',
     signal:AbortSignal.timeout(15000)
   });
-  const data=await boundedJson(response);
+  const data=await boundedJson(response,uri.startsWith('/v7/tasks/plan-batch')?96*1024:16384);
   if(!response.ok){
     const code=typeof data?.error_code==='string'&&/^[A-Z][A-Z0-9_]{1,79}$/.test(data.error_code)
       ?data.error_code:'CENTRAL_REQUEST_FAILED';
@@ -408,4 +408,78 @@ async function recordProviderAttempt({origin,agentId,ticketId,dir,signer,action,
       provider_sent:false,automatic_execution_allowed:false,provider_mapping_verified:false};
   }catch{fail('WORKER_PROVIDER_OUTCOME_UNCERTAIN_INSPECT_CURRENT_TASK_NO_RETRY');}
 }
-module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt};
+// Main-process planning review. The renderer cannot choose a signing URL,
+// provide an epoch for admission, or replace the reviewed payload at commit.
+function validateBatchReceipt(reply,body,{preview=false,historical=false}={}){
+  if(!reply||reply.project_id!==body.project_id||reply.request_id!==body.request_id||
+     !Number.isSafeInteger(reply.epoch)||reply.epoch<1||
+     (!historical&&reply.epoch!==body.expected_master_epoch)||
+     reply.automatic_execution_allowed!==false||reply.semantic_discovery_verified!==false||
+     reply.baseline_verified!==false||typeof reply.preview_sha256!=='string'||
+     !/^[a-f0-9]{64}$/.test(reply.preview_sha256)||
+     (!preview&&reply.preview_sha256!==body.preview_sha256)||
+     (preview?reply.read_only!==true:reply.accepted!==true)||
+     !Array.isArray(reply.plan_order)||reply.plan_order.length<2||reply.plan_order.length>10||
+     !Array.isArray(reply.tickets)||reply.tickets.length!==reply.plan_order.length||
+     new Set(reply.plan_order.map(x=>typeof x==='string'?x.toLowerCase():null)).size!==reply.plan_order.length)
+    fail('WORKER_BATCH_RECEIPT_INVALID');
+  const ids=body.tasks?.map(x=>x.ticket_id);
+  if(ids&&JSON.stringify([...ids].sort())!==JSON.stringify([...reply.plan_order].sort()))
+    fail('WORKER_BATCH_RECEIPT_INVALID');
+  for(let i=0;i<reply.tickets.length;i++){
+    const t=reply.tickets[i],id=reply.plan_order[i];
+    if(typeof id!=='string'||!ID.test(id)||!t||t.ticket_id!==id||
+       !['READY','WAITING_AUTHORIZATION'].includes(t.status)||t.version!==1||
+       t.owner_approval_required!==(t.status==='WAITING_AUTHORIZATION'))
+      fail('WORKER_BATCH_RECEIPT_INVALID');
+    if(preview){
+      const original=body.tasks.find(x=>x.ticket_id===id);
+      if(!original||JSON.stringify(t.dependencies)!==JSON.stringify(original.dependencies)||
+         JSON.stringify(t.write_scopes)!==JSON.stringify(original.write_scopes)||
+         JSON.stringify(t.contract_keys)!==JSON.stringify([...original.contract_keys].sort()))
+        fail('WORKER_BATCH_PREVIEW_DECLARATION_MISMATCH');
+    }
+  }
+  // Keep only the known display fields, never echo arbitrary server data.
+  return {project_id:reply.project_id,request_id:reply.request_id,epoch:reply.epoch,
+    preview_sha256:reply.preview_sha256,plan_order:[...reply.plan_order],
+    tickets:reply.tickets.map(t=>({ticket_id:t.ticket_id,status:t.status,version:1,
+      owner_approval_required:t.owner_approval_required})),
+    automatic_execution_allowed:false,semantic_discovery_verified:false,baseline_verified:false};
+}
+async function previewMasterBatch({origin,agentId,projectId,requestId,tasks,signer,fetcher=fetch,beforeMutation=()=>{}}){
+  if(!ORIGIN.test(origin||'')||!ID.test(agentId||'')||!ID.test(projectId||'')||!ID.test(requestId||'')||
+     !Array.isArray(tasks)||tasks.length<2||tasks.length>10||Buffer.byteLength(JSON.stringify(tasks),'utf8')>65536)
+    fail('WORKER_BATCH_INPUT_DENIED');
+  const cluster=await signedRequest({origin,signer,method:'GET',uri:'/v7/cluster/state',agentId,fetcher});
+  if(cluster?.phase!=='READY'||cluster.paused!==false||cluster.master_agent_id!==agentId||
+     !Number.isSafeInteger(cluster.epoch)||cluster.epoch<1)fail('WORKER_BATCH_MASTER_NOT_READY');
+  beforeMutation();
+  const body={agent_id:agentId,project_id:projectId,request_id:requestId,
+    expected_master_epoch:cluster.epoch,tasks:JSON.parse(JSON.stringify(tasks))};
+  const reply=await signedRequest({origin,signer,method:'POST',uri:'plan-batch-preview',agentId,payload:body,fetcher});
+  return {body,review:validateBatchReceipt(reply,body,{preview:true})};
+}
+async function commitMasterBatch({origin,agentId,prepared,signer,fetcher=fetch,beforeMutation=()=>{}}){
+  if(!prepared||prepared.body?.agent_id!==agentId)fail('WORKER_BATCH_REVIEW_REQUIRED');
+  const body={...prepared.body,preview_sha256:prepared.review.preview_sha256};
+  beforeMutation();
+  try{
+    const reply=await signedRequest({origin,signer,method:'POST',uri:'plan-batch',agentId,payload:body,fetcher});
+    const result=validateBatchReceipt(reply,body);
+    if(JSON.stringify(result.plan_order)!==JSON.stringify(prepared.review.plan_order)||
+       JSON.stringify(result.tickets)!==JSON.stringify(prepared.review.tickets))
+      fail('WORKER_BATCH_RECEIPT_INVALID');
+    return {...result,historical_receipt:true};
+  }catch{fail('WORKER_BATCH_OUTCOME_UNCERTAIN_INSPECT_RECEIPT_NO_RETRY');}
+}
+async function inspectMasterBatchReceipt({origin,agentId,projectId,requestId,reviewedDigest,signer,fetcher=fetch}){
+  if(!ORIGIN.test(origin||'')||typeof reviewedDigest!=='string'||reviewedDigest.length!==64||
+     !/^[a-f0-9]{64}$/.test(reviewedDigest))fail('WORKER_BATCH_RECEIPT_INPUT_DENIED');
+  const body={agent_id:agentId,project_id:projectId,request_id:requestId,preview_sha256:reviewedDigest};
+  const reply=await signedRequest({origin,signer,method:'POST',uri:'plan-batch-receipt',agentId,payload:body,fetcher});
+  if(reply?.read_only!==true||reply.historical_receipt!==true||reply.automatic_execution_allowed!==false)
+    fail('WORKER_BATCH_RECEIPT_INVALID');
+  return {...validateBatchReceipt(reply.receipt,body,{historical:true}),historical_receipt:true};
+}
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt};
