@@ -55,6 +55,18 @@
 <button id="workerDetail" class="secondary" type="button" disabled>View task details (no claim)</button>
 <button id="workerContext" class="secondary" type="button" disabled>Preview compact provider context (manual only)</button>
 <p class="muted">Review context for secrets and authorized scope before manually using an approved provider workspace. Preview does not verify the provider account or grant a lease.</p>
+<label for="workerProviderPreview">Compact context only (copy only after independent review)</label>
+<textarea id="workerProviderPreview" rows="5" readonly spellcheck="false"></textarea>
+<label for="workerProviderKind">Provider for manual attempt</label>
+<select id="workerProviderKind"><option value="CHATGPT_WEB">ChatGPT Web</option><option value="GOOGLE_AI_STUDIO">Google AI Studio</option></select>
+<label for="workerProviderDigest">Exact reviewed context SHA-256 from preview</label>
+<input id="workerProviderDigest" maxlength="64" autocomplete="off" spellcheck="false">
+<button id="workerProviderBegin" class="secondary" type="button" disabled>Record reviewed attempt BEGIN (no provider send)</button>
+<label for="workerProviderAttempt">Exact attempt ID from signed task detail</label>
+<input id="workerProviderAttempt" maxlength="40" autocomplete="off" spellcheck="false">
+<div class="actions"><button id="workerProviderInterrupt" class="secondary" type="button" disabled>Record interruption</button>
+<button id="workerProviderClose" class="secondary" type="button" disabled>Close after independent review and fresh checkpoint</button></div>
+<p class="hint">If a response is uncertain, inspect current signed detail before further action. A recorded attempt never verifies provider permission or transmitted bytes. No automatic retry.</p>
 <div class="actions">
 <button id="workerClaim" class="secondary" type="button" disabled>Choose trusted Git checkout and claim</button>
 <button id="workerResume" class="secondary" type="button" disabled>Verify my existing work lease</button>
