@@ -1109,6 +1109,67 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
 
       }finally{if(prior===undefined)delete process.env[key];else process.env[key]=prior;}
     }
+    // Manual provider recovery fixture reuses a reconciled independent ticket.
+    // Never connects to a real provider or records credentials/prompt contents.
+    {
+      const project_id='project_revocation_fixture',ticket_id='ticket_revocation_fixture',
+        agent_id=d.agent_id,expected_master_epoch=Number(status.epoch);
+      await owner('GRANT_PROJECT_AGENT',{project_id,agent_id,can_develop:true});
+      const binding={project_id,agent_id,provider:'CHATGPT_WEB',account_ref:'account_attempt',workspace_ref:'workspace_attempt'};
+      const registry=await owner('REPLACE_PROVIDER_REGISTRY',{expected_version:2,bindings:[binding]});
+      assert.equal(registry.state.registry_version,3);
+      const claim=await d.signed('/v7/tasks/claim',{request_id:'provider_claim_'+(++count),agent_id,ticket_id,expected_master_epoch});
+      assert.equal(claim.code,200,JSON.stringify(claim.body));
+      const common={agent_id,ticket_id,lease_id:claim.body.lease_id,expected_master_epoch};
+      const cp=async()=>d.signed('/v7/tasks/checkpoint',{...common,request_id:'provider_cp_'+(++count),
+        summary:'Manual provider checkpoint fixture',next_action:'Review external session independently'});
+      const first=await cp();assert.equal(first.code,200,JSON.stringify(first.body));
+      const path='/v7/tasks/detail/'+ticket_id;
+      const detail=await d.signed(path,undefined,'GET');
+      assert.equal(detail.code,200);
+      const begin={...common,action:'BEGIN',request_id:'provider_begin_'+(++count),registry_version:3,
+        provider:binding.provider,binding_sha256:detail.body.provider_mappings[0].binding_sha256,
+        checkpoint_generation:first.body.generation,checkpoint_sha256:first.body.content_sha256,context_sha256:'d'.repeat(64)};
+      const wrong=await d.signed('/v7/tasks/provider-attempt',{...begin,registry_version:2});
+      assert.equal(wrong.code,409,JSON.stringify(wrong.body));
+      const opened=await d.signed('/v7/tasks/provider-attempt',begin);
+      assert.equal(opened.code,200,JSON.stringify(opened.body));
+      assert.equal(opened.body.attempt.state,'OPEN');
+      assert.equal(opened.body.provider_sent,false);
+      assert.deepEqual((await d.signed('/v7/tasks/provider-attempt',begin)).body,opened.body);
+      const duplicate=await d.signed('/v7/tasks/provider-attempt',{...begin,request_id:'provider_duplicate_'+(++count)});
+      assert.equal(duplicate.code,423);
+      const attempt_id=opened.body.attempt.attempt_id;
+      const interrupted=await d.signed('/v7/tasks/provider-attempt',{...common,action:'INTERRUPT',attempt_id,request_id:'provider_interrupt_'+(++count)});
+      assert.equal(interrupted.code,200,JSON.stringify(interrupted.body));
+      assert.equal(interrupted.body.attempt.state,'INTERRUPTED');
+      const blocked=await d.signed('/v7/tasks/submit',{...common,request_id:'provider_blocked_submit_'+(++count),candidate_head_sha:'b'.repeat(40),candidate_tree_sha:'c'.repeat(40)});
+      assert.equal(blocked.code,423);
+      assert.equal(blocked.body.error_code,'PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED');
+      const close={...common,action:'CLOSE',attempt_id,request_id:'provider_close_'+(++count),external_session_reviewed:true,worktree_reviewed:true};
+      const premature=await d.signed('/v7/tasks/provider-attempt',close);
+      assert.equal(premature.code,409);
+      assert.equal(premature.body.error_code,'PROVIDER_ATTEMPT_FRESH_CHECKPOINT_REQUIRED');
+      const fresh=await cp();assert.equal(fresh.code,200);
+      const closed=await d.signed('/v7/tasks/provider-attempt',close);
+      assert.equal(closed.code,200,JSON.stringify(closed.body));
+      assert.equal(closed.body.attempt.resolution,'WORKER_CHECKPOINT');
+      const again=await d.signed('/v7/tasks/provider-attempt',{...begin,request_id:'provider_second_'+(++count),
+        checkpoint_generation:fresh.body.generation,checkpoint_sha256:fresh.body.content_sha256});
+      assert.equal(again.code,200,JSON.stringify(again.body));
+      await owner('REVOKE_PROJECT_AGENT',{project_id,agent_id});
+      const reconcile={ticket_id,reason:'Disposable CI: reconcile interrupted provider record',remote_checked:true};
+      const held=await post('/v7/owner/command',{request_id:'provider_held_'+(++count),command:'RECONCILE_TICKET',payload:reconcile},admin);
+      assert.equal(held.code,423,JSON.stringify(held.body));
+      const ownerView=await fetch(base+'/v7/owner/provider-attempt/'+ticket_id,{headers:{authorization:'Bearer '+admin}});
+      assert.equal(ownerView.status,200);
+      assert.equal((await ownerView.json() as any).attempt.attempt_id,again.body.attempt.attempt_id);
+      const resolved=await owner('RESOLVE_PROVIDER_ATTEMPT',{ticket_id,attempt_id:again.body.attempt.attempt_id,
+        external_session_reviewed:true,worktree_reviewed:true,no_automatic_retry_confirmed:true});
+      assert.equal(resolved.state.automatic_reassignment_allowed,false);
+      assert.equal((await owner('RECONCILE_TICKET',reconcile)).state.status,'READY');
+      await owner('REPLACE_PROVIDER_REGISTRY',{expected_version:3,bindings:[]});
+    }
     // Replaying the identical durable claim after a lost HTTP reply MUST
     // return the original lease, never create another lease or worktree.
     const recoveredClaim=await b.signed('/v7/tasks/claim',claimPayload);
