@@ -27,7 +27,7 @@ import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,Q
 import sharedContract from '../packages/shared/contract.json';
 import {publicCentralFiles} from './public_files.ts';
 import {parseOwnerTelegram,telegramReceiptText} from './telegram_owner.ts';
-import {declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot,validateProviderAttempt} from './provider_mappings.ts';
+import {declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot,validateProviderAttempt,validateProviderUsageReading,providerUsageRecord,summarizeProviderUsage} from './provider_mappings.ts';
 import {verifyRecoverySnapshot} from './recovery_validation.ts';
 
 const app=express();
@@ -342,6 +342,20 @@ async function latestProviderAttempt(c:PoolConnection,ticketId:string){
     if(x.ticket_id!==ticketId)throw Error('Ticket mismatch');
     return x;
   }catch{fault('PROVIDER_ATTEMPT_LEDGER_INVALID',423);}
+}
+async function providerUsageHistory(c:PoolConnection,ticketId:string){
+  const t=await one(c,'SELECT ticket_id FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
+  if(!t||t.ticket_id!==ticketId)return fault('TASK_NOT_FOUND',404);
+  const states=await rows(c,'SELECT resource_id,payload_json FROM v7_events WHERE event_type="PROVIDER_ATTEMPT_STATE" AND resource_id=? ORDER BY event_id LIMIT 301',[ticketId]);
+  const records=await rows(c,'SELECT resource_id,payload_json,actor FROM v7_events WHERE event_type="PROVIDER_USAGE_RECORDED" AND resource_id=? ORDER BY event_id LIMIT 101',[ticketId]);
+  try{
+    if(states.some(r=>r.resource_id!==ticketId)||records.some(r=>r.resource_id!==ticketId||r.actor!=='owner:web'))
+      throw Error('PROVIDER_USAGE_HISTORY_INVALID');
+    const decode=(r:any)=>typeof r.payload_json==='string'?JSON.parse(r.payload_json):r.payload_json;
+    const stateValues=states.map(decode);
+    const summary=summarizeProviderUsage(ticketId,stateValues,records.map(decode));
+    return {summary,states:stateValues};
+  }catch{return fault('PROVIDER_USAGE_HISTORY_REVIEW_REQUIRED',423);}
 }
 async function requireNoOpenProviderAttempt(c:PoolConnection,ticketId:string){
   const attempt=await latestProviderAttempt(c,ticketId);
@@ -793,6 +807,19 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any,onFresh?:()=>
         [k.agent_id,k.request_id,'TASK_PLAN_BATCH_CANCELLED:'+digest(JSON.stringify(k)),JSON.stringify(resolution)]);
       await event(c,'TASK_BATCH_ADMISSION_CANCELLED',actor,Number(ld.epoch),k.project_id,resolution);
       result=resolution;
+    }else if(command==='RECORD_PROVIDER_USAGE'){
+      if(actor!=='owner:web')fault('PROVIDER_USAGE_WEB_OWNER_REQUIRED',403);
+      let reading;
+      try{reading=validateProviderUsageReading(payload);}
+      catch{return fault('PROVIDER_USAGE_READING_INVALID',400);}
+      const history=await providerUsageHistory(c,reading.ticket_id);
+      const item=history.summary.attempts.find(a=>a.attempt_id===reading.attempt_id);
+      if(!item||!item.owner_recording_eligible||item.context_sha256!==reading.context_sha256)
+        return fault('PROVIDER_USAGE_ATTEMPT_NOT_ELIGIBLE',409);
+      const attempt=[...history.states].reverse().find(a=>a.attempt_id===reading.attempt_id);
+      const record=providerUsageRecord(reading,attempt);
+      await event(c,'PROVIDER_USAGE_RECORDED',actor,Number(ld.epoch),reading.ticket_id,record);
+      result=record;
     }else if(command==='RESOLVE_PROVIDER_ATTEMPT'){
       if(actor!=='owner:web')fault('PROVIDER_ATTEMPT_WEB_OWNER_REQUIRED',403);
       const ticketId=requireId(payload.ticket_id),attemptId=requireId(payload.attempt_id);
@@ -941,6 +968,16 @@ app.get('/v7/owner/provider-attempt/:ticketId',jsonRoute(async req=>{
       owner_resolution_eligible:ownerResolutionEligible,
       read_only:true,automatic_execution_allowed:false,automatic_reassignment_allowed:false,
       provider_mapping_verified:false};
+  });
+}));
+app.get('/v7/owner/provider-usage/:ticketId',jsonRoute(async req=>{
+  admin(req);
+  const ticketId=requireId(req.params.ticketId);
+  return transaction(async c=>{
+    // Serialize with attempt transitions and Owner observations; no
+    // leadership evaluation, lease change, task update or provider call.
+    await leader(c);
+    return (await providerUsageHistory(c,ticketId)).summary;
   });
 }));
 app.get('/v7/owner/provider-registry',jsonRoute(async req=>{
