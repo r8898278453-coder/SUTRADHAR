@@ -1152,6 +1152,19 @@ test('encrypted Master admission journal survives restart, prevents a second unr
     assert.equal(create().pending(),null);
     assert.equal(fs.readdirSync(dir).length,2);
     assert.throws(()=>create().begin(origin,prepared),/EEXIST/);
+    const body2={...body,request_id:'batch_cancel_example'};
+    const review2={...review,request_id:body2.request_id};
+    const saved2=create().begin(origin,{body:body2,review:review2});
+    const cancellation={resolution:{agent_id:body2.agent_id,project_id:body2.project_id,request_id:body2.request_id,
+      preview_sha256:review2.preview_sha256,plan_order:review2.plan_order,state:'ADMISSION_CANCELLED',epoch:9,
+      resolution_id:'batch_cancel_'+'d'.repeat(32),owner_review_recorded:true,automatic_execution_allowed:false},
+      historical_receipt:true,automatic_execution_allowed:false};
+    assert.throws(()=>create().close(saved2.key,{...cancellation,resolution:{...cancellation.resolution,
+      plan_order:[...review2.plan_order].reverse()}}),/CANCELLATION_INVALID/);
+    assert.deepEqual(create().pending(),saved2);
+    assert.deepEqual(create().close(saved2.key,cancellation),cancellation);
+    assert.equal(create().pending(),null);
+    assert.throws(()=>create().begin(origin,{body:body2,review:review2}),/EEXIST/);
     // Historical evidence is never deleted or silently ignored after corruption.
     fs.writeFileSync(path.join(dir,files[0]),Buffer.from('invalid ciphertext'));
     assert.throws(()=>create().pending(),/CORRUPT_OWNER_REVIEW/);
