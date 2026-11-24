@@ -48,7 +48,7 @@ const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
   require('./pilot-node-continuity.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,createMasterDraftStore,createMasterBatchJournal}=require('./worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal}=require('./worker-claim.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
@@ -685,7 +685,24 @@ app.whenReady().then(()=>{
       const report=inspectMasterSourceHints({repoDir:baseline.repoDir,project:baseline.project,
         observed:baseline.observed,tasks});
       beforeMutation();
-      return report;
+      return {...report,declared_planning_review:analyzeMasterPlanningDraft(tasks)};
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:buildMasterPlanningContext',async(event,agentId,projectId,tasks)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,projectId);
+    workerClaimBusy=true;
+    try{
+      if(masterJournal().pending())throw Error('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
+      const baseline=masterBaselineReview;
+      const beforeMutation=()=>{
+        if(approvedWorkerOperator(agentId,projectId,true)!==origin)
+          throw Error('WORKER_BATCH_CENTRAL_CHANGED');
+      };
+      analyzeMasterPlanningDraft(tasks);
+      await recheckMasterBaseline(baseline,{origin,agentId,projectId,tasks,beforeMutation});
+      const result=buildMasterPlanningContext({observed:baseline.observed,tasks});
+      beforeMutation();return result;
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:previewMasterBatch',async(event,agentId,projectId,requestId,tasks)=>{
