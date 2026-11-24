@@ -238,3 +238,16 @@ Verified previous baseline `e935cef`: [application CI](https://github.com/r88982
 | V7-O09, O11 | Owner authenticated attempt observation and explicit review; no automatic reassignment | Owner dashboard and packaged Desktop usability, independent live acceptance |
 
 Source regressions await exact-head CI. Original 71 acceptance scenario definitions remain unchanged, no LIVE_ACCEPTED promotion. G0–G7 HOLD.
+
+
+## Incremental Owner interruption review coverage
+
+Previous HEAD `82e2a8c` failed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188656) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188901) on TS18049 strict-null diagnostics; disposable MySQL integration and unsigned Windows smoke passed. Explicit return guards (`4d05bde`) correct the reported paths; combined CI verification of the fix and new UI remains pending. Last fully green baseline `e935cef`.
+
+| Requirement | New source evidence | Still required |
+|---|---|---|
+| V7-O02, O03, O06 | MySQL fixture: live lease not eligible, revoked exact lease eligible, closed attempt no longer eligible | Actual original PC/provider and independent Owner review |
+| V7-O09, O11 | Dashboard VM regression: exact ticket/attempt, three attestations, one closure POST, current readback, ineligible/malformed refusal, uncertainty and logout | Real-browser/Hostinger Owner usability and physical interruption |
+| V7-B05, B06, B08, B09 | No actual provider permission, prompt or quota claim; local evidence only | Packaged Desktop mutation, transmitted context verification, live permitted recovery and measured usage |
+
+No change to the original 71 scenario definitions; no LIVE_ACCEPTED promotion. G0–G7 HOLD.
