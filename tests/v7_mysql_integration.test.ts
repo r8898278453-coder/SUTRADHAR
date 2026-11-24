@@ -926,6 +926,78 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       await owner('RECONCILE_TICKET',{ticket_id,
         reason:'Disposable CI: close recovered claim after testing checkpoint freshness',remote_checked:true});
     }
+    // Distinct paths and base branches still conflict on declared shared
+    // API/schema/interface/event resources. Approval does not override a hold.
+    {
+      const p1='project_contract_primary',p2='project_contract_secondary';
+      const expected_master_epoch=Number(status.epoch);
+      for(const [project_id,base_branch] of [[p1,'main'],[p2,'develop']]){
+        await owner('CREATE_PROJECT',{project_id,display_name:project_id,repository:'example/shared-contract-fixture',base_branch});
+      }
+      await owner('GRANT_PROJECT_AGENT',{project_id:p1,agent_id:b.agent_id,can_develop:true});
+      await owner('GRANT_PROJECT_AGENT',{project_id:p2,agent_id:d.agent_id,can_develop:true});
+      const db=await mysql.createConnection({host:'127.0.0.1',port:Number(process.env.DB_PORT||3306),
+        user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME});
+      const plan=async(ticket_id:string,project_id:string,contract_keys?:string[])=>a.signed('/v7/tasks/plan',{
+        request_id:'contract_plan_'+(++count),agent_id:a.agent_id,expected_master_epoch,
+        project_id,ticket_id,branch_name:'ai/'+ticket_id,baseline_sha:'a'.repeat(40),
+        risk:'LOW',title:'Contract fixture '+ticket_id,description:'Independent file and shared contract review',
+        write_scopes:['src/'+ticket_id+'.ts'],acceptance_criteria:['Preserve declared contract'],
+        ...(contract_keys===undefined?{}:{contract_keys})});
+      const claim=async(client:any,ticket_id:string)=>client.signed('/v7/tasks/claim',{
+        request_id:'contract_claim_'+(++count),agent_id:client.agent_id,ticket_id,expected_master_epoch});
+      const approve=async(ticket_id:string)=>{
+        const [rows]:any=await db.query('SELECT proposal_id,kind,justification FROM v7_approvals WHERE ticket_id=?',[ticket_id]);
+        assert.equal(rows.length,1);
+        assert.equal(rows[0].kind,'SHARED_CONTRACT');
+        assert.match(rows[0].justification,/Declared shared contracts:/);
+        await owner('APPROVE_PROPOSAL',{proposal_id:rows[0].proposal_id});
+      };
+      const first='ticket_contract_parent',second='ticket_contract_child',third='ticket_contract_disjoint',
+        legacy='ticket_contract_unclassified';
+      try{
+        const malformed=await plan(first,p1,['api:Orders']);
+        assert.equal(malformed.code,400);
+        assert.equal(malformed.body.error_code,'INVALID_TASK_CONTRACT_KEYS');
+        for(const [ticket_id,project_id,keys] of [
+          [first,p1,['api:orders']],[second,p2,['api:orders.create']],[third,p2,['api:inventory']]
+        ] as const){
+          const r=await plan(ticket_id,project_id,[...keys]);
+          assert.equal(r.code,200,JSON.stringify(r.body));
+          assert.equal(r.body.status,'WAITING_AUTHORIZATION');
+        }
+        assert.equal((await claim(b,first)).code,409);
+        for(const id of [first,second,third])await approve(id);
+        assert.equal((await plan(legacy,p2)).code,200);
+        const live=await claim(b,first);
+        assert.equal(live.code,200,JSON.stringify(live.body));
+        const detail=await b.signed('/v7/tasks/detail/'+first,undefined,'GET');
+        assert.equal(detail.code,200,JSON.stringify(detail.body));
+        assert.deepEqual(detail.body.contract_keys,['api:orders']);
+        for(const id of [second,legacy]){
+          const refused=await claim(d,id);
+          assert.equal(refused.code,409,JSON.stringify(refused.body));
+          assert.equal(refused.body.error_code,'SHARED_CONTRACT_CONFLICT');
+          const [rows]:any=await db.query('SELECT ticket_id FROM v7_reservations WHERE ticket_id=?',[id]);
+          assert.equal(rows.length,0);
+        }
+        const independent=await claim(d,third);
+        assert.equal(independent.code,200,JSON.stringify(independent.body));
+        // Revocation preserves the same reservation until explicit reconciliation.
+        await owner('REVOKE_PROJECT_AGENT',{project_id:p1,agent_id:b.agent_id});
+        await owner('REVOKE_PROJECT_AGENT',{project_id:p2,agent_id:d.agent_id});
+        await owner('GRANT_PROJECT_AGENT',{project_id:p2,agent_id:d.agent_id,can_develop:true});
+        const held=await claim(d,second);
+        assert.equal(held.body.error_code,'SHARED_CONTRACT_CONFLICT');
+        for(const id of [first,third])await owner('RECONCILE_TICKET',{ticket_id:id,
+          reason:'Disposable CI: independently review declared contract fixture',remote_checked:true});
+        const released=await claim(d,second);
+        assert.equal(released.code,200,JSON.stringify(released.body));
+        await owner('REVOKE_PROJECT_AGENT',{project_id:p2,agent_id:d.agent_id});
+        await owner('RECONCILE_TICKET',{ticket_id:second,
+          reason:'Disposable CI: clean up contract fixture after release',remote_checked:true});
+      }finally{await db.end();}
+    }
     const claimPayload={request_id:'claim_'+(++count),agent_id:b.agent_id,
       expected_master_epoch:Number(status.epoch),ticket_id:'ticket_qa_test'};
     const claim=await b.signed('/v7/tasks/claim',claimPayload);
