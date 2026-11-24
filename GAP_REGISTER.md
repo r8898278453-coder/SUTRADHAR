@@ -25,7 +25,7 @@ This register reflects the current implementation branch, not an unsupported "al
 | V7-GAP-02 | P0 | Persistent node identity vs separate agent identity; 60s heartbeat, 180s suspicion, secure enrollment | PARTIAL — signed API and enrollment code/CI; physical Windows DPAPI/restart NOT_RUN |
 | V7-GAP-03 | P0 | Initial post-08:00 election, retention across days, two ranked backups, fenced multi-PC failover | PARTIAL — MySQL election/concurrency/fencing CI; physical 2/3/8–10-PC NOT_RUN |
 | V7-GAP-04 | P0 | Master hybrid developer duty + backup worker preemption, durable takeover context | PARTIAL — durable leadership/worker recovery source, physical hybrid duty acceptance open |
-| V7-GAP-05 | P0 | Master deduplicated project selection/creation, parallel-safe task DAG and explicit QA contract | PARTIAL — planning validation, dependency-ready discovery and path reservations in CI; semantic contract reservations and autonomous task generation OPEN |
+| V7-GAP-05 | P0 | Master deduplicated project selection/creation, parallel-safe task DAG and explicit QA contract | PARTIAL — planning validation, dependency-ready discovery and path reservations in CI; explicit shared contract declarations/claim exclusion CODED / CI PENDING; automatic semantic discovery and autonomous task generation OPEN |
 | V7-GAP-06 | P0 | Electron isolation, browser provider compatibility, permitted chat continuation and project mapping | PARTIAL — OS-vault/Electron and scoped Owner-declared unverified workspace bindings in CI; durable MySQL registry, browser/provider permission and physical acceptance OPEN |
 | V7-GAP-07 | P0 | Trusted local patch/Git operator, MySQL path and semantic contract reservations, no unverified DONE | PARTIAL — local Git/scope reservations/QA guards CI; live protected GitHub acceptance OPEN |
 | V7-GAP-08 | P0 | Independent QA, combined integration tree, live GitHub draft PR/merge acceptance, release evidence | PARTIAL — signed QA/source CI; real independent reviewer/device and live protected merge NOT_RUN |
@@ -78,3 +78,10 @@ historical public Master signing key rotation is still OWNER ACTION.
 ## 24 November — current verified source baseline
 
 At `3465af4`, both [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985550) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985559) passed. This supersedes earlier source-CI-pending notes for that exact baseline only. New fresh-checkpoint submission changes `ee2e62f` / `8684dfe` are coded, not yet CI verified at this update. No gap is closed on the basis of source CI alone. See [consolidated implementation tracker](docs/IMPLEMENTATION_TRACKER.md) and [incremental requirements evidence](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md). G0–G7 HOLD.
+
+
+## Shared-contract admission follow-up
+
+Verified previous baseline `93993a0`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700768) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700737) both SUCCESS, including the fresh-checkpoint change. The new shared-contract implementation and regressions are CODED / CI PENDING at this update.
+
+V7-GAP-05/V7-GAP-07: explicit declared contract keys, Owner review, conservative same-repository claim exclusion and Desktop context fidelity are implemented in source. This does not independently infer missing declarations or prove combined integration; target ledger lookup performance and live QA remain open. V7-GAP-09 fresh-checkpoint guard is now CI verified at 93993a0. No gap promoted to ACCEPTED; G0–G7 HOLD. See [tracker](docs/IMPLEMENTATION_TRACKER.md) and [matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md).
