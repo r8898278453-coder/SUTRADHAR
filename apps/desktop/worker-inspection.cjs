@@ -61,6 +61,18 @@ function providerDeclarations(x){
   });
   return {provider_mapping_state:state,provider_mappings:mappings};
 }
+function contractDeclaration(value){
+  // An older Central response is unclassified, never verified conflict-free.
+  if(value===undefined||value===null)return null;
+  if(!Array.isArray(value)||value.length>12||
+     value.some(x=>typeof x!=='string'||x.length>96||
+       !/^(?:api|db|interface|event):[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*$/.test(x))||
+     value.some((x,i)=>value.some((y,j)=>j>i&&
+       (x===y||x.startsWith(y+'.')||y.startsWith(x+'.')))||
+     JSON.stringify(value)!==JSON.stringify([...value].sort()))
+    fail('WORKER_CONTRACT_DECLARATION_INVALID');
+  return [...value];
+}
 function detailItem(x,expectedId){
   if(!x||!validId(expectedId)||x.ticket_id!==expectedId||!validId(x.project_id)||
     typeof x.repository!=='string'||typeof x.baseline_sha!=='string'||typeof x.branch_name!=='string'||
@@ -96,6 +108,7 @@ function detailItem(x,expectedId){
     risk:x.risk,status:textField(x.status,40),
     version:Number(x.version),write_scopes:scopes,
     acceptance_criteria:criteria,
+    contract_keys:contractDeclaration(x.contract_keys),
     worker_agent_id:x.worker_agent_id||null,
     ...providerDeclarations(x),
     candidate_head_sha:head,candidate_tree_sha:tree,
@@ -173,6 +186,7 @@ function compactWorkerContext(task,agentId){
     risk:t.risk,title:t.title,description:t.description,
     write_scopes:[...new Set(t.write_scopes)].sort(),
     acceptance_criteria:[...new Set(t.acceptance_criteria)],
+    ...(t.contract_keys===null?{}:{contract_keys:t.contract_keys}),
     checkpoint:checkpoint?{generation:checkpoint.generation,summary:checkpoint.summary,
       next_action:checkpoint.next_action,content_sha256:checkpoint.content_sha256}:null
   };
