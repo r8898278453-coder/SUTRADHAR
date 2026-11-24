@@ -199,3 +199,16 @@ Verified previous baseline `93993a0`: [application CI](https://github.com/r88982
 | V7-B06, B08 | `tests/desktop_worker_inspection.test.cjs`: declared keys preserved in bounded preview; malformed metadata rejected | Actual provider permission, token usage, secret review |
 
 Previous fresh-checkpoint regressions are verified in source CI at 93993a0. The 71 original scenario definitions are retained, with no promotion to LIVE_ACCEPTED.
+
+
+## Incremental provider registry coverage
+
+Last fully green source baseline `93993a0`; shared-contract HEAD `01ff1ce` dependency CI succeeded but application CI was cancelled. New provider-registry source is CODED / CI PENDING; verify the latest exact-head workflow results.
+
+| Requirement | Added source evidence | Still required |
+|---|---|---|
+| V7-P01, B05, O09 | tests/v7_rules.test.ts canonical digest/version and invalid aliases; tests/v7_mysql_integration.test.ts exact grant denial, non-owner read denial and scoped task detail | Real provider identity and permitted cross-project isolation |
+| V7-P03, T02, O06, O11 | MySQL replacement CAS, concurrent identical receipt, concurrent different requests, stale version refusal, explicit empty snapshot and no legacy fallback | Owner editor, real revocation/restore and physical acceptance |
+| V7-B06, B08, B09 | tests/desktop_worker_inspection.test.cjs registry provenance outside prompt and invalid version rejection | Live authorized provider, actual tokens/quota and secret review |
+
+All new source evidence awaits exact-head CI. Original 71 scenarios retained; no LIVE_ACCEPTED promotion. G0–G7 HOLD.
