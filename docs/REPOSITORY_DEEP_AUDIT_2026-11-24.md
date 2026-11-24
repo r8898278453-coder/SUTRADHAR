@@ -82,3 +82,10 @@ See [GAP_REGISTER.md](../GAP_REGISTER.md),
    personal PC inventory to this repository, chat or PR.
 4. On any failed exact-head CI job, retain HOLD, inspect actual failure
    logs, fix it only on the existing fix branch and re-run exact-head CI.
+
+
+## Follow-up evidence reconciliation — 24 November 2026
+
+The later exact source head `3465af4` passed both [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985550) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985559). Subsequent source remediation includes fresh checkpoint enforcement on candidate submission (`ee2e62f`) and signed HTTP/disposable MySQL regression fixtures (`8684dfe`), pending CI when recorded. Prior fixes include strict restart/ACK fixtures, compact context validation, task-plan criteria/approval validation, scoped unverified provider declarations, project revocation containment and independent recovery validation. For the exact commit list, statuses and next work see [implementation tracker](IMPLEMENTATION_TRACKER.md) and [acceptance matrix](V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md).
+
+This is a follow-up to the original targeted audit, not a new full audit or independent security attestation. Durable provider mapping, real token usage, semantic contract reservations, live Hostinger and physical-PC evidence remain open; G0–G7 HOLD. Original method, findings and stop rules above are preserved.
