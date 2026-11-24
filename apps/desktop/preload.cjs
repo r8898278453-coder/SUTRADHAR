@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   previewWorkerContext:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:inspectWorkerTasks',agentId,ticketId,'context'),
   claimWorkerTask:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:claimWorkerTask',agentId,ticketId),
   resumeWorkerTask:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:resumeWorkerTask',agentId,ticketId),
+  recordProviderAttempt:(agentId,ticketId,action,provider,reviewedDigest,attemptId)=>ipcRenderer.invoke('sutradhar:recordProviderAttempt',agentId,ticketId,action,provider,reviewedDigest,attemptId),
   checkpointWorkerTask:(agentId,ticketId,summary,nextAction)=>ipcRenderer.invoke('sutradhar:checkpointWorkerTask',agentId,ticketId,summary,nextAction),
   renewWorkerLease:(agentId,ticketId,reason)=>ipcRenderer.invoke('sutradhar:renewWorkerLease',agentId,ticketId,reason),
   submitWorkerCandidate:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:submitWorkerCandidate',agentId,ticketId),
