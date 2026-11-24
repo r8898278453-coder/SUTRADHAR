@@ -554,7 +554,7 @@ get('masterRecover').addEventListener('click',async()=>{
     for(const k of masterTaskFields)get(k).value='';
     get('masterProject').value=r.project_id;get('masterRequest').value=r.request_id;
     renderMasterDraft();get('masterDigest').value=r.preview_sha256;
-    output.textContent='Recovered exact reviewed admission from encrypted journal (epoch '+r.epoch+'). Inspect historical receipt; never resend blindly.';
+    output.textContent='Recovered exact reviewed admission from encrypted journal (epoch '+r.epoch+'). Inspect historical receipt; never resend blindly.\nOriginal agent: '+agent+'\nProject: '+r.project_id+'\nRequest: '+r.request_id+'\nPreview SHA-256: '+r.preview_sha256+'\nOrdered tickets (one per line):\n'+r.plan_order.join('\n');
   }catch(error){output.textContent='Local recovery blocked: '+String(error?.message||error);}
   finally{masterBusy=false;updateMasterControls();await loadStatus();}
 });
@@ -596,7 +596,7 @@ get('masterReceipt').addEventListener('click',async()=>{
     const r=await api.inspectMasterBatchReceipt(id.agent,id.project,id.request,digest);
     if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
     masterRecovered=false;
-    output.textContent='HISTORICAL ADMISSION RECEIPT — not current task state.\n'+JSON.stringify(r,null,2);
+    output.textContent=(r.resolution?'OWNER-CANCELLED ADMISSION — original request permanently blocked in Central; no tickets admitted by this resolution. Review new work separately.\n':'HISTORICAL ADMISSION RECEIPT — not current task state.\n')+JSON.stringify(r,null,2);
   }catch(error){output.textContent='Receipt not verified: '+String(error?.message||error)+
     '. Do not assume non-admission or create a replacement batch; consult Owner if uncertain.';}
   finally{masterBusy=false;updateMasterControls();await loadStatus();}
