@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chooseLeader,chooseBackups,firstElectionOpen,scopesOverlap,safeScope,LEASE_SECONDS,HEARTBEAT_SECONDS,validTaskBranch,isProtectedScope,parseContractKeys,contractReservationConflicts} from '../v7/rules.ts';
-import {parseProviderMappings,declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot} from '../v7/provider_mappings.ts';
+import {parseProviderMappings,declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot,validateProviderAttempt} from '../v7/provider_mappings.ts';
 const day=Date.parse('2026-11-11T00:00:00Z');
 const ts=(hour:number,minute=0)=>day+hour*3600000+minute*60000;
 const candidate=(id:string,node:string,arrival:number,seen:number)=>({
@@ -246,4 +246,18 @@ test('versioned provider registry snapshots are canonical and empty snapshot is 
   for(const v of [0,-1,1.5,'1',Number.MAX_SAFE_INTEGER+1])
     assert.throws(()=>providerRegistrySnapshot(v,[]),/PROVIDER_REGISTRY_INVALID/);
   assert.throws(()=>providerRegistrySnapshot(1,[{...first,workspace_ref:'workspace_alpha\n'}]));
+});
+
+test('provider attempt accepts only exact non-secret evidence metadata and valid lifecycle',()=>{
+  const x={attempt_id:'attempt_'+'a'.repeat(32),ticket_id:'ticket_abc',agent_id:'agent_abc',
+    lease_id:'lease_abc',epoch:1,registry_version:1,provider:'CHATGPT_WEB',
+    binding_sha256:'b'.repeat(64),checkpoint_generation:1,checkpoint_sha256:'c'.repeat(64),
+    context_sha256:'d'.repeat(64),state:'OPEN',resolution:null};
+  assert.deepEqual(validateProviderAttempt(x),x);
+  assert.equal(validateProviderAttempt({...x,state:'INTERRUPTED'}).state,'INTERRUPTED');
+  assert.equal(validateProviderAttempt({...x,state:'CLOSED',resolution:'OWNER_REVIEW'}).state,'CLOSED');
+  for(const bad of [{...x,prompt:'SENTINEL'},{...x,chat_id:'SENTINEL'},{...x,registry_version:0},
+    {...x,context_sha256:'x'.repeat(64)},{...x,checkpoint_generation:'1'},
+    {...x,state:'CLOSED'},{...x,resolution:'OWNER_REVIEW'},{...x,provider:'UNKNOWN'}])
+    assert.throws(()=>validateProviderAttempt(bad),/PROVIDER_ATTEMPT_INVALID/);
 });
