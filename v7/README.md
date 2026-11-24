@@ -163,3 +163,9 @@ Explicitly save editable task/editor data locally; reload under the same agent/C
 Exact baseline `babd15b` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45489449293) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45489449341). Encrypted unconfirmed draft storage and lexical source hints are source-CI verified. New advisory graph, fair sampling and compact context changes are CODED / EXACT-HEAD CI PENDING.
 
 Declared internal waves and conflict review groups supplement bounded lexical source hints; external dependencies and execution eligibility remain unverified. Local compact context preserves exact task fields, reports UTF-8 bytes and digest, and never sends provider requests. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). G0–G7 HOLD.
+
+## Owner-attested provider usage
+
+Exact baseline `8e897c8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45492514727) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45492514610). Advisory planning graph, fair source sampling and compact context are source-CI verified. New Owner-attested provider usage history is CODED / EXACT-HEAD CI PENDING.
+
+Owner web usage panel inspects exact ticket history and records independently observed counts for a closed attempt, with exact context digest and one-shot readback. Unknown attempts are not zero; cached input is a subset. No provider API, quota, cost or new execution authorization. See [provider guide](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). G0–G7 HOLD.
