@@ -48,7 +48,7 @@ const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
   require('./pilot-node-continuity.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,createMasterBatchJournal}=require('./worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,createMasterDraftStore,createMasterBatchJournal}=require('./worker-claim.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
@@ -579,6 +579,32 @@ app.whenReady().then(()=>{
     if(!node)throw Error('MASTER_BATCH_JOURNAL_IDENTITY_REQUIRED');
     return createMasterBatchJournal({dir:path.join(nodeDir(),'master-batch-journal'),safeStorage,nodeId:node.node_id});
   }
+  function masterDraftStore(origin,agentId){
+    const node=vault.read();
+    if(!node)throw Error('MASTER_DRAFT_IDENTITY_REQUIRED');
+    return createMasterDraftStore({dir:path.join(nodeDir(),'master-unconfirmed-drafts'),
+      safeStorage,nodeId:node.node_id,origin,agentId});
+  }
+  ipcMain.handle('sutradhar:loadMasterUnconfirmedDraft',async(event,agentId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,'project_draft');
+    workerClaimBusy=true;masterBatchReview=null;masterBaselineReview=null;
+    try{
+      if(masterJournal().pending())throw Error('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
+      return masterDraftStore(origin,agentId).load();
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:saveMasterUnconfirmedDraft',async(event,agentId,draft,expectedDigest)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,'project_draft');
+    workerClaimBusy=true;masterBatchReview=null;
+    try{
+      if(masterJournal().pending())throw Error('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
+      if(expectedDigest!==null&&(typeof expectedDigest!=='string'||expectedDigest.length!==64||!/^[a-f0-9]{64}$/.test(expectedDigest)))
+        throw Error('MASTER_DRAFT_REVISION_INVALID');
+      return masterDraftStore(origin,agentId).save(draft,expectedDigest);
+    }finally{workerClaimBusy=false;}
+  });
   ipcMain.handle('sutradhar:listMasterProjects',async(event,agentId)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,'project_catalog');
@@ -641,6 +667,27 @@ app.whenReady().then(()=>{
     return requireMasterBaseline({tasks,observed:saved.observed,
       current:inspectMasterBaseline({repoDir:saved.repoDir,project:fresh.project})});
   }
+  ipcMain.handle('sutradhar:inspectMasterSourceHints',async(event,agentId,projectId,tasks)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,projectId);
+    workerClaimBusy=true;
+    try{
+      if(masterJournal().pending())throw Error('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
+      const baseline=masterBaselineReview;
+      const beforeMutation=()=>{
+        if(approvedWorkerOperator(agentId,projectId,true)!==origin)
+          throw Error('WORKER_BATCH_CENTRAL_CHANGED');
+      };
+      if(!Array.isArray(tasks)||tasks.length<2||tasks.length>10||
+         Buffer.byteLength(JSON.stringify(tasks),'utf8')>65536)
+        throw Error('MASTER_SOURCE_HINT_SCOPE_INVALID');
+      await recheckMasterBaseline(baseline,{origin,agentId,projectId,tasks,beforeMutation});
+      const report=inspectMasterSourceHints({repoDir:baseline.repoDir,project:baseline.project,
+        observed:baseline.observed,tasks});
+      beforeMutation();
+      return report;
+    }finally{workerClaimBusy=false;}
+  });
   ipcMain.handle('sutradhar:previewMasterBatch',async(event,agentId,projectId,requestId,tasks)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,projectId);
