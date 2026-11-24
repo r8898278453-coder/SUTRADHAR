@@ -16,6 +16,8 @@ SUTRADHAR coordinates a group of PCs through an authoritative control plane:
 
 | You want to... | Read this first |
 | --- | --- |
+| Track current code, evidence and open work | [Implementation tracker](docs/IMPLEMENTATION_TRACKER.md) and [gap register](GAP_REGISTER.md) |
+| Configure manual provider workspace references | [Owner provider declaration guide](docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md) |
 | Understand how Central and Desktop fit together | [Architecture & repository decision](docs/ADR_001_MONOREPO_TWO_APPS.md) |
 | Set up or operate the system without programming | [Owner's installation and deployment guide](docs/OWNER_SETUP_AND_DEPLOYMENT.md) |
 | Approve a release, investigate failures or recover safely | [Release, update & rollback policy](docs/RELEASE_OPERATIONS.md) |
@@ -179,3 +181,10 @@ wrappers; those folders **exist**. The repository's `main` branch metadata
 currently reports **not protected**, so G0 stays unresolved. Always consult
 the exact-HEAD [GitHub PR #1](https://github.com/r8898278453-coder/SUTRADHAR/pull/1)
 and [gap register](GAP_REGISTER.md), never a historical green run.
+
+
+## 24 November 2026 — Current development evidence
+
+Last independently checked source baseline: `3465af4`, [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985550) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985559) both SUCCESS. Includes strict task planning, compact context preview, unverified Owner-declared workspace mapping, dependency-ready task filtering, project access revocation and independent Master recovery validation. Fresh checkpoint before candidate submission after reclaim/failed QA (`ee2e62f` / `8684dfe`) is new source awaiting CI at this update.
+
+Read the [current architecture reconciliation](docs/SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md), [contract](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md), [implementation tracker](docs/IMPLEMENTATION_TRACKER.md), [acceptance matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](GAP_REGISTER.md) together. The provider registry is configuration-only and unverified; actual account/workspace validation, durable registry, token measurement and physical acceptance remain open. All G0–G7 remain HOLD. Check exact current Draft PR head before any review; earlier CI is not release approval.
