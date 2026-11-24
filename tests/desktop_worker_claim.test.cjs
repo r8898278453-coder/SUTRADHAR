@@ -4,7 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const crypto=require('node:crypto'),cp=require('node:child_process');
 const {createVault}=require('../apps/desktop/os-vault.cjs');
 const {createSignerBridge}=require('../apps/desktop/vault-bridge.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt}=require('../apps/desktop/worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt}=require('../apps/desktop/worker-claim.cjs');
 const {progressWorkerTask}=require('../apps/desktop/worker-progress.cjs');
 const {submitWorkerCandidate}=require('../apps/desktop/worker-submit.cjs');
 const available=cp.spawnSync('git',['--version'],{encoding:'utf8'}).status===0;
@@ -1041,4 +1041,84 @@ test('Desktop renderer exposes only explicit attempt commands and a separate con
   assert.match(html,/id="workerProviderPreview"[^>]*readonly/);
   assert.match(renderer,/get\('workerProviderPreview'\)\.value=r\.preview/);
   assert.doesNotMatch(renderer,/\+r\.preview;/);
+});
+
+
+test('Master planning Desktop preview, admission and historical receipt are narrowly signed and independently checked',{skip:!available},async()=>{
+  const f=fixture();
+  try{
+    const task=i=>({ticket_id:'ticket_plan_'+i,baseline_sha:f.baseline,branch_name:'ai/plan_'+i,
+      title:'Implement task '+i,description:'Review local scope',risk:'LOW',write_scopes:['src/file'+i+'.ts'],
+      acceptance_criteria:['Test passes'],dependencies:i===2?['ticket_plan_1']:[],contract_keys:[]});
+    const args={origin:'https://central.example.com',agentId:'agent_aaa',projectId:'project_aaa',
+      requestId:'batch_review_001',tasks:[task(2),task(1)],signer:f.signer};
+    let master='agent_aaa',posted=0,receipt=null,lost=false,badPreview=false,wrongReceipt=false;
+    const digest='a'.repeat(64);
+    const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
+    const fetcher=async(url,init)=>{
+      const uri=new URL(url).pathname,h=init.headers,raw=init.body||'';
+      assert.equal(new URL(url).origin,args.origin);assert.equal(init.redirect,'error');assert.equal(init.credentials,'omit');
+      const canonical=[h['x-sutradhar-timestamp'],h['x-sutradhar-nonce'],init.method,uri,sha(raw)].join('\n');
+      assert.equal(crypto.verify(null,Buffer.from(canonical),crypto.createPublicKey(f.pub.public_key_pem),Buffer.from(h['x-sutradhar-signature'],'base64')),true);
+      let result;
+      if(uri==='/v7/cluster/state')result={phase:'READY',paused:false,epoch:7,master_agent_id:master};
+      else if(uri==='/v7/tasks/plan-batch/preview'){
+        const b=JSON.parse(raw);
+        const ordered=[...b.tasks].sort((a,b)=>a.ticket_id.localeCompare(b.ticket_id));
+        const tickets=ordered.map(t=>({ticket_id:t.ticket_id,status:'READY',version:1,owner_approval_required:false}));
+        receipt={accepted:true,project_id:b.project_id,request_id:b.request_id,epoch:b.expected_master_epoch,
+          preview_sha256:digest,plan_order:ordered.map(t=>t.ticket_id),tickets,
+          automatic_execution_allowed:false,semantic_discovery_verified:false,baseline_verified:false};
+        result={...receipt,read_only:true,tickets:tickets.map((t,i)=>({...t,dependencies:ordered[i].dependencies,
+          write_scopes:badPreview?['wrong.ts']:ordered[i].write_scopes,contract_keys:ordered[i].contract_keys}))};
+      }else if(uri==='/v7/tasks/plan-batch'){
+        posted++;
+        const b=JSON.parse(raw);assert.equal(b.preview_sha256,digest);assert.equal(b.tasks[0].title,'Implement task 2');
+        if(lost)throw Error('LOST_COMMIT_REPLY');
+        result=wrongReceipt?{...receipt,preview_sha256:'b'.repeat(64)}:receipt;
+      }else if(uri==='/v7/tasks/plan-batch/receipt'){
+        const b=JSON.parse(raw);assert.deepEqual(Object.keys(b).sort(),['agent_id','preview_sha256','project_id','request_id']);
+        result={read_only:true,historical_receipt:true,automatic_execution_allowed:false,receipt};
+      }else throw Error('UNEXPECTED_ENDPOINT');
+      return new Response(JSON.stringify(result));
+    };
+    master='agent_other';await assert.rejects(previewMasterBatch({...args,fetcher}),/MASTER_NOT_READY/);
+    master='agent_aaa';badPreview=true;
+    await assert.rejects(previewMasterBatch({...args,fetcher}),/DECLARATION_MISMATCH/);
+    badPreview=false;
+    const prepared=await previewMasterBatch({...args,fetcher});
+    assert.equal(prepared.review.preview_sha256,digest);assert.deepEqual(prepared.review.plan_order,['ticket_plan_1','ticket_plan_2']);
+    assert.equal(posted,0);
+    args.tasks[0].title='changed outside reviewed snapshot';
+    await assert.rejects(commitMasterBatch({...args,prepared,fetcher,beforeMutation:()=>{throw Error('FENCED');}}),/FENCED/);
+    assert.equal(posted,0);
+    wrongReceipt=true;
+    await assert.rejects(commitMasterBatch({...args,prepared,fetcher}),/OUTCOME_UNCERTAIN/);
+    wrongReceipt=false;lost=true;
+    await assert.rejects(commitMasterBatch({...args,prepared,fetcher}),/OUTCOME_UNCERTAIN/);
+    assert.equal(posted,2,'each explicit invocation makes exactly one POST');
+    const readback=await inspectMasterBatchReceipt({...args,reviewedDigest:digest,fetcher});
+    assert.equal(readback.historical_receipt,true);assert.equal(readback.automatic_execution_allowed,false);
+    assert.equal(posted,2);
+    const sign=payload=>f.signer.signWorkerAction({operation:'plan-batch-preview',agent_id:args.agentId,payload});
+    assert.equal(sign(prepared.body).uri,'/v7/tasks/plan-batch/preview');
+    for(const patch of [{tasks:[task(1)]},{tasks:[{...task(1),credential:'not allowed'},task(2)]},{expected_master_epoch:0},{arbitrary_url:'https://example.invalid'}])
+      assert.throws(()=>sign({...prepared.body,...patch}),/DENIED/);
+    assert.throws(()=>f.signer.sign({kind:'node_api',method:'POST',uri:'/v7/tasks/plan-batch',body:'{}'}),/DENIED/);
+  }finally{f.close();}
+});
+
+test('Master planning renderer exposes narrow reviewed admission only',()=>{
+  const root=path.join(__dirname,'../apps/desktop');
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const html=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  const renderer=fs.readFileSync(path.join(root,'setup.js'),'utf8');
+  assert.match(main,/masterBatchReview=\{origin,prepared\}/);
+  assert.match(main,/masterBatchReview!==saved/);
+  assert.match(preload,/commitMasterBatch:\(agentId,projectId,requestId,digest\)/);
+  assert.doesNotMatch(preload,/signWorkerAction|private_key_pem/);
+  assert.match(html,/id="masterDraft"[^>]*readonly/);
+  assert.match(renderer,/get\('masterReviewed'\)\.checked!==true/);
+  assert.match(renderer,/invalidateMasterReview\(\{clearDigest:false\}\)/);
 });
