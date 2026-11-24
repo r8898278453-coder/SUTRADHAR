@@ -209,3 +209,10 @@ Owner-managed provider alias snapshots now persist in MySQL with versioned repla
 Verified previous source baseline `215e5ee`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116654) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116645) both SUCCESS. New Owner registry editor is CODED / CI PENDING at this update.
 
 Non-developer Owner can now load current alias declarations, add/remove local draft rows, review the entire replacement and save explicitly with current-version readback. No API command composition needed for this dashboard workflow. See [step-by-step Owner guide](docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md), [tracker](docs/IMPLEMENTATION_TRACKER.md), [matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](GAP_REGISTER.md). Uncertain responses require fresh load; aliases are not provider credentials or permission proof. No actual provider action, schema migration, deployment or production acceptance. G0–G7 HOLD.
+
+
+## Provider interruption recovery — latest development
+
+Verified previous baseline `e935cef`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765773) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765743) both SUCCESS. New manual attempt source is CODED / CI PENDING at this update.
+
+Manual provider attempts now have durable OPEN/INTERRUPTED/CLOSED metadata bound to original lease, registry revision and checkpoint; unresolved records block fresh handoff/submission/requeue until reviewed. Developer CLI supports explicit record and readback. See [provider recovery guide](docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md), [tracker](docs/IMPLEMENTATION_TRACKER.md), [matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](GAP_REGISTER.md). No automatic provider activity, login, session transfer, measured token accounting or schema migration. Desktop mutation controls, Owner resolution UI and physical acceptance remain open. G0–G7 HOLD.
