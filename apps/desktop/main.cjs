@@ -48,7 +48,7 @@ const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
   require('./pilot-node-continuity.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt}=require('./worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt}=require('./worker-claim.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
@@ -72,6 +72,7 @@ let maintenanceRestartBusy=false;
 let workerClaimBusy=false;
 // Tab-local review metadata only; never retain prompt text or credentials here.
 let workerContextReview=null;
+let masterBatchReview=null;
 let installerPreparationBusy=false;
 let installerExecutionBusy=false;
 let postInstallBusy=false;
@@ -572,6 +573,58 @@ app.whenReady().then(()=>{
       throw Error('QA_RECOVERY_CENTRAL_TASK_STATE_INVALID');
     return task.status==='RECONCILIATION_REQUIRED';
   }
+  ipcMain.handle('sutradhar:previewMasterBatch',async(event,agentId,projectId,requestId,tasks)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,projectId);
+    if(typeof requestId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(requestId)||
+       !Array.isArray(tasks)||tasks.length<2||tasks.length>10)
+      throw Error('WORKER_BATCH_INPUT_DENIED');
+    workerClaimBusy=true;masterBatchReview=null;
+    try{
+      const beforeMutation=()=>{
+        if(approvedWorkerOperator(agentId,projectId,true)!==origin)throw Error('WORKER_BATCH_CENTRAL_CHANGED');
+      };
+      const prepared=await previewMasterBatch({origin,agentId,projectId,requestId,tasks,signer,beforeMutation});
+      beforeMutation();
+      masterBatchReview={origin,prepared};
+      return prepared.review;
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:commitMasterBatch',async(event,agentId,projectId,requestId,reviewedDigest)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,projectId);
+    const saved=masterBatchReview,body=saved?.prepared.body,review=saved?.prepared.review;
+    if(!saved||saved.origin!==origin||body.agent_id!==agentId||body.project_id!==projectId||
+       body.request_id!==requestId||review.preview_sha256!==reviewedDigest)
+      throw Error('WORKER_BATCH_REVIEW_REQUIRED');
+    workerClaimBusy=true;
+    try{
+      const confirmed=await dialog.showMessageBox(setupWindow,{
+        type:'warning',buttons:['Cancel — no batch admission','Admit exact reviewed task batch'],
+        defaultId:0,cancelId:0,noLink:true,
+        message:'Admit '+body.tasks.length+' reviewed tasks into Central?',
+        detail:'Project: '+projectId+'\nMaster: '+agentId+' / epoch '+body.expected_master_epoch+
+          '\nRequest: '+requestId+'\nDigest: '+reviewedDigest+'\nOrdered tickets: '+review.plan_order.join(', ')+
+          '\nConfirm the complete reviewed task text, baseline, scope, criteria and dependency declarations. No execution, claim, provider send or Git action.'
+      });
+      if(confirmed.response!==1)return {canceled:true};
+      const beforeMutation=()=>{
+        if(approvedWorkerOperator(agentId,projectId,true)!==origin||masterBatchReview!==saved)
+          throw Error('WORKER_BATCH_REVIEW_CHANGED');
+      };
+      return await commitMasterBatch({origin,agentId,prepared:saved.prepared,signer,beforeMutation});
+    }finally{masterBatchReview=null;workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:inspectMasterBatchReceipt',async(event,agentId,projectId,requestId,reviewedDigest)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,projectId);
+    if(typeof requestId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(requestId))
+      throw Error('WORKER_BATCH_INPUT_DENIED');
+    workerClaimBusy=true;masterBatchReview=null;
+    try{
+      return await inspectMasterBatchReceipt({origin,agentId,projectId,requestId,reviewedDigest,signer});
+    }finally{workerClaimBusy=false;}
+  });
   ipcMain.handle('sutradhar:claimWorkerTask',async(event,agentId,ticketId)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,ticketId);
