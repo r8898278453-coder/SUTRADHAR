@@ -544,6 +544,32 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     assert.equal(duplicateDependencyPlan.code,400,JSON.stringify(duplicateDependencyPlan.body));
     assert.equal(duplicateDependencyPlan.body.error_code,
       'TASK_PLANNING_AMBIGUOUS_SCOPE_OR_DEPENDENCIES');
+    // A plan must have usable criteria and cannot borrow an unrelated approval.
+    const validationPlan={agent_id:a.agent_id,expected_master_epoch:Number(status.epoch),
+      ticket_id:'ticket_plan_validation',project_id:'project_integration',
+      baseline_sha:'a'.repeat(40),branch_name:'ai/plan_validation',
+      title:'Validate task input',description:'Reject malformed planning data without inserting tickets',
+      risk:'HIGH',write_scopes:['src/validation.ts'],acceptance_criteria:['Test passes']};
+    for(const [patch,error] of [
+      [{acceptance_criteria:['   ']},'MISSING_ACCEPTANCE_CRITERIA'],
+      [{acceptance_criteria:['Test passes',' Test passes ']},'TASK_DUPLICATE_ACCEPTANCE_CRITERIA'],
+      [{acceptance_criteria:['broken\uD800']},'MISSING_ACCEPTANCE_CRITERIA'],
+      [{dependencies:false},'INVALID_TASK_SCOPE'],
+      [{dependencies:['ticket_plan_VALIDATION']},'INVALID_TASK_SCOPE'],
+      [{dependencies:['ticket_qa_test','TICKET_QA_TEST']},'TASK_PLANNING_AMBIGUOUS_SCOPE_OR_DEPENDENCIES'],
+      [{proposal_id:'proposal_nonexistent'},'TASK_INITIAL_APPROVAL_MUST_BE_SERVER_CREATED']
+    ] as const){
+      const invalid=await a.signed('/v7/tasks/plan',{...validationPlan,...patch,
+        request_id:'plan_validation_'+(++count)});
+      assert.equal(invalid.code,400,JSON.stringify(invalid.body));
+      assert.equal(invalid.body.error_code,error);
+    }
+    // Reuse the rejected ticket identity: no invalid input may reserve it.
+    const validPlan=await a.signed('/v7/tasks/plan',{...validationPlan,
+      request_id:'plan_validation_'+(++count)});
+    assert.equal(validPlan.code,200,JSON.stringify(validPlan.body));
+    assert.equal(validPlan.body.status,'WAITING_AUTHORIZATION');
+    assert.equal(validPlan.body.owner_approval_required,true);
     // One Git repository can have separate projects with different base
     // branches, but its ai/* branch namespace must NEVER be duplicated.
     const collisionInProject=await a.signed('/v7/tasks/plan',{
