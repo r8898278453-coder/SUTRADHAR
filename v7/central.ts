@@ -1364,19 +1364,27 @@ app.post('/v7/leadership/reconcile',jsonRoute(async req=>{
 app.post('/v7/tasks/plan',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{};
   const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id),projectId=requireId(d.project_id);
-  const scope=d.write_scopes, deps=d.dependencies||[];
+  const scope=d.write_scopes, deps=d.dependencies===undefined?[]:d.dependencies;
   if(!Array.isArray(scope)||!scope.length||scope.length>30||!scope.every(safeScope)||new Set(scope).size!==scope.length||
-    !Array.isArray(deps)||deps.length>30||deps.includes(ticketId))fault('INVALID_TASK_SCOPE',400);
+    !Array.isArray(deps)||deps.length>30||!deps.every(okId)||
+    deps.some((id:string)=>id.toLowerCase()===ticketId.toLowerCase()))fault('INVALID_TASK_SCOPE',400);
   // Overlapping scopes within ONE ticket and repeated dependencies create
   // ambiguous reservations/acceptance DAGs. Reject before MySQL writes.
   if(scope.some((s:string,i:number)=>scope.some((other:string,j:number)=>j>i&&scopesOverlap(s,other)))||
-     new Set(deps).size!==deps.length)
+     new Set(deps.map((id:string)=>id.toLowerCase())).size!==deps.length)
     fault('TASK_PLANNING_AMBIGUOUS_SCOPE_OR_DEPENDENCIES',400);
   const risk=d.risk;
   if(!['LOW','MEDIUM','HIGH','CORE'].includes(risk))fault('INVALID_RISK',400);
   const criteria=d.acceptance_criteria;
-  if(!Array.isArray(criteria)||!criteria.length||criteria.length>30||criteria.some(x=>typeof x!=='string'||x.length>500))
+  if(!Array.isArray(criteria)||!criteria.length||criteria.length>30||
+     criteria.some(x=>typeof x!=='string'||!x.trim()||x.length>500||/[\uD800-\uDFFF]/u.test(x)))
     fault('MISSING_ACCEPTANCE_CRITERIA',400);
+  if(new Set(criteria.map((x:string)=>x.trim())).size!==criteria.length)
+    fault('TASK_DUPLICATE_ACCEPTANCE_CRITERIA',400);
+  // The only supported initial approval is minted with the immutable task.
+  // A caller-provided ID may be absent, unrelated or a different review kind.
+  if(d.proposal_id!==undefined&&d.proposal_id!==null)
+    fault('TASK_INITIAL_APPROVAL_MUST_BE_SERVER_CREATED',400);
   const baseline=requireSha(d.baseline_sha),title=requireStr(d.title,220),description=requireStr(d.description,10000);
   const fingerprint=digest(JSON.stringify([projectId,title.trim().toLowerCase(),
     description.trim().toLowerCase(),[...scope].sort(),[...deps].sort()]));
@@ -1404,12 +1412,7 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
       if(intentTaken)fault('TASK_INTENT_DUPLICATE',409);
       const sensitive=scope.some(isProtectedScope);
       const approvalNeeded=risk==='CORE'||risk==='HIGH'||sensitive;
-      let approved=false;
-      if(d.proposal_id){
-        const proposal=await one(c,'SELECT state FROM v7_approvals WHERE proposal_id=? AND ticket_id=? FOR UPDATE',[d.proposal_id,ticketId]);
-        approved=proposal?.state==='APPROVED';
-      }
-      const status=approvalNeeded&&!approved?'WAITING_AUTHORIZATION':'READY';
+      const status=approvalNeeded?'WAITING_AUTHORIZATION':'READY';
       for(const dependency of deps){
         requireId(dependency);
         const other=await one(c,'SELECT project_id FROM v7_tickets WHERE ticket_id=?',[dependency]);
@@ -1418,13 +1421,13 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
       await c.query('INSERT INTO v7_tickets(ticket_id,project_id,creator_agent_id,fingerprint,created_epoch,title,description,baseline_sha,branch_name,risk,scopes_json,criteria_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
         [ticketId,projectId,agentId,fingerprint,Number(ld.epoch),title,description,baseline,branch,risk,JSON.stringify(scope),JSON.stringify(criteria),status]);
       for(const dep of deps)await c.query('INSERT INTO v7_dependencies(ticket_id,dependency_id) VALUES(?,?)',[ticketId,dep]);
-      if(approvalNeeded&&!approved){
-        const proposalId=d.proposal_id?requireId(d.proposal_id):'approval_'+crypto.randomUUID().replace(/-/g,'');
-        if(!d.proposal_id)await c.query('INSERT INTO v7_approvals(proposal_id,ticket_id,kind,justification) VALUES(?,?,?,?)',
+      if(approvalNeeded){
+        const proposalId='approval_'+crypto.randomUUID().replace(/-/g,'');
+        await c.query('INSERT INTO v7_approvals(proposal_id,ticket_id,kind,justification) VALUES(?,?,?,?)',
           [proposalId,ticketId,sensitive?'CORE_SECURITY':risk,description.slice(0,500)]);
       }
       await event(c,'TASK_PLANNED',agentId,Number(ld.epoch),ticketId,{project_id:projectId,status,risk,scope_digest:digest(JSON.stringify(scope))});
-      return {accepted:true,ticket_id:ticketId,status,version:1,owner_approval_required:approvalNeeded&&!approved};
+      return {accepted:true,ticket_id:ticketId,status,version:1,owner_approval_required:approvalNeeded};
     });
   });
 }));
