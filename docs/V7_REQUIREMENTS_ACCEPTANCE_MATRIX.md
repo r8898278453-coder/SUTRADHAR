@@ -280,3 +280,17 @@ Previous exact HEAD `8145c64`: [application CI](https://github.com/r8898278453-c
 | V7-B05, B06 | Prior Desktop static assertion corrected to check main-process reviewed context guard | Combined exact-head CI, physical provider/Windows acceptance |
 
 Original 71 scenarios unchanged. No LIVE_ACCEPTED promotion. G0–G7 HOLD.
+
+
+## Desktop Master planning and receipt regression coverage
+
+Exact baseline `804726e` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45463312420) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45463312581), including previous Desktop correction and Master batch admission. New Desktop Master planner and receipt lookup are CODED / EXACT-HEAD CI PENDING.
+
+| Requirement | New source evidence | Still required |
+|---|---|---|
+| V7-T01, T04, T05 | Desktop no-code task draft, signed preview, pinned reviewed payload and native confirmation | Actual autonomous task decomposition/source semantic analysis and physical usability |
+| V7-T02, O01, O03 | Signed historical batch receipt lookup, exact actor/project/request/digest, mismatch/uncertain response and foreign actor regression | Physical restart/crash and Owner/successor recovery when original signer unavailable |
+| V7-T08, O06, O07 | Exact Master eligibility, node binding and drain fencing; final local guard | Physical failover/maintenance and expiry acceptance |
+| V7-Q02, Q03, O11 | Declared criteria and existing separate Owner approval retained; no execution or baseline proof | Independent actual baseline and combined integration QA |
+
+Original 71 scenarios unchanged. No LIVE_ACCEPTED promotion. G0–G7 HOLD.
