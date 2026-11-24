@@ -131,3 +131,10 @@ See [Master task batch guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). Trusted
 Exact baseline `804726e` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45463312420) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45463312581), including previous Desktop correction and Master batch admission. New Desktop Master planner and receipt lookup are CODED / EXACT-HEAD CI PENDING.
 
 Use the existing approved Master PC, exact project ID and unique request ID. Add 2–10 tasks locally, preview, review every field and digest, then confirm natively. Preserve draft and identifiers. On uncertainty use signed historical receipt inspection, not a replacement batch. Original approved actor only; historical admission is not current execution permission. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). No automatic provider action, new schema or production release. G0–G7 HOLD.
+
+
+## Master project catalog and reviewed admission restart recovery
+
+Exact baseline `0fc7c7a` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325287) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325508), including the previous Desktop Master planner and historical receipt lookup. New project catalog and admission journal changes are CODED / EXACT-HEAD CI PENDING.
+
+Desktop Master may load signed active project identities (up to 100, explicit truncation). Exact native-confirmed reviewed batch is encrypted and journaled before POST; one unresolved local intent blocks further admission. Restore pending original draft after restart and inspect historical receipt; do not resubmit or infer non-admission from a missing receipt. Unconfirmed drafts remain in memory. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). Actual baseline/source analysis, Owner reconciliation, journal retention and physical acceptance remain open. G0–G7 HOLD.
