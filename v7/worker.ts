@@ -380,7 +380,7 @@ async function providerAttempt(id:string){
        !t.latest_checkpoint||t.provider_attempt&&t.provider_attempt.state!=='CLOSED')
       throw Error('PROVIDER_ATTEMPT_BEGIN_REQUIRES_CURRENT_MAPPING_AND_CHECKPOINT');
     Object.assign(body,{provider,context_sha256,registry_version:t.provider_registry_version,
-      binding_sha256:mapping.binding_sha256,checkpoint_generation:Number(t.latest_checkpoint.generation),
+      binding_sha256:mapping.binding_sha256,expected_task_version:Number(t.version),checkpoint_generation:Number(t.latest_checkpoint.generation),
       checkpoint_sha256:t.latest_checkpoint.content_sha256});
   }else{
     const attempt_id=process.argv[6];
