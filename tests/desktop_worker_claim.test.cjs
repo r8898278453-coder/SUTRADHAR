@@ -4,7 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const crypto=require('node:crypto'),cp=require('node:child_process');
 const {createVault}=require('../apps/desktop/os-vault.cjs');
 const {createSignerBridge}=require('../apps/desktop/vault-bridge.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,createMasterBatchJournal}=require('../apps/desktop/worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,createMasterDraftStore,createMasterBatchJournal}=require('../apps/desktop/worker-claim.cjs');
 const {progressWorkerTask}=require('../apps/desktop/worker-progress.cjs');
 const {submitWorkerCandidate}=require('../apps/desktop/worker-submit.cjs');
 const available=cp.spawnSync('git',['--version'],{encoding:'utf8'}).status===0;
@@ -1276,4 +1276,82 @@ test('Master baseline is selected natively and rechecked before encrypted admiss
   assert.match(main,/await recheckMasterBaseline\(saved\.baseline,[\s\S]*?const pending=journal\.begin/);
   assert.match(preload,/inspectMasterBaseline:\(agentId,projectId\)=>ipcRenderer\.invoke/);
   assert.match(html,/id="masterBaselineInspect"/);
+});
+
+
+test('unconfirmed Master draft persists encrypted editor fields and tasks, with CAS and no restored authority',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-master-draft-'));
+  try{
+    const storage=safeStorage(),nodeId='node_'+'a'.repeat(32),origin='https://central.example.com',agentId='agent_aaa';
+    const create=(patch={})=>createMasterDraftStore({dir,safeStorage:storage,nodeId,origin,agentId,...patch});
+    const editor={ticket:'ticket_partial',baseline:'',branch:'',title:'Unfinished private title',description:'Private partial draft',
+      risk:'LOW',scopes:'src/',criteria:'',dependencies:'',contracts:''};
+    const task={ticket_id:'ticket_saved',baseline_sha:'a'.repeat(40),branch_name:'ai/saved',title:'Saved task',
+      description:'Reviewed later',risk:'LOW',write_scopes:['src/feature.ts'],acceptance_criteria:['Test passes'],dependencies:[],contract_keys:[]};
+    const draft={project_id:'project_aaa',request_id:'batch_draft_001',tasks:[task],editor};
+    assert.equal(create().load(),null);
+    const saved=create().save(draft,null);
+    assert.equal(saved.revision,1);assert.equal(saved.automatic_execution_allowed,false);
+    assert.deepEqual(create().load(),saved);
+    const folder=path.join(dir,fs.readdirSync(dir)[0]),file=path.join(folder,'draft.bin');
+    assert.equal(fs.readFileSync(file).includes(Buffer.from(editor.description)),false);
+    assert.throws(()=>create().save(draft,null),/REVISION_CONFLICT/);
+    const next={...draft,editor:{...editor,description:'Changed partial draft'}};
+    const newer=create().save(next,saved.sha256);
+    assert.equal(newer.revision,2);assert.deepEqual(create().load().draft,next);
+    assert.throws(()=>create().save(draft,saved.sha256),/REVISION_CONFLICT/);
+    assert.throws(()=>create().save({...draft,preview_sha256:'b'.repeat(64)},newer.sha256),/SHAPE_OR_SIZE/);
+    assert.throws(()=>create().save({...draft,editor:{...editor,password:'denied'}},newer.sha256),/SHAPE_OR_SIZE/);
+    assert.equal(create({agentId:'agent_bbb'}).load(),null);
+    assert.equal(create({origin:'https://other.example.com'}).load(),null);
+    assert.throws(()=>create({safeStorage:{...storage,isEncryptionAvailable:()=>false}}),/STORAGE_DENIED/);
+    fs.writeFileSync(path.join(folder,'identity.osvault.write-intent'),'interrupted',{mode:0o600});
+    assert.throws(()=>create().load(),/WRITE_UNCERTAIN/);
+    fs.unlinkSync(path.join(folder,'identity.osvault.write-intent'));
+    fs.writeFileSync(file,'corrupt');
+    assert.throws(()=>create().load(),/CORRUPT_OWNER_REVIEW/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('Master bounded source hints read immutable Git blobs, report cross-task and shared imports without returning source',{skip:!available},()=>{
+  const f=fixture();
+  try{
+    fs.writeFileSync(path.join(f.repo,'src','a.ts'),"import {b} from './b';\nimport {shared} from './shared';\nconst PRIVATE_SOURCE_MARKER=1;\n");
+    fs.writeFileSync(path.join(f.repo,'src','b.ts'),"import {shared} from './shared';\nexport const b=shared;\n");
+    fs.writeFileSync(path.join(f.repo,'src','shared.ts'),'export const shared=1;\n');
+    fs.writeFileSync(path.join(f.repo,'src','large.ts'),'x'.repeat(17000));
+    run(f.repo,'add','.');run(f.repo,'commit','-m','local scoped import fixtures');
+    const baseline=run(f.repo,'rev-parse','HEAD');
+    run(f.repo,'update-ref','refs/remotes/origin/main',baseline);
+    const project={project_id:'project_aaa',repository:'example/repo',base_branch:'main'};
+    const observed=inspectMasterBaseline({repoDir:f.repo,project});
+    const tasks=[{ticket_id:'ticket_a',baseline_sha:baseline,dependencies:[],write_scopes:['src/a.ts','src/large.ts']},
+      {ticket_id:'ticket_b',baseline_sha:baseline,dependencies:[],write_scopes:['src/b.ts']}];
+    const args={repoDir:f.repo,project,observed,tasks};
+    // Working tree edits cannot influence immutable source hints.
+    fs.writeFileSync(path.join(f.repo,'src','a.ts'),'uncommitted modification');
+    const before=run(f.repo,'status','--porcelain');
+    const result=inspectMasterSourceHints(args);
+    assert.equal(result.baseline_sha,baseline);assert.equal(result.scoped_source_file_count,3);
+    assert.equal(result.scanned_file_count,2);assert.equal(result.skipped_file_count,1);assert.equal(result.scan_limited,true);
+    assert.ok(result.hints.some(h=>h.kind==='CROSS_TASK_RELATIVE_IMPORT'&&h.from_ticket==='ticket_a'&&h.to_ticket==='ticket_b'));
+    assert.ok(result.hints.some(h=>h.kind==='SHARED_RELATIVE_IMPORT'&&h.target_path==='src/shared.ts'));
+    assert.equal(result.semantic_discovery_verified,false);assert.equal(result.provider_sent,false);
+    assert.equal(result.source_contents_returned,false);assert.equal(result.automatic_execution_allowed,false);
+    assert.equal(JSON.stringify(result).includes('PRIVATE_SOURCE_MARKER'),false);
+    assert.equal(run(f.repo,'status','--porcelain'),before);
+    assert.throws(()=>inspectMasterSourceHints({...args,tasks:[{...tasks[0],write_scopes:['../outside']},tasks[1]]}),/SCOPE_INVALID/);
+    run(f.repo,'update-ref','refs/remotes/origin/main',f.baseline);
+    assert.throws(()=>inspectMasterSourceHints(args),/BASELINE_CHANGED/);
+  }finally{f.close();}
+});
+
+test('unconfirmed draft and source hint IPC remain narrow and separate from admission',()=>{
+  const root=path.join(__dirname,'../apps/desktop');
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8'),preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const html=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  assert.match(main,/ipcMain\.handle\('sutradhar:loadMasterUnconfirmedDraft'[\s\S]*?masterBatchReview=null;masterBaselineReview=null/);
+  assert.match(main,/ipcMain\.handle\('sutradhar:inspectMasterSourceHints'[\s\S]*?await recheckMasterBaseline/);
+  assert.match(preload,/saveMasterUnconfirmedDraft:\(agentId,draft,expectedDigest\)/);
+  assert.match(html,/id="masterDraftSave"/);assert.match(html,/id="masterSourceHints"/);
 });
