@@ -203,6 +203,30 @@ function createSignerBridge(vault){
       if(!id(payload.ticket_id)||typeof payload.lease_id!=='string'||
         !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(payload.lease_id)||
         !epoch)fail('VAULT_WORKER_ACTION_DENIED');
+    }else if(operation==='provider-attempt'){
+      uri='/v7/tasks/provider-attempt';
+      expected=['request_id','agent_id','ticket_id','lease_id','expected_master_epoch','action'];
+      const hash=v=>typeof v==='string'&&v.length===64&&/^[a-f0-9]{64}$/.test(v);
+      if(!id(payload.ticket_id)||!id(payload.request_id)||!payload.request_id.startsWith('provider_')||
+         typeof payload.lease_id!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(payload.lease_id)||!epoch)
+        fail('VAULT_WORKER_ACTION_DENIED');
+      if(payload.action==='BEGIN'){
+        expected.push('provider','registry_version','binding_sha256','checkpoint_generation','checkpoint_sha256','context_sha256');
+        if(!['CHATGPT_WEB','GOOGLE_AI_STUDIO'].includes(payload.provider)||
+           !Number.isSafeInteger(payload.registry_version)||payload.registry_version<1||
+           !Number.isSafeInteger(payload.checkpoint_generation)||payload.checkpoint_generation<1||
+           ![payload.binding_sha256,payload.checkpoint_sha256,payload.context_sha256].every(hash))
+          fail('VAULT_WORKER_ACTION_DENIED');
+      }else if(['INTERRUPT','CLOSE'].includes(payload.action)){
+        expected.push('attempt_id');
+        if(typeof payload.attempt_id!=='string'||payload.attempt_id.length!==40||
+           !/^attempt_[a-f0-9]{32}$/.test(payload.attempt_id))fail('VAULT_WORKER_ACTION_DENIED');
+        if(payload.action==='CLOSE'){
+          expected.push('external_session_reviewed','worktree_reviewed');
+          if(payload.external_session_reviewed!==true||payload.worktree_reviewed!==true)
+            fail('VAULT_WORKER_ACTION_DENIED');
+        }
+      }else fail('VAULT_WORKER_ACTION_DENIED');
     }else if(operation==='submit'){
       uri='/v7/tasks/submit';
       expected=['request_id','agent_id','ticket_id','lease_id',
