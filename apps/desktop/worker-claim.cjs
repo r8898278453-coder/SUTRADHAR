@@ -752,6 +752,112 @@ function inspectMasterSourceHints({repoDir,project,observed,tasks}){
     source_contents_returned:false};
 }
 
+// Advisory planning analysis, independent of Central admission/lease policy.
+// Conservative declared resource conflicts + explicit dependency DAG.
+function analyzeMasterPlanningDraft(tasks){
+  const id=x=>typeof x==='string'&&ID.test(x)&&!/[\r\n]/.test(x);
+  const bounded=(x,n)=>typeof x==='string'&&x.length<=n&&!/[\uD800-\uDFFF]/u.test(x);
+  const list=(a,n,fn)=>Array.isArray(a)&&a.length<=n&&a.every(fn);
+  const contract=x=>bounded(x,96)&&/^(?:api|db|interface|event):[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*$/.test(x);
+  const overlap=(a,b,sep)=>a===b||a.startsWith(b+sep)||b.startsWith(a+sep);
+  if(!Array.isArray(tasks)||tasks.length<2||tasks.length>10||
+     Buffer.byteLength(JSON.stringify(tasks),'utf8')>65536||
+     tasks.some(t=>!t||Object.keys(t).sort().join('|')!=='acceptance_criteria|baseline_sha|branch_name|contract_keys|dependencies|description|risk|ticket_id|title|write_scopes'||
+       !id(t.ticket_id)||typeof t.baseline_sha!=='string'||t.baseline_sha.length!==40||!SHA.test(t.baseline_sha)||
+       !bounded(t.branch_name,120)||!/^ai\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(t.branch_name)||
+       t.branch_name.includes('..')||t.branch_name.endsWith('.lock')||
+       !bounded(t.title,220)||!t.title.trim()||!bounded(t.description,10000)||!t.description.trim()||
+       !['LOW','MEDIUM','HIGH','CORE'].includes(t.risk)||
+       !list(t.write_scopes,30,safeScope)||!t.write_scopes.length||
+       !list(t.acceptance_criteria,30,c=>bounded(c,500)&&!!c.trim())||!t.acceptance_criteria.length||
+       !list(t.dependencies,30,id)||new Set(t.dependencies).size!==t.dependencies.length||
+       !list(t.contract_keys,12,contract)||
+       t.contract_keys.some((x,i)=>t.contract_keys.some((y,j)=>j>i&&overlap(x,y,'.')))))
+    fail('MASTER_PLANNING_DRAFT_INVALID');
+  const ordered=[...tasks].sort((a,b)=>a.ticket_id<b.ticket_id?-1:a.ticket_id>b.ticket_id?1:0);
+  const byId=new Map(ordered.map(t=>[t.ticket_id,t]));
+  const aliases=new Map(ordered.map(t=>[t.ticket_id.toLowerCase(),t.ticket_id]));
+  if(aliases.size!==tasks.length||new Set(tasks.map(t=>t.branch_name.toLowerCase())).size!==tasks.length)
+    fail('MASTER_PLANNING_DUPLICATE_ID_OR_BRANCH');
+  const ancestors=new Map(),waiting=new Set(byId.keys()),waves=[];
+  for(const t of ordered)for(const d of t.dependencies)
+    if(aliases.has(d.toLowerCase())&&aliases.get(d.toLowerCase())!==d)
+      fail('MASTER_PLANNING_DEPENDENCY_ALIAS');
+  while(waiting.size){
+    const wave=[...waiting].filter(k=>byId.get(k).dependencies.every(d=>!waiting.has(d)));
+    if(!wave.length)fail('MASTER_PLANNING_DEPENDENCY_CYCLE');
+    for(const k of wave){
+      const all=new Set();
+      for(const d of byId.get(k).dependencies)if(byId.has(d)){
+        all.add(d);for(const x of ancestors.get(d)||[])all.add(x);
+      }
+      ancestors.set(k,all);
+    }
+    for(const k of wave)waiting.delete(k);
+    waves.push(wave);
+  }
+  const conflicts=[],external=[];
+  for(const t of ordered){
+    const dependencies=t.dependencies.filter(d=>!byId.has(d));
+    if(dependencies.length)external.push({ticket_id:t.ticket_id,dependencies});
+  }
+  for(let i=0;i<ordered.length;i++)for(let j=i+1;j<ordered.length;j++){
+    const a=ordered[i],b=ordered[j];
+    const pathConflict=a.write_scopes.some(x=>b.write_scopes.some(y=>overlap(x.toLowerCase(),y.toLowerCase(),'/')));
+    const contractConflict=a.contract_keys.some(x=>b.contract_keys.some(y=>overlap(x,y,'.')));
+    if(pathConflict||contractConflict){
+      const direction=ancestors.get(b.ticket_id).has(a.ticket_id)?[a.ticket_id,b.ticket_id]:
+        ancestors.get(a.ticket_id).has(b.ticket_id)?[b.ticket_id,a.ticket_id]:null;
+      conflicts.push({ticket_ids:[a.ticket_id,b.ticket_id],path_conflict:pathConflict,
+        contract_conflict:contractConflict,declared_order:direction,requires_review:direction===null});
+    }
+  }
+  // Connected components are advisory review groups, never dispatch groups.
+  const neighbors=new Map(ordered.map(t=>[t.ticket_id,new Set()]));
+  const connect=(a,b)=>{neighbors.get(a).add(b);neighbors.get(b).add(a);};
+  for(const t of ordered)for(const d of t.dependencies)if(byId.has(d))connect(t.ticket_id,d);
+  for(const c of conflicts)connect(...c.ticket_ids);
+  const unseen=new Set(byId.keys()),groups=[];
+  while(unseen.size){
+    const todo=[[...unseen][0]],group=[];
+    while(todo.length){
+      const k=todo.pop();if(!unseen.delete(k))continue;
+      group.push(k);for(const n of neighbors.get(k))if(unseen.has(n))todo.push(n);
+    }
+    groups.push(group.sort());
+  }
+  return {task_count:tasks.length,declared_dependency_waves:waves,declared_review_groups:groups,
+    declared_conflicts:conflicts,external_dependencies_unverified:external,
+    unresolved_declared_conflict_count:conflicts.filter(c=>c.requires_review).length,
+    semantic_discovery_verified:false,worker_availability_verified:false,
+    upstream_changes_in_baseline_verified:false,automatic_execution_allowed:false};
+}
+function buildMasterPlanningContext({observed,tasks}){
+  const graph=analyzeMasterPlanningDraft(tasks);
+  if(!observed||observed.local_tracking_ref_verified!==true||observed.remote_freshness_verified!==false||
+     typeof observed.project_id!=='string'||!ID.test(observed.project_id)||
+     typeof observed.repository!=='string'||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(observed.repository)||
+     typeof observed.base_branch!=='string'||!/^[A-Za-z0-9._/-]+$/.test(observed.base_branch)||
+     typeof observed.baseline_sha!=='string'||!SHA.test(observed.baseline_sha)||
+     tasks.some(t=>t.baseline_sha!==observed.baseline_sha))
+    fail('MASTER_PLANNING_CONTEXT_BASELINE_INVALID');
+  const context={schema:'SUTRADHAR_MASTER_PLANNING_CONTEXT_V1',
+    project_id:observed.project_id,repository:observed.repository,base_branch:observed.base_branch,
+    baseline_sha:observed.baseline_sha,local_tracking_ref_only:true,
+    instruction:'All tasks inherit the common baseline_sha. Review declarations; no execution or semantic independence is authorized.',
+    tasks:tasks.map(({baseline_sha,...task})=>task)};
+  // Keep exact task strings, order, risk and criteria. Only hoist the common
+  // baseline and serialize compactly; no lossy summaries or token guesses.
+  const expanded={...context,tasks};
+  const preview=JSON.stringify(context),utf8_bytes=Buffer.byteLength(preview,'utf8');
+  const expanded_utf8_bytes=Buffer.byteLength(JSON.stringify(expanded),'utf8');
+  if(utf8_bytes>16384)fail('MASTER_PLANNING_CONTEXT_BUDGET_EXCEEDED_SPLIT_BATCH');
+  return {preview,context_sha256:crypto.createHash('sha256').update(preview).digest('hex'),
+    utf8_bytes,expanded_utf8_bytes,bytes_saved:expanded_utf8_bytes-utf8_bytes,
+    byte_budget:16384,task_count:graph.task_count,provider_sent:false,secret_scan_verified:false,
+    token_usage_verified:false,automatic_execution_allowed:false};
+}
+
 // Append-only encrypted admission evidence, one unresolved intent per PC.
 // No private keys, arbitrary paths, automated replay or automatic deletion.
 // A Windows filesystem power-cut guarantee still requires physical acceptance.
@@ -865,4 +971,4 @@ function createMasterBatchJournal({dir,safeStorage,nodeId}){
   }
   return {pending,begin,close};
 }
-module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,createMasterDraftStore,createMasterBatchJournal};
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal};
