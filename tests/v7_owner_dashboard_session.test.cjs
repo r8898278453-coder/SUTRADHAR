@@ -290,3 +290,94 @@ test('Owner registry stale GET after logout cannot display earlier session alias
   assert.equal(e('provider-registry-rows').children.length,0);
   assert.equal(e('provider-registry-save').disabled,true);
 });
+
+
+const recoveryAttempt={attempt_id:'attempt_'+'a'.repeat(32),ticket_id:'ticket_recovery',agent_id:'agent_demo',
+  lease_id:'lease_demo',epoch:3,registry_version:1,provider:'CHATGPT_WEB',
+  binding_sha256:'b'.repeat(64),checkpoint_generation:2,checkpoint_sha256:'c'.repeat(64),
+  context_sha256:'d'.repeat(64),state:'INTERRUPTED',resolution:null};
+function recoveryResponse(attempt=recoveryAttempt,eligible=true){
+  return {ticket_id:'ticket_recovery',ticket_status:'RECONCILIATION_REQUIRED',attempt,
+    owner_resolution_eligible:eligible,read_only:true,automatic_execution_allowed:false,
+    automatic_reassignment_allowed:false,provider_mapping_verified:false};
+}
+async function loadProviderRecovery(b,data=recoveryResponse()){
+  const e=b.element;e('provider-recovery-ticket').value='ticket_recovery';
+  const run=e('provider-recovery-load').onclick();
+  assert.equal(b.pending.length,1);
+  assert.equal(b.pending[0].url,'/v7/owner/provider-attempt/ticket_recovery');
+  complete(b.pending.shift(),data);await run;
+}
+function reviewProviderRecovery(b){
+  const e=b.element;b.ctx.confirm=()=>true;
+  e('provider-recovery-attempt').value=recoveryAttempt.attempt_id;
+  e('provider-recovery-attempt').listeners.input();
+  for(const id of ['provider-recovery-session','provider-recovery-worktree','provider-recovery-no-retry']){
+    e(id).checked=true;e(id).listeners.change();
+  }
+}
+function providerRecoveryReceipt(post){
+  return {accepted:true,receipt_id:post.request_id,state:{ticket_id:'ticket_recovery',
+    attempt_id:recoveryAttempt.attempt_id,state:'CLOSED',owner_review_recorded:true,
+    automatic_execution_allowed:false,automatic_reassignment_allowed:false}};
+}
+test('Owner provider recovery requires eligible read, exact ID, explicit reviews, one POST and exact readback',async()=>{
+  const b=browser(),e=b.element;
+  await loadProviderRecovery(b);
+  assert.equal(e('provider-recovery-close').disabled,true);
+  reviewProviderRecovery(b);
+  assert.equal(e('provider-recovery-close').disabled,false);
+  const run=e('provider-recovery-close').onclick();
+  assert.equal(b.pending.length,1);
+  const post=JSON.parse(b.queries[1].options.body);
+  assert.equal(post.command,'RESOLVE_PROVIDER_ATTEMPT');
+  assert.deepEqual(post.payload,{ticket_id:'ticket_recovery',attempt_id:recoveryAttempt.attempt_id,
+    external_session_reviewed:true,worktree_reviewed:true,no_automatic_retry_confirmed:true});
+  await e('provider-recovery-close').onclick();
+  assert.equal(b.queries.length,2);
+  complete(b.pending.shift(),providerRecoveryReceipt(post));
+  await awaitPending(b);
+  complete(b.pending.shift(),recoveryResponse({...recoveryAttempt,state:'CLOSED',resolution:'OWNER_REVIEW'},false));
+  await run;
+  assert.match(e('provider-recovery-status').textContent,/exact closure read back/);
+  assert.equal(e('provider-recovery-close').disabled,true);
+  assert.ok(b.queries.every(q=>q.options.credentials==='omit'));
+});
+test('Owner recovery ineligible and malformed reads cannot enable closure',async()=>{
+  for(const data of [recoveryResponse(recoveryAttempt,false),
+    recoveryResponse({...recoveryAttempt,state:'CLOSED',resolution:'OWNER_REVIEW'},true),
+    recoveryResponse({...recoveryAttempt,prompt:'forbidden'},true)]){
+    const b=browser(),e=b.element;
+    await loadProviderRecovery(b,data);reviewProviderRecovery(b);
+    await e('provider-recovery-close').onclick();
+    assert.equal(b.queries.length,1);
+    assert.equal(e('provider-recovery-close').disabled,true);
+  }
+});
+test('Owner provider recovery uncertain readback disables future closure until fresh inspection',async()=>{
+  const b=browser(),e=b.element;
+  await loadProviderRecovery(b);reviewProviderRecovery(b);
+  const run=e('provider-recovery-close').onclick();
+  const post=JSON.parse(b.queries[1].options.body);
+  complete(b.pending.shift(),providerRecoveryReceipt(post));
+  await awaitPending(b);
+  complete(b.pending.shift(),recoveryResponse());
+  await run;
+  assert.match(e('provider-recovery-status').textContent,/Closure not verified/);
+  assert.equal(e('provider-recovery-close').disabled,true);
+  await e('provider-recovery-close').onclick();
+  assert.equal(b.queries.length,3);
+});
+test('Owner provider recovery ignores late POST after logout',async()=>{
+  const b=browser(),e=b.element;
+  await loadProviderRecovery(b);reviewProviderRecovery(b);
+  const run=e('provider-recovery-close').onclick();
+  const post=JSON.parse(b.queries[1].options.body);
+  e('disconnect').onclick();
+  complete(b.pending.shift(),providerRecoveryReceipt(post));
+  await run;
+  assert.equal(b.queries.length,2);
+  assert.match(e('provider-recovery-status').textContent,/session changed/);
+  assert.equal(e('provider-recovery-ticket').value,'');
+  assert.equal(e('provider-recovery-close').disabled,true);
+});
