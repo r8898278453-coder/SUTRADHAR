@@ -1139,7 +1139,8 @@ function registryControls(){
   $('provider-registry-consent').disabled=!editable;
   const changed=registrySnapshot&&(registrySnapshot.version===0||
     JSON.stringify(registryDraft)!==JSON.stringify(registrySnapshot.bindings));
-  $('provider-registry-save').disabled=!editable||!changed||!$('provider-registry-consent').checked;
+  const unadded=registryInputs.some(id=>id!=='provider-kind'&&$(id).value!=='');
+  $('provider-registry-save').disabled=!editable||!changed||unadded||!$('provider-registry-consent').checked;
 }
 function renderProviderRegistry(){
   const body=$('provider-registry-rows');body.replaceChildren();
@@ -1199,6 +1200,9 @@ $('provider-registry-add').onclick=()=>{
     renderProviderRegistry();
   }catch{registryStatus('Invalid, duplicate, conflicting or oversized binding. Draft unchanged.');}
 };
+for(const id of registryInputs)$(id).addEventListener('input',()=>{
+  $('provider-registry-consent').checked=false;registryControls();
+});
 $('provider-registry-consent').addEventListener('change',registryControls);
 $('provider-registry-save').onclick=async()=>{
   registryControls();if($('provider-registry-save').disabled)return;
