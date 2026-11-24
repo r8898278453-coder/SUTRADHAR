@@ -347,6 +347,77 @@ async function requireNoOpenProviderAttempt(c:PoolConnection,ticketId:string){
   const attempt=await latestProviderAttempt(c,ticketId);
   if(attempt&&attempt.state!=='CLOSED')fault('PROVIDER_ATTEMPT_RECONCILIATION_REQUIRED',423);
 }
+// The original actor/request key is the same durable namespace as admission.
+// A cancellation is a permanent deny marker, not proof about a lost DB history.
+function batchRecoveryKey(d:any){
+  if(!d||typeof d!=='object'||Array.isArray(d)||
+     Object.keys(d).sort().join('|')!=='agent_id|preview_sha256|project_id|request_id'||
+     typeof d.preview_sha256!=='string'||d.preview_sha256.length!==64||!/^[a-f0-9]{64}$/.test(d.preview_sha256))
+    return fault('TASK_BATCH_RECEIPT_INPUT_INVALID',400);
+  return {agent_id:requireId(d.agent_id),project_id:requireId(d.project_id),
+    request_id:requireId(d.request_id),preview_sha256:d.preview_sha256 as string};
+}
+type BatchRecoveryKey=ReturnType<typeof batchRecoveryKey>;
+async function batchRecoveryRow(c:PoolConnection,k:BatchRecoveryKey){
+  const row=await one(c,'SELECT actor,request_id,operation,response_json FROM v7_commands WHERE actor=? AND request_id=? FOR UPDATE',[k.agent_id,k.request_id]);
+  if(row&&(row.actor!==k.agent_id||row.request_id!==k.request_id))
+    return fault('TASK_BATCH_RECEIPT_NOT_VERIFIED',409);
+  return row;
+}
+function batchRecoveryValue(row:any,k:BatchRecoveryKey){
+  const prior=typeof row.response_json==='string'?JSON.parse(row.response_json):row.response_json;
+  if(row.operation==='TASK_PLAN_BATCH_CANCELLED:'+digest(JSON.stringify(k))){
+    if(!prior||Object.keys(prior).sort().join('|')!=='agent_id|automatic_execution_allowed|epoch|owner_review_recorded|plan_order|preview_sha256|project_id|request_id|resolution_id|state'||
+       prior.agent_id!==k.agent_id||prior.project_id!==k.project_id||prior.request_id!==k.request_id||
+       prior.preview_sha256!==k.preview_sha256||prior.state!=='ADMISSION_CANCELLED'||
+       prior.owner_review_recorded!==true||prior.automatic_execution_allowed!==false||
+       !okId(prior.resolution_id)||!Number.isSafeInteger(prior.epoch)||prior.epoch<1||
+       !Array.isArray(prior.plan_order)||prior.plan_order.length<2||prior.plan_order.length>10||
+       !prior.plan_order.every(okId)||new Set(prior.plan_order.map((id:string)=>id.toLowerCase())).size!==prior.plan_order.length)
+      return fault('TASK_BATCH_RECEIPT_NOT_VERIFIED',409);
+    return {state:'ADMISSION_CANCELLED',resolution:prior};
+  }
+  if(!/^TASK_PLAN_BATCH:[a-f0-9]{64}$/.test(row.operation))
+    return fault('TASK_BATCH_RECEIPT_NOT_VERIFIED',409);
+  if(!prior||prior.accepted!==true||prior.project_id!==k.project_id||prior.request_id!==k.request_id||
+     prior.preview_sha256!==k.preview_sha256||prior.automatic_execution_allowed!==false||
+     prior.semantic_discovery_verified!==false||prior.baseline_verified!==false||
+     !Number.isSafeInteger(prior.epoch)||prior.epoch<1||!Array.isArray(prior.tickets)||
+     prior.tickets.length<2||prior.tickets.length>10||!Array.isArray(prior.plan_order)||
+     prior.plan_order.length!==prior.tickets.length||
+     prior.tickets.some((t:any,i:number)=>!t||!okId(t.ticket_id)||t.ticket_id!==prior.plan_order[i]||
+       !['READY','WAITING_AUTHORIZATION'].includes(t.status)||t.version!==1||
+       t.owner_approval_required!==(t.status==='WAITING_AUTHORIZATION'))||
+     new Set(prior.plan_order.map((id:string)=>id.toLowerCase())).size!==prior.plan_order.length)
+    return fault('TASK_BATCH_RECEIPT_NOT_VERIFIED',409);
+  return {state:'ADMITTED',receipt:prior};
+}
+function batchRecoveryOrder(value:unknown):string[]{
+  if(!Array.isArray(value)||value.length<2||value.length>10||!value.every(okId)||
+     new Set(value.map((id:string)=>id.toLowerCase())).size!==value.length)
+    return fault('TASK_BATCH_RECOVERY_ORDER_INVALID',400);
+  return value;
+}
+async function inspectBatchRecovery(c:PoolConnection,k:BatchRecoveryKey,order:string[]){
+  const agent=await one(c,'SELECT agent_id FROM v7_agents WHERE agent_id=?',[k.agent_id]);
+  const project=await one(c,'SELECT project_id FROM v7_projects WHERE project_id=?',[k.project_id]);
+  if(!agent||agent.agent_id!==k.agent_id||!project||project.project_id!==k.project_id)
+    return fault('TASK_BATCH_RECOVERY_IDENTITY_UNKNOWN',404);
+  const row=await batchRecoveryRow(c,k);
+  if(row){
+    const current=batchRecoveryValue(row,k);
+    const saved=current.receipt?.plan_order??current.resolution?.plan_order;
+    if(JSON.stringify(saved)!==JSON.stringify(order))return fault('TASK_BATCH_RECOVERY_ORDER_MISMATCH',409);
+    return {...k,...current,plan_order:order,read_only:true,owner_cancellation_eligible:false,
+      automatic_execution_allowed:false};
+  }
+  // Any ticket alias, even in another project, is a conflict. Never erase
+  // existing work or interpret the absence of a receipt as safe to retry.
+  const existing=await rows(c,'SELECT ticket_id FROM v7_tickets WHERE ticket_id IN ('+order.map(()=>'?').join(',')+') FOR UPDATE',order);
+  return {...k,plan_order:order,state:existing.length?'HOLD_TICKET_CONFLICT':'NO_RECEIPT',
+    read_only:true,owner_cancellation_eligible:existing.length===0,
+    automatic_execution_allowed:false};
+}
 async function ownerCommand(c:PoolConnection,actor:string,body:any,onFresh?:()=>void){
   const command=requireStr(body.command,40);
   const payload=body.payload||{};
@@ -705,6 +776,23 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any,onFresh?:()=>
         scope_reservation_preserved:true,owner_remote_review_required:true,
         automatic_reassignment_allowed:false,version:Number(t.version)+1,
         epoch:Number(ld.epoch)};
+    }else if(command==='CANCEL_MASTER_BATCH_ADMISSION'){
+      if(actor!=='owner:web')fault('TASK_BATCH_RECOVERY_WEB_OWNER_REQUIRED',403);
+      if(Object.keys(payload).sort().join('|')!=='agent_id|evidence_reviewed|no_retry_confirmed|plan_order|preview_sha256|project_id|request_id'||
+         payload.evidence_reviewed!==true||payload.no_retry_confirmed!==true)
+        return fault('TASK_BATCH_RECOVERY_REVIEW_REQUIRED',400);
+      const {plan_order,evidence_reviewed,no_retry_confirmed,...raw}=payload;
+      const k=batchRecoveryKey(raw),order=batchRecoveryOrder(plan_order);
+      const observed=await inspectBatchRecovery(c,k,order);
+      if(observed.state!=='NO_RECEIPT'||!observed.owner_cancellation_eligible)
+        return fault('TASK_BATCH_RECOVERY_NOT_CANCELLABLE',409);
+      const resolution={...k,plan_order:order,state:'ADMISSION_CANCELLED',epoch:Number(ld.epoch),
+        resolution_id:'batch_cancel_'+crypto.randomUUID().replace(/-/g,''),
+        owner_review_recorded:true,automatic_execution_allowed:false};
+      await c.query('INSERT INTO v7_commands(actor,request_id,operation,response_json) VALUES(?,?,?,?)',
+        [k.agent_id,k.request_id,'TASK_PLAN_BATCH_CANCELLED:'+digest(JSON.stringify(k)),JSON.stringify(resolution)]);
+      await event(c,'TASK_BATCH_ADMISSION_CANCELLED',actor,Number(ld.epoch),k.project_id,resolution);
+      result=resolution;
     }else if(command==='RESOLVE_PROVIDER_ATTEMPT'){
       if(actor!=='owner:web')fault('PROVIDER_ATTEMPT_WEB_OWNER_REQUIRED',403);
       const ticketId=requireId(payload.ticket_id),attemptId=requireId(payload.attempt_id);
@@ -1706,33 +1794,29 @@ app.post('/v7/tasks/plan-batch',jsonRoute(async req=>{
 }));
 // Historical admission receipt, scoped to its original approved signer.
  // No current execution authority is inferred from this observation.
+app.post('/v7/owner/master-batch/inspect',jsonRoute(async req=>{
+  admin(req);
+  const d=req.body;
+  if(!d||typeof d!=='object'||Array.isArray(d)||Object.keys(d).sort().join('|')!=='agent_id|plan_order|preview_sha256|project_id|request_id')
+    return fault('TASK_BATCH_RECOVERY_INPUT_INVALID',400);
+  const {plan_order,...raw}=d,k=batchRecoveryKey(raw),order=batchRecoveryOrder(plan_order);
+  return transaction(async c=>{await leader(c);return inspectBatchRecovery(c,k,order);});
+}));
 app.post('/v7/tasks/plan-batch/receipt',jsonRoute(async req=>{
-  const node=await nodeAuth(req),d=req.body;
-  if(!d||typeof d!=='object'||Array.isArray(d)||
-     Object.keys(d).sort().join('|')!=='agent_id|preview_sha256|project_id|request_id'||
-     typeof d.preview_sha256!=='string'||d.preview_sha256.length!==64||!/^[a-f0-9]{64}$/.test(d.preview_sha256))
-    return fault('TASK_BATCH_RECEIPT_INPUT_INVALID',400);
-  const actor=requireId(d.agent_id),project=requireId(d.project_id),requestId=requireId(d.request_id);
+  const node=await nodeAuth(req),k=batchRecoveryKey(req.body);
   return transaction(async c=>{
     await leader(c);
-    await signedAgent(c,node.node_id,actor);
+    await signedAgent(c,node.node_id,k.agent_id);
     await requireNoNodeDrain(c,node.node_id);
-    const row=await one(c,'SELECT actor,request_id,operation,response_json FROM v7_commands WHERE actor=? AND request_id=?',[actor,requestId]);
-    if(!row||row.actor!==actor||row.request_id!==requestId||!/^TASK_PLAN_BATCH:[a-f0-9]{64}$/.test(row.operation))
+    const row=await batchRecoveryRow(c,k);
+    if(!row)return fault('TASK_BATCH_RECEIPT_NOT_FOUND',404);
+    // Preserve historical 404 for unrelated commands; cancellation is a
+    // distinct receipt type, never a successful ticket admission.
+    if(!/^TASK_PLAN_BATCH(?:_CANCELLED)?:[a-f0-9]{64}$/.test(row.operation))
       return fault('TASK_BATCH_RECEIPT_NOT_FOUND',404);
-    const prior=typeof row.response_json==='string'?JSON.parse(row.response_json):row.response_json;
-    if(!prior||prior.accepted!==true||prior.project_id!==project||prior.request_id!==requestId||
-       prior.preview_sha256!==d.preview_sha256||prior.automatic_execution_allowed!==false||
-       prior.semantic_discovery_verified!==false||prior.baseline_verified!==false||
-       !Number.isSafeInteger(prior.epoch)||prior.epoch<1||!Array.isArray(prior.tickets)||
-       prior.tickets.length<2||prior.tickets.length>10||!Array.isArray(prior.plan_order)||
-       prior.plan_order.length!==prior.tickets.length||
-       prior.tickets.some((t:any,i:number)=>!t||!okId(t.ticket_id)||t.ticket_id!==prior.plan_order[i]||
-         !['READY','WAITING_AUTHORIZATION'].includes(t.status)||t.version!==1||
-         t.owner_approval_required!==(t.status==='WAITING_AUTHORIZATION'))||
-       new Set(prior.plan_order.map((id:string)=>id.toLowerCase())).size!==prior.plan_order.length)
-      return fault('TASK_BATCH_RECEIPT_NOT_VERIFIED',409);
-    return {read_only:true,historical_receipt:true,automatic_execution_allowed:false,receipt:prior};
+    const current=batchRecoveryValue(row,k);
+    return {read_only:true,historical_receipt:true,automatic_execution_allowed:false,
+      ...(current.state==='ADMITTED'?{receipt:current.receipt}:{resolution:current.resolution})};
   });
 }));
 app.post('/v7/tasks/claim',jsonRoute(async req=>{
