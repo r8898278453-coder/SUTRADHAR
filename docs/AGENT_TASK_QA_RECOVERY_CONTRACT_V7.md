@@ -327,3 +327,16 @@ Source baseline `3465af4` passed application and dependency CI; later `ee2e62f` 
 - **New submission precondition (coded, CI pending):** after claim/reclaim or failed QA, the worker must save a fresh checkpoint transition to CHECKPOINTED before candidate submission. Central checks latest checkpoint agent, epoch and digest; malformed Unicode is rejected before persistence. Historical checkpoints remain available as handoff, not new authorization. Exact valid submit retries remain idempotent.
 
 No schema alteration, automatic reassignment, provider authorization or release permission is introduced. All original invariants and physical acceptance requirements remain binding.
+
+
+## Shared contract declaration and claim policy — incremental alpha
+
+Verified previous baseline `93993a0`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700768) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700737) both SUCCESS, including the fresh-checkpoint change. The new shared-contract implementation and regressions are CODED / CI PENDING at this update.
+
+- Signed Master plan accepts optional `contract_keys`: maximum 12 canonical lowercase strings, maximum 96 characters each, `api:`, `db:`, `interface:` or `event:` followed by dot-separated ASCII identifiers. Reject invalid, duplicate or nested-redundant declarations. Store canonical sorted keys in TASK_PLANNED; absent means unclassified, explicit [] means planner declares no shared contract, not verified proof.
+- Nonempty keys require Owner approval even for LOW risk; review justification includes the actual declared keys. Existing protected-path policy is unchanged. Intent fingerprint continues to reject duplicate work even if the proposed declaration changes.
+- Claim reads declared keys of the requested task and all same-repository reserved tickets under the existing lock. Equal or ancestor/descendant keys within the same namespace conflict; a declared nonempty task also conflicts with an unclassified reservation in either direction. Refuse with SHARED_CONTRACT_CONFLICT before inserting reservations. Missing historical declaration is unclassified; malformed/duplicate plan ledger records and excessive declaration lookup scope hold rather than guessing.
+- Existing path reservations remain the single durable lock authority, including quarantine/recovery. Keys are not pseudo-paths, do not change allowed files, and are not a second worker lease. Owner approval does not override conflicts.
+- Signed detail returns canonical declaration or null; Desktop validates it and includes non-null keys in the existing 8 KiB compact context, never automatically transmits it.
+
+No automatic semantic inference, verified completeness of declarations, cross-repository dependency lock, measured hosting cost or combined integration acceptance is claimed. Schema v7/v8 unchanged. Original QA and G0–G7 gates remain.
