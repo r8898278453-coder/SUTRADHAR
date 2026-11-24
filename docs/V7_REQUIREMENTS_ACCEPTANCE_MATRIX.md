@@ -308,3 +308,17 @@ Exact baseline `0fc7c7a` passed [application CI](https://github.com/r8898278453-
 | V7-Q02, Q03, O11 | Existing declared criteria and approvals unchanged, no execution grant | Autonomous source discovery, actual baseline proof and combined independent QA |
 
 Original 71 scenarios unchanged. No LIVE_ACCEPTED promotion. G0–G7 HOLD.
+
+
+## Interrupted Master admission reconciliation coverage
+
+Exact baseline `85ae5a8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45480705079) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45480705150), including encrypted Master admission journal and signed project catalog. New Owner reconciliation batch is CODED / EXACT-HEAD CI PENDING.
+
+| Requirement | New source evidence | Still required |
+|---|---|---|
+| V7-T02, O01, O03 | Exact original receipt and ticket conflict inspection; permanent original actor/request cancellation; identical Owner replay and delayed admission/preview refusal | Actual cancellation/admission race, crash, restore, original signer unavailable recovery |
+| V7-O06, O07, O11 | Web-only independent Owner review, exact session-bound consent/readback, no deletion or execution | Actual physical operator and Owner approval/revocation acceptance |
+| V7-T08 | Shared leader lock with batch admission; no new ticket on cancellation | Physical takeover and partition acceptance |
+| V7-O02 | Distinct encrypted local cancellation closure with exact ordered IDs | Physical DPAPI/power-cut and retention |
+
+Original 71 scenarios unchanged; no LIVE_ACCEPTED promotion. Cancellation is a permanent deny marker for the exact original actor/request key, not proof of historical non-admission after database loss/restore. Owner must independently compare original local journal, ordered IDs, preview digest, database history and uncertain effects; server checks the current durable ledger and listed ticket IDs, not the full original task manifest. A wrong cancellation declaration is not automatically corrected. No existing tickets are deleted, no replacement work authorized, and an unavailable/revoked original signer cannot automatically release its local journal. Retention and physical DPAPI/power-cut acceptance remain open. G0–G7 HOLD.
