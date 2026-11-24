@@ -70,6 +70,8 @@ let vault=null,vaultError=null,signer=null;
 let agentSession=null,expectedQuitChild=null,expectedMaintenanceStopChild=null,quitCompletionStarted=false;
 let maintenanceRestartBusy=false;
 let workerClaimBusy=false;
+// Tab-local review metadata only; never retain prompt text or credentials here.
+let workerContextReview=null;
 let installerPreparationBusy=false;
 let installerExecutionBusy=false;
 let postInstallBusy=false;
@@ -524,8 +526,16 @@ app.whenReady().then(()=>{
       throw Error('WORKER_INSPECTION_REQUIRES_RECENT_CENTRAL_ACK');
     if(!['detail','context'].includes(mode)||(mode==='context'&&ticketId===null))
       throw Error('WORKER_INSPECTION_MODE_DENIED');
-    const result=await inspectWorkerTasks({origin:current.centralUrl,agentId,ticketId,signer});
-    return mode==='context'?compactWorkerContext(result.task,agentId):result;
+    const origin=current.centralUrl;
+    if(mode==='context')workerContextReview=null;
+    const result=await inspectWorkerTasks({origin,agentId,ticketId,signer});
+    if(mode!=='context')return result;
+    const preview=compactWorkerContext(result.task,agentId);
+    if(current?.centralUrl!==origin)throw Error('WORKER_PROVIDER_CENTRAL_CHANGED');
+    workerContextReview={origin,agentId,ticketId,digest:preview.context_sha256,
+      registryVersion:preview.provider_registry_version,
+      mappings:preview.provider_mappings.map(m=>({provider:m.provider,binding_sha256:m.binding_sha256}))};
+    return preview;
   });
 
   function approvedWorkerOperator(agentId,ticketId,alreadyLocked=false){
@@ -614,6 +624,12 @@ app.whenReady().then(()=>{
          typeof reviewedDigest!=='string'||reviewedDigest.length!==64||!/^[a-f0-9]{64}$/.test(reviewedDigest)))||
        (action!=='BEGIN'&&(typeof attemptId!=='string'||attemptId.length!==40||!/^attempt_[a-f0-9]{32}$/.test(attemptId))))
       throw Error('WORKER_PROVIDER_ATTEMPT_INPUT_DENIED');
+    const review=action==='BEGIN'?workerContextReview:null;
+    const reviewedBinding=review?.mappings.find(m=>m.provider===provider);
+    if(action==='BEGIN'&&(!review||review.origin!==origin||review.agentId!==agentId||
+       review.ticketId!==ticketId||review.digest!==reviewedDigest||
+       !Number.isSafeInteger(review.registryVersion)||review.registryVersion<1||!reviewedBinding))
+      throw Error('WORKER_PROVIDER_PREVIEW_REVIEW_REQUIRED');
     workerClaimBusy=true;
     try{
       const confirmed=await dialog.showMessageBox(setupWindow,{
@@ -629,11 +645,13 @@ app.whenReady().then(()=>{
       const beforeMutation=()=>{
         if(approvedWorkerOperator(agentId,ticketId,true)!==origin)
           throw Error('WORKER_PROVIDER_CENTRAL_CHANGED');
+        if(action==='BEGIN'&&workerContextReview!==review)throw Error('WORKER_PROVIDER_PREVIEW_REVIEW_CHANGED');
       };
       beforeMutation();
       return await recordProviderAttempt({origin,agentId,ticketId,action,provider,reviewedDigest,attemptId,
+        reviewedRegistryVersion:review?.registryVersion,reviewedBindingDigest:reviewedBinding?.binding_sha256,
         dir:path.join(nodeDir(),'worker'),signer,beforeMutation});
-    }finally{workerClaimBusy=false;}
+    }finally{workerContextReview=null;workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:checkpointWorkerTask',async(event,agentId,ticketId,summary,nextAction)=>{
     verifySender(event);
