@@ -2,7 +2,7 @@
 
 > **Start here if you are the Owner:** [Non-developer setup guide](../docs/OWNER_SETUP_AND_DEPLOYMENT.md) · [Architecture/repository decision](../docs/ADR_001_MONOREPO_TWO_APPS.md) · [Release, update and recovery policy](../docs/RELEASE_OPERATIONS.md) · [Repository README](../README.md).
 >
-> **Important as of 22 November 2026:** This is an alpha engineering runbook, not approved production deployment. Independent `apps/central` and `apps/desktop` builds, an unsigned internal QA installer smoke build, and Owner/QA security controls exist in the Draft PR; **no Owner-approved production-signed installer, live Hostinger staging restore, physical-PC validation or protected production promotion has happened**. Never connect the development fix branch to any live Hostinger deployment. Use the repository README and Owner release-gate checklist as the current go/no-go authority.
+> **Important as of 24 November 2026:** This is an alpha engineering runbook, not approved production deployment. Independent `apps/central` and `apps/desktop` builds, an unsigned internal QA installer smoke build, and Owner/QA security controls exist in the Draft PR; **no Owner-approved production-signed installer, live Hostinger staging restore, physical-PC validation or protected production promotion has happened**. Never connect the development fix branch to any live Hostinger deployment. Use the repository README and Owner release-gate checklist as the current go/no-go authority.
 
 
 Status: **alpha code committed, not production accepted**. Existing v6 security/Git/Docker guards remain in the repository. Only v7 MySQL is authoritative for the new routes; legacy SQLite/demo service is available explicitly via the legacy development command and MUST NOT serve production.
@@ -66,3 +66,12 @@ Review SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md, AGENT_TASK_QA_RECOVERY_CONTRACT_V
 The Git bridge is an alpha integration of the existing hardened publisher. Local QA evidence is signed by the approved agent; live target GitHub auth, reviewer independence and actual merged PR proof are **not yet acceptance tested**. Publishing is a one-shot remote mutation with durable reservation; failed/ambiguous attempts require reconciliation instead of blind retry. The QA PC needs Python 3.11+, Git, Docker and a trusted project checkout pinned to the frozen baseline. The existing Docker runner image is Python-oriented; other stacks need separately reviewed test images.
 
 The 71 v7 acceptance cases are **not** completed simply because the workflow CI passed. Target Hostinger limits, physical 2-PC/10-PC network partition, provider web policies, OS key vault, backup/restore, full migration cutover and production rollbacks still require explicit Owner validation.
+
+
+## 24 November — Provider handoff and recovered worker operation
+
+Use [Owner provider declaration setup](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md) for optional non-secret aliases. The assigned developer can inspect their own declared binding in Desktop; the binding is explicitly unverified and separate from the compact context. Verify the actual account/workspace and lease independently and review secrets before any permitted manual use. No automatic provider transmission or actual token measurement exists.
+
+If project developer access is removed, Central revokes unfinished leases and holds the affected ticket for reconciliation, preserving evidence. Regrant does not restore the old lease. After Owner reconciliation and a new claim, inspect the old checkpoint as historical handoff and independently verify the worktree. The new source (`ee2e62f`, `8684dfe`; CI pending at this update) requires a fresh checkpoint under the current claim before submission, including after failed QA. It does not delete older generations. Never retry uncertain external Git effects blindly.
+
+Last verified source baseline `3465af4`: [application](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985550) and [dependency](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985559) CI passed. See [implementation tracker](../docs/IMPLEMENTATION_TRACKER.md), [acceptance matrix](../docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](../GAP_REGISTER.md). No production signing/deployment or physical acceptance; G0–G7 HOLD.
