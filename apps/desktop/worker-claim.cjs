@@ -7,7 +7,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {spawnSync}=require('node:child_process');
-const {inspectWorkerTasks}=require('./worker-inspection.cjs');
+const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
 const {evidenceEntryPresent}=require('./local-evidence-file.cjs');
 const {readEvidenceBytes}=require('./local-evidence-file.cjs');
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
@@ -185,14 +185,14 @@ async function boundedJson(response){
       chunks.push(Buffer.from(v.value));
     }
   }finally{try{await reader.cancel();}catch{}reader.releaseLock();}
-  try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}
+  try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));}
   catch{fail('WORKER_CENTRAL_RESPONSE_INVALID');}
 }
 async function signedRequest({origin,signer,method,uri,agentId,payload,fetcher}){
   let headers,body;
   if(method==='GET'&&uri==='/v7/cluster/state'){
     headers=signer.sign({kind:'node_api',method:'GET',uri,body:''});body=undefined;
-  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint','submit'].includes(uri)){
+  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint','submit','provider-attempt'].includes(uri)){
     const prepared=signer.signWorkerAction({operation:uri,agent_id:agentId,payload});
     headers=prepared.headers;body=prepared.body;uri=prepared.uri;
   }else fail('WORKER_REQUEST_NOT_ALLOWLISTED');
@@ -329,4 +329,80 @@ async function resumeApprovedTask({origin,agentId,ticketId,dir,signer,fetcher=fe
     epoch:local.epoch,status:proof.status,resume_allowed:true,
     automatic_execution_allowed:false,git_push_allowed:false};
 }
-module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume};
+// No renderer-supplied request body or signing oracle: construct the exact
+// command from a locally sealed receipt, fresh signed Central observations,
+// and a digest previously reviewed by the operator. Never send provider data.
+async function recordProviderAttempt({origin,agentId,ticketId,dir,signer,action,provider,
+  reviewedDigest,attemptId,fetcher=fetch,beforeMutation=()=>{}}){
+  if(!ORIGIN.test(origin||'')||!['BEGIN','INTERRUPT','CLOSE'].includes(action))
+    fail('WORKER_PROVIDER_ATTEMPT_INPUT_DENIED');
+  const local=loadWorkerReceipt(dir,agentId,ticketId);
+  const detail=async()=>(await inspectWorkerTasks({origin,agentId,ticketId,signer,fetcher})).task;
+  const proof=await signedRequest({origin,signer,method:'POST',uri:'resume-check',agentId,
+    payload:{agent_id:agentId,ticket_id:ticketId,lease_id:local.lease_id,expected_master_epoch:local.epoch},fetcher});
+  confirmResume(local,proof);
+  if(proof.lease_id!==local.lease_id)fail('WORKER_PROVIDER_LEASE_MISMATCH');
+  // Unlike claim preparation, recovery must never recreate a missing worktree.
+  if(!evidenceEntryPresent(local.worktree))fail('WORKER_PROVIDER_WORKTREE_MISSING');
+  const work=localWorktree({repoDir:local.repository_dir,t:{...local,write_scopes:local.scopes},workerDir:dir});
+  if(work.worktree!==local.worktree)fail('WORKER_PROVIDER_WORKTREE_MISMATCH');
+  const task=await detail();
+  if(task.worker_agent_id!==agentId||task.project_id!==local.project_id||
+     task.repository!==local.repository||task.baseline_sha!==local.baseline_sha||
+     task.branch_name!==local.branch_name||
+     JSON.stringify([...task.write_scopes].sort())!==JSON.stringify([...local.scopes].sort()))
+    fail('WORKER_PROVIDER_TASK_MISMATCH');
+  const cp=task.latest_checkpoint,previous=task.provider_attempt;
+  const body={action,request_id:'provider_'+crypto.randomUUID().replace(/-/g,''),
+    agent_id:agentId,ticket_id:ticketId,lease_id:local.lease_id,expected_master_epoch:local.epoch};
+  if(action==='BEGIN'){
+    if(task.status!=='CHECKPOINTED'||task.provider_mapping_source!=='MYSQL_OWNER_REGISTRY'||!cp||
+       !proof.latest_checkpoint||Number(proof.latest_checkpoint.generation)!==cp.generation||
+       proof.latest_checkpoint.content_sha256!==cp.content_sha256)
+      fail('WORKER_PROVIDER_CHECKPOINT_REQUIRED');
+    const preview=compactWorkerContext(task,agentId);
+    const mapping=task.provider_mappings.find(m=>m.provider===provider);
+    if(!mapping||typeof reviewedDigest!=='string'||reviewedDigest!==preview.context_sha256)
+      fail('WORKER_PROVIDER_REVIEWED_CONTEXT_CHANGED');
+    Object.assign(body,{provider,registry_version:task.provider_registry_version,
+      binding_sha256:mapping.binding_sha256,checkpoint_generation:cp.generation,
+      checkpoint_sha256:cp.content_sha256,context_sha256:preview.context_sha256});
+  }else{
+    if(!previous||previous.attempt_id!==attemptId||previous.state==='CLOSED'||
+       (action==='INTERRUPT'&&previous.state!=='OPEN'))fail('WORKER_PROVIDER_ATTEMPT_STATE_MISMATCH');
+    body.attempt_id=attemptId;
+    if(action==='CLOSE'){
+      if(task.status!=='CHECKPOINTED'||!cp||cp.generation<=previous.checkpoint_generation||
+         !proof.latest_checkpoint||Number(proof.latest_checkpoint.generation)!==cp.generation||
+         proof.latest_checkpoint.content_sha256!==cp.content_sha256||
+         crypto.createHash('sha256').update(cp.summary+'\n'+cp.next_action).digest('hex')!==cp.content_sha256)
+        fail('WORKER_PROVIDER_FRESH_CHECKPOINT_REQUIRED');
+      Object.assign(body,{external_session_reviewed:true,worktree_reviewed:true});
+    }
+  }
+  // Final local fence after all asynchronous observations.
+  beforeMutation();
+  try{
+    const result=await signedRequest({origin,signer,method:'POST',uri:'provider-attempt',agentId,payload:body,fetcher});
+    const expected=action==='BEGIN'?'OPEN':action==='INTERRUPT'?'INTERRUPTED':'CLOSED';
+    const x=result?.attempt;
+    if(result?.accepted!==true||result.provider_sent!==false||result.provider_mapping_verified!==false||
+       result.automatic_execution_allowed!==false||!x||x.ticket_id!==ticketId||x.agent_id!==agentId||
+       x.lease_id!==local.lease_id||x.epoch!==local.epoch||x.state!==expected||
+       typeof x.attempt_id!=='string'||!/^attempt_[a-f0-9]{32}$/.test(x.attempt_id)||
+       (action==='BEGIN'&&(x.context_sha256!==body.context_sha256||x.provider!==body.provider||
+         x.registry_version!==body.registry_version||x.binding_sha256!==body.binding_sha256||
+         x.checkpoint_generation!==body.checkpoint_generation||x.checkpoint_sha256!==body.checkpoint_sha256))||
+       (action!=='BEGIN'&&x.attempt_id!==attemptId))
+      fail('WORKER_PROVIDER_RECEIPT_INVALID');
+    const latest=await detail(),y=latest.provider_attempt;
+    if(!y||y.attempt_id!==x.attempt_id||y.state!==expected||y.provider!==x.provider||
+       y.registry_version!==x.registry_version||y.context_sha256!==x.context_sha256||
+       y.checkpoint_generation!==x.checkpoint_generation||y.resolution!==x.resolution||
+       (expected==='CLOSED'&&y.resolution!=='WORKER_CHECKPOINT'))
+      fail('WORKER_PROVIDER_READBACK_REQUIRED');
+    return {ticket_id:ticketId,agent_id:agentId,attempt:y,
+      provider_sent:false,automatic_execution_allowed:false,provider_mapping_verified:false};
+  }catch{fail('WORKER_PROVIDER_OUTCOME_UNCERTAIN_INSPECT_CURRENT_TASK_NO_RETRY');}
+}
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt};
