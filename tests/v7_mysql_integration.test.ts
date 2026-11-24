@@ -1140,6 +1140,14 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       const duplicate=await d.signed('/v7/tasks/provider-attempt',{...begin,request_id:'provider_duplicate_'+(++count)});
       assert.equal(duplicate.code,423);
       const attempt_id=opened.body.attempt.attempt_id;
+      const observe=async()=>{
+        const response=await fetch(base+'/v7/owner/provider-attempt/'+ticket_id,{headers:{authorization:'Bearer '+admin}});
+        assert.equal(response.status,200);
+        const data=await response.json() as any;
+        assert.equal(data.automatic_reassignment_allowed,false);
+        return data;
+      };
+      assert.equal((await observe()).owner_resolution_eligible,false,'Live lease cannot be closed by Owner recovery');
       const interrupted=await d.signed('/v7/tasks/provider-attempt',{...common,action:'INTERRUPT',attempt_id,request_id:'provider_interrupt_'+(++count)});
       assert.equal(interrupted.code,200,JSON.stringify(interrupted.body));
       assert.equal(interrupted.body.attempt.state,'INTERRUPTED');
@@ -1163,10 +1171,15 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
       assert.equal(held.code,423,JSON.stringify(held.body));
       const ownerView=await fetch(base+'/v7/owner/provider-attempt/'+ticket_id,{headers:{authorization:'Bearer '+admin}});
       assert.equal(ownerView.status,200);
-      assert.equal((await ownerView.json() as any).attempt.attempt_id,again.body.attempt.attempt_id);
+      const ownerObservation=await ownerView.json() as any;
+      assert.equal(ownerObservation.attempt.attempt_id,again.body.attempt.attempt_id);
+      assert.equal(ownerObservation.owner_resolution_eligible,true);
       const resolved=await owner('RESOLVE_PROVIDER_ATTEMPT',{ticket_id,attempt_id:again.body.attempt.attempt_id,
         external_session_reviewed:true,worktree_reviewed:true,no_automatic_retry_confirmed:true});
       assert.equal(resolved.state.automatic_reassignment_allowed,false);
+      const closedObservation=await observe();
+      assert.equal(closedObservation.owner_resolution_eligible,false);
+      assert.equal(closedObservation.attempt.resolution,'OWNER_REVIEW');
       assert.equal((await owner('RECONCILE_TICKET',reconcile)).state.status,'READY');
       await owner('REPLACE_PROVIDER_REGISTRY',{expected_version:3,bindings:[]});
     }
