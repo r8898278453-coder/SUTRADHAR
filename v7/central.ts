@@ -222,8 +222,9 @@ async function readyMaster(c:PoolConnection,nodeId:string,agentId:string,epoch:a
   const ld=await leader(c);
   if(ld.paused)fault('CLUSTER_PAUSED',423);
   if(ld.master_agent_id!==agentId||Number(ld.epoch)!==Number(epoch))fault('STALE_MASTER_EPOCH',409);
-  const live=await one(c,'SELECT a.agent_id FROM v7_agents a JOIN v7_nodes n ON n.node_id=a.node_id WHERE a.agent_id=? AND a.node_id=? AND a.state="APPROVED" AND n.state="APPROVED"',[agentId,nodeId]);
-  if(!live)fault('MASTER_REVOKED',403);
+  const live=await one(c,'SELECT a.agent_id,a.node_id FROM v7_agents a JOIN v7_nodes n ON n.node_id=a.node_id WHERE a.agent_id=? AND a.node_id=? AND a.state="APPROVED" AND a.master_eligible=1 AND n.state="APPROVED"',[agentId,nodeId]);
+  if(!live||live.agent_id!==agentId||live.node_id!==nodeId)fault('MASTER_REVOKED',403);
+  await requireNoNodeDrain(c,nodeId);
   const now=await dbNow(c),until=ld.lease_until?Date.parse(ld.lease_until+'Z'):0;
   if(!Number.isFinite(until)||until<=now)fault('LEASE_EXPIRED',409);
   if(ld.phase!=='READY')fault('MASTER_RECOVERING',423);
@@ -1683,6 +1684,37 @@ app.post('/v7/tasks/plan-batch',jsonRoute(async req=>{
         preview_sha256:b.preview_sha256,plan_order:b.ordered.map(p=>p.ticketId),tickets,
         automatic_execution_allowed:false,semantic_discovery_verified:false,baseline_verified:false};
     });
+  });
+}));
+// Historical admission receipt, scoped to its original approved signer.
+ // No current execution authority is inferred from this observation.
+app.post('/v7/tasks/plan-batch/receipt',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body;
+  if(!d||typeof d!=='object'||Array.isArray(d)||
+     Object.keys(d).sort().join('|')!=='agent_id|preview_sha256|project_id|request_id'||
+     typeof d.preview_sha256!=='string'||d.preview_sha256.length!==64||!/^[a-f0-9]{64}$/.test(d.preview_sha256))
+    return fault('TASK_BATCH_RECEIPT_INPUT_INVALID',400);
+  const actor=requireId(d.agent_id),project=requireId(d.project_id),requestId=requireId(d.request_id);
+  return transaction(async c=>{
+    await leader(c);
+    await signedAgent(c,node.node_id,actor);
+    await requireNoNodeDrain(c,node.node_id);
+    const row=await one(c,'SELECT actor,request_id,operation,response_json FROM v7_commands WHERE actor=? AND request_id=?',[actor,requestId]);
+    if(!row||row.actor!==actor||row.request_id!==requestId||!/^TASK_PLAN_BATCH:[a-f0-9]{64}$/.test(row.operation))
+      return fault('TASK_BATCH_RECEIPT_NOT_FOUND',404);
+    const prior=typeof row.response_json==='string'?JSON.parse(row.response_json):row.response_json;
+    if(!prior||prior.accepted!==true||prior.project_id!==project||prior.request_id!==requestId||
+       prior.preview_sha256!==d.preview_sha256||prior.automatic_execution_allowed!==false||
+       prior.semantic_discovery_verified!==false||prior.baseline_verified!==false||
+       !Number.isSafeInteger(prior.epoch)||prior.epoch<1||!Array.isArray(prior.tickets)||
+       prior.tickets.length<2||prior.tickets.length>10||!Array.isArray(prior.plan_order)||
+       prior.plan_order.length!==prior.tickets.length||
+       prior.tickets.some((t:any,i:number)=>!t||!okId(t.ticket_id)||t.ticket_id!==prior.plan_order[i]||
+         !['READY','WAITING_AUTHORIZATION'].includes(t.status)||t.version!==1||
+         t.owner_approval_required!==(t.status==='WAITING_AUTHORIZATION'))||
+       new Set(prior.plan_order.map((id:string)=>id.toLowerCase())).size!==prior.plan_order.length)
+      return fault('TASK_BATCH_RECEIPT_NOT_VERIFIED',409);
+    return {read_only:true,historical_receipt:true,automatic_execution_allowed:false,receipt:prior};
   });
 }));
 app.post('/v7/tasks/claim',jsonRoute(async req=>{
