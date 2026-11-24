@@ -125,3 +125,6 @@ Verified exact baseline `1193b3b`: [application CI](https://github.com/r88982784
 6. Each action sends one allowlisted signed metadata command, then reads back current state; uncertain or conflicting results require fresh signed inspection, not automatic retries. For a revoked original lease, use the separate Owner review dashboard. Never treat closure as permission to requeue.
 
 The renderer cannot submit a generic signed request, raw prompt, session ID, credential or provider response. Main recomputes the reviewed compact digest from current task metadata; this is not proof of the actual transmitted bytes or independent provider account verification. The trusted CLI BEGIN now supplies expected_task_version too; rebuild both components together. No provider requests or external continuation are performed. Real Windows OS-vault, provider and Hostinger acceptance, actual usage accounting and target ledger performance/restore remain open. G0–G7 HOLD.
+
+
+Additional safeguards `5432a9a`, `2651e1e`, `7768fb2`: main retains only the reviewed preview's in-memory task/origin/digest/registry-version/binding-digest metadata; a changed registry revision or binding blocks BEGIN even when compact context bytes match. Recovery refuses a missing original worktree rather than recreating it. These safeguards and regression fixtures also await exact-head CI.
