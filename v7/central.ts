@@ -14,7 +14,7 @@ import {verifyGitHubMergeEvidence} from '../github_merge_verifier.ts';
 import {createVerifiedDraftPr,inspectVerifiedDraftPr} from '../github_pr_creator.ts';
 import {inspectGitRemote} from './git_remote.ts';
 import {inspectGithubPrReview} from './pr_review.ts';
-import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest,validTaskBranch,isProtectedScope} from './rules.ts';
+import {chooseLeader,chooseBackups,firstElectionOpen,ID_RE,SHA_RE,safeScope,scopesOverlap,digest,validTaskBranch,isProtectedScope,parseContractKeys,contractReservationConflicts} from './rules.ts';
 import {checkMaintenanceIntent,checkDrainStart} from './maintenance.ts';
 import {planWorkerLeaseExtension} from './worker_lease_policy.ts';
 import {permitSignedHeartbeatPilotRecord} from './pilot_heartbeat_window.ts';
@@ -1300,6 +1300,31 @@ app.get('/v7/tasks/available',jsonRoute(async req=>{
     return allowed;
   });
 }));
+// Immutable plan declaration lives in the existing durable TASK_PLANNED
+// ledger. Its lifetime follows ordinary path reservations; no second lock
+// authority or pseudo-files are introduced. Missing historical declarations
+// are unclassified, not proof of a conflict-free task.
+async function taskContractDeclarations(c:PoolConnection,ids:string[]){
+  const unique=[...new Set(ids)];
+  if(unique.length>301)fault('TASK_CONTRACT_REVIEW_CAPACITY_REQUIRED',423);
+  const out=new Map<string,string[]|null>(unique.map(id=>[id,null]));
+  if(!unique.length)return out;
+  const plans=await rows(c,'SELECT resource_id,payload_json FROM v7_events WHERE event_type="TASK_PLANNED" '+
+    'AND resource_id IN ('+unique.map(()=>'?').join(',')+') LIMIT 302',unique);
+  const seen=new Set<string>();
+  for(const plan of plans){
+    if(!out.has(plan.resource_id)||seen.has(plan.resource_id))fault('TASK_CONTRACT_LEDGER_INVALID',423);
+    seen.add(plan.resource_id);
+    try{
+      const p=typeof plan.payload_json==='string'?JSON.parse(plan.payload_json):plan.payload_json;
+      if(!p||typeof p!=='object'||Array.isArray(p))throw Error('Invalid plan');
+      const keys=parseContractKeys(p.contract_keys);
+      if(keys!==null&&JSON.stringify(keys)!==JSON.stringify(p.contract_keys))throw Error('Noncanonical plan');
+      out.set(plan.resource_id,keys);
+    }catch{fault('TASK_CONTRACT_LEDGER_INVALID',423);}
+  }
+  return out;
+}
 app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
   const node=await nodeAuth(req),agentId=requireId(req.header('x-sutradhar-agent'));
   const ticketId=requireId(req.params.ticketId);
@@ -1322,7 +1347,9 @@ app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
         providerMappingState=providerMappings.length?'OWNER_DECLARED_UNVERIFIED':'UNCONFIGURED';
       }catch{providerMappingState='INVALID_OWNER_CONFIGURATION';}
     }
+    const contractKeys=(await taskContractDeclarations(c,[t.ticket_id])).get(t.ticket_id)??null;
     return {ticket_id:t.ticket_id,project_id:t.project_id,repository:p.repository,base_branch:p.base_branch,
+      contract_keys:contractKeys,
       title:t.title,description:t.description,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
       risk:t.risk,status:t.status,version:t.version,write_scopes:t.scopes_json,
       acceptance_criteria:t.criteria_json,worker_agent_id:t.worker_agent_id,
@@ -1400,6 +1427,8 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
   const node=await nodeAuth(req),d=req.body||{};
   const agentId=requireId(d.agent_id),ticketId=requireId(d.ticket_id),projectId=requireId(d.project_id);
   const scope=d.write_scopes, deps=d.dependencies===undefined?[]:d.dependencies;
+  let contractKeys:string[]|null=null;
+  try{contractKeys=parseContractKeys(d.contract_keys);}catch{fault('INVALID_TASK_CONTRACT_KEYS',400);}
   if(!Array.isArray(scope)||!scope.length||scope.length>30||!scope.every(safeScope)||new Set(scope).size!==scope.length||
     !Array.isArray(deps)||deps.length>30||!deps.every(okId)||
     deps.some((id:string)=>id.toLowerCase()===ticketId.toLowerCase()))fault('INVALID_TASK_SCOPE',400);
@@ -1446,7 +1475,8 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
         [projectId,fingerprint]);
       if(intentTaken)fault('TASK_INTENT_DUPLICATE',409);
       const sensitive=scope.some(isProtectedScope);
-      const approvalNeeded=risk==='CORE'||risk==='HIGH'||sensitive;
+      const sharedContractChange=Boolean(contractKeys?.length);
+      const approvalNeeded=risk==='CORE'||risk==='HIGH'||sensitive||sharedContractChange;
       const status=approvalNeeded?'WAITING_AUTHORIZATION':'READY';
       for(const dependency of deps){
         requireId(dependency);
@@ -1459,9 +1489,11 @@ app.post('/v7/tasks/plan',jsonRoute(async req=>{
       if(approvalNeeded){
         const proposalId='approval_'+crypto.randomUUID().replace(/-/g,'');
         await c.query('INSERT INTO v7_approvals(proposal_id,ticket_id,kind,justification) VALUES(?,?,?,?)',
-          [proposalId,ticketId,sensitive?'CORE_SECURITY':risk,description.slice(0,500)]);
+          [proposalId,ticketId,sensitive?'CORE_SECURITY':sharedContractChange?'SHARED_CONTRACT':risk,
+            (sharedContractChange?'Declared shared contracts: '+contractKeys!.join(', ')+'\n':'')+description.slice(0,500)]);
       }
-      await event(c,'TASK_PLANNED',agentId,Number(ld.epoch),ticketId,{project_id:projectId,status,risk,scope_digest:digest(JSON.stringify(scope))});
+      await event(c,'TASK_PLANNED',agentId,Number(ld.epoch),ticketId,{project_id:projectId,status,risk,scope_digest:digest(JSON.stringify(scope)),
+        ...(contractKeys===null?{}:{contract_keys:contractKeys})});
       return {accepted:true,ticket_id:ticketId,status,version:1,owner_approval_required:approvalNeeded};
     });
   });
@@ -1508,6 +1540,13 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
         [project.repository]);
       for(const s of scope)if(reserved.some(x=>scopesOverlap(s,x.scope)))
         fault('SCOPE_CONFLICT',409);
+      const reservedIds=[...new Set<string>(reserved.map(x=>x.ticket_id))];
+      const declarations=await taskContractDeclarations(c,[ticketId,...reservedIds]);
+      const requested=declarations.get(ticketId)??null;
+      for(const other of reservedIds){
+        if(contractReservationConflicts(requested,declarations.get(other)??null))
+          fault('SHARED_CONTRACT_CONFLICT',409);
+      }
       for(const s of scope)await c.query('INSERT INTO v7_reservations(project_id,scope,ticket_id) VALUES(?,?,?)',[t.project_id,s,ticketId]);
       const leaseId=crypto.randomUUID();
       await c.query('INSERT INTO v7_leases(ticket_id,agent_id,epoch,lease_id,expires_at,revoked) VALUES(?,?,?,?,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 600 SECOND),0) ON DUPLICATE KEY UPDATE agent_id=VALUES(agent_id),epoch=VALUES(epoch),lease_id=VALUES(lease_id),expires_at=VALUES(expires_at),revoked=0',
