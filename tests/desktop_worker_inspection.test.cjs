@@ -234,3 +234,28 @@ test('compact provider payload is canonical, smaller, and retains every task fie
     assert.throws(()=>compactWorkerContext({...t,...patch},'agent_aaa'),/RESPONSE_INVALID/);
   }
 });
+
+test('provider declarations are bound to exact task project and worker and excluded from prompt bytes',()=>{
+  const {compactWorkerContext}=require('../apps/desktop/worker-inspection.cjs');
+  const t={ticket_id:'ticket_123',project_id:'project_aaa',title:'Feature',
+    description:'Implement scoped feature',repository:'example/repo',branch_name:'ai/ticket_123',
+    baseline_sha:'a'.repeat(40),risk:'LOW',status:'CLAIMED',version:1,
+    worker_agent_id:'agent_aaa',write_scopes:['src/x.ts'],acceptance_criteria:['Test passes']};
+  const binding={project_id:t.project_id,agent_id:t.worker_agent_id,provider:'CHATGPT_WEB',
+    account_ref:'account_operator',workspace_ref:'workspace_example'};
+  const mapping={provider:binding.provider,account_ref:binding.account_ref,workspace_ref:binding.workspace_ref,
+    binding_sha256:crypto.createHash('sha256').update(JSON.stringify(binding)).digest('hex'),
+    state:'OWNER_DECLARED_UNVERIFIED',provider_mapping_verified:false,automatic_execution_allowed:false};
+  const task={...t,provider_mapping_state:'OWNER_DECLARED_UNVERIFIED',provider_mappings:[mapping]};
+  const r=compactWorkerContext(task,'agent_aaa');
+  assert.deepEqual(r.provider_mappings,[mapping]);
+  assert.equal(r.provider_mapping_verified,false);
+  assert.equal(r.context_sha256,compactWorkerContext(t,'agent_aaa').context_sha256);
+  assert.doesNotMatch(r.preview,/account_operator|workspace_example/);
+  for(const altered of [{...mapping,provider_mapping_verified:true},{...mapping,binding_sha256:'0'.repeat(64)},
+    {...mapping,workspace_ref:'https://example.invalid'},{...mapping,token:'SENTINEL'}]){
+    assert.throws(()=>compactWorkerContext({...task,provider_mappings:[altered]},'agent_aaa'),/WORKER_PROVIDER_MAPPING_INVALID/);
+  }
+  assert.throws(()=>compactWorkerContext({...task,project_id:'project_bbb'},'agent_aaa'),/WORKER_PROVIDER_MAPPING_INVALID/);
+  assert.throws(()=>compactWorkerContext({...task,provider_mappings:[mapping,mapping]},'agent_aaa'),/WORKER_PROVIDER_MAPPING_INVALID/);
+});
