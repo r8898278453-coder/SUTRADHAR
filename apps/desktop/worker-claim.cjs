@@ -935,6 +935,33 @@ function analyzeBulkPlanningDraft(tasks){
     automatic_admission_allowed:false,automatic_execution_allowed:false};
 }
 
+// Explicit local extraction for human review, not a Central admission
+// body or execution grant. Recompute whole backlog before choosing a group.
+function extractBulkReviewGroup(tasks,expectedDigest,groupId){
+  if(typeof expectedDigest!=='string'||expectedDigest.length!==64||!/^[a-f0-9]{64}$/.test(expectedDigest)||
+     typeof groupId!=='string'||groupId.length!==10||!/^review_[0-9]{3}$/.test(groupId))
+    fail('BULK_REVIEW_SELECTION_INVALID');
+  const report=analyzeBulkPlanningDraft(tasks);
+  if(report.manifest_sha256!==expectedDigest)fail('BULK_REVIEW_MANIFEST_CHANGED');
+  const group=report.review_groups.find(g=>g.group_id===groupId);
+  if(!group)fail('BULK_REVIEW_GROUP_NOT_FOUND');
+  const byId=new Map(tasks.map(t=>[t.ticket_id,t]));
+  // Return canonical exact task fields, including all external/internal
+  // dependencies, with no rewriting, summarization or inferred edges.
+  const selected=group.ticket_ids.map(id=>{
+    const t=byId.get(id);
+    return {ticket_id:t.ticket_id,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
+      title:t.title,description:t.description,risk:t.risk,write_scopes:[...t.write_scopes],
+      acceptance_criteria:[...t.acceptance_criteria],dependencies:[...t.dependencies],contract_keys:[...t.contract_keys]};
+  });
+  const payload={schema:'SUTRADHAR_BULK_GROUP_REVIEW_V1',manifest_sha256:report.manifest_sha256,
+    baseline_sha:report.baseline_sha,group,related_conflicts:report.cross_group_conflicts.filter(c=>c.review_group_ids.includes(groupId)),
+    tasks:selected};
+  return {...payload,group_review_sha256:digest(payload),source_contents_returned:false,
+    task_description_contents_returned:true,secret_scan_verified:false,provider_sent:false,
+    remote_freshness_verified:false,automatic_admission_allowed:false,automatic_execution_allowed:false};
+}
+
 function buildMasterPlanningContext({observed,tasks}){
   const graph=analyzeMasterPlanningDraft(tasks);
   if(!observed||observed.local_tracking_ref_verified!==true||observed.remote_freshness_verified!==false||
@@ -1074,4 +1101,4 @@ function createMasterBatchJournal({dir,safeStorage,nodeId}){
   }
   return {pending,begin,close};
 }
-module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,analyzeBulkPlanningDraft,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal};
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,analyzeBulkPlanningDraft,extractBulkReviewGroup,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal};
