@@ -27,6 +27,7 @@ import {verifyQaEvidencePackage,qaEvidenceProposalId,validatedStoredQaEvidence,Q
 import sharedContract from '../packages/shared/contract.json';
 import {publicCentralFiles} from './public_files.ts';
 import {parseOwnerTelegram,telegramReceiptText} from './telegram_owner.ts';
+import {declaredProviderMappings} from './provider_mappings.ts';
 
 const app=express();
 const MAX_BODY='128kb';
@@ -213,7 +214,7 @@ async function maintenanceRedundancyEvidence(c:PoolConnection,ids:any[]){
 
 async function signedAgent(c:PoolConnection,nodeId:string,agentId:string,qa=false){
   const a=await one(c,'SELECT * FROM v7_agents WHERE agent_id=? AND node_id=? FOR UPDATE',[agentId,nodeId]);
-  if(!a||a.state!=='APPROVED'||(qa&&!a.qa_eligible))fault('AGENT_NOT_AUTHORIZED',403);
+  if(!a||a.agent_id!==agentId||a.node_id!==nodeId||a.state!=='APPROVED'||(qa&&!a.qa_eligible))fault('AGENT_NOT_AUTHORIZED',403);
   return a;
 }
 async function readyMaster(c:PoolConnection,nodeId:string,agentId:string,epoch:any){
@@ -1270,14 +1271,13 @@ app.get('/v7/tasks/available',jsonRoute(async req=>{
     const allowed=await rows(c,
       'SELECT t.ticket_id,t.project_id,t.title,t.risk,t.version FROM v7_tickets t '+
       'JOIN v7_project_agents a ON a.project_id=t.project_id '+
-      'WHERE a.agent_id=? AND a.can_develop=1 AND t.status="READY" ORDER BY t.updated_at LIMIT 50',
-      [agentId]);
-    const out=[];
-    for(const t of allowed){
-      const unmet=await one(c,'SELECT COUNT(*) n FROM v7_dependencies d JOIN v7_tickets p ON p.ticket_id=d.dependency_id WHERE d.ticket_id=? AND p.status!="DONE"',[t.ticket_id]);
-      if(Number(unmet.n)===0)out.push(t);
-    }
-    return out;
+      'JOIN v7_projects p ON p.project_id=t.project_id '+
+      'WHERE a.agent_id=? AND a.can_develop=1 AND p.status="ACTIVE" AND t.status="READY" '+
+      'AND NOT EXISTS (SELECT 1 FROM v7_dependencies d LEFT JOIN v7_tickets dep '+
+      'ON dep.ticket_id=d.dependency_id WHERE d.ticket_id=t.ticket_id '+
+      'AND (dep.ticket_id IS NULL OR dep.status!="DONE")) '+
+      'ORDER BY t.updated_at,t.ticket_id LIMIT 50',[agentId]);
+    return allowed;
   });
 }));
 app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
@@ -1292,12 +1292,23 @@ app.get('/v7/tasks/detail/:ticketId',jsonRoute(async req=>{
     if(!access||(Number(access.can_develop)!==1&&Number(access.can_qa)!==1))fault('PROJECT_ACCESS_DENIED',403);
     const p=await one(c,'SELECT repository,base_branch FROM v7_projects WHERE project_id=?',[t.project_id]);
     const latest=await one(c,'SELECT generation,summary,next_action,content_sha256 FROM v7_checkpoints WHERE ticket_id=? ORDER BY generation DESC LIMIT 1',[ticketId]);
+    // Only the assigned developer sees their own non-secret configuration.
+    // Missing or malformed mapping never prevents ordinary task inspection.
+    let providerMappings:ReturnType<typeof declaredProviderMappings>=[];
+    let providerMappingState='NOT_APPLICABLE';
+    if(Number(access.can_develop)===1&&t.worker_agent_id===agentId){
+      try{
+        providerMappings=declaredProviderMappings(process.env.SUTRADHAR_PROVIDER_MAPPINGS_JSON,t.project_id,agentId);
+        providerMappingState=providerMappings.length?'OWNER_DECLARED_UNVERIFIED':'UNCONFIGURED';
+      }catch{providerMappingState='INVALID_OWNER_CONFIGURATION';}
+    }
     return {ticket_id:t.ticket_id,project_id:t.project_id,repository:p.repository,base_branch:p.base_branch,
       title:t.title,description:t.description,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
       risk:t.risk,status:t.status,version:t.version,write_scopes:t.scopes_json,
       acceptance_criteria:t.criteria_json,worker_agent_id:t.worker_agent_id,
       candidate_head_sha:t.candidate_head_sha,candidate_tree_sha:t.candidate_tree_sha,
-      latest_checkpoint:latest};
+      latest_checkpoint:latest,provider_mapping_state:providerMappingState,
+      provider_mappings:providerMappings};
   });
 }));
 async function recoveryManifest(c:PoolConnection){
