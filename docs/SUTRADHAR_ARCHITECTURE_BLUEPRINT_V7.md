@@ -171,3 +171,12 @@ Verified source baseline: `3465af4`, [application CI](https://github.com/r889827
 | Owner control | Shared web/private Telegram STATUS/PAUSE/RESUME | Real bot delivery and remaining safe command parity |
 
 Requirements in sections 1–11 are unchanged. See [implementation tracker](IMPLEMENTATION_TRACKER.md), [gap register](../GAP_REGISTER.md), [acceptance matrix](V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [provider declaration guide](PROVIDER_WORKSPACE_DECLARATIONS_V7.md). G0–G7 remain HOLD; main unchanged; no production rollout.
+
+
+## 13. Shared-contract admission — incremental source reconciliation
+
+Verified previous baseline `93993a0`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700768) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700737) both SUCCESS, including the fresh-checkpoint change. The new shared-contract implementation and regressions are CODED / CI PENDING at this update.
+
+Master may declare canonical exclusive API, database, interface and event keys in `contract_keys` when planning a task. Nonempty declarations require fresh Owner authorization regardless of LOW risk. Central persists the declaration in the durable TASK_PLANNED ledger and, under the existing repository-wide reservation lock, rejects overlapping declared keys across distinct files/base branches. An unclassified legacy task and a nonempty declared task cannot hold reservations concurrently in the same repository. Path scopes remain separate; a contract key never grants filesystem permission. Reconciliation retains the hold until ordinary reservations are explicitly released. Desktop retains the declaration in bounded manual context.
+
+This is an initial explicit declaration mechanism, not automatic semantic dependency discovery. An explicitly empty declaration is not independently proven conflict-free. Different resource namespaces, external repos, incorrectly declared contracts and combined integration behavior still need review. No schema migration was introduced; event lookup cost on real Hostinger remains to be measured. G0–G7 remain HOLD.
