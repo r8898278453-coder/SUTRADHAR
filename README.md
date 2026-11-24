@@ -276,3 +276,9 @@ Desktop Master can explicitly save and restore unfinished task/editor fields usi
 Exact baseline `babd15b` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45489449293) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45489449341). Encrypted unconfirmed draft storage and lexical source hints are source-CI verified. New advisory graph, fair sampling and compact context changes are CODED / EXACT-HEAD CI PENDING.
 
 Desktop Master can review declared dependency waves, conflict components and fair bounded local source hints, and prepare an exact compact JSON planning preview with common baseline and byte/digest evidence. No automatic execution, semantic independence or measured provider token claim. See [operator guide](docs/MASTER_TASK_BATCH_PLANNING_V7.md), [tracker](docs/IMPLEMENTATION_TRACKER.md), [matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](GAP_REGISTER.md). G0–G7 HOLD.
+
+## Owner-attested provider usage ledger
+
+Exact baseline `8e897c8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45492514727) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45492514610). Advisory planning graph, fair source sampling and compact context are source-CI verified. New Owner-attested provider usage history is CODED / EXACT-HEAD CI PENDING.
+
+Central Owner can inspect historical attempts and record independently observed exact input/output counts for closed attempts once, with optional cached input subset. Missing readings remain unknown; no provider-verified quota, cost or execution permission. See [provider guide](docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md), [tracker](docs/IMPLEMENTATION_TRACKER.md), [matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](GAP_REGISTER.md). G0–G7 HOLD.
