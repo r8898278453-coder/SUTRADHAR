@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chooseLeader,chooseBackups,firstElectionOpen,scopesOverlap,safeScope,LEASE_SECONDS,HEARTBEAT_SECONDS,validTaskBranch,isProtectedScope,parseContractKeys,contractReservationConflicts} from '../v7/rules.ts';
+import {chooseLeader,chooseBackups,firstElectionOpen,scopesOverlap,safeScope,LEASE_SECONDS,HEARTBEAT_SECONDS,validTaskBranch,isProtectedScope,parseContractKeys,contractReservationConflicts,orderTaskBatch} from '../v7/rules.ts';
 import {parseProviderMappings,declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot,validateProviderAttempt} from '../v7/provider_mappings.ts';
 const day=Date.parse('2026-11-11T00:00:00Z');
 const ts=(hour:number,minute=0)=>day+hour*3600000+minute*60000;
@@ -260,4 +260,23 @@ test('provider attempt accepts only exact non-secret evidence metadata and valid
     {...x,context_sha256:'x'.repeat(64)},{...x,checkpoint_generation:'1'},
     {...x,state:'CLOSED'},{...x,resolution:'OWNER_REVIEW'},{...x,provider:'UNKNOWN'}])
     assert.throws(()=>validateProviderAttempt(bad),/PROVIDER_ATTEMPT_INVALID/);
+});
+
+test('Master batch order is deterministic; independent nodes can be parallel, conflicting nodes require dependency reachability',()=>{
+  const a={ticketId:'ticket_a',branch:'ai/a',fingerprint:'a',scope:['src/a.ts'],deps:[] as string[],contractKeys:[] as string[]};
+  const b={...a,ticketId:'ticket_b',branch:'ai/b',fingerprint:'b',scope:['SRC/A.ts'],deps:['ticket_a']};
+  const c={...a,ticketId:'ticket_c',branch:'ai/c',fingerprint:'c',scope:['src/c.ts'],deps:['ticket_b']};
+  const d={...a,ticketId:'ticket_d',branch:'ai/d',fingerprint:'d',scope:['src/a.ts'],deps:['ticket_c']};
+  assert.deepEqual(orderTaskBatch([d,b,c,a]).map(x=>x.ticketId),['ticket_a','ticket_b','ticket_c','ticket_d']);
+  assert.deepEqual(orderTaskBatch([c,a,b]),orderTaskBatch([a,b,c]));
+  assert.throws(()=>orderTaskBatch([a,{...b,deps:[]}]),/CONFLICT_REQUIRES_DEPENDENCY/);
+  assert.throws(()=>orderTaskBatch([{...a,deps:['ticket_b']},b]),/DEPENDENCY_CYCLE/);
+  assert.throws(()=>orderTaskBatch([a,{...b,deps:['TICKET_A']}]),/DEPENDENCY_ALIAS/);
+  for(const patch of [{ticketId:'TICKET_A'},{branch:'AI/A'},{fingerprint:'a'}])
+    assert.throws(()=>orderTaskBatch([a,{...b,...patch}]),/DUPLICATE_ID_BRANCH_OR_INTENT/);
+  const x={...a,contractKeys:['api:orders']};
+  const y={...c,deps:[],contractKeys:['api:orders.create']};
+  assert.throws(()=>orderTaskBatch([x,y]),/CONFLICT_REQUIRES_DEPENDENCY/);
+  assert.deepEqual(orderTaskBatch([x,{...y,deps:['ticket_a']}]).map(p=>p.ticketId),['ticket_a','ticket_c']);
+  assert.throws(()=>orderTaskBatch([a]),/SIZE_INVALID/);
 });
