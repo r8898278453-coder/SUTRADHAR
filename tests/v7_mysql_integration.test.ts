@@ -693,6 +693,23 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         assert.ok(accepted.every(x=>x.code===200),JSON.stringify(accepted));
         assert.deepEqual(accepted[0].body,accepted[1].body);
         assert.equal(await countTickets(),3);
+        const receiptQuery={agent_id:a.agent_id,project_id,request_id:envelope.request_id,
+          preview_sha256:reviewed.body.preview_sha256};
+        const historical=await a.signed('/v7/tasks/plan-batch/receipt',receiptQuery);
+        assert.equal(historical.code,200,JSON.stringify(historical.body));
+        assert.equal(historical.body.read_only,true);
+        assert.equal(historical.body.historical_receipt,true);
+        assert.equal(historical.body.automatic_execution_allowed,false);
+        assert.deepEqual(historical.body.receipt,accepted[0].body);
+        const wrongDigest=await a.signed('/v7/tasks/plan-batch/receipt',{...receiptQuery,preview_sha256:'0'.repeat(64)});
+        assert.equal(wrongDigest.code,409);
+        const missing=await a.signed('/v7/tasks/plan-batch/receipt',{...receiptQuery,request_id:'batch_missing_001'});
+        assert.equal(missing.code,404);
+        const foreign=await b.signed('/v7/tasks/plan-batch/receipt',receiptQuery);
+        assert.equal(foreign.code,403);
+        const unrelated=await b.signed('/v7/tasks/plan-batch/receipt',{...receiptQuery,agent_id:b.agent_id});
+        assert.equal(unrelated.code,404);
+        assert.equal(await countTickets(),3);
         const [edges]:any=await db.query('SELECT dependency_id FROM v7_dependencies WHERE ticket_id=?',[second.ticket_id]);
         assert.deepEqual(edges.map((x:any)=>x.dependency_id),[first.ticket_id]);
         const [approvals]:any=await db.query('SELECT kind,state FROM v7_approvals WHERE ticket_id=?',[third.ticket_id]);
