@@ -1,10 +1,10 @@
 # SUTRADHAR — Architecture Blueprint v7.0
 
 **Date:** 2026-11-11  
-**Status:** DESIGN BASELINE / NOT IMPLEMENTED / NOT PRODUCTION READY  
+**Status:** TARGET DESIGN BASELINE / PARTIAL ALPHA SOURCE IMPLEMENTED / NOT PRODUCTION READY  
 **Scope:** The owner's consolidated requirements from the architecture discussions. This document supersedes v6.0 **as a target design**, not as a claim that the existing code works accordingly. The legacy root file **Project Blue Print.txt** remains preserved for historical context.  
 **Companion contracts:** [Agent, Task, QA and Recovery Contract](./AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md) and [Acceptance / Traceability Matrix](./V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md).  
-**Code status:** Current implementation still uses SQLite, in-memory/demo views, and partially implemented Git/LLM flows; do not call this blueprint deployed.
+**Original 11 November code status:** legacy SQLite, in-memory/demo views and partial Git/LLM flows. The current v7 alpha uses MySQL as the sole authority for new Central routes and separate Central/Desktop builds; legacy code remains isolated from the intended deployment. See the current source progress below.
 
 ## 1. Non-negotiable product requirements
 
@@ -154,3 +154,20 @@ Retire or disable production access to **legacy in-memory demo cluster state**, 
 - M6: Web/Telegram parity, 8–10 PC stress, recovery and rollout.
 
 **Release policy:** Documentation alone is not verification. Every gate needs a reproducible acceptance test and owner-approved deployment evidence. See [V7 Requirements / Acceptance Matrix](./V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md). Existing draft PR #1 remains **unmerged**, and main is unchanged.
+
+
+## 12. Current implementation reconciliation — 24 November 2026
+
+Verified source baseline: `3465af4`, [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985550) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985559) both passed. This is not production acceptance. The subsequent fresh-checkpoint change (`ee2e62f`, tests `8684dfe`) is coded, CI not yet verified at this documentation update.
+
+| Target area | Current source status | Remaining proof/work |
+|---|---|---|
+| Central + Desktop split | Separate staging builds; MySQL authority and unsigned Windows QA packaging in CI | Real Hostinger HTTPS, off-host restore and signed installer |
+| Retained Master + two independent backups | Signed heartbeat, lease/epoch fencing and shared recovery snapshot verification | Actual 2/3/8–10-PC failover, hybrid duty and load |
+| Master task creator | Exact project IDs, branch uniqueness, deterministic task fingerprint, valid acceptance criteria, dependencies and repository-wide path reservation | Autonomous decomposition, semantic API/schema contract reservation and clarification |
+| Provider workspace selection | Owner-declared non-secret configuration aliases, exact project/agent binding and conflict checks | Durable versioned MySQL registry, verified real account/workspace, revocation and permitted adapter |
+| Token minimization | Deterministic compact JSON, deduplicated scope/criteria, 8 KiB cap, checkpoint digest; mapping metadata outside prompt | Actual tokenizer/quota accounting, safe context reuse, secret review and provider-permitted continuation |
+| Worker recovery | Project revocation fences unfinished leases and preserves evidence; stale receipts rejected; new claim needs fresh checkpoint before submit (new CI pending) | Physical crash recovery, independent worktree verification, provider interruption and tested release |
+| Owner control | Shared web/private Telegram STATUS/PAUSE/RESUME | Real bot delivery and remaining safe command parity |
+
+Requirements in sections 1–11 are unchanged. See [implementation tracker](IMPLEMENTATION_TRACKER.md), [gap register](../GAP_REGISTER.md), [acceptance matrix](V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [provider declaration guide](PROVIDER_WORKSPACE_DECLARATIONS_V7.md). G0–G7 remain HOLD; main unchanged; no production rollout.
