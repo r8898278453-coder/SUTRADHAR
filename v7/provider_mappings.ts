@@ -77,3 +77,29 @@ export function verifyProviderRegistrySnapshot(input:unknown){
   if(x.registry_sha256!==snapshot.registry_sha256)throw Error('PROVIDER_REGISTRY_INVALID');
   return snapshot;
 }
+
+
+// Strict local/manual attempt metadata. No prompt, response, remote session
+// identifier, provider credential, or unverified token-count is accepted.
+export type ProviderAttempt={attempt_id:string;ticket_id:string;agent_id:string;lease_id:string;
+  epoch:number;registry_version:number;provider:Provider;binding_sha256:string;
+  checkpoint_generation:number;checkpoint_sha256:string;context_sha256:string;
+  state:'OPEN'|'INTERRUPTED'|'CLOSED';resolution:'WORKER_CHECKPOINT'|'OWNER_REVIEW'|null};
+export function validateProviderAttempt(input:unknown):ProviderAttempt{
+  const fail=()=>{throw Error('PROVIDER_ATTEMPT_INVALID');};
+  if(!input||typeof input!=='object'||Array.isArray(input))return fail();
+  const x=input as Record<string,unknown>;
+  const keys='agent_id|attempt_id|binding_sha256|checkpoint_generation|checkpoint_sha256|context_sha256|epoch|lease_id|provider|registry_version|resolution|state|ticket_id';
+  if(Object.keys(x).sort().join('|')!==keys)return fail();
+  const positive=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>0;
+  const hash=(v:unknown)=>typeof v==='string'&&v.length===64&&/^[0-9a-f]{64}$/.test(v);
+  if(!exact(x.attempt_id,/^attempt_[a-f0-9]{32}$/)||!exact(x.ticket_id,ID)||
+     !exact(x.agent_id,ID)||!exact(x.lease_id,ID)||!positive(x.epoch)||
+     !positive(x.registry_version)||!positive(x.checkpoint_generation)||
+     !PROVIDERS.includes(x.provider as Provider)||!hash(x.binding_sha256)||
+     !hash(x.checkpoint_sha256)||!hash(x.context_sha256)||
+     !['OPEN','INTERRUPTED','CLOSED'].includes(x.state as string)||
+     (x.state==='CLOSED'?!['WORKER_CHECKPOINT','OWNER_REVIEW'].includes(x.resolution as string):x.resolution!==null))
+    return fail();
+  return x as ProviderAttempt;
+}
