@@ -145,3 +145,9 @@ Desktop Master may load signed active project identities (up to 100, explicit tr
 Exact baseline `85ae5a8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45480705079) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45480705150), including encrypted Master admission journal and signed project catalog. New Owner reconciliation batch is CODED / EXACT-HEAD CI PENDING.
 
 Use exact recovered agent/project/request/digest/order in Owner dashboard. Existing admission or listed ticket conflict blocks cancellation. After independently reviewing journal and DB history, Owner may permanently block the original request key; no new work is authorized. Original approved Desktop reads exact cancellation resolution and closes the encrypted hold. Missing receipt is not non-admission proof. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). No new schema/release. G0–G7 HOLD.
+
+## Master local Git baseline preflight
+
+Exact baseline `a77d3a8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45483558734) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45483558666), including previous Owner admission reconciliation. New local baseline and exact project lookup changes are CODED / EXACT-HEAD CI PENDING.
+
+Desktop Master selects trusted local checkout, inspects signed project origin/base tracking ref and commit/tree, and uses that SHA for every task. Preview and native-confirmed commit recheck local evidence before admission. No remote freshness or upstream merge verification; plan dependent work later if it needs upstream changes. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). G0–G7 HOLD.
