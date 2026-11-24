@@ -755,6 +755,57 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
         const [partialEvents]:any=await db.query('SELECT event_id FROM v7_events WHERE event_type="TASK_PLANNED" AND resource_id=?',[nextA.ticket_id]);
         const [partialReceipt]:any=await db.query('SELECT request_id FROM v7_commands WHERE actor=? AND request_id=?',[a.agent_id,nextEnvelope.request_id]);
         assert.equal(partial.length+partialApprovals.length+partialEvents.length+partialReceipt.length,0,'all partial admission and receipt writes roll back');
+        // Missing receipt alone is never a grant. Owner can reserve the
+        // original key under the same cluster lock, without creating tasks.
+        const cancelledKey={agent_id:a.agent_id,project_id,request_id:nextEnvelope.request_id,
+          preview_sha256:nextPreview.body.preview_sha256,plan_order:nextPreview.body.plan_order};
+        const inspectBatch=(k:any)=>post('/v7/owner/master-batch/inspect',k,admin);
+        const cancel=(k:any,request_id='batch_cancel_review_'+(++count))=>post('/v7/owner/command',{
+          request_id,command:'CANCEL_MASTER_BATCH_ADMISSION',
+          payload:{...k,evidence_reviewed:true,no_retry_confirmed:true}},admin);
+        const admittedKey={...receiptQuery,plan_order:reviewed.body.plan_order};
+        const admitted=await inspectBatch(admittedKey);
+        assert.equal(admitted.code,200,JSON.stringify(admitted.body));
+        assert.equal(admitted.body.state,'ADMITTED');assert.equal(admitted.body.owner_cancellation_eligible,false);
+        assert.equal((await cancel(admittedKey)).code,409);
+        const aliasKey={...cancelledKey,agent_id:a.agent_id.toUpperCase()};
+        assert.equal((await inspectBatch(aliasKey)).code,404);
+        const conflictKey={...cancelledKey,plan_order:[first.ticket_id,nextA.ticket_id]};
+        const conflict=await inspectBatch(conflictKey);
+        assert.equal(conflict.code,200);assert.equal(conflict.body.state,'HOLD_TICKET_CONFLICT');
+        assert.equal((await cancel(conflictKey)).code,409);
+        const missingBefore=await inspectBatch(cancelledKey);
+        assert.equal(missingBefore.code,200);assert.equal(missingBefore.body.state,'NO_RECEIPT');
+        assert.equal(missingBefore.body.owner_cancellation_eligible,true);
+        const noReview=await post('/v7/owner/command',{request_id:'batch_review_denied_'+(++count),
+          command:'CANCEL_MASTER_BATCH_ADMISSION',payload:{...cancelledKey,evidence_reviewed:false,no_retry_confirmed:true}},admin);
+        assert.equal(noReview.code,400);
+        const unauthorized=await post('/v7/owner/master-batch/inspect',cancelledKey,'invalid');
+        assert.equal(unauthorized.code,401);
+        const ownerRequest='batch_cancel_once_'+(++count);
+        const cancellations=await Promise.all([cancel(cancelledKey,ownerRequest),cancel(cancelledKey,ownerRequest)]);
+        assert.ok(cancellations.every(x=>x.code===200),JSON.stringify(cancellations));
+        assert.deepEqual(cancellations[0].body,cancellations[1].body);
+        const resolution=cancellations[0].body.state;
+        assert.equal(resolution.state,'ADMISSION_CANCELLED');assert.equal(resolution.automatic_execution_allowed,false);
+        assert.equal((await cancel(cancelledKey)).code,409);
+        const observed=await inspectBatch(cancelledKey);
+        assert.equal(observed.body.state,'ADMISSION_CANCELLED');
+        assert.deepEqual(observed.body.resolution,resolution);
+        assert.equal(observed.body.owner_cancellation_eligible,false);
+        const {plan_order,...originalKey}=cancelledKey;
+        const sealed=await a.signed('/v7/tasks/plan-batch/receipt',originalKey);
+        assert.equal(sealed.code,200,JSON.stringify(sealed.body));
+        assert.deepEqual(sealed.body.resolution,resolution);assert.equal(sealed.body.receipt,undefined);
+        assert.equal((await b.signed('/v7/tasks/plan-batch/receipt',originalKey)).code,403);
+        assert.equal((await a.signed('/v7/tasks/plan-batch/receipt',{...originalKey,preview_sha256:'0'.repeat(64)})).code,409);
+        const delayed=await a.signed('/v7/tasks/plan-batch',{...nextEnvelope,preview_sha256:nextPreview.body.preview_sha256});
+        assert.equal(delayed.code,409,JSON.stringify(delayed.body));
+        assert.equal(delayed.body.error_code,'IDEMPOTENCY_KEY_REUSED');
+        const [cancelEvents]:any=await db.query('SELECT event_id FROM v7_events WHERE event_type="TASK_BATCH_ADMISSION_CANCELLED" AND resource_id=?',[project_id]);
+        assert.equal(cancelEvents.length,1);
+        assert.equal(await countTickets(),4);
+
       }finally{await db.end();}
     }
     // Actual MySQL fencing: a formerly eligible idle PC cannot obtain
