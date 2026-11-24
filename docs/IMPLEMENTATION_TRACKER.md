@@ -1298,3 +1298,27 @@ At `82e2a8c`, [application CI](https://github.com/r8898278453-coder/SUTRADHAR/ac
 - P0: G0–G7 Owner prerequisites, Hostinger staging, signer/rotation, physical 2/3/8–10 PCs, rollback and independent 71-case acceptance.
 
 Decision: reuse the existing Owner-authenticated dashboard and endpoint, without additional credential store or schema migration. Closure-only action requires current server eligibility and manual review; ordinary requeue remains separate. See [Owner recovery guide](PROVIDER_WORKSPACE_DECLARATIONS_V7.md). No provider calls, deployment, signing or merge.
+
+
+
+## Consolidated priority batch — packaged Desktop attempt controls and context integrity
+
+Verified exact baseline `1193b3b`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45459215514) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45459215696) both SUCCESS, including the previous strict-null correction and Owner interruption review dashboard. New packaged Desktop attempt controls and task-version admission are CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Status |
+|---|---|---|
+| Main-only OS-vault exact provider attempt signing; fatal UTF-8 response decoding | `0c482e0`, `8ba365d` | CODED / CI PENDING |
+| Sealed local receipt, current signed lease, exact Git worktree, recomputed compact digest, metadata POST and exact readback | `8ba365d` | CODED / CI PENDING |
+| Guarded Electron IPC and native explicit confirmation; preload allowlist; no generic signer exposure | `b251e63`, `9f473fb` | CODED / CI PENDING |
+| Non-developer BEGIN/INTERRUPT/CLOSE controls, separate compact context field, selection/error clearing | `c17fcec`, `fcc5b23` | CODED / CI PENDING |
+| Desktop signed Git fixture, stale digest/lease, unresolved attempt, fresh checkpoint, lost response and signing scope regression | `28e60a9`, `ac7da3c` | CODED / CI PENDING |
+| Transactional exact task-version admission on BEGIN; coordinated CLI/Desktop/signer/MySQL tests | `370bee8`, `27822a2`, `eb8c156`, `72eb7d5`, `4f37433` | CODED / CI PENDING |
+
+### Remaining priority batch
+- P0: verify exact-head CI; repair failures before more changes. Complete real physical Desktop/provider interruption and recovery acceptance; actual provider-permitted integration, independently verified account/workspace identity and transmitted bytes remain open.
+- P0: intelligent Master task creator and automated semantic dependency discovery/completeness, combined QA.
+- P1: measured token/quota accounting and minimal-context continuation; 8 KiB byte budget is not token accounting.
+- P0: safe Owner web/Telegram parity, actual delivery; durable ledger retention, indexed lookup/performance and target backup/restore.
+- P0: G0–G7 branch protection, signer rotation, Hostinger staging, trusted installer, physical 2/3/8–10 PC tests, rollback and independent 71-case acceptance.
+
+Decision: extend existing packaged modules, rather than add another deployment artifact or schema migration. BEGIN contract now requires expected_task_version, so coordinated Central/Desktop/CLI builds are needed. No automatic provider action, signing/release, deployment or main merge. See [operator workflow](PROVIDER_WORKSPACE_DECLARATIONS_V7.md).
