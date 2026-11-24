@@ -865,7 +865,7 @@ function analyzeBulkPlanningDraft(tasks){
     const t=byId.get(id);
     if(t.baseline_sha!==baseline)fail('BULK_PLAN_MIXED_BASELINE');
     const unique=(list,key)=>new Set(list.map(key)).size===list.length;
-    if(!unique(t.write_scopes,x=>x.toLowerCase())||
+    if(!unique(t.write_scopes,x=>x.toLowerCase())||t.write_scopes.some(x=>/[\r\n]/.test(x))||
        !unique(t.acceptance_criteria,x=>x.trim())||
        !unique(t.dependencies,x=>x.toLowerCase())||
        /[\r\n]/.test(t.branch_name)||t.branch_name.toLowerCase().endsWith('.lock'))
@@ -907,7 +907,10 @@ function analyzeBulkPlanningDraft(tasks){
       const unresolved_conflicts=graph.declared_conflicts.filter(c=>c.requires_review&&c.ticket_ids.some(id=>bin.ids.includes(id))).length;
       groups.push({group_id,wave:w+1,ticket_ids:bin.ids,manifest_bytes,
         isolated_review:bin.isolated,single_task_review:bin.ids.length===1,
-        within_existing_batch_size:bin.ids.length>=2&&bin.ids.length<=10&&manifest_bytes<=65536,
+        isolation_reasons:bin.ids.flatMap(id=>{const t=byId.get(id);return [
+          ...(['HIGH','CORE'].includes(t.risk)?[{ticket_id:id,reason:'PROTECTED_RISK'}]:[]),
+          ...(external.has(id)?[{ticket_id:id,reason:'EXTERNAL_DEPENDENCY_UNVERIFIED'}]:[])];}),
+        within_existing_batch_limits:bin.ids.length>=2&&bin.ids.length<=10&&manifest_bytes<=65536,
         unresolved_conflict_count:unresolved_conflicts,requires_fresh_central_preview:true,
         automatic_admission_allowed:false});
     }
