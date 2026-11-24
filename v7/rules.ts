@@ -121,3 +121,43 @@ export function contractReservationConflicts(a:string[]|null,b:string[]|null):bo
   if(b===null)return Boolean(a.length);
   return a.some(x=>b.some(y=>contractKeysOverlap(x,y)));
 }
+
+
+// Deterministic bounded DAG for a single project planning batch. Conflicts
+// are inferred from DECLARED paths and contract keys only, not source analysis.
+export type BatchPlanNode={ticketId:string;branch:string;fingerprint:string;
+  scope:string[];deps:string[];contractKeys:string[]|null};
+export function orderTaskBatch<T extends BatchPlanNode>(plans:readonly T[]):T[]{
+  if(!Array.isArray(plans)||plans.length<2||plans.length>10)throw Error('TASK_BATCH_SIZE_INVALID');
+  const byId=new Map<string,T>(),aliases=new Map<string,string>();
+  const branches=new Set<string>(),intents=new Set<string>();
+  for(const p of plans){
+    const alias=p.ticketId.toLowerCase(),branch=p.branch.toLowerCase();
+    if(aliases.has(alias)||branches.has(branch)||intents.has(p.fingerprint))
+      throw Error('TASK_BATCH_DUPLICATE_ID_BRANCH_OR_INTENT');
+    aliases.set(alias,p.ticketId);byId.set(p.ticketId,p);branches.add(branch);intents.add(p.fingerprint);
+  }
+  for(const p of plans)for(const dep of p.deps){
+    const exact=aliases.get(dep.toLowerCase());
+    if(exact!==undefined&&exact!==dep)throw Error('TASK_BATCH_DEPENDENCY_ALIAS');
+  }
+  const pending=new Set(byId.keys()),ordered:T[]=[],ancestors=new Map<string,Set<string>>();
+  while(pending.size){
+    const next=[...pending].sort().find(id=>byId.get(id)!.deps.every(dep=>!pending.has(dep)));
+    if(next===undefined)throw Error('TASK_BATCH_DEPENDENCY_CYCLE');
+    const p=byId.get(next)!;
+    const all=new Set<string>();
+    for(const dep of p.deps)if(byId.has(dep)){
+      all.add(dep);for(const a of ancestors.get(dep)??[])all.add(a);
+    }
+    ancestors.set(next,all);pending.delete(next);ordered.push(p);
+  }
+  for(let i=0;i<ordered.length;i++)for(let j=i+1;j<ordered.length;j++){
+    const a=ordered[i],b=ordered[j];
+    const conflict=a.scope.some(x=>b.scope.some(y=>scopesOverlap(x,y)))||
+      contractReservationConflicts(a.contractKeys,b.contractKeys);
+    if(conflict&&!ancestors.get(b.ticketId)?.has(a.ticketId))
+      throw Error('TASK_BATCH_CONFLICT_REQUIRES_DEPENDENCY');
+  }
+  return ordered;
+}
