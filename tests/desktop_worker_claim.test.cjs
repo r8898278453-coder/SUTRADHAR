@@ -4,7 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const crypto=require('node:crypto'),cp=require('node:child_process');
 const {createVault}=require('../apps/desktop/os-vault.cjs');
 const {createSignerBridge}=require('../apps/desktop/vault-bridge.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt}=require('../apps/desktop/worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,createMasterBatchJournal}=require('../apps/desktop/worker-claim.cjs');
 const {progressWorkerTask}=require('../apps/desktop/worker-progress.cjs');
 const {submitWorkerCandidate}=require('../apps/desktop/worker-submit.cjs');
 const available=cp.spawnSync('git',['--version'],{encoding:'utf8'}).status===0;
@@ -1121,4 +1121,75 @@ test('Master planning renderer exposes narrow reviewed admission only',()=>{
   assert.match(html,/id="masterDraft"[^>]*readonly/);
   assert.match(renderer,/get\('masterReviewed'\)\.checked!==true/);
   assert.match(renderer,/invalidateMasterReview\(\{clearDigest:false\}\)/);
+});
+
+
+test('encrypted Master admission journal survives restart, prevents a second unresolved intent, and closes only on exact receipt',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sut-master-journal-'));
+  try{
+    const storage=safeStorage(),nodeId='node_'+'a'.repeat(32);
+    const origin='https://central.example.com';
+    const create=()=>createMasterBatchJournal({dir,safeStorage:storage,nodeId});
+    const tasks=['1','2'].map(i=>({ticket_id:'ticket_plan_'+i,baseline_sha:'b'.repeat(40),
+      branch_name:'ai/plan_'+i,title:'Private reviewed task '+i,description:'Private scope explanation',
+      risk:'LOW',write_scopes:['src/file'+i+'.ts'],acceptance_criteria:['Test passes'],dependencies:[],contract_keys:[]}));
+    const body={agent_id:'agent_aaa',project_id:'project_aaa',request_id:'batch_review_001',expected_master_epoch:7,tasks};
+    const review={project_id:body.project_id,request_id:body.request_id,epoch:7,preview_sha256:'a'.repeat(64),
+      plan_order:tasks.map(t=>t.ticket_id),tickets:tasks.map(t=>({ticket_id:t.ticket_id,status:'READY',version:1,owner_approval_required:false})),
+      automatic_execution_allowed:false,semantic_discovery_verified:false,baseline_verified:false};
+    const prepared={body,review},receipt={...review,historical_receipt:true};
+    assert.equal(create().pending(),null);
+    const saved=create().begin(origin,prepared);
+    const files=fs.readdirSync(dir);assert.equal(files.length,1);
+    assert.equal(fs.readFileSync(path.join(dir,files[0])).includes(Buffer.from(tasks[0].title)),false);
+    assert.deepEqual(create().pending(),saved);
+    assert.deepEqual(create().pending().intent.body.tasks,tasks);
+    assert.throws(()=>create().begin(origin,{body:{...body,request_id:'batch_other_001'},review:{...review,request_id:'batch_other_001'}}),/PENDING_INSPECT_RECEIPT/);
+    assert.throws(()=>create().close(saved.key,{...receipt,preview_sha256:'c'.repeat(64)}),/RECEIPT/);
+    assert.deepEqual(create().pending(),saved);
+    assert.throws(()=>createMasterBatchJournal({dir,safeStorage:storage,nodeId:'node_'+'c'.repeat(32)}).pending(),/INTENT_INVALID/);
+    assert.deepEqual(create().close(saved.key,receipt),receipt);
+    assert.equal(create().pending(),null);
+    assert.equal(fs.readdirSync(dir).length,2);
+    assert.throws(()=>create().begin(origin,prepared),/EEXIST/);
+    // Historical evidence is never deleted or silently ignored after corruption.
+    fs.writeFileSync(path.join(dir,files[0]),Buffer.from('invalid ciphertext'));
+    assert.throws(()=>create().pending(),/CORRUPT_OWNER_REVIEW/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('Master project catalog is signed, bounded, exact and unavailable to a non-Master',{skip:!available},async()=>{
+  const f=fixture();
+  try{
+    let agent='agent_aaa',calls=0,extra=false;
+    const project={project_id:'project_aaa',display_name:'Same name',repository:'example/repo',base_branch:'main'};
+    const fetcher=async(url,init)=>{
+      calls++;const uri=new URL(url).pathname;
+      assert.equal(init.redirect,'error');assert.equal(init.credentials,'omit');
+      const h=init.headers,raw=init.body||'';
+      const canonical=[h['x-sutradhar-timestamp'],h['x-sutradhar-nonce'],init.method,uri,crypto.createHash('sha256').update(raw).digest('hex')].join('\n');
+      assert.equal(crypto.verify(null,Buffer.from(canonical),crypto.createPublicKey(f.pub.public_key_pem),Buffer.from(h['x-sutradhar-signature'],'base64')),true);
+      if(uri==='/v7/cluster/state')return new Response(JSON.stringify({phase:'READY',paused:false,epoch:7,master_agent_id:agent}));
+      assert.equal(uri,'/v7/tasks/plan-batch/projects');assert.deepEqual(JSON.parse(raw),{agent_id:'agent_aaa',expected_master_epoch:7});
+      return new Response(JSON.stringify({read_only:true,agent_id:'agent_aaa',epoch:7,truncated:false,
+        automatic_execution_allowed:false,baseline_verified:false,
+        projects:[extra?{...project,credential:'forbidden'}:project,{...project,project_id:'project_bbb',base_branch:'develop'}]}));
+    };
+    const args={origin:'https://central.example.com',agentId:'agent_aaa',signer:f.signer,fetcher};
+    agent='agent_bbb';await assert.rejects(listMasterProjects(args),/MASTER_NOT_READY/);assert.equal(calls,1);
+    agent='agent_aaa';
+    const r=await listMasterProjects(args);assert.equal(r.projects.length,2);assert.equal(r.projects[1].base_branch,'develop');
+    extra=true;await assert.rejects(listMasterProjects(args),/CATALOG_INVALID/);
+    assert.throws(()=>f.signer.signWorkerAction({operation:'plan-batch-projects',agent_id:args.agentId,payload:{agent_id:args.agentId,expected_master_epoch:7,project_id:'project_aaa'}}),/DENIED/);
+  }finally{f.close();}
+});
+test('Master pending intent is journaled before the mutation and recovery IPC cannot sign arbitrary requests',()=>{
+  const root=path.join(__dirname,'../apps/desktop');
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8');
+  const preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const html=fs.readFileSync(path.join(root,'setup.html'),'utf8');
+  assert.match(main,/const pending=journal\.begin\(origin,saved\.prepared\);[\s\S]*?const result=await commitMasterBatch/);
+  assert.match(main,/return journal\.close\(pending\.key,result\)/);
+  assert.match(preload,/recoverMasterBatchDraft:agentId=>ipcRenderer.invoke/);
+  assert.match(html,/id="masterRecover"/);
+  assert.match(html,/id="masterProjectChoice"/);
 });
