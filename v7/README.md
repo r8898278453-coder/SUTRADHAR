@@ -103,3 +103,10 @@ The existing Central dashboard has a local draft editor with load, add/remove, r
 Verified previous baseline `e935cef`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765773) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765743) both SUCCESS. New manual attempt source is CODED / CI PENDING at this update.
 
 See [provider interruption instructions](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md) for explicit trusted worker CLI provider-attempt begin/interrupt/close, fresh checkpoint review and Owner revoked-lease resolution. The record is a local audit/hold, not a remote provider request or permission grant. Never repeat an uncertain external operation; inspect signed detail and independently review first. Packaged Desktop read-only attempt metadata holds a new compact handoff, but mutation controls and Owner resolution UI are not yet implemented. No physical provider acceptance or production deployment. G0–G7 HOLD.
+
+
+## Owner interrupted attempt review
+
+Previous HEAD `82e2a8c` failed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188656) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188901) on TS18049 strict-null diagnostics; disposable MySQL integration and unsigned Windows smoke passed. Explicit return guards (`4d05bde`) correct the reported paths; combined CI verification of the fix and new UI remains pending. Last fully green baseline `e935cef`.
+
+Use the dashboard's interrupted provider attempt panel to inspect current ticket, retype exact attempt ID, independently review external session and worktree, and record closure ONLY when Central reports eligible. Current readback must confirm exact CLOSED / OWNER_REVIEW; uncertainty requires another inspection, no automatic retry. Ordinary task reconciliation remains a separate gate. See [operator guide](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). Packaged Desktop mutation and real provider/browser/physical acceptance pending. G0–G7 HOLD.
