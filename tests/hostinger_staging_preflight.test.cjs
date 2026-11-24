@@ -2,12 +2,15 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {preflight,target,publicAddress,MAX_BYTES}=
   require('../scripts/ops/hostinger-staging-preflight.cjs');
+const crypto=require('node:crypto');
+const ui={'index.html':'<div>SUTRADHAR / CENTRAL</div>','dashboard.js':'// dashboard fixture','app.css':'/* css fixture */','owner-crash-crosscheck.js':'// recovery fixture'};
+const hashes=Object.fromEntries(Object.entries(ui).map(([name,body])=>[name,crypto.createHash('sha256').update(body).digest('hex')]));
 const sha='a'.repeat(40),host='stage.sutradhar.example.com';
 const origin='https://'+host;
 const publicDns=async()=>[{address:'8.8.8.8',family:4},
   {address:'2606:4700:4700::1111',family:6}];
 function mock({wrongSha=false,healthReady=true,oversized=false,
-  fingerprint=false,redirect=false,seen=[]}={}){
+  fingerprint=false,redirect=false,seen=[],missingAsset=false,mixedAsset=false,badManifest=false}={}){
   return async(url,options)=>{
     const path=new URL(url).pathname;
     seen.push({url,options});
@@ -19,8 +22,10 @@ function mock({wrongSha=false,healthReady=true,oversized=false,
       authority:'mysql',api_protocol:7});
     else if(path==='/release-manifest.json')body=JSON.stringify({
       application:'central',source_sha:wrongSha?'b'.repeat(40):sha,
-      api_protocol:7,mysql_schema_version:7,bundle_sha256:'c'.repeat(64)});
-    else if(path==='/')body='<div>SUTRADHAR / CENTRAL</div>';
+      api_protocol:7,mysql_schema_version:7,bundle_sha256:'c'.repeat(64),ui_sha256:badManifest?{}:hashes});
+    else if(path==='/owner-crash-crosscheck.js'&&missingAsset)return new Response('',{status:404});
+    else if(path==='/dashboard.js'&&mixedAsset)body=ui['index.html'];
+    else if(Object.hasOwn(ui,path==='/'?'index.html':path.slice(1)))body=ui[path==='/'?'index.html':path.slice(1)];
     else return new Response('',{status:404});
     if(oversized&&path==='/v7/health')
       body='a'.repeat(MAX_BYTES+1);
@@ -41,7 +46,7 @@ test('Hostinger read-only preflight accepts exact Owner pinned host and app SHA'
   assert.equal(ok.staging_readonly_only,true);
   assert.equal(ok.production_accepted,false);
   assert.deepEqual(calls.map(x=>new URL(x.url).pathname),
-    ['/v7/health','/release-manifest.json','/']);
+    ['/v7/health','/release-manifest.json','/','/dashboard.js','/app.css','/owner-crash-crosscheck.js']);
   assert.ok(calls.every(x=>x.options.method==='GET'&&
     x.options.redirect==='error'&&x.options.credentials==='omit'&&
     x.options.cache==='no-store'&&x.options.signal));
@@ -144,8 +149,8 @@ test('production HTTPS preflight pins one validated IP, preserves SNI and refuse
         service:'sutradhar-v7',ready:true,authority:'mysql',api_protocol:7}):
         url.pathname==='/release-manifest.json'?JSON.stringify({
           application:'central',source_sha:sha,api_protocol:7,
-          mysql_schema_version:7,bundle_sha256:'c'.repeat(64)}):
-        'SUTRADHAR CENTRAL';
+          mysql_schema_version:7,bundle_sha256:'c'.repeat(64),ui_sha256:hashes}):
+        ui[url.pathname==='/'?'index.html':url.pathname.slice(1)];
       const response=Readable.from([Buffer.from(text)]);
       response.statusCode=200;
       response.headers={'content-type':url.pathname==='/'?'text/html':'application/json'};
@@ -160,7 +165,7 @@ test('production HTTPS preflight pins one validated IP, preserves SNI and refuse
   });
   assert.equal(result.accepted,true,JSON.stringify(result));
   assert.equal(result.https_address_pinned,true);
-  assert.equal(seen.length,3);
+  assert.equal(seen.length,6);
   for(const call of seen){
     assert.equal(new URL(call.url).hostname,host);
     assert.equal(call.options.servername,host);
@@ -186,10 +191,19 @@ test('production HTTPS preflight pins one validated IP, preserves SNI and refuse
     [origin+'/v7/health',{method:'POST',redirect:'error',credentials:'omit'}],
     [origin+'/v7/health',{method:'GET',redirect:'follow',credentials:'omit'}]
   ])await assert.rejects(transport(...unsafe),/STAGING_PINNED_HTTPS_METHOD_OR_PATH_DENIED/);
-  assert.equal(seen.length,3,'unsafe paths must not reach transport');
+  assert.equal(seen.length,6,'unsafe paths must not reach transport');
 });
 test('mock preflight cannot claim real HTTPS address pinning',async()=>{
   const result=await preflight(allowed());
   assert.equal(result.accepted,true);
   assert.equal(result.https_address_pinned,false);
+});
+
+test('staging preflight refuses missing or mixed-version dashboard assets and old manifests',async()=>{
+  for(const [opts,issue] of [[{missingAsset:true},'DASHBOARD_ASSET_UNAVAILABLE:owner-crash-crosscheck.js'],[{mixedAsset:true},'DASHBOARD_ASSET_HASH_MISMATCH:dashboard.js'],[{badManifest:true},'DASHBOARD_ASSET_MANIFEST_INVALID']]){
+    const result=await preflight(allowed({fetcher:mock(opts)}));
+    assert.equal(result.accepted,false,JSON.stringify(result));
+    assert.ok(result.issues.includes(issue),JSON.stringify(result));
+    assert.equal(result.production_accepted,false);
+  }
 });

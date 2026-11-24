@@ -54,3 +54,5 @@ See the [Owner-ready production checklist](../../docs/PRODUCTION_READINESS_V7_20
 - Protected Owner-approved production promotion: **NOT CONFIGURED**.
 
 See [ADR](../../docs/ADR_001_MONOREPO_TWO_APPS.md) and [Release operations](../../docs/RELEASE_OPERATIONS.md).
+
+The staging preflight also retrieves the four fixed dashboard assets over the pinned HTTPS transport and compares their bytes to `ui_sha256` in the deployed manifest. This catches missing/fallback HTML and mixed-version UI files, but is not independent attestation of server or deployment authenticity. Older manifests without UI digests must be rebuilt before this check passes.

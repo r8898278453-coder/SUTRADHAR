@@ -25,7 +25,7 @@ function createPinnedFetcher({
     let target;
     try{target=new URL(url);}catch{blocked('URL_INVALID');}
     if(target.origin!==origin||target.hash||target.search||
-       !['/','/v7/health','/release-manifest.json'].includes(target.pathname)||
+       !['/','/v7/health','/release-manifest.json','/dashboard.js','/app.css','/owner-crash-crosscheck.js'].includes(target.pathname)||
        options.method!=='GET'||options.redirect!=='error'||
        options.credentials!=='omit')
       blocked('METHOD_OR_PATH_DENIED');
@@ -36,7 +36,7 @@ function createPinnedFetcher({
           method:'GET',agent:false,servername:hostname,
           rejectUnauthorized:true,timeout:12000,maxHeaderSize:16384,
           signal:options.signal,
-          headers:{Accept:target.pathname==='/'?'text/html':'application/json'},
+          headers:{Accept:target.pathname==='/'?'text/html':target.pathname.endsWith('.js')?'text/javascript':target.pathname.endsWith('.css')?'text/css':'application/json'},
           lookup:(requested,_lookupOptions,callback)=>{
             if(requested!==hostname)
               return callback(Error('STAGING_PINNED_HOSTNAME_CHANGED'));

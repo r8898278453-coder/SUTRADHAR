@@ -12,6 +12,9 @@
 'use strict';
 const dns=require('node:dns').promises;
 const net=require('node:net');
+const crypto=require('node:crypto');
+const UI_ASSETS=Object.freeze({'index.html':'/','dashboard.js':'/dashboard.js','app.css':'/app.css','owner-crash-crosscheck.js':'/owner-crash-crosscheck.js'});
+const digest=text=>crypto.createHash('sha256').update(text,'utf8').digest('hex');
 const {createPinnedFetcher}=require('./staging-pinned-https.cjs');
 const SHA=/^[a-f0-9]{40}$/;
 const HOST=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
@@ -81,7 +84,7 @@ async function readBounded(response){
       chunks.push(Buffer.from(value));
     }
   }finally{try{await reader.cancel();}catch{}reader.releaseLock();}
-  return Buffer.concat(chunks,bytes).toString('utf8');
+  return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(Buffer.concat(chunks,bytes));
 }
 async function preflight({origin,expectedSha,allowedHostname,
   fetcher=null,resolveHost=async host=>dns.lookup(host,{all:true}),
@@ -111,7 +114,7 @@ async function preflight({origin,expectedSha,allowedHostname,
   async function get(path){
     const response=await actualFetcher(url.origin+path,{
       method:'GET',redirect:'error',credentials:'omit',cache:'no-store',
-      headers:{Accept:path==='/'?'text/html':'application/json'},
+      headers:{Accept:path==='/'?'text/html':path.endsWith('.js')?'text/javascript':path.endsWith('.css')?'text/css':'application/json'},
       signal:AbortSignal.timeout(12000)
     });
     if(response.headers?.get?.('x-powered-by'))
@@ -132,11 +135,24 @@ async function preflight({origin,expectedSha,allowedHostname,
       !/^[0-9a-f]{64}$/.test(manifest?.bundle_sha256||''))
       flag('DEPLOYED_SOURCE_OR_SCHEMA_MISMATCH');
   }catch{flag('RELEASE_MANIFEST_UNAVAILABLE');}
-  try{
-    const html=await get('/');
-    if(!html.includes('SUTRADHAR')||!html.includes('CENTRAL'))
-      flag('DASHBOARD_CONTENT_MISMATCH');
-  }catch{flag('DASHBOARD_UNAVAILABLE');}
+  // Verify every actually served UI byte against the declared build manifest.
+  // This detects missing assets, fallback HTML, and mixed deployments, not a
+  // malicious server forging both its manifest and response.
+  const ui=manifest?.ui_sha256;
+  const uiManifestValid=!!ui&&typeof ui==='object'&&!Array.isArray(ui)&&
+    Object.keys(ui).length===Object.keys(UI_ASSETS).length&&
+    Object.keys(UI_ASSETS).every(name=>Object.hasOwn(ui,name)&&/^[a-f0-9]{64}$/.test(ui[name]));
+  if(!uiManifestValid)flag('DASHBOARD_ASSET_MANIFEST_INVALID');
+  const checks=await Promise.all(Object.entries(UI_ASSETS).map(async([name,route])=>{
+    try{
+      const bytes=await get(route);
+      if(name==='index.html'&&(!bytes.includes('SUTRADHAR')||!bytes.includes('CENTRAL')))
+        return 'DASHBOARD_CONTENT_MISMATCH';
+      if(!uiManifestValid||digest(bytes)!==ui[name])return 'DASHBOARD_ASSET_HASH_MISMATCH:'+name;
+      return null;
+    }catch{return 'DASHBOARD_ASSET_UNAVAILABLE:'+name;}
+  }));
+  for(const issue of checks)if(issue)flag(issue);
   return {accepted:issues.length===0,issues,staging_origin:url.origin,
     observed_commit:manifest?.source_sha||null,
     observed_protocol:health?.api_protocol||null,

@@ -1119,3 +1119,8 @@ Central and packaged Desktop scoped-path policies now reject trailing-dot segmen
 ### 24 November — separate build inventory and missing dashboard asset
 
 Central and Desktop build outputs now have closed inventories with regular-file, no-symlink and single-link checks before and after build. Unexpected files are refused without deletion. Central manifests bind all four UI assets by SHA-256; post-build checks compare their bytes to the current source and validate the actual HTML script/style references. In particular `owner-crash-crosscheck.js` was previously copied only by the legacy combined build, even though the dashboard imports it. It is now included in the Hostinger Central-only bundle. CI tests cover missing assets, stale files, aliases and hard links. Real staging deployment remains G1 HOLD.
+
+
+### 24 November — staging dashboard byte consistency
+
+The Owner-pinned read-only Hostinger probe now checks the exact four dashboard assets against the declared Central manifest hashes, with bounded strict UTF-8 and a fixed GET path allowlist. Missing crash-crosscheck scripts, fallback HTML, mixed release bytes and incomplete old UI manifests fail closed. This is consistency evidence only, not an independent server attestation or a live staging acceptance. No hosting was contacted or changed.
