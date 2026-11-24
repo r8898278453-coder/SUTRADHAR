@@ -643,6 +643,21 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
     {
       const project_id='project_batch_ci',expected_master_epoch=Number(status.epoch);
       await owner('CREATE_PROJECT',{project_id,display_name:'Batch planning fixture',repository:'example/batch-ci'});
+      const catalogBody={agent_id:a.agent_id,expected_master_epoch};
+      const catalog=await a.signed('/v7/tasks/plan-batch/projects',catalogBody);
+      assert.equal(catalog.code,200,JSON.stringify(catalog.body));
+      assert.equal(catalog.body.read_only,true);
+      assert.equal(catalog.body.baseline_verified,false);
+      assert.equal(catalog.body.automatic_execution_allowed,false);
+      assert.deepEqual(catalog.body.projects.find((p:any)=>p.project_id===project_id),
+        {project_id,display_name:'Batch planning fixture',repository:'example/batch-ci',base_branch:'main'});
+      assert.ok(catalog.body.projects.every((p:any)=>Object.keys(p).sort().join('|')==='base_branch|display_name|project_id|repository'));
+      const catalogForeign=await b.signed('/v7/tasks/plan-batch/projects',{...catalogBody,agent_id:b.agent_id});
+      assert.equal(catalogForeign.code,409,JSON.stringify(catalogForeign.body));
+      const catalogStale=await a.signed('/v7/tasks/plan-batch/projects',{...catalogBody,expected_master_epoch:expected_master_epoch+1});
+      assert.equal(catalogStale.code,409);
+      const catalogExtra=await a.signed('/v7/tasks/plan-batch/projects',{...catalogBody,project_id});
+      assert.equal(catalogExtra.code,400);
       await owner('GRANT_PROJECT_AGENT',{project_id,agent_id:b.agent_id,can_develop:true});
       const task=(suffix:string,scope:string,deps:string[]=[],contract_keys:string[]=[])=>({
         ticket_id:'ticket_batch_'+suffix,baseline_sha:'a'.repeat(40),branch_name:'ai/batch_'+suffix,
