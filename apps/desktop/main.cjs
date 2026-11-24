@@ -47,7 +47,7 @@ const {createVault}=require('./os-vault.cjs');
 const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
   require('./pilot-node-continuity.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
-const {inspectWorkerTasks}=require('./worker-inspection.cjs');
+const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
 const {claimApprovedTask,resumeApprovedTask}=require('./worker-claim.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
@@ -500,7 +500,7 @@ app.whenReady().then(()=>{
   ipcMain.handle('sutradhar:openDashboard',event=>{
     verifySender(event);showDashboard();return {opened:true};
   });
-  ipcMain.handle('sutradhar:inspectWorkerTasks',async(event,agentId,ticketId=null)=>{
+  ipcMain.handle('sutradhar:inspectWorkerTasks',async(event,agentId,ticketId=null,mode='detail')=>{
     verifySender(event);
     if(process.platform!=='win32'||!app.isPackaged||!current||!vault||!signer)
       throw Error('WORKER_INSPECTION_REQUIRES_PACKAGED_WINDOWS_OS_VAULT');
@@ -522,7 +522,10 @@ app.whenReady().then(()=>{
     const status=safeStatus();
     if(!status.agentProcessRunning||!status.centralReport?.acknowledgedNow)
       throw Error('WORKER_INSPECTION_REQUIRES_RECENT_CENTRAL_ACK');
-    return inspectWorkerTasks({origin:current.centralUrl,agentId,ticketId,signer});
+    if(!['detail','context'].includes(mode)||(mode==='context'&&ticketId===null))
+      throw Error('WORKER_INSPECTION_MODE_DENIED');
+    const result=await inspectWorkerTasks({origin:current.centralUrl,agentId,ticketId,signer});
+    return mode==='context'?compactWorkerContext(result.task,agentId):result;
   });
 
   function approvedWorkerOperator(agentId,ticketId,alreadyLocked=false){

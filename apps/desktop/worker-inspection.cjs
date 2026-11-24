@@ -6,6 +6,8 @@
 'use strict';
 const ID=/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/;
 const SHA=/^[0-9a-f]{40}$/;
+const crypto=require('node:crypto');
+const {safeScopedPath}=require('./worker-scoped-path.cjs');
 const MAX_BYTES=96*1024;
 const fail=(code)=>{throw Error(code);};
 function plainList(value,max){if(typeof value==='string'){
@@ -114,4 +116,36 @@ async function inspectWorkerTasks({origin,agentId,ticketId=null,signer,fetcher=f
     {mode:'AVAILABLE',agent_id:agentId,tasks:plainList(data,50).map(taskItem)}:
     {mode:'DETAIL',agent_id:agentId,task:detailItem(data,ticketId)};
 }
-module.exports={inspectWorkerTasks};
+// Local operator preview only. The byte ceiling is NOT a tokenizer, provider
+// quota estimate, lease authorization, workspace mapping or secret scanner.
+const CONTEXT_MAX_BYTES=8192;
+function compactWorkerContext(task,agentId){
+  const t=detailItem(task,task?.ticket_id);
+  if(!ID.test(agentId||'')||!ID.test(t.ticket_id||'')||
+     t.worker_agent_id!==agentId||
+     !['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status)||
+     !t.write_scopes.length||t.write_scopes.some(s=>!safeScopedPath(s))||
+     !t.acceptance_criteria.length)fail('WORKER_CONTEXT_REQUIRES_OWN_CLAIMED_TASK');
+  const checkpoint=t.latest_checkpoint;
+  if(checkpoint&&crypto.createHash('sha256').update(checkpoint.summary+'\n'+checkpoint.next_action).digest('hex')!==checkpoint.content_sha256)
+    fail('WORKER_CONTEXT_CHECKPOINT_DIGEST_MISMATCH');
+  const context={
+    schema:'SUTRADHAR_ASSISTED_CONTEXT_V1',
+    project_id:t.project_id,ticket_id:t.ticket_id,ticket_version:t.version,
+    repository:t.repository,branch_name:t.branch_name,baseline_sha:t.baseline_sha,
+    risk:t.risk,title:t.title,description:t.description,
+    write_scopes:[...new Set(t.write_scopes)].sort(),
+    acceptance_criteria:[...new Set(t.acceptance_criteria)],
+    checkpoint:checkpoint?{generation:checkpoint.generation,summary:checkpoint.summary,
+      next_action:checkpoint.next_action,content_sha256:checkpoint.content_sha256}:null
+  };
+  const preview=JSON.stringify(context,null,2);
+  const bytes=Buffer.byteLength(preview,'utf8');
+  if(bytes>CONTEXT_MAX_BYTES)fail('WORKER_CONTEXT_BUDGET_EXCEEDED_OWNER_REVIEW');
+  return {kind:'PROVIDER_ASSISTED_HANDOFF_PREVIEW',preview,utf8_bytes:bytes,
+    byte_budget:CONTEXT_MAX_BYTES,context_sha256:crypto.createHash('sha256').update(preview).digest('hex'),
+    provider_mapping_verified:false,lease_verified:false,provider_sent:false,
+    automatic_execution_allowed:false,secret_scan_verified:false};
+}
+module.exports={inspectWorkerTasks,compactWorkerContext};
+

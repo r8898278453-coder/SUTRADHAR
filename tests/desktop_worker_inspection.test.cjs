@@ -142,3 +142,34 @@ test('packaged Electron worker inspection is scoped to local sandboxed setup and
   assert.match(setup,/id="workerList"/);
   assert.doesNotMatch(preload,/signWorkerReadOnly|private_key_pem/);
 });
+
+test('compact context includes only bounded exact task/checkpoint fields without provider or execution permission',()=>{
+  const {compactWorkerContext}=require('../apps/desktop/worker-inspection.cjs');
+  const summary='Completed scoped function',next_action='Run tests';
+  const checkpoint={generation:2,summary,next_action,content_sha256:crypto.createHash('sha256').update(summary+'\n'+next_action).digest('hex')};
+  const task={ticket_id:'ticket_123',project_id:'project_aaa',title:'Feature',description:'Narrow implementation',repository:'example/repo',branch_name:'ai/ticket_123',baseline_sha:'a'.repeat(40),risk:'LOW',status:'CHECKPOINTED',version:3,worker_agent_id:'agent_aaa',write_scopes:['src/x.ts','src/x.ts'],acceptance_criteria:['Test passes','Test passes'],latest_checkpoint:checkpoint,private_key_pem:'SENTINEL'};
+  const r=compactWorkerContext(task,'agent_aaa'),body=JSON.parse(r.preview);
+  assert.deepEqual(body.write_scopes,['src/x.ts']);
+  assert.deepEqual(body.acceptance_criteria,['Test passes']);
+  assert.equal(body.checkpoint.content_sha256,checkpoint.content_sha256);
+  assert.equal(r.utf8_bytes,Buffer.byteLength(r.preview));
+  assert.equal(r.context_sha256,crypto.createHash('sha256').update(r.preview).digest('hex'));
+  assert.equal(r.provider_sent,false);
+  assert.equal(r.lease_verified,false);
+  assert.equal(r.automatic_execution_allowed,false);
+  assert.doesNotMatch(r.preview,/SENTINEL|private_key_pem/);
+  assert.throws(()=>compactWorkerContext({...task,status:'READY'},'agent_aaa'),/OWN_CLAIMED_TASK/);
+  assert.throws(()=>compactWorkerContext(task,'agent_bbb'),/OWN_CLAIMED_TASK/);
+  assert.throws(()=>compactWorkerContext({...task,write_scopes:['src/.env']},'agent_aaa'),/OWN_CLAIMED_TASK/);
+  assert.throws(()=>compactWorkerContext({...task,latest_checkpoint:{...checkpoint,summary:'changed'}},'agent_aaa'),/DIGEST_MISMATCH/);
+  assert.throws(()=>compactWorkerContext({...task,description:'界'.repeat(3500)},'agent_aaa'),/BUDGET_EXCEEDED/);
+});
+test('compact context preview uses existing bounded inspection IPC, never automatic provider transmission',()=>{
+  const root=path.resolve(__dirname,'../apps/desktop');
+  const main=fs.readFileSync(path.join(root,'main.cjs'),'utf8'),preload=fs.readFileSync(path.join(root,'preload.cjs'),'utf8');
+  const html=fs.readFileSync(path.join(root,'setup.html'),'utf8'),js=fs.readFileSync(path.join(root,'setup.js'),'utf8');
+  assert.match(main,/mode==='context'\?compactWorkerContext/);
+  assert.match(preload,/previewWorkerContext:\(agentId,ticketId\)=>ipcRenderer.invoke\('sutradhar:inspectWorkerTasks',agentId,ticketId,'context'\)/);
+  assert.match(html,/id="workerContext"/);
+  assert.match(js,/Nothing sent to provider/);
+});

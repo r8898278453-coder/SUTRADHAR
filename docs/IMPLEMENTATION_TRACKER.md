@@ -1154,3 +1154,8 @@ Offline QA handoff now captures a bounded 32 MiB descriptor snapshot with stable
 ### 24 November — Telegram Owner adapter policy
 
 Implemented strict private-chat webhook authorization and fixed STATUS/PAUSE/RESUME parser with bounded freshness, stable update receipt IDs, and redacted best-effort notification only on fresh committed commands. Tests exercise malformed, stale, forwarded and unauthorized messages. Privileged approvals stay web-only; no real bot registration or Telegram external acceptance performed.
+
+
+### 24 November — compact human-assisted provider context
+
+Packaged Desktop adds an explicit read-only context preview for the selected agent's claimed task, with exact ticket version/baseline, deduplicated scopes/criteria, verified latest checkpoint hash, deterministic context hash and 8 KiB UTF-8 ceiling. Oversize context holds rather than silently truncating acceptance criteria. Preview never sends data, opens a provider or grants lease/project authorization. The operator must independently verify the live lease, authorized provider account/project and absence of secrets before manual use. Real provider mapping, tokenizer/quota counters and provider acceptance remain open.

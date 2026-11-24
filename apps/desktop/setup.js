@@ -61,6 +61,7 @@ async function loadStatus(){
     select.disabled=!approvedReadOnly;
     get('workerList').disabled=!approvedReadOnly;
     get('workerDetail').disabled=!approvedReadOnly;
+    get('workerContext').disabled=!approvedReadOnly;
     get('workerClaim').disabled=!approvedReadOnly;
     get('workerResume').disabled=!approvedReadOnly;
     get('workerCheckpoint').disabled=!approvedReadOnly;
@@ -383,6 +384,23 @@ get('workerDetail').addEventListener('click',async()=>{
     const reply=await api.inspectWorkerTasks(get('workerAgent').value,ticket);
     output.textContent=JSON.stringify(reply.task,null,2);
   }catch(error){output.textContent='Read-only inspection blocked: '+String(error?.message||error);}
+  finally{await loadStatus();}
+});
+
+get('workerContext').addEventListener('click',async()=>{
+  const button=get('workerContext'),output=get('workerTasks');
+  button.disabled=true;
+  try{
+    const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+    output.textContent='Preparing local read-only context preview…';
+    const r=await api.previewWorkerContext(agent,ticket);
+    if(ticket!==get('workerTicket').value.trim()||agent!==get('workerAgent').value){
+      output.textContent='Task selection changed. Request a new preview.';return;
+    }
+    output.textContent='MANUAL PREVIEW ONLY — '+r.utf8_bytes+' / '+r.byte_budget+
+      ' UTF-8 bytes (not provider tokens).\nSHA-256: '+r.context_sha256+
+      '\nReview for secrets, verify current lease and correct provider project independently. Nothing sent to provider.\n\n'+r.preview;
+  }catch(error){output.textContent='Context preview blocked: '+String(error?.message||error);}
   finally{await loadStatus();}
 });
 

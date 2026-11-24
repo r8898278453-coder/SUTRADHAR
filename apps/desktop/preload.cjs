@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   restartAfterMaintenance:()=>ipcRenderer.invoke('sutradhar:restartAfterMaintenance'),
   openDashboard:()=>ipcRenderer.invoke('sutradhar:openDashboard'),
   inspectWorkerTasks:(agentId,ticketId=null)=>ipcRenderer.invoke('sutradhar:inspectWorkerTasks',agentId,ticketId),
+  previewWorkerContext:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:inspectWorkerTasks',agentId,ticketId,'context'),
   claimWorkerTask:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:claimWorkerTask',agentId,ticketId),
   resumeWorkerTask:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:resumeWorkerTask',agentId,ticketId),
   checkpointWorkerTask:(agentId,ticketId,summary,nextAction)=>ipcRenderer.invoke('sutradhar:checkpointWorkerTask',agentId,ticketId,summary,nextAction),
