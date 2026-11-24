@@ -89,3 +89,10 @@ In the signed Master task-plan request, declare e.g. `"contract_keys":["api:orde
 Last fully green source baseline `93993a0`; shared-contract HEAD `01ff1ce` dependency CI succeeded but application CI was cancelled. New provider-registry source is CODED / CI PENDING; verify the latest exact-head workflow results.
 
 See [registry setup](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md) for authenticated GET and expected-version full replacement. Use fictional/non-secret aliases only; verify actual account and workspace independently before manual assisted use. A stored empty snapshot revokes all declarations and never falls back to environment aliases. Do not mistake the previous command receipt for current registry state; read the current version. This does not terminate provider sessions, grant leases or authorize external activity. No dashboard editor yet; staging API only until reviewed. G0–G7 HOLD.
+
+
+## Owner dashboard registry management
+
+Verified previous source baseline `215e5ee`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116654) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116645) both SUCCESS. New Owner registry editor is CODED / CI PENDING at this update.
+
+The existing Central dashboard has a local draft editor with load, add/remove, review and exact versioned save. At version 0 independently inventory every intended legacy alias before replacing the registry. Do not type credentials or provider URLs into alias inputs. Save once, verify readback; on uncertain or competing revision reload rather than blindly retrying. Disconnect clears tab-local data but does not undo accepted MySQL mutations. The authenticated API workflow remains available for diagnostics. See [Owner guide](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). Real browser/provider/Hostinger acceptance pending; G0–G7 HOLD.
