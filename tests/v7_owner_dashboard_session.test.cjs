@@ -381,3 +381,63 @@ test('Owner provider recovery ignores late POST after logout',async()=>{
   assert.equal(e('provider-recovery-ticket').value,'');
   assert.equal(e('provider-recovery-close').disabled,true);
 });
+
+
+const batchKey={agent_id:'agent_original',project_id:'project_original',request_id:'batch_original',
+  preview_sha256:'a'.repeat(64),plan_order:['ticket_first','ticket_second']};
+const batchResolution={...batchKey,state:'ADMISSION_CANCELLED',resolution_id:'batch_cancel_'+'c'.repeat(32),
+  epoch:9,owner_review_recorded:true,automatic_execution_allowed:false};
+function batchObservationFixture(state='NO_RECEIPT'){
+  return {...batchKey,state,read_only:true,automatic_execution_allowed:false,
+    owner_cancellation_eligible:state==='NO_RECEIPT',...(state==='ADMISSION_CANCELLED'?{resolution:batchResolution}:{})};
+}
+async function loadBatchRecovery(b,data=batchObservationFixture()){
+  const e=b.element;
+  for(const [f,v] of Object.entries({agent:batchKey.agent_id,project:batchKey.project_id,request:batchKey.request_id,
+    digest:batchKey.preview_sha256,order:batchKey.plan_order.join('\n')}))e('batch-recovery-'+f).value=v;
+  const run=e('batch-recovery-load').onclick();
+  assert.equal(b.pending.length,1);
+  assert.equal(b.queries[0].url,'/v7/owner/master-batch/inspect');
+  assert.deepEqual(JSON.parse(b.queries[0].options.body),batchKey);
+  complete(b.pending.shift(),data);await run;
+}
+function consentBatch(b){
+  b.ctx.confirm=()=>true;
+  for(const f of ['evidence','no-retry']){
+    b.element('batch-recovery-'+f).checked=true;
+    b.element('batch-recovery-'+f).listeners.change();
+  }
+}
+test('Owner batch cancellation needs exact observation, explicit consent and exact durable readback',async()=>{
+  const b=browser(),e=b.element;await loadBatchRecovery(b);
+  assert.equal(e('batch-recovery-cancel').disabled,true);
+  consentBatch(b);
+  assert.equal(e('batch-recovery-cancel').disabled,false);
+  const run=e('batch-recovery-cancel').onclick();
+  assert.equal(b.pending.length,1);
+  const body=JSON.parse(b.queries[1].options.body);
+  assert.equal(body.command,'CANCEL_MASTER_BATCH_ADMISSION');
+  assert.deepEqual(body.payload,{...batchKey,evidence_reviewed:true,no_retry_confirmed:true});
+  complete(b.pending.shift(),{accepted:true,receipt_id:body.request_id,state:batchResolution});
+  await awaitPending(b);
+  complete(b.pending.shift(),batchObservationFixture('ADMISSION_CANCELLED'));
+  await run;
+  assert.match(e('batch-recovery-status').textContent,/Exact permanent cancellation read back/);
+  assert.equal(e('batch-recovery-cancel').disabled,true);
+  assert.equal(b.queries.length,3);
+});
+test('Owner batch recovery blocks conflicting or edited evidence and discards late session response',async()=>{
+  const b=browser(),e=b.element;
+  await loadBatchRecovery(b,batchObservationFixture('HOLD_TICKET_CONFLICT'));consentBatch(b);
+  assert.equal(e('batch-recovery-cancel').disabled,true);
+  const c=browser(),f=c.element;await loadBatchRecovery(c);consentBatch(c);
+  f('batch-recovery-request').value='batch_changed';f('batch-recovery-request').listeners.input();
+  f('batch-recovery-request').value=batchKey.request_id;
+  await f('batch-recovery-cancel').onclick();assert.equal(c.queries.length,1);
+  const d=browser(),g=d.element;await loadBatchRecovery(d);consentBatch(d);
+  const run=g('batch-recovery-cancel').onclick(),body=JSON.parse(d.queries[1].options.body);
+  g('disconnect').onclick();
+  complete(d.pending.shift(),{accepted:true,receipt_id:body.request_id,state:batchResolution});await run;
+  assert.equal(d.queries.length,2);assert.equal(g('batch-recovery-cancel').disabled,true);
+  assert.equal(g('batch-recovery-request').value,'');
+});
