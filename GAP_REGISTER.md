@@ -25,13 +25,13 @@ This register reflects the current implementation branch, not an unsupported "al
 | V7-GAP-02 | P0 | Persistent node identity vs separate agent identity; 60s heartbeat, 180s suspicion, secure enrollment | PARTIAL — signed API and enrollment code/CI; physical Windows DPAPI/restart NOT_RUN |
 | V7-GAP-03 | P0 | Initial post-08:00 election, retention across days, two ranked backups, fenced multi-PC failover | PARTIAL — MySQL election/concurrency/fencing CI; physical 2/3/8–10-PC NOT_RUN |
 | V7-GAP-04 | P0 | Master hybrid developer duty + backup worker preemption, durable takeover context | PARTIAL — durable leadership/worker recovery source, physical hybrid duty acceptance open |
-| V7-GAP-05 | P0 | Master deduplicated project selection/creation, parallel-safe task DAG and explicit QA contract | PARTIAL — project/task/QA API policies and disposable tests; real provider orchestration NOT_RUN |
-| V7-GAP-06 | P0 | Electron isolation, browser provider compatibility, permitted chat continuation and project mapping | PARTIAL — OS-vault/Electron code in unsigned QA; browser-provider feasibility and physical acceptance OPEN |
+| V7-GAP-05 | P0 | Master deduplicated project selection/creation, parallel-safe task DAG and explicit QA contract | PARTIAL — planning validation, dependency-ready discovery and path reservations in CI; semantic contract reservations and autonomous task generation OPEN |
+| V7-GAP-06 | P0 | Electron isolation, browser provider compatibility, permitted chat continuation and project mapping | PARTIAL — OS-vault/Electron and scoped Owner-declared unverified workspace bindings in CI; durable MySQL registry, browser/provider permission and physical acceptance OPEN |
 | V7-GAP-07 | P0 | Trusted local patch/Git operator, MySQL path and semantic contract reservations, no unverified DONE | PARTIAL — local Git/scope reservations/QA guards CI; live protected GitHub acceptance OPEN |
 | V7-GAP-08 | P0 | Independent QA, combined integration tree, live GitHub draft PR/merge acceptance, release evidence | PARTIAL — signed QA/source CI; real independent reviewer/device and live protected merge NOT_RUN |
-| V7-GAP-09 | P0 | Centralized checkpoint/event history with idempotent crash/network recovery | PARTIAL — MySQL ledgers and recovery tests; hardware crash/partition proof NOT_RUN |
+| V7-GAP-09 | P0 | Centralized checkpoint/event history with idempotent crash/network recovery | PARTIAL — MySQL ledgers, grant-revocation and independent snapshot validation in CI; fresh-checkpoint submission guard coded/CI pending; hardware crash/partition proof NOT_RUN |
 | V7-GAP-10 | P0 | Website and Telegram single Owner Command Service, default-deny core change authorization | PARTIAL — shared web/private Telegram STATUS/PAUSE/RESUME service and replay tests added; real Telegram delivery, wider command parity and Owner authorization OPEN |
-| V7-GAP-11 | P1 | Context minimization, retry budgets, provider quota and transparent partial results | PARTIAL — bounded evidence/source policies; real provider quota/cost measurements OPEN |
+| V7-GAP-11 | P1 | Context minimization, retry budgets, provider quota and transparent partial results | PARTIAL — deterministic compact 8 KiB preview, hash/deduplication and separate mapping metadata in CI; actual token accounting, secret review and provider quota/cost measurements OPEN |
 | V7-GAP-12 | P0 | Retire or disable production access to duplicate SQLite/in-memory/demo/legacy election and Git paths | PARTIAL — Central-only bundle and MySQL authority; legacy source remains and production route isolation NOT ACCEPTED |
 
 **V7 authoritative target docs:** [Blueprint](docs/SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md), [Contracts](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md), [Acceptance matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md). Legacy issues above remain open until independently verified.
@@ -73,3 +73,8 @@ The known `main protected:false` G0 gap, Hostinger staging, MySQL
 backup→restore, trusted Windows signer, physical 2/3/8–10-PC election and
 update/rollback evidence, and G7 Owner approval remain OPEN. The
 historical public Master signing key rotation is still OWNER ACTION.
+
+
+## 24 November — current verified source baseline
+
+At `3465af4`, both [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985550) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985559) passed. This supersedes earlier source-CI-pending notes for that exact baseline only. New fresh-checkpoint submission changes `ee2e62f` / `8684dfe` are coded, not yet CI verified at this update. No gap is closed on the basis of source CI alone. See [consolidated implementation tracker](docs/IMPLEMENTATION_TRACKER.md) and [incremental requirements evidence](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md). G0–G7 HOLD.
