@@ -177,3 +177,11 @@ test('nested ignored-file and dependency runtime controls remain protected',()=>
   }
   assert.equal(safeScope('src/normal-feature.ts'),true);
 });
+
+test('Windows aliases and case-insensitive scope reservations fail closed',()=>{
+  for(const p of ['src/package.json.','src/.git.','src/name.','src/CON','src/nul.txt','src/COM1.ts','src/lpt9/file.ts','src/AUX.json'])assert.equal(safeScope(p),false,p);
+  assert.equal(safeScope('src/concept.ts'),true);
+  assert.equal(scopesOverlap('src/Feature.ts','SRC/feature.ts'),true);
+  assert.equal(scopesOverlap('Src/Features','src/features/a.ts'),true);
+  assert.equal(scopesOverlap('src/a','SRC/ab'),false);
+});

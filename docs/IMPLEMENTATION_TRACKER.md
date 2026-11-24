@@ -1109,3 +1109,8 @@ worktrees, prove no Central submit POST, and prove QA refuses the
 history. This is a default-deny security change; legitimate changes
 to build/security configuration require independent Owner-controlled
 review, not a worker's broad automated scope.
+
+
+### 24 November — Windows path alias containment
+
+Central and packaged Desktop scoped-path policies now reject trailing-dot segments and reserved DOS device basenames (including extensions) on every platform. Central task scope overlap is case-insensitive, preventing simultaneous reservations of case variants on Windows. Regression coverage is source-level; physical Windows acceptance remains separate.

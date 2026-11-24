@@ -61,8 +61,11 @@ export function safeScope(s:string) {
     '.pnp.loader.mjs','node_modules','package.json','package-lock.json',
     'yarn.lock','pnpm-lock.yaml','bun.lockb','bun.lock',
     'pyproject.toml','setup.py']);
+  // Win32 strips trailing dots and reserves DOS device basenames even
+  // with extensions. Reject these aliases on every platform, before Git.
   if(s.split('/').some(part=>blocked.has(part.toLowerCase())||
-       part.toLowerCase()==='.env'||part.toLowerCase().startsWith('.env.')))
+       part.toLowerCase()==='.env'||part.toLowerCase().startsWith('.env.')||
+       part.endsWith('.')||/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(part)))
     return false;
   return /^[a-zA-Z0-9._/-]+$/.test(s);
 }
@@ -91,6 +94,8 @@ export function isProtectedScope(scope:unknown):boolean{
   return top.includes(p);
 }
 export function scopesOverlap(a:string,b:string) {
-  return a===b||a.startsWith(b+'/')||b.startsWith(a+'/');
+  // All workers must reserve paths conservatively on case-insensitive PCs.
+  const x=a.toLowerCase(),y=b.toLowerCase();
+  return x===y||x.startsWith(y+'/')||y.startsWith(x+'/');
 }
 export function digest(s:string|Buffer) {return crypto.createHash('sha256').update(s).digest('hex');}

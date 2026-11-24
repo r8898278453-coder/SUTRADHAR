@@ -18,3 +18,8 @@ test('policy is part of packaged Electron Desktop closure',()=>{
   const pkg=require('../apps/desktop/package.json');
   assert.ok(pkg.build.files.includes('worker-scoped-path.cjs'));
 });
+
+test('Windows path aliases cannot be treated as ordinary Git paths on any OS',()=>{
+  for(const p of ['src/package.json.','src/.git.','src/name.','src/CON','src/nul.txt','src/COM1.ts','src/lpt9/file.ts','src/AUX.json'])assert.equal(safeScopedPath(p),false,p);
+  assert.equal(safeScopedPath('src/concept.ts'),true);
+});

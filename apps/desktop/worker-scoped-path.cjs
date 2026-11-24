@@ -17,6 +17,7 @@ function safeScopedPath(value){
      value.includes('//'))return false;
   const parts=value.toLowerCase().split('/');
   return !parts.some(p=>!p||p==='.'||p==='..'||forbidden.has(p)||
-    p.startsWith('.env.'));
+    p.startsWith('.env.')||p.endsWith('.')||
+    /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(p));
 }
 module.exports={safeScopedPath};
