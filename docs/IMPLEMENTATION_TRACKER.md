@@ -1254,3 +1254,25 @@ Verified baseline `215e5ee`: [application CI](https://github.com/r8898278453-cod
 - P0: G0–G7 branch protection and signer rotation, Hostinger staging/restore, production signing, physical 2/3/8–10-PC tests, rollback and independent 71-case acceptance.
 
 Decision: extend existing dashboard assets and API, not another authentication or deployment surface. Use explicit reload after uncertain replacement, not automatic retry. Registry is local unverified alias metadata; no actual provider login, external revocation, deployment, schema migration or release. See [Owner guide](PROVIDER_WORKSPACE_DECLARATIONS_V7.md).
+
+
+## Priority work update — manual provider interruption recovery
+
+Verified previous baseline `e935cef`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765773) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765743) both SUCCESS, including the Owner registry dashboard. Manual provider attempt source is CODED / CI PENDING at this update.
+
+| Work | Source commits | Status |
+|---|---|---|
+| Exact bounded non-secret attempt record/lifecycle | `c709e54` | CODED / CI PENDING |
+| Signed attempt BEGIN/INTERRUPT/CLOSE, original lease/registry/checkpoint binding, durable holds, Owner observation/closure | `e4402e0` | CODED / CI PENDING |
+| Trusted worker CLI explicit record/readback; Desktop unresolved handoff hold | `403e1cc`, `a3c58a3` | CODED / CI PENDING |
+| Disposable MySQL lifecycle and revoked-lease review; unit and Desktop regressions | `e729fd8`, `4745c9c`, `5299740` | CODED / CI PENDING |
+
+### Remaining priorities
+- P0: exact-head CI; manual attempt lifecycle source is coded, not live provider recovery. Packaged Desktop record actions and Owner resolution UI; physical interruptions, safe remote continuation, provider permission proof and verified context bytes remain open.
+- P0: intelligent Master task creator and automatic semantic dependency discovery, declaration completeness and combined QA.
+- P1: minimum-token context reuse and actual authorized token/quota accounting.
+- P0: safe web/Telegram parity and real bot delivery.
+- P0: registry/attempt ledger retention, target-hosting lookup performance and backup/restore proof.
+- P0: G0–G7 Owner branch protection and signer rotation, Hostinger staging, trusted Windows installer, physical 2/3/8–10 PCs, rollback and independent 71-case acceptance.
+
+Decision: retain opt-in metadata in existing MySQL audit ledger, no new schema or unverified provider integration. OPEN/INTERRUPTED is an explicit hold; a closed attempt does not prove external session safety. No automatic retry, actual provider actions or production deployment. See [provider recovery guide](PROVIDER_WORKSPACE_DECLARATIONS_V7.md).
