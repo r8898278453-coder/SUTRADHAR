@@ -276,3 +276,23 @@ test('compact task context retains canonical declared shared contracts without c
     ['api:orders','api:orders.create'],['api:orders','api:orders'],'api:orders'])
     assert.throws(()=>compactWorkerContext({...t,contract_keys:keys},'agent_aaa'),/WORKER_CONTRACT_DECLARATION_INVALID/);
 });
+
+test('registry source/version is local metadata only and cannot assert verified permission',()=>{
+  const {compactWorkerContext}=require('../apps/desktop/worker-inspection.cjs');
+  const t={ticket_id:'ticket_123',project_id:'project_aaa',title:'Feature',
+    description:'Implement scoped feature',repository:'example/repo',branch_name:'ai/ticket_123',
+    baseline_sha:'a'.repeat(40),risk:'LOW',status:'CLAIMED',version:1,
+    worker_agent_id:'agent_aaa',write_scopes:['src/x.ts'],acceptance_criteria:['Test passes']};
+  const r=compactWorkerContext({...t,provider_mapping_state:'UNCONFIGURED',
+    provider_mapping_source:'MYSQL_OWNER_REGISTRY',provider_registry_version:2},'agent_aaa');
+  assert.equal(r.provider_registry_version,2);
+  assert.equal(r.provider_mapping_source,'MYSQL_OWNER_REGISTRY');
+  assert.equal(r.context_sha256,compactWorkerContext(t,'agent_aaa').context_sha256);
+  assert.doesNotMatch(r.preview,/provider_registry_version|MYSQL_OWNER_REGISTRY/);
+  assert.equal(r.provider_mapping_verified,false);
+  for(const patch of [{provider_registry_version:0},{provider_registry_version:'2'},
+    {provider_mapping_source:'LEGACY_ENV_CONFIGURATION'},
+    {provider_mapping_source:'INVALID'}])
+    assert.throws(()=>compactWorkerContext({...t,provider_mapping_state:'UNCONFIGURED',
+      provider_mapping_source:'MYSQL_OWNER_REGISTRY',provider_registry_version:2,...patch},'agent_aaa'),/WORKER_PROVIDER_MAPPING_INVALID/);
+});
