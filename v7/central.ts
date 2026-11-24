@@ -455,13 +455,32 @@ async function ownerCommand(c:PoolConnection,actor:string,body:any,onFresh?:()=>
     }else if(command==='GRANT_PROJECT_AGENT'||command==='REVOKE_PROJECT_AGENT'){
       const projectId=requireId(payload.project_id),agentId=requireId(payload.agent_id);
       const project=await one(c,'SELECT project_id FROM v7_projects WHERE project_id=? FOR UPDATE',[projectId]);
-      const agent=await one(c,'SELECT state FROM v7_agents WHERE agent_id=?',[agentId]);
-      if(!project||agent?.state!=='APPROVED')fault('INVALID_PROJECT_AGENT',409);
+      const agent=await one(c,'SELECT agent_id,state FROM v7_agents WHERE agent_id=?',[agentId]);
+      if(!project||project.project_id!==projectId||!agent||agent.agent_id!==agentId||
+         (command==='GRANT_PROJECT_AGENT'&&agent.state!=='APPROVED'))fault('INVALID_PROJECT_AGENT',409);
       if(command==='REVOKE_PROJECT_AGENT')await c.query('DELETE FROM v7_project_agents WHERE project_id=? AND agent_id=?',
         [projectId,agentId]);
       else await c.query('INSERT INTO v7_project_agents(project_id,agent_id,can_develop,can_qa) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE can_develop=VALUES(can_develop),can_qa=VALUES(can_qa)',
         [projectId,agentId,payload.can_develop===true?1:0,payload.can_qa===true?1:0]);
-      result={project_id:projectId,agent_id:agentId,action:command};
+      // Same cluster lock as claim/checkpoint/submit. Revoking developer access
+      // fences unfinished work, even if its previous lease has just expired.
+      // Keep candidate, checkpoints, reservations and Git records for review.
+      let quarantined=0;
+      if(command==='REVOKE_PROJECT_AGENT'||payload.can_develop!==true){
+        const affected=await rows(c,'SELECT t.ticket_id FROM v7_tickets t '+
+          'JOIN v7_leases l ON l.ticket_id=t.ticket_id '+
+          'WHERE t.project_id=? AND t.worker_agent_id=? AND l.agent_id=? AND l.revoked=0 '+
+          'AND t.status IN ("CLAIMED","RUNNING","CHECKPOINTED","TEST_FAILED","SUBMITTED_FOR_REVIEW","INTEGRATING") '+
+          'ORDER BY t.ticket_id FOR UPDATE',[projectId,agentId,agentId]);
+        for(const task of affected){
+          await c.query('UPDATE v7_leases SET revoked=1 WHERE ticket_id=?',[task.ticket_id]);
+          await c.query('UPDATE v7_tickets SET status="RECONCILIATION_REQUIRED",version=version+1,updated_at=UTC_TIMESTAMP(3) WHERE ticket_id=?',[task.ticket_id]);
+          await event(c,'WORKER_PROJECT_ACCESS_REVOKED',actor,Number(ld.epoch),task.ticket_id,{project_id:projectId,agent_id:agentId});
+          quarantined++;
+        }
+      }
+      result={project_id:projectId,agent_id:agentId,action:command,
+        quarantined_tasks:quarantined,automatic_reassignment_allowed:false};
     }else if(command==='APPROVE_QA_EVIDENCE'||command==='REJECT_QA_EVIDENCE'){
       const proposalId=requireId(payload.review_proposal_id);
       const reviewNote=requireStr(payload.review_note,500);
@@ -1451,8 +1470,8 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
     await signedAgent(c,node.node_id,agentId);
     await requireNoNodeDrain(c,node.node_id);
     if(ld.paused||ld.phase!=='READY'||Number(ld.epoch)!==Number(d.expected_master_epoch)||
-       !ld.lease_until||Date.parse(ld.lease_until+'Z')<=await dbNow(c))fault('NO_READY_MASTER',423);
-    return idem(c,agentId,d.request_id,'TASK_CLAIM',d,async()=>{
+       !await approvedMasterLease(c,ld))fault('NO_READY_MASTER',423);
+    const result=await idem(c,agentId,d.request_id,'TASK_CLAIM',d,async()=>{
       // Project row serializes all overlapping path reservations.
       const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=?',[ticketId]);
       if(!t)fault('TASK_NOT_FOUND',404);
@@ -1475,7 +1494,7 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
       if(Number(busy.n)>=1)fault('AGENT_CAPACITY_EXCEEDED',409);
       const access=await one(c,'SELECT can_develop FROM v7_project_agents WHERE project_id=? AND agent_id=?',
         [t.project_id,agentId]);
-      if(!access?.can_develop)fault('PROJECT_ACCESS_DENIED',403);
+      if(Number(access?.can_develop)!==1)fault('PROJECT_ACCESS_DENIED',403);
       const scope=typeof locked.scopes_json==='string'?JSON.parse(locked.scopes_json):locked.scopes_json;
       const reserved=await rows(c,
         'SELECT r.scope,r.ticket_id FROM v7_reservations r '+
@@ -1494,6 +1513,10 @@ app.post('/v7/tasks/claim',jsonRoute(async req=>{
       return {accepted:true,ticket_id:ticketId,lease_id:leaseId,epoch:Number(ld.epoch),version:Number(locked.version)+1,
         lease_seconds:600,write_scopes:scope};
     });
+    // A saved receipt is not fresh authority after expiry/revocation/requeue.
+    // Preserve exact idempotent success only while the original lease is live.
+    await workerLease(c,node.node_id,agentId,ticketId,result.lease_id,d.expected_master_epoch);
+    return result;
   });
 }));
 async function workerLease(c:PoolConnection,nodeId:string,agentId:string,ticketId:string,leaseId:string,epoch:any){
@@ -1507,7 +1530,15 @@ async function workerLease(c:PoolConnection,nodeId:string,agentId:string,ticketI
   if(!lease||lease.revoked||lease.agent_id!==agentId||lease.lease_id!==leaseId||
      Number(lease.epoch)!==Number(epoch))fault('WORKER_LEASE_INVALID',403);
   if(Date.parse(lease.expires_at+'Z')<=await dbNow(c))fault('WORKER_LEASE_EXPIRED',409);
-  return await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
+  const t=await one(c,'SELECT * FROM v7_tickets WHERE ticket_id=? FOR UPDATE',[ticketId]);
+  if(!t||t.ticket_id!==ticketId||t.worker_agent_id!==agentId)fault('WORKER_LEASE_INVALID',403);
+  const access=await one(c,'SELECT pa.can_develop FROM v7_project_agents pa '+
+    'JOIN v7_projects p ON p.project_id=pa.project_id '+
+    'JOIN v7_nodes n ON n.node_id=? '+
+    'WHERE pa.project_id=? AND pa.agent_id=? AND p.status="ACTIVE" AND n.state="APPROVED"',
+    [nodeId,t.project_id,agentId]);
+  if(Number(access?.can_develop)!==1)fault('PROJECT_ACCESS_DENIED',403);
+  return t;
 }
 // The existing v7_tickets.updated_at column is reset only upon a successful
 // task claim, not by checkpoints. It is the Central DB claim-time anchor for a
