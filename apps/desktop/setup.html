@@ -49,6 +49,29 @@
 <p class="hint">After the Owner approves this PC and agent, inspect Central's available tasks and exact ticket details. The device key remains protected in Windows OS vault. Read-only inspection does not change Central. Separate confirmation is required to claim or save progress; this interface never runs AI, publishes Git or approves QA.</p>
 <label for="workerAgent">This PC's approved agent</label>
 <select id="workerAgent" aria-label="Select local agent"><option value="">Configure this PC first</option></select>
+<details>
+<summary>Master task batch planner (2–10 tasks, manual review)</summary>
+<p class="hint">Use the selected local agent only if it is the current Master. Enter a unique request ID; retain the exact project, request ID, task draft and reviewed digest until admission is reconciled. No automatic task generation or execution.</p>
+<label for="masterProject">Existing exact project ID</label><input id="masterProject" maxlength="100" autocomplete="off" spellcheck="false">
+<label for="masterRequest">Unique batch request ID</label><input id="masterRequest" maxlength="100" autocomplete="off" spellcheck="false">
+<label for="masterTicket">Task ID</label><input id="masterTicket" maxlength="100" autocomplete="off">
+<label for="masterBaseline">Independently reviewed baseline commit SHA (40 lowercase hex)</label><input id="masterBaseline" maxlength="40" autocomplete="off" spellcheck="false">
+<label for="masterBranch">Task branch (ai/…)</label><input id="masterBranch" maxlength="120" autocomplete="off" spellcheck="false">
+<label for="masterTitle">Task title</label><input id="masterTitle" maxlength="220">
+<label for="masterDescription">Scoped task description</label><textarea id="masterDescription" maxlength="10000" rows="3"></textarea>
+<label for="masterRisk">Declared risk (server may require approval)</label><select id="masterRisk"><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>CORE</option></select>
+<label for="masterScopes">Write paths, one per line</label><textarea id="masterScopes" rows="3"></textarea>
+<label for="masterCriteria">Acceptance criteria, one per line</label><textarea id="masterCriteria" rows="3"></textarea>
+<label for="masterDependencies">Exact dependency ticket IDs, one per line (empty = none)</label><textarea id="masterDependencies" rows="2"></textarea>
+<label for="masterContracts">Declared shared contract keys, one per line (empty = none)</label><textarea id="masterContracts" rows="2"></textarea>
+<div class="actions"><button id="masterAdd" class="secondary" type="button">Add task to local draft</button><button id="masterUndo" class="secondary" type="button">Remove last draft task</button></div>
+<label for="masterDraft">Review all task fields (local draft, not yet admitted)</label><textarea id="masterDraft" rows="8" readonly spellcheck="false"></textarea>
+<button id="masterPreview" class="secondary" type="button" disabled>Validate and preview exact batch</button>
+<label for="masterDigest">Reviewed preview digest (retain for receipt lookup)</label><input id="masterDigest" maxlength="64" autocomplete="off" spellcheck="false">
+<label><input id="masterReviewed" type="checkbox"> I independently reviewed every task, baseline, dependency, scope, contract and criterion; no provider or Git work is authorized by admission.</label>
+<div class="actions"><button id="masterCommit" class="secondary" type="button" disabled>Confirm exact reviewed batch</button><button id="masterReceipt" class="secondary" type="button" disabled>Inspect historical admission receipt (no mutation)</button></div>
+<pre id="masterResult" role="status" aria-live="polite">Local draft only.</pre>
+</details>
 <div class="actions"><button id="workerList" class="secondary" type="button" disabled>List available tasks</button></div>
 <label for="workerTicket">Task ID to inspect</label>
 <input id="workerTicket" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="ticket_example_001">
