@@ -282,3 +282,14 @@ Desktop Master can review declared dependency waves, conflict components and fai
 Exact baseline `8e897c8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45492514727) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45492514610). Advisory planning graph, fair source sampling and compact context are source-CI verified. New Owner-attested provider usage history is CODED / EXACT-HEAD CI PENDING.
 
 Central Owner can inspect historical attempts and record independently observed exact input/output counts for closed attempts once, with optional cached input subset. Missing readings remain unknown; no provider-verified quota, cost or execution permission. See [provider guide](docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md), [tracker](docs/IMPLEMENTATION_TRACKER.md), [matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](GAP_REGISTER.md). G0–G7 HOLD.
+
+
+## 25 November 2026 — developer AST hint inspection
+
+Starting exact HEAD `d1daa265` independently passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45495746438) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45495746128). The Owner-attested usage ledger is source-CI verified on that HEAD.
+
+- `4e08d02`, `261e10b`: developer-only TypeScript AST parser, conservative relative module resolution, immutable Git object inspection, strict bounded inputs, path and encoding checks, explicit missing/ambiguous/unsupported statuses. No provider transmission, source-content export, worktree mutation, task dispatch or remote freshness proof.
+- `27426f2`: 161 regression scenarios (syntax forms, comment/string decoys, unsupported references, path/extension ambiguity, bounds and real local Git snapshot). These are test cases, not 161 completed implementation tasks.
+- `537f10c`: integrated regression suite into `npm run test:v7`; added `npm run ops:master-ast-hints`.
+
+**CODED / EXACT-HEAD CI PENDING** until an independently observed successful run on the final source. Developer-only: relies on locked TypeScript dev dependency, not installed Electron runtime; existing Desktop lexical hints are unchanged. This is syntactic evidence, not type-checker resolution, scope binding, contract inference or semantic independence. V7-GAP-05/07/08 remain PARTIAL/OPEN; autonomous task decomposition, integrated Desktop AST, upstream proof, combined QA remain open. No production gate promoted. See [AST operator instructions](docs/MASTER_AST_HINTS_V7.md). G0–G7 HOLD.
