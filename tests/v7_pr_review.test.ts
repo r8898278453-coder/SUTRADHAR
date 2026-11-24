@@ -48,7 +48,7 @@ function scenario(x:Opt={}){
     if(pathname.endsWith('/commits/'+HEAD+'/check-runs'))
       return respond({total_count:x.checkCount??1,check_runs:[{
         name:'CI / tests',head_sha:HEAD,app:{slug:'github-actions'},
-        status:'completed',conclusion:x.checksFail?'failure':'success'
+        started_at:'2026-11-18T09:00:00Z',completed_at:'2026-11-18T10:00:00Z',status:'completed',conclusion:x.checksFail?'failure':'success'
       }]});
     if(pathname.endsWith('/pulls/41/reviews'))
       return respond(x.incompleteReviews?Array.from({length:100},()=>({
@@ -127,7 +127,7 @@ test('GitHub outage blocks review without fabricating approval',async()=>{
 test('latest dismissed review overrides an earlier approved review',()=>{
   const policy=evaluateGithubReviewPolicy({
     checks:{total_count:1,check_runs:[{name:'CI / tests',head_sha:HEAD,
-      app:{slug:'github-actions'},status:'completed',conclusion:'success'}]},
+      app:{slug:'github-actions'},started_at:'2026-11-18T09:00:00Z',completed_at:'2026-11-18T10:00:00Z',status:'completed',conclusion:'success'}]},
     reviews:[
       {id:1,user:{login:'reviewer',type:'User'},state:'APPROVED',commit_id:HEAD,
         submitted_at:'2026-11-18T11:00:00Z'},
@@ -146,7 +146,7 @@ test('latest dismissed review overrides an earlier approved review',()=>{
 test('unreadable later dismissal/change request cannot preserve earlier approval',()=>{
   const context={
     checks:{total_count:1,check_runs:[{name:'CI / tests',head_sha:HEAD,
-      app:{slug:'github-actions'},status:'completed',conclusion:'success'}]},
+      app:{slug:'github-actions'},started_at:'2026-11-18T09:00:00Z',completed_at:'2026-11-18T10:00:00Z',status:'completed',conclusion:'success'}]},
     headSha:HEAD,prAuthor:'author',requiredChecks:['CI / tests'],
     requiredApprovals:1,checkAppSlug:'github-actions',
     cutoff:'2026-11-20T13:00:00Z'
@@ -178,7 +178,7 @@ test('read-only Owner PR cannot show manual merge readiness for nested secret pa
 });
 
 test('ordinary comments cannot clear a change request or remove a valid decisive approval',()=>{
-  const context={checks:{total_count:1,check_runs:[{name:'CI / tests',head_sha:HEAD,app:{slug:'github-actions'},status:'completed',conclusion:'success'}]},
+  const context={checks:{total_count:1,check_runs:[{name:'CI / tests',head_sha:HEAD,app:{slug:'github-actions'},started_at:'2026-11-18T09:00:00Z',completed_at:'2026-11-18T10:00:00Z',status:'completed',conclusion:'success'}]},
     headSha:HEAD,prAuthor:'author',requiredChecks:['CI / tests'],requiredApprovals:1,checkAppSlug:'github-actions',cutoff:'2026-11-20T13:00:00Z'};
   const vote=(id:number,login:string,state:string,submitted_at:string)=>({id,user:{login,type:'User'},state,commit_id:HEAD,submitted_at});
   const approval=vote(1,'approver','APPROVED','2026-11-18T10:00:00Z');

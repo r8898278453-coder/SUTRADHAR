@@ -104,9 +104,9 @@ test('HTTP GitHub merge approval uses signed durable lease and actual tested tre
     if (pathname.endsWith('/commits/' + HEAD + '/check-runs'))
       return body({ total_count: 2, check_runs: [
         { name: 'CI / tests', head_sha: HEAD,
-          status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } },
+          started_at: '2026-11-06T17:00:00Z', completed_at: '2026-11-06T18:00:00Z', status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } },
         { name: 'TypeScript, unit checks, and build', head_sha: HEAD,
-          status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }
+          started_at: '2026-11-06T17:00:00Z', completed_at: '2026-11-06T18:00:00Z', status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }
       ] });
     if (pathname.endsWith('/pulls/24/reviews'))
       return body([{ state: 'APPROVED', user: { login: 'reviewer',type:'User' },

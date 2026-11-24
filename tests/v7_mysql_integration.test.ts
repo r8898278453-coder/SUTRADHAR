@@ -1769,7 +1769,7 @@ test('v7 MySQL HTTP post-bootstrap election, signed enrollment, replay, takeover
           else if(path==='commits/'+'b'.repeat(40)+'/check-runs?per_page=100')
             result={total_count:1,check_runs:[{name:'CI / tests',
               head_sha:'b'.repeat(40),app:{slug:'github-actions'},
-              status:'completed',conclusion:'success'}]};
+              started_at:'2026-11-06T15:00:00Z',completed_at:'2026-11-06T16:00:00Z',status:'completed',conclusion:'success'}]};
           else if(path==='pulls/77/reviews?per_page=100')
             result=[{id:1,user:{login:'independent_reviewer',type:'User'},
               state:'APPROVED',commit_id:reviewedOldHead?'e'.repeat(40):'b'.repeat(40),

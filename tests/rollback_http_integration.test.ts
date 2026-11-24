@@ -153,7 +153,7 @@ test('real admin HTTP rollback PR requires external review/CI evidence before co
     if (pathname.endsWith('/commits/' + REVERT_HEAD + '/check-runs'))
       return answer({ total_count: 1, check_runs: [{
         name: 'CI / tests', head_sha: REVERT_HEAD, app: { slug: 'github-actions' },
-        status: 'completed', conclusion: 'success'
+        started_at: '2026-11-09T22:00:00Z', completed_at: '2026-11-09T23:00:00Z', status: 'completed', conclusion: 'success'
       }] });
     if (pathname.endsWith('/pulls/77/reviews'))
       return answer([{ state: approved ? 'APPROVED' : 'COMMENTED',

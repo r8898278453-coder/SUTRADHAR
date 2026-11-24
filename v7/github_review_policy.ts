@@ -14,10 +14,19 @@ export type GithubReviewPolicyDecision={
   required_checks:string[];blocks:string[];
 };
 const strictHead=/^[a-f0-9]{40}$/;
+// GitHub API timestamps are UTC ISO-8601. Reject normalized invalid dates,
+// locale dates, and ambiguous clocks instead of relying on Date.parse alone.
+function githubTime(value:unknown):number{
+  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value))return NaN;
+  const n=Date.parse(value);
+  if(!Number.isFinite(n))return NaN;
+  const canonical=value.includes('.')?value:value.slice(0,-1)+'.000Z';
+  return new Date(n).toISOString()===canonical?n:NaN;
+}
 export function evaluateGithubReviewPolicy(x:GithubReviewPolicyInput):GithubReviewPolicyDecision{
   const blockers:string[]=[];
   const checkNames=x.requiredChecks;
-  const stamp=Date.parse(x.cutoff||'');
+  const stamp=githubTime(x.cutoff);
   const configured= strictHead.test(x.headSha||'') &&
     Array.isArray(checkNames)&&checkNames.length>0&&checkNames.length<=30&&
     checkNames.every(s=>typeof s==='string'&&s.length>0&&s.length<=150&&s.trim()===s) &&
@@ -42,8 +51,14 @@ export function evaluateGithubReviewPolicy(x:GithubReviewPolicyInput):GithubRevi
       const matching=c.check_runs.filter((run:any)=>
         run?.name===name&&run?.head_sha===x.headSha&&
         run?.app?.slug===x.checkAppSlug);
-      return matching.length===1&&matching[0].status==='completed'&&
-        matching[0].conclusion==='success';
+      if(matching.length!==1)return false;
+      const run=matching[0];
+      // A successful rerun after the historical merge cannot retroactively
+      // prove that required CI had passed before the merge.
+      const started=githubTime(run.started_at),completed=githubTime(run.completed_at);
+      return run.status==='completed'&&run.conclusion==='success'&&
+        Number.isFinite(started)&&Number.isFinite(completed)&&
+        started<=completed&&completed<=stamp;
     });
   }
   if(!checksPassed)blockers.push('GITHUB_REQUIRED_CHECKS_MISSING');
@@ -57,12 +72,12 @@ export function evaluateGithubReviewPolicy(x:GithubReviewPolicyInput):GithubRevi
       typeof r.user?.login==='string'&&r.user.login.length>0&&
       r.user.login.length<=100&&typeof r.state==='string'&&
       knownStates.has(r.state)&&typeof r.submitted_at==='string'&&
-      Number.isFinite(Date.parse(r.submitted_at)));
+      Number.isFinite(githubTime(r.submitted_at)));
   if(reviewsValid){
     const chronological=x.reviews
-      .filter((review:any)=>Date.parse(review.submitted_at)<=stamp)
+      .filter((review:any)=>githubTime(review.submitted_at)<=stamp)
       .sort((a:any,b:any)=>{
-        const dateDiff=Date.parse(a.submitted_at)-Date.parse(b.submitted_at);
+        const dateDiff=githubTime(a.submitted_at)-githubTime(b.submitted_at);
         return dateDiff || (Number(a.id||0)-Number(b.id||0));
       });
     const latest=new Map<string,any>();
@@ -73,7 +88,7 @@ export function evaluateGithubReviewPolicy(x:GithubReviewPolicyInput):GithubRevi
       if(review.state==='COMMENTED'||review.state==='PENDING')continue;
       const user=review.user.login.toLowerCase();
       const prior=latest.get(user);
-      if(prior&&Date.parse(prior.submitted_at)===Date.parse(review.submitted_at)&&
+      if(prior&&githubTime(prior.submitted_at)===githubTime(review.submitted_at)&&
          (!Number.isSafeInteger(prior.id)||prior.id<1||
           !Number.isSafeInteger(review.id)||review.id<1||prior.id===review.id)){
         ambiguous=true;break;

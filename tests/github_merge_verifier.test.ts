@@ -58,7 +58,7 @@ function input(overrides: Fixture = {}) {
     if (pathname.endsWith('/commits/' + HEAD + '/check-runs'))
       return response({ total_count: opts.checkCountOverride, check_runs: [{
         name: 'CI / tests', head_sha: HEAD, app: { slug: 'github-actions' },
-        status: 'completed', conclusion: opts.checkSuccess ? 'success' : 'failure'
+        started_at: '2026-11-06T15:00:00Z', completed_at: '2026-11-06T16:00:00Z', status: 'completed', conclusion: opts.checkSuccess ? 'success' : 'failure'
       }] });
     if (pathname.endsWith('/pulls/12/reviews'))
       return response([{ user: { login: 'reviewer',type:'User' },
@@ -164,4 +164,23 @@ test('duplicate GitHub changed file entries cannot represent a verified merged P
     filenames:['src/safe.ts','src/safe.ts']
   }));
   assert.deepEqual(proof,{verified:false,error:'GITHUB_PR_FILE_SCOPE_MISMATCH'});
+});
+
+test('post-merge CI success, missing timestamps and inverted check chronology cannot verify historical merge',async()=>{
+  for(const timestamps of [
+    {started_at:'2026-11-06T16:00:00Z',completed_at:'2026-11-06T17:00:01Z'},
+    {started_at:null,completed_at:'2026-11-06T16:00:00Z'},
+    {started_at:'2026-11-06T16:00:00Z',completed_at:null},
+    {started_at:'2026-11-06T16:00:00Z',completed_at:'2026-11-06T15:00:00Z'},
+    {started_at:'2026-02-30T15:00:00Z',completed_at:'2026-11-06T16:00:00Z'}
+  ]){
+    const original=input(),fetcher=original.fetcher!;
+    const result=await verifyGitHubMergeEvidence({...original,fetcher:async(url,init)=>{
+      const response=await fetcher(url,init);
+      if(!new URL(url).pathname.endsWith('/check-runs'))return response;
+      const checks=await response.json();
+      return new Response(JSON.stringify({...checks,check_runs:checks.check_runs.map((r:any)=>({...r,...timestamps}))}));
+    }});
+    assert.deepEqual(result,{verified:false,error:'GITHUB_REQUIRED_CHECKS_MISSING'});
+  }
 });
