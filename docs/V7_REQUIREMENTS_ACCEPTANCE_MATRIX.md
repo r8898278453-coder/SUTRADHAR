@@ -225,3 +225,16 @@ Verified previous source baseline `215e5ee`: [application CI](https://github.com
 | V7-B06, B08, B09 | Stale GET/POST responses after Owner logout ignored; no additional provider action | Live permission, physical assisted continuation, measured quota/tokens |
 
 New source awaits exact-head CI. Original 71 acceptance scenario definitions remain unchanged; no LIVE_ACCEPTED promotion or production gate change.
+
+
+## Incremental provider interruption coverage
+
+Verified previous baseline `e935cef`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765773) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765743) both SUCCESS. New manual attempt source is CODED / CI PENDING at this update.
+
+| Requirement | New source evidence | Still required |
+|---|---|---|
+| V7-B05, B06, B08, B09 | tests/v7_rules.test.ts exact attempt shape; tests/desktop_worker_inspection.test.cjs unresolved hold and metadata outside compact prompt | Real provider account/workspace permission, exact transmitted bytes and actual token/quota measurement |
+| V7-O02, O03, O06, Q06 | tests/v7_mysql_integration.test.ts live lease, registry version, duplicate BEGIN, interrupted submit hold, newer checkpoint closure, revoked-lease Owner review before requeue | Physical interrupted PC/provider session and verified external effects |
+| V7-O09, O11 | Owner authenticated attempt observation and explicit review; no automatic reassignment | Owner dashboard and packaged Desktop usability, independent live acceptance |
+
+Source regressions await exact-head CI. Original 71 acceptance scenario definitions remain unchanged, no LIVE_ACCEPTED promotion. G0–G7 HOLD.
