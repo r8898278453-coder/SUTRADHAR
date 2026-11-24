@@ -99,3 +99,25 @@ export function scopesOverlap(a:string,b:string) {
   return x===y||x.startsWith(y+'/')||y.startsWith(x+'/');
 }
 export function digest(s:string|Buffer) {return crypto.createHash('sha256').update(s).digest('hex');}
+
+// Explicit semantic declarations are conservative exclusive resources, not
+// inferred code dependencies. Null means a legacy/unclassified task; an
+// explicitly empty list means the planner declared no shared contracts.
+export function contractKeysOverlap(a:string,b:string):boolean{
+  return a===b||a.startsWith(b+'.')||b.startsWith(a+'.');
+}
+export function parseContractKeys(value:unknown):string[]|null{
+  if(value===undefined)return null;
+  if(!Array.isArray(value)||value.length>12||
+     value.some(x=>typeof x!=='string'||x.length>96||
+       !/^(?:api|db|interface|event):[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*$/.test(x)))
+    throw Error('INVALID_TASK_CONTRACT_KEYS');
+  if(value.some((x,i)=>value.some((y,j)=>j>i&&contractKeysOverlap(x,y))))
+    throw Error('INVALID_TASK_CONTRACT_KEYS');
+  return [...value].sort();
+}
+export function contractReservationConflicts(a:string[]|null,b:string[]|null):boolean{
+  if(a===null)return Boolean(b?.length);
+  if(b===null)return Boolean(a.length);
+  return a.some(x=>b.some(y=>contractKeysOverlap(x,y)));
+}
