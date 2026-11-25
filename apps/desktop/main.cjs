@@ -50,6 +50,7 @@ const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
 const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,compareMasterAstHints,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal}=require('./worker-claim.cjs');
 const {readBulkManifest,reviewBulkManifest,selectBulkDraft}=require('./master-bulk-desktop.cjs');
+const {inspectProjectCapacity}=require('./master-capacity.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
@@ -607,6 +608,18 @@ app.whenReady().then(()=>{
         throw Error('MASTER_DRAFT_REVISION_INVALID');
       return masterDraftStore(origin,agentId).save(draft,expectedDigest);
     }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:inspectProjectCapacity',async(event,agentId,projectId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,projectId);
+    workerClaimBusy=true;
+    const guard=()=>{
+      verifySender(event);
+      if(approvedWorkerOperator(agentId,projectId,true)!==origin||masterJournal().pending())
+        throw Error('WORKER_CAPACITY_LOCAL_FENCED');
+    };
+    try{return await inspectProjectCapacity({origin,agentId,projectId,signer,guard});}
+    finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:listMasterProjects',async(event,agentId)=>{
     verifySender(event);
