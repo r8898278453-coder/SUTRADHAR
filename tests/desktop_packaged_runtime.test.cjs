@@ -21,6 +21,10 @@ function fixture(fn){
     fs.writeFileSync(path.join(resources,'app.asar'),'fake ASAR fixture');
     fs.copyFileSync(path.join(dir,'dist','secure-agent.cjs'),
       path.join(resources,'secure-agent.cjs'));
+    for(const name of ['master-typescript.cjs','master-typescript-LICENSE.txt','master-typescript-NOTICE.txt']){
+      fs.writeFileSync(path.join(dir,'dist',name),'fixture '+name);
+      fs.copyFileSync(path.join(dir,'dist',name),path.join(resources,name));
+    }
     const listed=names.map(n=>'/'+n);
     const overrides={};
     const reader={listPackage:()=>listed,
@@ -69,3 +73,14 @@ test('unexpected Central executable and preloaded identity must not ship in ASAR
     }
   });
 });
+
+for(const name of ['master-typescript.cjs','master-typescript-LICENSE.txt','master-typescript-NOTICE.txt']){
+  test('packaged AST resource exact bytes '+name,()=>fixture(({dir,resources,reader})=>{
+    const proof=verifyPackagedRuntime({desktopDir:dir,resourceDir:resources,asarApi:reader});
+    assert.match(proof.ast_resource_sha256[name],/^[a-f0-9]{64}$/);
+    fs.writeFileSync(path.join(resources,name),'changed');
+    assert.throws(()=>verifyPackagedRuntime({desktopDir:dir,resourceDir:resources,asarApi:reader}),/AST_RESOURCE_CHANGED/);
+    fs.unlinkSync(path.join(resources,name));
+    assert.throws(()=>verifyPackagedRuntime({desktopDir:dir,resourceDir:resources,asarApi:reader}),/FILE_NOT_FOUND/);
+  }));
+}
