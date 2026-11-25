@@ -49,6 +49,7 @@ const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
 const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal}=require('./worker-claim.cjs');
+const {readBulkManifest,reviewBulkManifest,selectBulkDraft}=require('./master-bulk-desktop.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
 const {exportCandidateHandoff,inspectQAHandoff}=require('./qa-handoff.cjs');
@@ -74,6 +75,8 @@ let workerClaimBusy=false;
 let workerContextReview=null;
 let masterBatchReview=null;
 let masterBaselineReview=null;
+// Only native-selected path and digests are retained, never the bulk task text.
+let masterBulkReview=null;
 let installerPreparationBusy=false;
 let installerExecutionBusy=false;
 let postInstallBusy=false;
@@ -367,7 +370,7 @@ function showSetup(){
   setupWindow.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   setupWindow.webContents.on('will-navigate',ev=>ev.preventDefault());
   setupWindow.loadFile(path.join(__dirname,'setup.html'));
-  setupWindow.on('closed',()=>{setupWindow=null;});
+  setupWindow.on('closed',()=>{setupWindow=null;masterBulkReview=null;});
 }
 function showDashboard(){
   if(!current)throw Error('Finish Desktop setup first');
@@ -588,7 +591,7 @@ app.whenReady().then(()=>{
   ipcMain.handle('sutradhar:loadMasterUnconfirmedDraft',async(event,agentId)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,'project_draft');
-    workerClaimBusy=true;masterBatchReview=null;masterBaselineReview=null;
+    workerClaimBusy=true;masterBatchReview=null;masterBaselineReview=null;masterBulkReview=null;
     try{
       if(masterJournal().pending())throw Error('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
       return masterDraftStore(origin,agentId).load();
@@ -635,7 +638,7 @@ app.whenReady().then(()=>{
   ipcMain.handle('sutradhar:inspectMasterBaseline',async(event,agentId,projectId)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,projectId);
-    workerClaimBusy=true;masterBatchReview=null;masterBaselineReview=null;
+    workerClaimBusy=true;masterBatchReview=null;masterBaselineReview=null;masterBulkReview=null;
     try{
       if(masterJournal().pending())throw Error('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
       const beforeMutation=()=>{
@@ -667,6 +670,66 @@ app.whenReady().then(()=>{
     return requireMasterBaseline({tasks,observed:saved.observed,
       current:inspectMasterBaseline({repoDir:saved.repoDir,project:fresh.project})});
   }
+  // Recheck the exact signed project and Master epoch, then reobserve the
+  // trusted local tracking ref. Bulk review is not a Central mutation.
+  async function bulkBaselineCurrent(saved,{origin,agentId,projectId,guard}){
+    guard();
+    if(!saved||masterBaselineReview!==saved||saved.origin!==origin||
+       saved.agentId!==agentId||saved.projectId!==projectId)
+      throw Error('MASTER_BASELINE_INSPECTION_REQUIRED');
+    const fresh=await lookupMasterProject({origin,agentId,projectId,signer,beforeMutation:guard});
+    guard();
+    if(masterBaselineReview!==saved||fresh.epoch!==saved.epoch||
+       JSON.stringify(fresh.project)!==JSON.stringify(saved.project))
+      throw Error('MASTER_BASELINE_PROJECT_OR_EPOCH_CHANGED');
+    return inspectMasterBaseline({repoDir:saved.repoDir,project:fresh.project});
+  }
+  ipcMain.handle('sutradhar:inspectMasterBulkManifest',async(event,agentId,projectId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,projectId),baseline=masterBaselineReview;
+    workerClaimBusy=true;masterBulkReview=null;masterBatchReview=null;
+    const guard=()=>{
+      verifySender(event);
+      if(approvedWorkerOperator(agentId,projectId,true)!==origin||masterJournal().pending())
+        throw Error('MASTER_BULK_LOCAL_FENCED');
+    };
+    try{
+      await bulkBaselineCurrent(baseline,{origin,agentId,projectId,guard});
+      const picked=await dialog.showOpenDialog(setupWindow,{
+        title:'Choose a trusted local bulk task declarations JSON file',
+        properties:['openFile'],filters:[{name:'Task declarations JSON',extensions:['json']}]
+      });
+      guard();
+      if(picked.canceled||picked.filePaths.length!==1)return {canceled:true};
+      const current=await bulkBaselineCurrent(baseline,{origin,agentId,projectId,guard});
+      const file=picked.filePaths[0];
+      const report=reviewBulkManifest(readBulkManifest(file),baseline.observed,current);
+      guard();
+      masterBulkReview={origin,agentId,projectId,baseline,file,
+        fileDigest:report.file_sha256,manifestDigest:report.manifest_sha256};
+      return report;
+    }finally{workerClaimBusy=false;}
+  });
+  ipcMain.handle('sutradhar:selectMasterBulkDraft',async(event,agentId,projectId,fileDigest,manifestDigest,groupId)=>{
+    verifySender(event);
+    const origin=approvedWorkerOperator(agentId,projectId),saved=masterBulkReview;
+    workerClaimBusy=true;masterBulkReview=null;masterBatchReview=null;
+    const guard=()=>{
+      verifySender(event);
+      if(approvedWorkerOperator(agentId,projectId,true)!==origin||masterJournal().pending())
+        throw Error('MASTER_BULK_LOCAL_FENCED');
+    };
+    try{
+      if(!saved||saved.origin!==origin||saved.agentId!==agentId||saved.projectId!==projectId||
+         saved.fileDigest!==fileDigest||saved.manifestDigest!==manifestDigest)
+        throw Error('MASTER_BULK_REVIEW_REQUIRED');
+      const current=await bulkBaselineCurrent(saved.baseline,{origin,agentId,projectId,guard});
+      const result=selectBulkDraft(readBulkManifest(saved.file),saved.baseline.observed,current,
+        fileDigest,manifestDigest,groupId);
+      guard();
+      return result;
+    }finally{workerClaimBusy=false;}
+  });
   ipcMain.handle('sutradhar:inspectMasterSourceHints',async(event,agentId,projectId,tasks)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,projectId);
