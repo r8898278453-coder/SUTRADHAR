@@ -310,3 +310,22 @@ Advisory only: existing Desktop/Central admission cap of 2–10 tasks remains un
 
 V7-GAP-05/07/08 remain PARTIAL/OPEN: actual automatic decomposition, Desktop AST integration, semantic/contract inference, upstream proof and combined QA; V7-GAP-06/09/11 remain open for provider permissions, recovery, retention and measured token/quota accounting. Hostinger staging, signing, branch protection and physical PC acceptance remain independent release gates. G0–G7 HOLD.
 Operator guide: [Bulk Master backlog review](docs/MASTER_BULK_REVIEW_V7.md).
+
+
+## 25 November 2026 — Desktop bulk backlog review and local draft import
+
+Previous exact HEAD `370672751cc3ae57623fab3bf8345bd28f397c27` independently passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45500418291) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45500418320), including the offline 100-task bulk planner. The following new Desktop integration is CODED / EXACT-HEAD CI PENDING.
+
+| Workstream | Source commits | Evidence status |
+|---|---|---|
+| Bounded native file read, exact UTF-8 manifest, local baseline equality, raw file and canonical manifest digests, import eligibility blockers | ad5eec9 | CODED / CI PENDING |
+| Signed project/epoch recheck, native file picker, fixed main-process IPC and one-shot selection, competing action fence | afb65aa, 22f9557 | CODED / CI PENDING |
+| Preload allowlist and ASAR package closure inclusion | 41b1b8d, ca41c4e | CODED / CI PENDING |
+| Local review report, explicit group selection and replacement consent, request/preview reset, selection/availability fences, blocker detail | f9adbc9, 984dbb0, fdb6359, a3ebffe, b51652a | CODED / CI PENDING |
+| 79 named regression scenarios (including POSIX symlink case and renderer DOM-model tests), CI registration | 2dafdfb, 89c6aa5, 11aee17 | CODED / CI PENDING |
+
+Desktop now accepts a native-selected trusted local JSON file of 2–100 declared tasks (512 KiB raw cap), bound to a current signed Master/project/epoch and local Git tracking-ref observation. Only an eligible 2–10-task group can be loaded into the local unconfirmed draft, after explicit confirmation and exact reread of both digests. Protected/isolated, unresolved conflict, external or upstream-dependent and singleton groups require separate review. A fresh request ID, Central preview, independent review and existing admission approval remain necessary. No automatic task generation, admission, dispatch, execution, provider request or Git mutation. No new schema, dependency, remote freshness proof, semantic independence, capacity proof or durable bulk backlog storage. Existing 2–10 Central admission cap unchanged. The selected file is operator-owned sensitive input; no secret scan or physical locality guarantee. UI and packaged Windows real-environment acceptance remain open. Test case count is not a completed feature-task count; the 50–100 development-task target was not achieved in this slice.
+
+V7-GAP-05/07/08 remain PARTIAL/OPEN for actual task decomposition, AST integration in Desktop, semantic/type/contract inference, independent remote baseline and combined QA. V7-GAP-06/09/11 remain open for provider permissions, recovery, retention and measured token/quota accounting. Hostinger staging, branch protection, owner signing and physical 8–10-PC acceptance remain separate gates. G0–G7 HOLD.
+
+Operator guide: [Desktop and CLI bulk backlog review](docs/MASTER_BULK_REVIEW_V7.md).
