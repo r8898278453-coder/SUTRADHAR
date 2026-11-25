@@ -1524,3 +1524,8 @@ The existing 2–10-task Desktop draft is inspected using the same bounded synta
 V7-GAP-05/07/08 remain PARTIAL/OPEN for actual automatic task decomposition, full semantic/type/contract discovery, remote baseline proof, worker availability, and combined integration QA. V7-GAP-06/09/11 remain open for provider permissions, durable recovery/retention and measured token/quota accounting. Hostinger staging, owner signing, branch protection and physical 8–10-PC acceptance remain independent gates. G0–G7 HOLD.
 
 Operator guide: [Bounded AST source inspection](MASTER_AST_HINTS_V7.md).
+
+
+## 25 November 2026 — capacity observation and Windows test correction
+
+Prior b0a4466 application CI failed Windows descriptor identity fixture; Linux build/desktop, MySQL backup/restore and Python/Docker jobs passed; dependency CI passed. 3df96bc fixes synthetic inode change without weakening guard. 87547d2/e479a63 implement current Master signed project capacity snapshot. 4aef19d/5c5adc6/61af4a3/c2be159/b68f09a/f04ed14 implement fixed signing, response validation, bounded read, MAIN IPC, preload and package inclusion. 1829d09/b6943e6 register capacity regression suite. CODED / CI PENDING. Visible UI and new real MySQL route acceptance remain pending due connector write failures. No task assignment, provider or hardware capacity proof, claim permission, or release approval. G0–G7 HOLD. 50–100 feature-task target not achieved; tests not features.
