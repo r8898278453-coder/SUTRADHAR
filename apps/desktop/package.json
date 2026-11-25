@@ -47,6 +47,7 @@
       "worker-claim.cjs",
       "master-bulk-desktop.cjs",
       "master-ast-parser.cjs",
+      "master-capacity.cjs",
       "worker-progress.cjs",
       "worker-scoped-path.cjs",
       "worker-submit.cjs",
