@@ -1,0 +1,1058 @@
+'use strict';
+const api=window.sutradharDesktop;
+const get=id=>document.getElementById(id);
+function showFeedback(message){get('feedback').textContent=message;}
+async function loadStatus(){
+  try{
+    const s=await api.getStatus();
+    if(s.configured){
+      get('central').value=s.centralUrl;
+      get('pcName').value=s.pcName;
+      get('agentCount').value=String(s.agentIds.length);
+      for(const id of ['central','pcName','agentCount'])get(id).disabled=true;
+    }
+    const grid=document.createElement('div');grid.className='status-grid';
+    const entries=[
+      ['Central',s.centralUrl||'Not configured'],
+      ['PC',s.pcName||'Not configured'],
+      ['Node ID',s.nodeId||'Not created'],
+      ['Agent IDs',(s.agentIds||[]).join(', ')||'Not created'],
+      ['Enrollment request',s.enrollmentState==='SUBMITTED'?
+        'Submitted to Central; Owner approval may still be pending':
+        s.enrollmentState==='OWNER_REVIEW_REQUIRED'?'BLOCKED — Owner must review identity/receipt':
+        s.enrollmentState==='PREPARED'?'Submission uncertain — Owner review required':
+        'Not yet submitted'],
+      ['Enrollment recovery issue',s.enrollmentError||'None reported'],
+      ['Local process',s.agentProcessRunning?'Running':'Not running'],
+      ['Agent restart safety',s.agentSessionStatus||'UNKNOWN — Owner review'],
+      ['Maintenance recovery hold',s.maintenanceHold||'NONE'],
+      ['Installer preparation',s.installerPreparation||'NONE'],
+      ['Installer execution',s.installerExecution||'NOT_ATTEMPTED'],
+      ['Direct installer exit',s.directInstallerExit||'NOT_OBSERVED'],
+      ['Persistent process observer',s.persistentObserver||'NO_WITNESS_OUTCOME_UNKNOWN'],
+      ['Post-install observation',s.postInstallObservation||'NOT_RECORDED'],
+      ['Failed install review',s.failedInstallReview||'NOT_RECORDED'],
+      ['Owner recovery investigation',s.failedRecoveryApproval||'NOT_RECORDED'],
+      ['Central acknowledgment',s.centralReport?.acknowledgedNow?
+        'Agent reports heartbeat accepted by Central (verify in Owner dashboard)' :
+        'Not currently acknowledged — pending approval / offline / error'],
+      ['Last accepted heartbeat',s.centralReport?.lastAcceptedAt||'Not yet accepted'],
+      ['Last Central error',s.centralReport?.errorCode||'None reported'],
+      ['Master recovery phase',s.centralReport?.phase||'Not yet confirmed'],
+      ['Device key storage',s.signingStatus||'OS vault unavailable'],
+      ['Production release','Not accepted; signed installer and physical vault test pending']
+    ];
+    for(const [label,value] of entries){
+      const k=document.createElement('span');k.textContent=label;
+      const v=document.createElement('strong');v.textContent=value;
+      grid.append(k,v);
+    }
+    get('status').replaceChildren(grid);
+    const select=get('workerAgent'),before=select.value;
+    select.replaceChildren();
+    for(const id of (s.agentIds||[])){
+      const option=document.createElement('option');
+      option.value=id;option.textContent=id;select.append(option);
+    }
+    if((s.agentIds||[]).includes(before))select.value=before;
+    const approvedReadOnly=Boolean(s.workerClaimSupported&&s.agentProcessRunning&&
+      s.centralReport?.acknowledgedNow&&s.maintenanceHold==='NONE'&&
+      s.enrollmentState==='SUBMITTED');
+    select.disabled=!approvedReadOnly;
+    if(before!==select.value){
+      masterDraftVersion=null;clearMasterBaseline();invalidateMasterReview();
+    }else if(!approvedReadOnly&&masterBulkReview){
+      clearMasterBulkReview('Local agent unavailable. Inspect again after recovery.');
+    }
+    masterAvailable=approvedReadOnly;updateMasterControls();
+    get('workerList').disabled=!approvedReadOnly;
+    get('workerDetail').disabled=!approvedReadOnly;
+    get('workerContext').disabled=!approvedReadOnly;
+    for(const id of ['workerProviderBegin','workerProviderInterrupt','workerProviderClose'])get(id).disabled=!approvedReadOnly;
+    get('workerClaim').disabled=!approvedReadOnly;
+    get('workerResume').disabled=!approvedReadOnly;
+    get('workerCheckpoint').disabled=!approvedReadOnly;
+    get('workerRenew').disabled=!approvedReadOnly;
+    get('workerSubmit').disabled=!approvedReadOnly;
+    get('workerExport').disabled=!approvedReadOnly;
+    get('workerQAInspect').disabled=!approvedReadOnly;
+    get('workerQARun').disabled=!approvedReadOnly||!s.qaRunnerConfigured;
+    get('workerQARecover').disabled=!approvedReadOnly||!s.qaRunnerConfigured;
+    get('workerQAAttest').disabled=!approvedReadOnly;
+    get('workerQAUpload').disabled=!approvedReadOnly;
+    get('workerQAReceipt').disabled=!approvedReadOnly;
+    get('workerGitPublish').disabled=!approvedReadOnly||!s.gitPublishConfigured;
+
+    get('dashboard').disabled=!s.configured;
+    get('autostart').disabled=!s.startupSupported;
+    get('autostart').checked=Boolean(s.startupEnabled);
+    get('reconcileEnrollment').disabled=!['PREPARED','OWNER_REVIEW_REQUIRED'].includes(s.enrollmentState);
+    get('inspectCrashEvidence').disabled=!(s.agentSessionStatus==='OWNER_REVIEW_REQUIRED'&&!s.agentProcessRunning);
+    get('exportPilotNodeProof').disabled=!s.configured||
+      s.enrollmentState!=='SUBMITTED'||!s.nodeId;
+    if(s.enrollmentRequested){get('code').value='';get('code').placeholder='Already enrolled; code not required for later starts';}
+  }catch(e){get('status').textContent='Could not read local status: '+String(e.message||e);}
+}
+get('inspectCrashEvidence').addEventListener('click',async()=>{
+  const button=get('inspectCrashEvidence'),output=get('crashEvidence');
+  button.disabled=true;
+  output.textContent='Inspecting local files without changing them…';
+  try{
+    const result=await api.inspectAgentCrashEvidence();
+    // Keep the entire displayed block valid JSON for an Owner to copy into
+    // Central's read-only crosscheck. Safety flags live inside the report.
+    output.textContent=JSON.stringify(result,null,2);
+  }catch(e){
+    output.textContent='DIAGNOSTIC BLOCKED: '+String(e?.message||e)+
+      '. Preserve this PC and all original evidence for Owner investigation.';
+  }finally{await loadStatus();}
+});
+get('setupForm').addEventListener('submit',async e=>{
+  e.preventDefault();get('save').disabled=true;showFeedback('Checking Central and starting the local agent…');
+  try{
+    const result=await api.saveSetup({
+      centralUrl:get('central').value,pcName:get('pcName').value,
+      agentCount:Number(get('agentCount').value),enrollmentCode:get('code').value
+    });
+    get('code').value='';
+    showFeedback('Local setup submitted. Ask the Owner to APPROVE the PC and its agent IDs in Central. The agent will report status every 60 seconds once approved.');
+    await loadStatus();
+  }catch(err){showFeedback(String(err?.message||err));}
+  finally{get('save').disabled=false;}
+});
+get('autostart').addEventListener('change',async e=>{
+  const checkbox=e.target;checkbox.disabled=true;
+  try{
+    await api.setStartup(Boolean(checkbox.checked));
+    showFeedback('Login auto-start preference updated locally. Physical installer/startup acceptance is still pending.');
+  }catch(error){showFeedback(String(error.message||error));}
+  await loadStatus();
+});
+get('approveFailedInstallReview').addEventListener('click',async()=>{
+  const button=get('approveFailedInstallReview');button.disabled=true;
+  get('updateFeedback').textContent='Verifying independent Owner review grant, device-signed failed-install evidence, Central cancellation and cluster readiness…';
+  try{
+    const result=await api.approveFailedInstallReview();
+    get('updateFeedback').textContent=result.canceled?'Owner investigation canceled.':
+      'Signed incident review recorded for '+result.node_id+
+      '. PC STILL ISOLATED. No hold release, installer retry, rollback or agent restart authorized.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='OWNER REVIEW BLOCKED: '+String(e.message||e)+
+      '. Keep all diagnostic records and the local hold for manual investigation.';
+  }finally{button.disabled=false;}
+});
+get('reviewFailedInstall').addEventListener('click',async()=>{
+  const button=get('reviewFailedInstall');button.disabled=true;
+  get('updateFeedback').textContent='Checking old installed version, protected device identity and Central maintenance…';
+  try{
+    const r=await api.reviewFailedInstall();
+    get('updateFeedback').textContent=r.canceled?
+      'Diagnostic canceled. No files changed.':
+      'Owner diagnostic recorded for '+r.node_id+': '+r.state+
+      '. Installer result remains UNKNOWN. Original hold ACTIVE. No automatic rollback, release or retry allowed.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='DIAGNOSTIC BLOCKED: '+
+      String(e.message||e)+'. Preserve all journals and contact Owner.';
+  }finally{button.disabled=false;}
+});
+get('observePostInstall').addEventListener('click',async()=>{
+  const button=get('observePostInstall');button.disabled=true;
+  get('updateFeedback').textContent='Verifying signed installer launch, current Desktop signature/version, OS-vault identity and Central maintenance…';
+  try{
+    const r=await api.observePostInstall();
+    get('updateFeedback').textContent='Target '+r.observed_version+
+      ', same device identity and Central DRAINED fence OBSERVED for '+r.node_id+
+      '. Windows installer completion is NOT proven. The local hold remains active; Owner cancellation and separately signed hold release are still required.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='POST-INSTALL VERIFICATION BLOCKED: '+
+      String(e.message||e)+'. Keep the hold and all execution receipts. Owner recovery review required.';
+  }finally{button.disabled=false;}
+});
+get('inspectPostUpdateIdentity').addEventListener('click',async()=>{
+  const button=get('inspectPostUpdateIdentity');button.disabled=true;
+  get('updateFeedback').textContent='Checking device public-key and agent identity against staged baseline…';
+  try{
+    const r=await api.inspectPostUpdateIdentity();
+    get('updateFeedback').textContent='Identity fingerprint and agent IDs unchanged for '+r.node_id+
+      '. Installed version observed '+r.observed_version+
+      ', staged target '+r.target_version+
+      (r.version_matches_target?' (version matches).':' (version NOT matched).')+
+      ' This does NOT prove installer execution or Central reconciliation.';
+  }catch(e){get('updateFeedback').textContent='Identity continuity BLOCKED: '+
+    String(e.message||e)+'. Preserve local identity and call Owner.';}
+  finally{button.disabled=false;}
+});
+get('inspectPersistentInstallerObserver').addEventListener('click',async()=>{
+  const button=get('inspectPersistentInstallerObserver');button.disabled=true;
+  get('updateFeedback').textContent='Checking enrolled identity, signed launch and unsigned process-liveness witness…';
+  try{
+    const r=await api.inspectPersistentInstallerObserver();
+    get('updateFeedback').textContent=r.available?
+      'Persistent observer reports '+r.state+
+      '. UNSIGNED / UNTRUSTED diagnostic only; exit code UNKNOWN and Windows setup completion UNPROVEN. Maintenance hold and manual Owner checks remain required.':
+      'No persistent observer witness. Outcome UNKNOWN. Preserve maintenance hold and signed installer receipts.';
+  }catch(e){
+    get('updateFeedback').textContent='OBSERVER INSPECTION BLOCKED: '+
+      String(e.message||e)+'. Do not delete any maintenance journal.';
+  }finally{button.disabled=false;}
+});
+get('inspectDirectInstallerExit').addEventListener('click',async()=>{
+  const button=get('inspectDirectInstallerExit');button.disabled=true;
+  get('updateFeedback').textContent='Verifying device-signed launch chain and any direct installer exit observation…';
+  try{
+    const v=await api.inspectDirectInstallerExit();
+    get('updateFeedback').textContent=v.observed?
+      'DIRECT installer process exit observed. Code: '+
+      String(v.direct_process_exit_code===null?'unknown':v.direct_process_exit_code)+
+      ', signal: '+String(v.direct_process_exit_signal||'none')+
+      '. NSIS/UAC completion and successful installation remain UNPROVEN. Hold and automatic retry are blocked.':
+      'No direct process exit record is available. Outcome UNKNOWN. Do not infer success/failure or delete the hold.';
+  }catch(e){
+    get('updateFeedback').textContent='EXIT INSPECTION BLOCKED: '+
+      String(e.message||e)+'. Preserve original installer receipts for Owner review.';
+  }finally{button.disabled=false;}
+});
+get('launchStagedInstaller').addEventListener('click',async()=>{
+  const button=get('launchStagedInstaller');button.disabled=true;
+  get('updateFeedback').textContent='Checking separate Owner execution grant, staged Authenticode, Central DRAINED state and local identity…';
+  try{
+    const r=await api.launchStagedInstaller();
+    get('updateFeedback').textContent=r.canceled?'Installer launch canceled.':
+      'Windows '+r.kind+' installer process launched for '+r.node_id+
+      '. INSTALL RESULT UNKNOWN. SUTRADHAR will exit. Finish Windows prompts, then check identity, version and Central recovery. No automatic retry.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='Execution BLOCKED: '+String(e.message||e)+
+      '. Preserve all journals and the maintenance hold; Owner review required.';
+  }finally{button.disabled=false;}
+});
+get('prepareInstaller').addEventListener('click',async()=>{
+  const button=get('prepareInstaller');button.disabled=true;
+  get('updateFeedback').textContent='Verifying Owner DRAINED fence, signed offer, Windows publisher and identity…';
+  try{
+    const result=await api.prepareInstaller();
+    get('updateFeedback').textContent=result.canceled?'Preparation canceled. No files staged.':
+      'Signed '+result.kind+' installer staged for '+result.node_id+
+      ' ('+result.target_version+'). Local identity fingerprint recorded; installer NOT executed. Owner-assisted next step only.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='Staging BLOCKED: '+String(e.message||e)+
+      '. Do not delete recovery hold or preparation receipts.';
+  }finally{button.disabled=false;}
+});
+get('verifyUpdate').addEventListener('click',async()=>{
+  const button=get('verifyUpdate');
+  button.disabled=true;
+  get('updateFeedback').textContent='Checking pinned Owner signature and Windows installer…';
+  try{
+    const receipt=await api.verifyLocalUpdate();
+    get('updateFeedback').textContent=receipt.canceled?'No file selected':
+      'Verified offline for '+receipt.nodeId+' in '+receipt.waveId+
+      ': '+receipt.version+'. '+(receipt.alreadyInspected?
+      'Previously inspected signed receipt revalidated.':
+      'New node-signed local inspection receipt saved.')+
+      ' Installer NOT executed. Seek separate Owner approval.';
+  }catch(e){get('updateFeedback').textContent='Update blocked: '+String(e.message||e);}
+  finally{button.disabled=false;}
+});
+get('updateReadiness').addEventListener('click',async()=>{
+  const button=get('updateReadiness');
+  button.disabled=true;
+  get('updateFeedback').textContent='Checking live Central membership and Master/backup roles…';
+  try{
+    const r=await api.checkUpdateReadiness();
+    get('updateFeedback').textContent=
+      'Signed Central check: '+r.node_id+' is non-critical at this moment'+
+      ' (epoch '+r.epoch+'). '+(r.owner_intent_present?
+        'Active 5-minute Owner intent '+r.owner_intent_id+' ('+r.owner_intent_wave_id+').':
+        'NO active Owner maintenance intent is recorded.')+
+      ' Roles can change immediately. NO installer will run.'+
+      ' Owner approval and fresh physical checks are still required.';
+  }catch(e){
+    get('updateFeedback').textContent='Maintenance BLOCKED: '+String(e.message||e)+
+      '. Do not stop the Master, backups or an unverified PC.';
+  }finally{button.disabled=false;}
+});
+get('isolatePc').addEventListener('click',async()=>{
+  const button=get('isolatePc');button.disabled=true;
+  get('updateFeedback').textContent='Checking signed Owner drain and local agent safety…';
+  try{
+    const result=await api.isolateDrainedPc();
+    get('updateFeedback').textContent=result.canceled?'Isolation canceled. No local hold created.':
+      'Persistent recovery hold created for '+result.node_id+
+      '. Local agent '+(result.agent_stopped?
+        'stop confirmed ('+result.exit_confirmed_by+').':
+        'STOP NOT CONFIRMED ('+result.exit_confirmed_by+'); Owner review required.')+
+      ' No installer executed. Ask Owner for recovery instructions.';
+    await loadStatus();
+  }catch(err){get('updateFeedback').textContent=
+    'Isolation BLOCKED: '+String(err.message||err)+
+    '. Do not manually delete identity or maintenance hold.';}
+  finally{button.disabled=false;}
+});
+get('checkRecovery').addEventListener('click',async()=>{
+  const button=get('checkRecovery');button.disabled=true;
+  get('updateFeedback').textContent='Verifying signed cancellation of the exact held maintenance plan…';
+  try{
+    const result=await api.checkMaintenanceRecovery();
+    get('updateFeedback').textContent='Owner cancellation verified for '+result.plan_id+
+      ' on '+result.node_id+'. LOCAL HOLD STILL ACTIVE. No agent restart or installer execution is authorized. Owner-assisted recovery is required.';
+    await loadStatus();
+  }catch(e){get('updateFeedback').textContent='Recovery BLOCKED: '+
+    String(e.message||e)+'. Keep the local hold and contact Owner.';}
+  finally{button.disabled=false;}
+});
+get('releaseHold').addEventListener('click',async()=>{
+  const button=get('releaseHold');button.disabled=true;
+  get('updateFeedback').textContent='Checking Owner-signed release grant and live cancellation…';
+  try{
+    const result=await api.releaseMaintenanceHold();
+    get('updateFeedback').textContent=result.canceled?'Release canceled.':
+      'Owner release archived for '+result.node_id+
+      '. Agent NOT restarted. Separate reconciliation required; do not delete the audit receipt.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='Release BLOCKED: '+String(e.message||e)+
+      '. Keep existing recovery records for Owner review.';
+  }finally{button.disabled=false;}
+});
+get('restartAfterMaintenance').addEventListener('click',async()=>{
+  const button=get('restartAfterMaintenance');button.disabled=true;
+  get('updateFeedback').textContent='Verifying one-time Owner grant, fresh Central state and new agent heartbeat…';
+  try{
+    const result=await api.restartAfterMaintenance();
+    get('updateFeedback').textContent=result.canceled?'Manual restart canceled.':
+      'Central recovery reconciliation observed for '+result.node_id+
+      ' (epoch '+result.epoch+'). Auto-restart is STILL blocked. No installer executed.';
+    await loadStatus();
+  }catch(e){
+    get('updateFeedback').textContent='Manual recovery BLOCKED: '+
+      String(e.message||e)+
+      '. Do not delete restart attempt or maintenance audit files. Owner review required.';
+  }finally{button.disabled=false;}
+});
+get('exportPilotNodeProof').addEventListener('click',async()=>{
+  const button=get('exportPilotNodeProof');button.disabled=true;
+  showFeedback('Checking exact Owner session and protected OS-vault identity…');
+  try{
+    const out=await api.exportPilotNodeProof();
+    showFeedback(out.canceled?'Evidence export canceled; no proof written.':
+      'Signed '+out.phase+' node continuity file saved privately. '+
+      'Review it on a separate machine with the independently pinned public key. '+
+      'Actual reboot/hardware and production acceptance remain unverified.');
+  }catch(e){showFeedback(String(e.message||e));}
+  finally{await loadStatus();}
+});
+get('reconcileEnrollment').addEventListener('click',async()=>{
+  const button=get('reconcileEnrollment');button.disabled=true;
+  showFeedback('Checking this same OS-vault identity against Owner-approved Central (read-only)…');
+  try{
+    const status=await api.reconcileEnrollment();
+    showFeedback(status.enrollmentRequested?
+      'Existing PC identity confirmed approved by Central. No new enrollment code used.':
+      'Recovery has not been confirmed by Central.');
+  }catch(e){showFeedback('Recovery blocked: '+String(e.message||e)+
+    '. Ask the Owner to inspect this exact PC identity; do not delete its vault.');}
+  finally{await loadStatus();}
+});
+get('refresh').addEventListener('click',loadStatus);
+get('dashboard').addEventListener('click',async()=>{try{await api.openDashboard();}catch(e){showFeedback(String(e.message||e));}});
+get('chatgpt').addEventListener('click',async()=>{try{await api.openProvider('chatgpt');}catch(e){showFeedback(String(e.message||e));}});
+get('studio').addEventListener('click',async()=>{try{await api.openProvider('ai_studio');}catch(e){showFeedback(String(e.message||e));}});
+loadStatus();
+// The status panel observes local signed-ack receipts; it does not declare success from a running process.
+setInterval(loadStatus,15000);
+
+
+get('workerList').addEventListener('click',async()=>{
+  const button=get('workerList');button.disabled=true;
+  const output=get('workerTasks');
+  output.textContent='Requesting signed, read-only task list from Central…';
+  try{
+    const reply=await api.inspectWorkerTasks(get('workerAgent').value,null);
+    output.textContent=reply.tasks.length?
+      JSON.stringify(reply.tasks,null,2):
+      'No currently READY tasks are assigned to this agent. Ask the Owner to check project access.';
+  }catch(error){output.textContent='Read-only inspection blocked: '+String(error?.message||error);}
+  finally{await loadStatus();}
+});
+get('workerDetail').addEventListener('click',async()=>{
+  const button=get('workerDetail');button.disabled=true;
+  const output=get('workerTasks'),ticket=get('workerTicket').value.trim();
+  if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{2,99}$/.test(ticket)){
+    output.textContent='Enter an exact Central task ID (letters, numbers, underscores or hyphens).';
+    await loadStatus();return;
+  }
+  output.textContent='Requesting signed, read-only ticket details…';
+  try{
+    const reply=await api.inspectWorkerTasks(get('workerAgent').value,ticket);
+    output.textContent=JSON.stringify(reply.task,null,2);
+  }catch(error){output.textContent='Read-only inspection blocked: '+String(error?.message||error);}
+  finally{await loadStatus();}
+});
+
+get('workerContext').addEventListener('click',async()=>{
+  const button=get('workerContext'),output=get('workerTasks');
+  button.disabled=true;
+  try{
+    const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+    clearProviderPreview();
+    output.textContent='Preparing local read-only context preview…';
+    const r=await api.previewWorkerContext(agent,ticket);
+    if(ticket!==get('workerTicket').value.trim()||agent!==get('workerAgent').value){
+      output.textContent='Task selection changed. Request a new preview.';return;
+    }
+    get('workerProviderPreview').value=r.preview;
+    output.textContent='MANUAL PREVIEW ONLY — '+r.utf8_bytes+' / '+r.byte_budget+
+      ' UTF-8 bytes (not provider tokens).\nSHA-256: '+r.context_sha256+
+      '\nProvider mapping: '+r.provider_mapping_state+
+      '\nRegistry source/version: '+r.provider_mapping_source+' / '+(r.provider_registry_version??'unknown')+
+      '\nLocal mapping references (do not paste into provider): '+JSON.stringify(r.provider_mappings)+
+      '\nReview the separate compact context field for secrets, verify current lease and correct provider project independently. Nothing sent to provider.';
+  }catch(error){output.textContent='Context preview blocked: '+String(error?.message||error);}
+  finally{await loadStatus();}
+});
+
+function clearProviderPreview(){
+  get('workerProviderPreview').value='';get('workerProviderDigest').value='';
+}
+for(const id of ['workerTicket','workerAgent'])get(id).addEventListener('input',()=>{
+  clearProviderPreview();get('workerProviderAttempt').value='';
+});
+for(const [buttonId,action] of [['workerProviderBegin','BEGIN'],['workerProviderInterrupt','INTERRUPT'],['workerProviderClose','CLOSE']]){
+  get(buttonId).addEventListener('click',async()=>{
+    const button=get(buttonId),output=get('workerTasks');button.disabled=true;
+    try{
+      const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+      const provider=get('workerProviderKind').value,digest=get('workerProviderDigest').value;
+      const attemptId=get('workerProviderAttempt').value;
+      if(action==='BEGIN'&&(!get('workerProviderPreview').value||!/^[a-f0-9]{64}$/.test(digest)))
+        throw Error('Preview and independently review exact compact context first; enter its SHA-256.');
+      if(action!=='BEGIN'&&!/^attempt_[a-f0-9]{32}$/.test(attemptId))
+        throw Error('Inspect current signed task details and enter exact attempt ID.');
+      output.textContent='Checking live lease, local worktree and current attempt; confirmation required…';
+      const r=await api.recordProviderAttempt(agent,ticket,action,provider,digest,attemptId);
+      if(ticket!==get('workerTicket').value.trim()||agent!==get('workerAgent').value){
+        output.textContent='Selection changed. Inspect current task before proceeding.';return;
+      }
+      if(r.canceled){output.textContent='Canceled; no attempt mutation requested.';return;}
+      clearProviderPreview();
+      get('workerProviderAttempt').value=r.attempt.attempt_id;
+      output.textContent='Recorded and read back '+r.attempt.state+' / '+r.attempt.attempt_id+
+        '. No provider action or permission verified. Inspect current signed task before another decision.';
+    }catch(error){
+      clearProviderPreview();
+      output.textContent='Provider attempt not verified: '+String(error?.message||error)+
+        '. Inspect current signed task detail; never blindly retry external work.';
+    }finally{await loadStatus();}
+  });
+}
+// Local form draft only; Central and Electron main independently validate.
+let masterDraft=[],masterReview=null,masterBusy=false,masterAvailable=false,masterRevision=0;
+let masterCatalogAgent=null,masterCatalogItems=[],masterRecovered=false,masterLocalBaseline=null;
+let masterDraftVersion=null,masterBulkReview=null;
+const masterEditorIds={ticket:'masterTicket',baseline:'masterBaseline',branch:'masterBranch',title:'masterTitle',description:'masterDescription',risk:'masterRisk',scopes:'masterScopes',criteria:'masterCriteria',dependencies:'masterDependencies',contracts:'masterContracts'};
+const masterTaskFields=['masterTicket','masterBaseline','masterBranch','masterTitle','masterDescription','masterScopes','masterCriteria','masterDependencies','masterContracts'];
+function masterIdentity(){return {agent:get('workerAgent').value,project:get('masterProject').value,request:get('masterRequest').value};}
+const masterId=x=>typeof x==='string'&&!/[\r\n]/.test(x)&&/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(x);
+const masterHash=x=>typeof x==='string'&&x.length===64&&/^[a-f0-9]{64}$/.test(x);
+function updateMasterControls(){
+  const id=masterIdentity(),valid=[id.agent,id.project,id.request].every(masterId);
+  const pending=masterTaskFields.some(k=>get(k).value!=='');
+  const eligible=masterAvailable&&!masterBusy&&valid;
+  get('masterAdd').disabled=masterBusy||masterDraft.length>=10;
+  get('masterUndo').disabled=masterBusy||!masterDraft.length;
+  get('masterCatalog').disabled=masterBusy||!masterAvailable||!masterId(id.agent);
+  get('masterProjectChoice').disabled=masterBusy||masterRecovered||masterCatalogAgent!==id.agent||!masterCatalogItems.length;
+  get('masterRecover').disabled=masterBusy||!masterAvailable||!masterId(id.agent);
+  get('masterAdd').disabled=masterBusy||masterRecovered||masterDraft.length>=10;
+  get('masterUndo').disabled=masterBusy||masterRecovered||!masterDraft.length;
+  const bulkBaselineMatches=masterLocalBaseline&&masterLocalBaseline.agent===id.agent&&masterLocalBaseline.project===id.project;
+  const bulkEligible=masterAvailable&&!masterBusy&&!masterRecovered&&masterId(id.agent)&&masterId(id.project)&&bulkBaselineMatches;
+  const bulkMatches=masterBulkReview&&masterBulkReview.revision===masterRevision&&
+    masterBulkReview.agent===id.agent&&masterBulkReview.project===id.project&&masterBulkReview.sha===masterLocalBaseline?.sha;
+  const bulkGroup=bulkMatches&&masterBulkReview.groups.find(g=>g.group_id===get('masterBulkGroup').value);
+  get('masterBulkInspect').disabled=!bulkEligible;
+  get('masterBulkGroup').disabled=!bulkEligible||!bulkMatches;
+  get('masterBulkImport').disabled=!bulkEligible||!bulkMatches||bulkGroup?.local_draft_import_allowed!==true;
+  get('masterBulkGroupStatus').textContent=bulkGroup?
+    bulkGroup.group_id+' — '+bulkGroup.ticket_ids.length+' task(s)\n'+bulkGroup.ticket_ids.join(', ')+
+    '\n'+(bulkGroup.local_draft_import_allowed?'Eligible for local draft only; independent review still required.':
+      'Separate review required: '+bulkGroup.local_draft_import_blockers.join(', ')):
+    'No current reviewed group selected.';
+  const baselineMatches=masterLocalBaseline&&masterLocalBaseline.agent===id.agent&&masterLocalBaseline.project===id.project&&masterDraft.every(t=>t.baseline_sha===masterLocalBaseline.sha);
+  get('masterBaselineInspect').disabled=!masterAvailable||masterBusy||masterRecovered||!masterId(id.agent)||!masterId(id.project);
+  get('masterDraftSave').disabled=masterBusy||masterRecovered||!masterAvailable||!masterId(id.agent);
+  get('masterDraftLoad').disabled=get('masterDraftSave').disabled;
+  get('masterSourceHints').disabled=!eligible||masterRecovered||pending||masterDraft.length<2||!baselineMatches;
+  get('masterPlanningContext').disabled=get('masterSourceHints').disabled;
+  get('masterPreview').disabled=!eligible||masterRecovered||pending||masterDraft.length<2||!baselineMatches;
+  get('masterReceipt').disabled=!eligible||!masterHash(get('masterDigest').value);
+  get('masterCommit').disabled=!eligible||masterRecovered||pending||!baselineMatches||!masterReview||
+    masterReview.revision!==masterRevision||masterReview.agent!==id.agent||
+    masterReview.project!==id.project||masterReview.request!==id.request||
+    masterReview.digest!==get('masterDigest').value||get('masterReviewed').checked!==true;
+  for(const k of [...masterTaskFields,'masterRisk','masterProject','masterRequest','masterDigest','masterReviewed'])
+    get(k).disabled=masterBusy||masterRecovered;
+}
+function clearMasterBulkReview(message='Draft or selection changed. Inspect the bulk manifest again.'){
+  masterBulkReview=null;
+  get('masterBulkReport').value='';
+  get('masterBulkGroupStatus').textContent='No group selected.';
+  const select=get('masterBulkGroup');select.replaceChildren();
+  const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Inspect a manifest first';select.append(placeholder);
+  get('masterBulkStatus').textContent=message;
+}
+function invalidateMasterReview({clearDigest=true}={}){
+  masterRevision++;masterReview=null;get('masterReviewed').checked=false;
+  clearMasterBulkReview();
+  get('masterSourceStatus').textContent='Draft or review changed. Inspect source hints again if needed.';
+  get('masterPlanningContextText').value='';
+  get('masterPlanningContextStatus').textContent='Draft or review changed. Prepare fresh compact context if needed.';
+  if(clearDigest)get('masterDigest').value='';
+  updateMasterControls();
+}
+function renderMasterDraft(){
+  get('masterDraft').value=JSON.stringify(masterDraft,null,2);
+  invalidateMasterReview();
+}
+for(const k of ['workerAgent','masterProject','masterRequest'])get(k).addEventListener('input',()=>{
+  if(k==='workerAgent'){masterDraftVersion=null;get('masterDraftStatus').textContent='Agent changed. Load the saved draft before replacing an existing snapshot.';}
+  if(k!=='masterRequest')clearMasterBaseline();
+  invalidateMasterReview();get('masterResult').textContent='Selection changed. Inspect exact current draft before preview.';
+});
+for(const k of [...masterTaskFields,'masterRisk'])get(k).addEventListener('input',()=>invalidateMasterReview());
+get('masterDigest').addEventListener('input',()=>{get('masterReviewed').checked=false;updateMasterControls();});
+get('masterReviewed').addEventListener('change',updateMasterControls);
+get('masterAdd').addEventListener('click',()=>{
+  if(masterBusy||masterRecovered||masterDraft.length>=10)return;
+  const lines=k=>get(k).value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  const t={ticket_id:get('masterTicket').value,baseline_sha:get('masterBaseline').value,
+    branch_name:get('masterBranch').value,title:get('masterTitle').value,
+    description:get('masterDescription').value,risk:get('masterRisk').value,
+    write_scopes:lines('masterScopes'),acceptance_criteria:lines('masterCriteria'),
+    dependencies:lines('masterDependencies'),contract_keys:lines('masterContracts')};
+  if(!masterId(t.ticket_id)||!/^[a-f0-9]{40}$/.test(t.baseline_sha)||
+     !/^ai\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(t.branch_name)||
+     !t.title.trim()||!t.description.trim()||!t.write_scopes.length||!t.acceptance_criteria.length||
+     masterDraft.some(x=>x.ticket_id.toLowerCase()===t.ticket_id.toLowerCase()||
+       x.branch_name.toLowerCase()===t.branch_name.toLowerCase())){
+    get('masterResult').textContent='Complete all required task fields; use a unique exact task ID and branch.';return;
+  }
+  const next=[...masterDraft,t];
+  if(new TextEncoder().encode(JSON.stringify(next)).length>65536){
+    get('masterResult').textContent='Draft exceeds 64 KiB. Use smaller reviewed batches.';return;
+  }
+  masterDraft=next;for(const k of masterTaskFields)get(k).value='';
+  renderMasterDraft();get('masterResult').textContent='Task added locally; no Central changes.';
+});
+get('masterUndo').addEventListener('click',()=>{
+  if(masterBusy||masterRecovered)return;
+  masterDraft=masterDraft.slice(0,-1);renderMasterDraft();
+  get('masterResult').textContent='Last task removed locally. Review complete draft again.';
+});
+get('masterCatalog').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterCatalog').disabled)return;
+  const agent=masterIdentity().agent,revision=masterRevision;
+  masterBusy=true;masterCatalogAgent=null;masterCatalogItems=[];updateMasterControls();
+  const output=get('masterResult');
+  try{
+    const r=await api.listMasterProjects(agent);
+    if(revision!==masterRevision||masterIdentity().agent!==agent)return;
+    masterCatalogAgent=agent;masterCatalogItems=r.projects;
+    const select=get('masterProjectChoice');select.replaceChildren();
+    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Choose exact project';select.append(placeholder);
+    for(const p of r.projects){
+      const option=document.createElement('option');option.value=p.project_id;
+      option.textContent=p.display_name+' — '+p.repository+' / '+p.base_branch+' ('+p.project_id+')';select.append(option);
+    }
+    output.textContent=r.projects.length+' active projects loaded.'+(r.truncated?' Catalog capped at 100; use exact ID for other projects.':'')+' Baseline not verified.';
+  }catch(error){output.textContent='Project catalog blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterProjectChoice').addEventListener('change',()=>{
+  if(masterBusy||masterRecovered||masterCatalogAgent!==masterIdentity().agent)return;
+  const p=masterCatalogItems.find(x=>x.project_id===get('masterProjectChoice').value);
+  if(!p)return;
+  get('masterProject').value=p.project_id;clearMasterBaseline();invalidateMasterReview();
+  get('masterResult').textContent='Selected '+p.repository+' / '+p.base_branch+'. Independently review baseline SHA.';
+});
+function clearMasterBaseline(){
+  masterLocalBaseline=null;
+  get('masterBaselineStatus').textContent='Local tracking ref not inspected for current selection. Remote freshness is unverified.';
+}
+get('masterBaselineInspect').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterBaselineInspect').disabled)return;
+  const id=masterIdentity();
+  clearMasterBaseline();invalidateMasterReview();
+  const revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const status=get('masterBaselineStatus');
+  status.textContent='Select your trusted local Git checkout. No fetch or checkout will run.';
+  try{
+    const r=await api.inspectMasterBaseline(id.agent,id.project);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    if(r.canceled){status.textContent='Canceled. No baseline selected.';return;}
+    if(r.project_id!==id.project||r.local_tracking_ref_verified!==true||
+       r.remote_freshness_verified!==false||r.baseline_verified!==false||
+       r.automatic_execution_allowed!==false||!/^[a-f0-9]{40}$/.test(r.baseline_sha))
+      throw Error('Invalid local baseline observation');
+    masterLocalBaseline={agent:id.agent,project:id.project,sha:r.baseline_sha};
+    status.textContent=r.repository+' / '+r.tracking_ref+' — '+r.baseline_sha+
+      '\nTree: '+r.tree_sha+'. LOCAL ONLY; remote freshness and upstream changes are unverified. Use this exact SHA in each task.';
+    // Do not overwrite an existing task field or a previously reviewed draft.
+  }catch(error){status.textContent='Baseline inspection blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterBulkGroup').addEventListener('change',updateMasterControls);
+get('masterBulkInspect').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterBulkInspect').disabled)return;
+  const id=masterIdentity(),baseline=masterLocalBaseline;
+  invalidateMasterReview();
+  const revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const status=get('masterBulkStatus');
+  status.textContent='Choose the trusted local JSON declarations file. Nothing will be admitted.';
+  try{
+    const r=await api.inspectMasterBulkManifest(id.agent,id.project);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity())||baseline!==masterLocalBaseline||!masterAvailable)return;
+    if(r?.canceled===true){clearMasterBulkReview('Canceled. No manifest reviewed.');return;}
+    if(r?.schema!=='SUTRADHAR_BULK_REVIEW_V1'||r.baseline_sha!==baseline.sha||
+       !masterHash(r.file_sha256)||!masterHash(r.manifest_sha256)||
+       !Number.isSafeInteger(r.task_count)||r.task_count<2||r.task_count>100||
+       r.local_tracking_ref_verified!==true||r.local_draft_only!==true||
+       r.remote_freshness_verified!==false||r.semantic_discovery_verified!==false||
+       r.provider_sent!==false||r.automatic_admission_allowed!==false||r.automatic_execution_allowed!==false||
+       !Array.isArray(r.review_groups)||r.review_groups.length<1||r.review_groups.length>100||
+       r.review_group_count!==r.review_groups.length||
+       new Set(r.review_groups.map(g=>g.group_id)).size!==r.review_groups.length||
+       r.review_groups.some(g=>!/^review_[0-9]{3}$/.test(g.group_id)||g.group_id.length!==10||
+         !Array.isArray(g.ticket_ids)||g.ticket_ids.length<1||g.ticket_ids.length>10||!g.ticket_ids.every(masterId)||
+         typeof g.local_draft_import_allowed!=='boolean'||!Array.isArray(g.local_draft_import_blockers))||
+       new Set(r.review_groups.flatMap(g=>g.ticket_ids)).size!==r.task_count||
+       r.review_groups.reduce((n,g)=>n+g.ticket_ids.length,0)!==r.task_count)
+      throw Error('Invalid bulk review report');
+    masterBulkReview={agent:id.agent,project:id.project,revision,sha:baseline.sha,
+      fileDigest:r.file_sha256,manifestDigest:r.manifest_sha256,groups:r.review_groups};
+    get('masterBulkReport').value=JSON.stringify(r,null,2);
+    const select=get('masterBulkGroup');select.replaceChildren();
+    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Choose one reviewed group';select.append(placeholder);
+    for(const g of r.review_groups){
+      const option=document.createElement('option');option.value=g.group_id;
+      option.textContent=g.group_id+' — wave '+g.wave+' — '+g.ticket_ids.length+' task(s) — '+
+        (g.local_draft_import_allowed?'local draft eligible':'separate review required');
+      select.append(option);
+    }
+    status.textContent=r.task_count+' declared tasks, '+r.review_group_count+' review groups, '+
+      r.unresolved_declared_conflict_count+' unresolved declared conflict pairs; '+r.review_groups.filter(g=>g.local_draft_import_allowed).length+' groups eligible for local draft only. Advisory only. Review the full report before selection.';
+  }catch{clearMasterBulkReview('Bulk inspection blocked. Check current Master, trusted local file, exact baseline and declarations.');}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterBulkImport').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterBulkImport').disabled)return;
+  const id=masterIdentity(),saved=masterBulkReview,group=saved.groups.find(g=>g.group_id===get('masterBulkGroup').value);
+  if(!group||!group.local_draft_import_allowed)return;
+  if(!confirm('Load '+group.group_id+' into the local draft only? This replaces current unsaved draft/editor fields and clears the request ID, preview and consent. No Central admission.'))return;
+  const revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  try{
+    const r=await api.selectMasterBulkDraft(id.agent,id.project,saved.fileDigest,saved.manifestDigest,group.group_id);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity())||
+       saved!==masterBulkReview||!masterAvailable)return;
+    if(r?.schema!=='SUTRADHAR_BULK_GROUP_REVIEW_V1'||r.baseline_sha!==saved.sha||
+       r.file_sha256!==saved.fileDigest||r.manifest_sha256!==saved.manifestDigest||
+       r.group?.group_id!==group.group_id||!masterHash(r.group_review_sha256)||
+       r.local_draft_only!==true||r.central_admission_performed!==false||r.requires_fresh_central_preview!==true||
+       r.automatic_admission_allowed!==false||r.automatic_execution_allowed!==false||r.provider_sent!==false||
+       !Array.isArray(r.tasks)||r.tasks.length<2||r.tasks.length>10||
+       JSON.stringify(r.tasks.map(t=>t.ticket_id))!==JSON.stringify(group.ticket_ids)||
+       r.tasks.some(t=>t.baseline_sha!==saved.sha)||
+       new TextEncoder().encode(JSON.stringify(r.tasks)).length>65536)
+      throw Error('Invalid selected group');
+    masterDraft=r.tasks;
+    for(const k of masterTaskFields)get(k).value='';
+    get('masterRisk').value='LOW';
+    get('masterRequest').value='';
+    renderMasterDraft();
+    get('masterBulkStatus').textContent='Group loaded into local draft only. Enter a new request ID, review every field and obtain a fresh Central preview. Inspect the manifest again to select another group.';
+    get('masterResult').textContent='Local draft imported. No admission, provider or Git operation performed.';
+  }catch{clearMasterBulkReview('Group import blocked. The file, baseline, Master or selected group may have changed. Inspect again.');}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+function collectMasterDraft(){
+  const id=masterIdentity();
+  return {project_id:id.project,request_id:id.request,tasks:masterDraft,
+    editor:Object.fromEntries(Object.entries(masterEditorIds).map(([k,v])=>[k,get(v).value]))};
+}
+get('masterDraftSave').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterDraftSave').disabled)return;
+  const agent=masterIdentity().agent,revision=masterRevision,body=collectMasterDraft();
+  const expected=masterDraftVersion?.agent===agent?masterDraftVersion.sha:null;
+  masterBusy=true;invalidateMasterReview();const fence=masterRevision;updateMasterControls();
+  const output=get('masterDraftStatus');
+  try{
+    const r=await api.saveMasterUnconfirmedDraft(agent,body,expected);
+    if(fence!==masterRevision||masterIdentity().agent!==agent)return;
+    if(r.automatic_execution_allowed!==false||!Number.isSafeInteger(r.revision)||!masterHash(r.sha256))
+      throw Error('Invalid draft receipt');
+    masterDraftVersion={agent,sha:r.sha256};
+    output.textContent='Encrypted local draft saved, revision '+r.revision+'. No admission or preview saved.';
+  }catch(error){output.textContent='Draft save not verified: '+String(error?.message||error)+'. Load existing snapshot before replacing it.';}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterDraftLoad').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterDraftLoad').disabled)return;
+  if(!confirm('Load the saved unconfirmed draft for this agent, replacing current unsaved fields if one exists?'))return;
+  const agent=masterIdentity().agent;
+  clearMasterBaseline();invalidateMasterReview();const revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const output=get('masterDraftStatus');
+  try{
+    const r=await api.loadMasterUnconfirmedDraft(agent);
+    if(revision!==masterRevision||masterIdentity().agent!==agent)return;
+    if(r===null){masterDraftVersion=null;output.textContent='No saved draft for this agent and Central.';return;}
+    if(r.automatic_execution_allowed!==false||!Number.isSafeInteger(r.revision)||!masterHash(r.sha256)||!r.draft)
+      throw Error('Invalid saved draft');
+    const d=r.draft;
+    get('masterProject').value=d.project_id;get('masterRequest').value=d.request_id;
+    masterDraft=d.tasks;
+    for(const [k,v] of Object.entries(masterEditorIds))get(v).value=d.editor[k];
+    renderMasterDraft();masterDraftVersion={agent,sha:r.sha256};
+    output.textContent='Restored unconfirmed revision '+r.revision+'. Reinspect baseline and obtain a fresh Central preview; do not reuse an admitted request.';
+  }catch(error){output.textContent='Draft restore blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterSourceHints').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterSourceHints').disabled)return;
+  const id=masterIdentity(),revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const output=get('masterSourceStatus');output.textContent='Inspecting bounded immutable local source blobs…';
+  try{
+    const r=await api.inspectMasterSourceHints(id.agent,id.project,masterDraft);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    if(r.inspection_mode!=='AST_SYNTAX'||r.type_resolution_verified!==false||r.semantic_discovery_verified!==false||r.automatic_execution_allowed!==false||
+       r.provider_sent!==false||r.source_contents_returned!==false||!Array.isArray(r.hints)||!Array.isArray(r.ast_files)||
+       r.source_order_review?.declared_edges_changed!==false||r.source_order_review?.automatic_admission_allowed!==false||
+       r.source_order_review?.automatic_execution_allowed!==false||r.source_order_review?.semantic_discovery_verified!==false||
+       !Array.isArray(r.source_order_review?.source_order_comparisons)||!Array.isArray(r.source_order_review?.shared_dependency_reviews))
+      throw Error('Invalid source hint report');
+    output.textContent='ADVISORY REVIEW ONLY — declared dependency waves, review groups and bounded AST syntax hints are not execution permission. External dependencies, worker availability and semantic independence are unverified.\n'+
+      'Source-order review questions: '+r.source_order_review.source_order_review_count+'; shared dependency reviews: '+r.source_order_review.shared_dependency_review_count+'; unresolved references: '+r.ast_unknown_reference_count+'. No declared edges changed.\n'+JSON.stringify(r,null,2);
+  }catch(error){output.textContent='Source hint inspection blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterPlanningContext').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterPlanningContext').disabled)return;
+  const id=masterIdentity(),revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const output=get('masterPlanningContextStatus'),field=get('masterPlanningContextText');
+  field.value='';output.textContent='Preparing exact compact draft context…';
+  try{
+    const r=await api.buildMasterPlanningContext(id.agent,id.project,masterDraft);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    if(r.provider_sent!==false||r.secret_scan_verified!==false||r.token_usage_verified!==false||
+       r.automatic_execution_allowed!==false||typeof r.preview!=='string'||
+       !masterHash(r.context_sha256)||!Number.isSafeInteger(r.utf8_bytes)||r.utf8_bytes<1||r.utf8_bytes>16384||
+       !Number.isSafeInteger(r.bytes_saved)||r.bytes_saved<0)
+      throw Error('Invalid compact context');
+    field.value=r.preview;
+    output.textContent='Local only: '+r.utf8_bytes+' UTF-8 bytes; '+r.bytes_saved+
+      ' bytes saved versus expanded JSON. SHA-256: '+r.context_sha256+
+      '. No provider call, actual token measurement or secret scan. Independently review before manually sharing.';
+  }catch(error){output.textContent='Context preparation blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterRecover').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterRecover').disabled)return;
+  const agent=masterIdentity().agent,revision=masterRevision;
+  if(masterDraft.length&&!masterRecovered&&!confirm('Replace the current unsaved local draft with the pending reviewed admission, if one exists?'))return;
+  masterBusy=true;updateMasterControls();
+  const output=get('masterResult');
+  try{
+    const r=await api.recoverMasterBatchDraft(agent);
+    if(revision!==masterRevision||masterIdentity().agent!==agent)return;
+    if(!r.pending){masterRecovered=false;output.textContent='No unresolved local admission journal.';return;}
+    masterRecovered=true;clearMasterBaseline();masterDraft=r.tasks;
+    for(const k of masterTaskFields)get(k).value='';
+    get('masterProject').value=r.project_id;get('masterRequest').value=r.request_id;
+    renderMasterDraft();get('masterDigest').value=r.preview_sha256;
+    output.textContent='Recovered exact reviewed admission from encrypted journal (epoch '+r.epoch+'). Inspect historical receipt; never resend blindly.\nOriginal agent: '+agent+'\nProject: '+r.project_id+'\nRequest: '+r.request_id+'\nPreview SHA-256: '+r.preview_sha256+'\nOrdered tickets (one per line):\n'+r.plan_order.join('\n');
+  }catch(error){output.textContent='Local recovery blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterPreview').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterPreview').disabled)return;
+  const id=masterIdentity();invalidateMasterReview();
+  const revision=masterRevision;masterBusy=true;updateMasterControls();
+  const output=get('masterResult');output.textContent='Validating current Master and exact draft…';
+  try{
+    const r=await api.previewMasterBatch(id.agent,id.project,id.request,masterDraft);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    masterReview={...id,revision,digest:r.preview_sha256};
+    get('masterDigest').value=r.preview_sha256;
+    output.textContent='PREVIEW ONLY. Review the entire draft and admission summary; retain the request ID and digest. Local tracking ref observed; remote freshness and upstream changes are NOT verified. If a dependency needs future merged code, plan that task later.\n'+JSON.stringify(r,null,2);
+  }catch(error){output.textContent='Preview blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterCommit').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterCommit').disabled)return;
+  const id=masterIdentity(),digest=get('masterDigest').value,revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const output=get('masterResult');output.textContent='Native confirmation required; admitting exact reviewed batch once…';
+  try{
+    const r=await api.commitMasterBatch(id.agent,id.project,id.request,digest);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    if(!r.canceled)masterRecovered=false;
+    output.textContent=r.canceled?'Canceled. No admission requested. Preview again.':
+      'HISTORICAL ADMISSION RECEIPT — not current task state or execution permission.\n'+JSON.stringify(r,null,2);
+  }catch(error){output.textContent='Admission not verified: '+String(error?.message||error)+
+    '. Preserve exact draft, request ID and digest. Inspect historical receipt before another decision; no automatic retry.';}
+  finally{masterBusy=false;invalidateMasterReview({clearDigest:false});await loadStatus();}
+});
+get('masterReceipt').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterReceipt').disabled)return;
+  const id=masterIdentity(),digest=get('masterDigest').value,revision=masterRevision;
+  masterBusy=true;masterReview=null;get('masterReviewed').checked=false;updateMasterControls();
+  const output=get('masterResult');output.textContent='Reading historical receipt only…';
+  try{
+    const r=await api.inspectMasterBatchReceipt(id.agent,id.project,id.request,digest);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
+    masterRecovered=false;
+    output.textContent=(r.resolution?'OWNER-CANCELLED ADMISSION — original request permanently blocked in Central; no tickets admitted by this resolution. Review new work separately.\n':'HISTORICAL ADMISSION RECEIPT — not current task state.\n')+JSON.stringify(r,null,2);
+  }catch(error){output.textContent='Receipt not verified: '+String(error?.message||error)+
+    '. Do not assume non-admission or create a replacement batch; consult Owner if uncertain.';}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+function exactWorkerTicket(){
+  const ticket=get('workerTicket').value.trim();
+  if(!/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(ticket))
+    throw Error('Enter an exact ticket ID before claiming or verifying the lease.');
+  return ticket;
+}
+get('workerClaim').addEventListener('click',async()=>{
+  const button=get('workerClaim');button.disabled=true;
+  const output=get('workerTasks');
+  try{
+    const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+    output.textContent='Choose your already-trusted local Git checkout. You must confirm before any task is claimed.';
+    const r=await api.claimWorkerTask(agent,ticket);
+    output.textContent=r.canceled?
+      'Canceled. No new claim request was sent.':
+      'Central accepted task '+r.ticket_id+' for '+r.agent_id+
+      '. Isolated worktree: '+r.worktree+
+      '. Live lease verified; no AI, QA or Git push started. Claim must be checkpointed or renewed within Central limits.';
+  }catch(error){
+    output.textContent='Claim/recovery blocked: '+String(error?.message||error)+
+      '. Preserve any local worktree and pending journal. Retry only the same ticket, agent and trusted checkout if the Master epoch has not changed; otherwise ask Owner to reconcile.';
+  }finally{await loadStatus();}
+});
+get('workerResume').addEventListener('click',async()=>{
+  const button=get('workerResume');button.disabled=true;
+  const output=get('workerTasks');
+  try{
+    const r=await api.resumeWorkerTask(get('workerAgent').value,exactWorkerTicket());
+    output.textContent='Original work lease is live for '+r.agent_id+' / '+r.ticket_id+
+      ' (status '+r.status+'). Local branch: '+r.worktree+
+      '. This is a read-only continuity check; does not renew, run code or publish.';
+  }catch(error){
+    output.textContent='Signed lease verification blocked: '+String(error?.message||error)+
+      '. Do not use an expired/unknown task lease; contact Owner if recovery is uncertain.';
+  }finally{await loadStatus();}
+});
+
+get('workerCheckpoint').addEventListener('click',async()=>{
+  const button=get('workerCheckpoint'),output=get('workerTasks');
+  button.disabled=true;
+  try{
+    const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+    const summary=get('workerSummary').value,next=get('workerNextAction').value;
+    if(!summary.trim()||summary.length>8000||!next.trim()||next.length>500)
+      throw Error('Describe completed work and next action; do not include secrets.');
+    output.textContent='Checking current Master, original lease and local Git checkout…';
+    const r=await api.checkpointWorkerTask(agent,ticket,summary,next);
+    output.textContent=r.canceled?'Canceled; no new checkpoint sent.':
+      'Checkpoint generation '+r.checkpoint_generation+' verified by Central for '+
+      ticket+'. Lease remains bounded. No QA, Git push or automatic coding was started.'+
+      (r.replayed?' Original pending request replayed.':'');
+  }catch(error){
+    output.textContent='Checkpoint blocked: '+String(error?.message||error)+
+      '. Preserve any pending progress journal; repeat identical summary and next action only if the original lease is still valid. Otherwise ask Owner to reconcile.';
+  }finally{await loadStatus();}
+});
+get('workerRenew').addEventListener('click',async()=>{
+  const button=get('workerRenew'),output=get('workerTasks');
+  button.disabled=true;
+  try{
+    const ticket=exactWorkerTicket(),agent=get('workerAgent').value;
+    const reason=get('workerRenewReason').value;
+    if(reason.trim()!==reason||reason.length<12||reason.length>300)
+      throw Error('Enter a 12–300 character progress/recovery reason.');
+    output.textContent='Checking approved Master and the current worker lease…';
+    const r=await api.renewWorkerLease(agent,ticket,reason);
+    output.textContent=r.canceled?'Canceled; no renewal requested.':
+      'Central verified bounded lease extension for '+ticket+
+      '. Remaining lease: '+r.lease_seconds_remaining+
+      ' seconds at Central acknowledgment. No automatic work was started.'+
+      (r.replayed?' Original pending request replayed.':'');
+  }catch(error){
+    output.textContent='Renewal blocked: '+String(error?.message||error)+
+      '. Early renewal, expired lease, stale Master or spent four-hour budget cannot be bypassed. Preserve pending journal for Owner review.';
+  }finally{await loadStatus();}
+});
+
+get('workerSubmit').addEventListener('click',async()=>{
+  const button=get('workerSubmit'),output=get('workerTasks');
+  button.disabled=true;
+  try{
+    const agent=get('workerAgent').value,ticket=exactWorkerTicket();
+    output.textContent='Validating committed Git candidate and signed Central checkpoint…';
+    const r=await api.submitWorkerCandidate(agent,ticket);
+    if(r.canceled){
+      output.textContent='Canceled. No submission was sent.';
+    }else{
+      output.textContent='Central candidate record verified for '+ticket+
+        '. Git HEAD: '+r.candidate_head_sha+
+        '. Git tree: '+r.candidate_tree_sha+
+        '. Changed paths: '+r.changed_paths.join(', ')+
+        '. Status: SUBMITTED_FOR_REVIEW. No Git push, QA pass, merge or deployment performed.'+
+        (r.already_submitted?' Existing Central submission reconciled.':
+          (r.replayed?' Original pending request replayed.':''));
+    }
+  }catch(error){
+    output.textContent='Submission blocked: '+String(error?.message||error)+
+      '. Preserve the local Git worktree and pending submission journal. '+
+      'Do not change commits or send a new claim while Central status is uncertain; ask Owner to reconcile.';
+  }finally{await loadStatus();}
+});
+
+get('workerExport').addEventListener('click',async()=>{
+  const output=get('workerTasks');get('workerExport').disabled=true;
+  try{
+    const r=await api.exportCandidateHandoff(get('workerAgent').value,exactWorkerTicket());
+    output.textContent=r.canceled?'Export canceled; no files written.':
+      'Exported offline candidate bundle: '+r.bundle_path+
+      ' and manifest: '+r.manifest_path+
+      '. SHA256: '+r.bundle_sha256+
+      '. Move BOTH files to another approved QA PC using your trusted transfer method. '+
+      'This does not publish Git or approve QA.';
+  }catch(error){
+    output.textContent='Offline export blocked: '+String(error?.message||error)+
+      '. Preserve existing source and any previously exported files; do not overwrite uncertain handoffs.';
+  }finally{await loadStatus();}
+});
+get('workerQAInspect').addEventListener('click',async()=>{
+  const output=get('workerTasks');get('workerQAInspect').disabled=true;
+  try{
+    const r=await api.inspectQAHandoff(get('workerAgent').value,exactWorkerTicket());
+    output.textContent=r.canceled?'QA inspection canceled.':
+      'Independent QA handoff inspected ONLY. Exact Central candidate: '+
+      r.candidate_head_sha+' / tree '+r.candidate_tree_sha+
+      '. Bundle SHA256: '+r.bundle_sha256+
+      '. No objects entered your trusted checkout, no tests ran, and no QA approval was sent.';
+  }catch(error){
+    output.textContent='QA inspection blocked: '+String(error?.message||error)+
+      '. Do not execute the bundle or manually force a Git import. Ask the Owner to review the mismatch.';
+  }finally{await loadStatus();}
+});
+get('workerQARun').addEventListener('click',async()=>{
+  const output=get('workerTasks'),button=get('workerQARun');
+  button.disabled=true;
+  try{
+    const r=await api.runIndependentQa(get('workerAgent').value,exactWorkerTicket());
+    if(r.canceled){output.textContent='Sandbox run canceled. No test was executed.';}
+    else{output.textContent='Independent QA local Docker test recorded for '+r.ticket_id+
+      '. Candidate SHA '+r.candidate_head_sha+
+      '. Test result: '+(r.test_passed?'PASS in local sandbox':'FAIL / not proven')+
+      '. Evidence file: '+r.evidence_path+
+      '. No Central QA receipt, QA approval, Git publication or deployment was performed.';}
+  }catch(error){
+    output.textContent='QA sandbox execution blocked or uncertain: '+
+      String(error?.message||error)+
+      '. Do not repeat this ticket automatically. Preserve the local qa_started journal and ask the Owner to inspect Docker cleanup and exact hashes.';
+  }finally{await loadStatus();}
+});
+get('workerQARecover').addEventListener('click',async()=>{
+  const output=get('workerTasks'),button=get('workerQARecover');
+  button.disabled=true;
+  try{
+    const r=await api.runFrozenQaRecovery(get('workerAgent').value,exactWorkerTicket());
+    output.textContent=r.canceled?'Frozen QA test canceled; no Docker attempt started.':
+      'FROZEN candidate local QA evidence created for '+r.ticket_id+
+      '. Report '+r.evidence_path+'. Result '+(r.test_passed?'PASS':'FAILED')+
+      '. Now explicitly SIGN and UPLOAD the report. Owner must separately approve'+
+      ' evidence and restore the exact candidate before a QA receipt. '+
+      'No automatic Git publication, worker restart or QA approval happened.';
+  }catch(error){
+    output.textContent='Frozen QA review BLOCKED/UNCERTAIN: '+String(error?.message||error)+
+      '. Keep the original bundle, journal and Docker evidence. Do NOT repeat'+
+      ' this one-time run; request independent Owner recovery review.';
+  }finally{await loadStatus();}
+});
+get('workerQAAttest').addEventListener('click',async()=>{
+  const output=get('workerTasks'),button=get('workerQAAttest');
+  button.disabled=true;
+  try{
+    const r=await api.attestQaEvidence(get('workerAgent').value,exactWorkerTicket());
+    output.textContent=r.canceled?'QA evidence signing canceled; no signature created.':
+      'Device-signed LOCAL evidence for '+r.ticket_id+'. Exact Git SHA '+
+      r.candidate_head_sha+'; report SHA-256 '+r.evidence_sha256+
+      '. Signed file: '+r.local_attestation_path+
+      '. Give the Owner BOTH qa_result and qa_attested files, and independently verify '+
+      'the approved Central node public key fingerprint '+r.public_key_fingerprint_sha256+
+      '. This is not Central QA approval or Git publication.';
+  }catch(error){
+    output.textContent='QA evidence signing blocked: '+String(error?.message||error)+
+      '. Preserve local report and attempt journal; ask Owner to investigate tampering or changed Central candidate.';
+  }finally{await loadStatus();}
+});
+get('workerQAUpload').addEventListener('click',async()=>{
+  const output=get('workerTasks');get('workerQAUpload').disabled=true;
+  try{
+    const r=await api.submitQaEvidenceForOwner(get('workerAgent').value,
+      exactWorkerTicket());
+    output.textContent=r.canceled?'Central evidence upload canceled.':
+      'Central validated the QA device signature. Review ID: '+
+      r.review_proposal_id+'. Status: '+r.status+
+      '. Owner must inspect the original QA report and runner independently. '+
+      'No QA receipt, Git push or production deployment occurred.';
+  }catch(error){
+    output.textContent='Central QA evidence upload blocked/uncertain: '+
+      String(error?.message||error)+
+      '. Preserve immutable local journal. Retry only the exact agent/ticket.';
+  }finally{await loadStatus();}
+});
+get('workerQAReceipt').addEventListener('click',async()=>{
+  const output=get('workerTasks');get('workerQAReceipt').disabled=true;
+  try{
+    const r=await api.submitOwnerReviewedQaReceipt(get('workerAgent').value,
+      exactWorkerTicket());
+    output.textContent=r.canceled?'QA receipt canceled.':
+      'Central reviewed QA receipt: '+r.status+
+      ', exact ticket '+r.ticket_id+
+      '. This DOES NOT perform Git publication, merge or deployment.';
+  }catch(error){
+    output.textContent='QA receipt denied/uncertain: '+
+      String(error?.message||error)+
+      '. Never bypass Owner approval or repeat with a new request ID.';
+  }finally{await loadStatus();}
+});
+get('workerGitPublish').addEventListener('click',async()=>{
+  const output=get('workerTasks'),button=get('workerGitPublish');
+  button.disabled=true;
+  try{
+    const r=await api.publishReviewedGitBranch(get('workerAgent').value,
+      exactWorkerTicket());
+    output.textContent=r.canceled?'Git publication cancelled; no remote write.':
+      'Central verified exact remote Git branch '+r.repository+'/'+r.branch+
+      ' at commit '+r.remote_head_sha+'. Status '+r.status+
+      '. No PR created, merge or production deployment performed.';
+  }catch(error){
+    output.textContent='Git publication blocked or outcome uncertain: '+
+      String(error?.message||error)+
+      '. DO NOT CLICK AGAIN or re-push. Preserve git_publish intent; '+
+      'Owner must inspect the exact remote branch and Central recovery queue.';
+  }finally{await loadStatus();}
+});

@@ -14,7 +14,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, List, Optional
 
-from core.crypto_signer import CryptoSigner
 from core.llm_router import LLMRouter
 from core.patch_validator import PatchValidator
 
@@ -141,17 +140,13 @@ class SequentialWorker:
                 )
 
                 if test_proc.returncode == 0:
+                    # Workers must never possess or use the master's private signing key.
+                    # A trusted master must issue the ticket-scoped lease before execution.
                     token_header = lease_token or ""
-                    if not token_header and self.privkey_path and os.path.exists(self.privkey_path):
-                        token_header = CryptoSigner.sign_lease(
-                            ticket_id=ticket_id,
-                            worker_id=self.node_id,
-                            epoch_id=epoch_id,
-                            allowed_files=allowed_files,
-                            ttl_seconds=3600,
-                            private_key_path=self.privkey_path,
-                        )
-                    
+                    if not token_header:
+                        print("[SECURITY] Missing master-issued lease; refusing commit/push.", file=sys.stderr)
+                        return False
+
                     commit_msg = (
                         f"feat({ticket_id}): verified autonomous implementation\n\n"
                         f"Security-Token: {token_header}\n"

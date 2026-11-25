@@ -1,0 +1,187 @@
+# SUTRADHAR v7 — Independent staging restore and signed evidence-file verification
+
+Date: 20 November 2026. Alpha. Owner-controlled operator procedure; never production release approval.
+
+## Separate systems and proof boundaries
+
+SUTRADHAR uses one monorepo with two independently deployable products: MySQL/Node Central on Hostinger and separately released Windows Desktop PCs. Only disposable CI MySQL is operated automatically by repository tests. The scripts in this guide are offline/operator-only; no live Hostinger account, production database, real Windows PC or actual Owner keys were used.
+
+Encrypted backup authentication proves the archive format and AES-256-GCM tag. Restoring into an initially empty, separately named staging database proves only that MySQL accepted the dump. The new independent read-only content verifier additionally compares the CURRENT source and restored target snapshots: tables, full column inventory, indexes, internal foreign keys, deterministic primary keys, counts, and cryptographic row digests. **It does not prove that the source was unchanged between the historical backup and verification**. For authoritative recovery, independently freeze source writes at backup, document time and source/target server identities, and retain the protected Hostinger deployment/backup logs. Use a DBA and restrict both database logins to read-only SELECT when running verification. If source was modified, stop and do not interpret a mismatch as grounds to overwrite anything.
+
+## Owner workflow (no coding required)
+
+1. Provision an isolated Hostinger staging website and two distinct databases with approved access; never connect the current draft fix branch directly to production. Record full approved source SHA, backup source, restored target and staging URL in a private evidence register.
+2. Approve and run the existing encrypted backup tool on a trusted operator workstation after source quiescence. Record its encrypted archive SHA-256 receipt and keep the backup key off GitHub/chat. Authenticate the archive with ops:verify-backup.
+3. Approve an initially EMPTY test/staging target DB and run existing ops:restore-staging only there. Never restore over a nonempty DB, production schema, or another Owner's staging database.
+4. Switch to dedicated read-only MySQL credentials that can SELECT both source and restored databases on the approved DB host. Review the exact environment names below. Run ops:verify-staging-restore. Keep the receipt in a separate access-controlled Owner evidence folder; do not publish raw database rows, credentials or the decrypted backup.
+5. Independently review that the backup and restored state relate to the same frozen source, the real Hostinger deployment log, schema migration plan, test cases, measured restore time and risk assessment. A matching row digest alone does not justify production rollout or migration.
+6. Only after separately gathering real CI, Hostinger, Windows signing and physical-PC evidence for G0–G7, produce an Owner-signed acceptance index. Run existing ops:verify-owner-acceptance for signature/format checks. Then optionally run ops:verify-owner-evidence-files with separate private local file mapping to confirm each of the eight referenced hashes matches real accessible local bytes. Both verification commands remain inspection-only and never grant production permission.
+
+## Operator-only environment for approved **empty staging restore**
+
+Use a separate MySQL **restore-only** login with privileges only on the new, EMPTY
+staging schema. Never use the Central runtime login, root/admin, a shared hosting
+superuser, or a username that can read/write the source or production database.
+Have an independent DBA check the real effective privileges/roles in MySQL,
+then store these values privately on the trusted operator machine:
+
+- DB_HOST, DB_PORT: approved reachable staging DB endpoint. Obtain connection instructions from Hostinger; never expose the DB port publicly merely to make the CLI work.
+- DB_NAME: exact name of the frozen backup's SOURCE database; this is a metadata binding, not permission to access it from the restore login.
+- DB_USER, DB_PASSWORD: dedicated STAGING restore login and its protected password.
+- SUTRADHAR_EXPECTED_RESTORE_DB_USER: the **exact same approved** staging DB_USER, entered separately by the Owner. Mismatch blocks the restore before connection.
+- SUTRADHAR_TARGET_DB_NAME: exact EMPTY, separately named staging schema. Its name must contain an approved staging/test token.
+- SUTRADHAR_EXPECTED_TARGET_DB_NAME: Owner's separate exact repeated target name.
+- SUTRADHAR_RESTORE_STAGING_APPROVED=yes: Owner approval for this one staging action, not blanket future permission.
+- SUTRADHAR_ENCRYPTED_BACKUP_PATH: absolute path to immutable encrypted archive verified separately.
+- SUTRADHAR_BACKUP_KEY_BASE64: source backup's AES-256 key, loaded from an off-repository secrets manager.
+
+Only after checking the actual server, target emptiness and restricted grants,
+run **npm run ops:restore-staging**. This command sends decrypted SQL directly
+to the local MySQL client; it does not create a plaintext SQL disk file and
+does not run on Hostinger itself. On any error, STOP: MySQL DDL can partially
+commit, so do not automatically retry or reuse the target. Archive authentication,
+SQL preflight, exact user/target binding and the empty-schema check are
+necessary safeguards, **not guarantees of total SQL safety or server permissions**.
+Do not treat a printed restore receipt as acceptance; continue with the
+independent read-only verification below.
+
+## Operator-only environment for read-only staging restore verification
+
+Set these values privately on a trusted workstation, not in a PR, terminal recording or chat:
+
+- DB_HOST, DB_PORT, DB_USER, DB_PASSWORD: restricted MySQL credentials with read access to BOTH databases on that host.
+- DB_NAME: exact original approved backup SOURCE database name.
+- SUTRADHAR_TARGET_DB_NAME: separate, previously restored STAGING database name.
+- SUTRADHAR_RESTORE_VERIFY_SOURCE_DB_NAME: exact repeated source DB name authorized by Owner.
+- SUTRADHAR_EXPECTED_TARGET_DB_NAME: exact repeated staging target name.
+- SUTRADHAR_RESTORE_VERIFY_APPROVED=yes: explicit current Owner approval for this read-only comparison.
+- SUTRADHAR_ENCRYPTED_BACKUP_PATH: full absolute path to immutable encrypted archive.
+- SUTRADHAR_BACKUP_KEY_BASE64: original 32-byte AES key encoded as base64, loaded from trusted secrets manager.
+- SUTRADHAR_RESTORE_VERIFY_BACKUP_SHA256: exact 64-character encrypted backup SHA-256 printed by backup creation.
+
+Then run **npm run ops:verify-staging-restore**.
+
+The verifier authenticates the immutable encrypted archive before database access. It opens separately named MySQL databases in REPEATABLE READ consistent read-only transactions. It never issues DDL/DML, logs passwords, writes decrypted dumps, or authorizes deployments. It refuses untrusted table names/engines, non-primary-key tables, schema/foreign-key/index drift, row-count mismatches, or changed row content. Read volumes are deliberately bounded (128 tables, 100,000 rows per table, 500,000 total rows, 1 MiB maximum per row, 256 MiB total row bytes). Larger datasets require a separately reviewed operator procedure; NEVER silently skip tables or truncate data and label it PASS. The operator must verify actual privileges, source quiescence and timing independently. A CI test uses disposable MySQL, real mysqldump/restore and a negative tampered-row test.
+
+## Owner acceptance: verify actual local evidence bytes, never self-attest
+
+The offline signed envelope already accepted by ops:verify-owner-acceptance has eight G0–G7 entries with evidence_sha256 fields. Create a separate small, private local mapping JSON file of the following shape (replace placeholders with actual absolute paths on the reviewing workstation):
+
+{
+  "schema": 1,
+  "artifacts": [
+    {"gate_id":"G0","path":"/private/evidence/g0.bin"},
+    {"gate_id":"G1","path":"/private/evidence/g1.bin"},
+    {"gate_id":"G2","path":"/private/evidence/g2.bin"},
+    {"gate_id":"G3","path":"/private/evidence/g3.bin"},
+    {"gate_id":"G4","path":"/private/evidence/g4.bin"},
+    {"gate_id":"G5","path":"/private/evidence/g5.bin"},
+    {"gate_id":"G6","path":"/private/evidence/g6.bin"},
+    {"gate_id":"G7","path":"/private/evidence/g7.bin"}
+  ]
+}
+
+Privately configure: SUTRADHAR_OWNER_ACCEPTANCE_FILE, SUTRADHAR_OWNER_ACCEPTANCE_PUBLIC_KEY_FILE, SUTRADHAR_EXPECTED_COMMIT_SHA and SUTRADHAR_OWNER_EVIDENCE_MAP_FILE (all exact files/paths; the first three are the same settings used by the existing verifier). Run **npm run ops:verify-owner-evidence-files**.
+
+The new verifier first checks the Ed25519 signature/format of the eight-gate Owner envelope using independently pinned public key, then opens each of the eight separate local evidence files read-only. It refuses symlinked or missing files, duplicates, changed files, wrong SHA-256, and files larger than 64 MiB. The output contains only gate IDs, sizes and hashes—not raw evidence. Success proves byte integrity relative to an Owner-signed index, NOT that a real Hostinger/Windows/rollback test occurred or a reviewer told the truth. Independent reviewer must open and examine the underlying original files; actual G0–G7 acceptance and release sign-off remain **Owner-controlled real-world processes**.
+
+## Alpha safety status
+
+Do not connect production databases, sign/install Windows packages or merge main based on these tests. No migration is run by these inspection commands. Owner acceptance gate and production_release_authorized flags remain FALSE even with all valid local hashes. Continue real staging, distinct physical Windows PCs, protected GitHub branch checks, authorized signed installer and rollback gates before promotion.
+
+## 23 November 2026 — Immutable backup destination / offline verifier
+
+Backup now publishes fully written, fsynced ciphertext via an **exclusive
+same-directory hard link**, which never replaces a pre-existing archive even
+when two processes race the same path. Supported operator destination
+filesystems must support hard links (e.g. NTFS/ext4); a missing hard-link
+capability means STOP, not a fallback to overwriting rename. Protect a
+separate off-host copy as usual. `npm run ops:verify-backup` now requires
+only `DB_NAME`, the protected AES key, and the absolute encrypted file —
+not MySQL login credentials. It rejects symlinked/oversize files. Restore
+still demands actual DB credentials and exact staging-target Owner approval,
+validated before decrypting the archive. Plaintext is zeroed best-effort
+after verify or restore, but JS copies and child-memory cannot be guaranteed
+erased. Code/CI proof does not replace real Hostinger G2 acceptance.
+
+
+## 23 November 2026 — Descriptor-safe archive reads, no path-switch window
+
+Both `ops:verify-backup`/`ops:restore-staging` and
+`ops:verify-staging-restore` formerly did a safe-looking `lstatSync`
+and then **read by pathname again**, creating a file/symlink swap window.
+They now share `scripts/ops/backup-safe-read.cjs`: open the exact
+archive as a read-only OS file descriptor, request O_NOFOLLOW where
+supported, compare initial lstat with opened fstat, perform an exact
+bounded positional read, then verify both the still-open descriptor
+and on-disk pathname identify the same unchanged regular file. The
+maximum encrypted archive remains `2 * 80 MiB`; no unbounded
+`readFileSync` fallback is permitted. Negative tests deliberately
+replace the archive with a symlink between lstat and open, replace
+a regular file while reading, and simulate premature EOF. Any such
+uncertainty blocks offline authentication/staging verification before
+decrypting or connecting to MySQL. AES-GCM authentication and Owner
+staging target approval remain separately mandatory.
+
+This protects a single operator-process read against the described
+path swap, **not** against arbitrary privileged file changes after
+verification, a malicious operator host, or historical source mutations.
+Real encrypted off-host backup/restore on Owner-provisioned Hostinger
+staging is still G2 HOLD.
+
+
+## 23 November 2026 — SQL restore preflight plus binary-mode
+
+Owner-controlled encrypted backups remain authenticated by AES-GCM,
+but encrypted SQL content is not proof that every executable SQL
+instruction remains within the target schema. The staging-only restore
+now scans bounded UTF-8 SQL (including versioned executable comments)
+and rejects direct/comment-prefixed USE, CREATE/DROP/ALTER/RENAME
+DATABASE/SCHEMA, privilege/user/global commands, and client shell/source
+escapes before making any target DB connection. Ordinary mysqldump
+header/set/trigger directives and quoted data containing dangerous
+words remain supported. The mysql subprocess uses --binary-mode to
+suppress noninteractive mysql client commands except charset and
+delimiter, per the MySQL 8.4 client options manual at
+https://dev.mysql.com/doc/refman/8.4/en/mysql-command-options.html.
+
+This is defense in depth, not a complete MySQL SQL parser, not a
+cross-schema access control, and not a substitute for an account
+restricted to an initially EMPTY, isolated staging schema. The
+Owner must independently validate credential privileges, archive
+provenance, real restore result, migration and post-restore evidence.
+All G2 real-environment acceptance remains HOLD.
+
+
+## 23 November 2026 — Cross-schema table/routine reference containment
+
+The staging restore's authenticated SQL lexical preflight now rejects
+explicit schema-qualified table names and routine calls in normal and
+versioned executable comments. Covered examples include CREATE/DROP
+TABLE, INSERT/REPLACE/UPDATE/DELETE, FROM/JOIN, DROP TABLE IF EXISTS,
+CREATE INDEX ON, CREATE TRIGGER ON and CALL. Qualified columns in
+ordinary expressions remain accepted. A lexical check cannot replace
+server-side database permissions or prove that all SQL is safe; use a
+single-empty-staging-schema-only login without global/production rights
+and independently inspect the real Hostinger restore. G2 stays HOLD.
+
+
+## 23 November 2026 — Exact restore-user binding (no privileged accounts)
+
+The staging restore CLI now requires an Owner-reviewed
+SUTRADHAR_EXPECTED_RESTORE_DB_USER environment variable, matching
+the actual DB_USER exactly. It refuses obvious administrative usernames
+(root, admin, administrator, superuser, dba) even when manually
+self-approved. The sole root exception is the disposable CI fixture
+with NODE_ENV=test, loopback 127.0.0.1, both exact fixed CI database
+names and the disposable-only sentinel; it is not a production option.
+The check runs after authenticated SQL preflight but before opening
+the MySQL connection or executing any DDL/DML. The new pure guard
+tests cover mismatches, privileged names and all CI exception fences,
+and the real MySQL integration test explicitly binds its disposable
+root username. This prevents a class of accidental operator
+misconfiguration but **does not inspect server-side GRANT statements
+or prove least privilege**. Owner/DBA must independently validate the
+actual staging login has no rights outside the approved, empty staging
+schema, including roles and server-level privileges. No live database
+credentials were used. G2 HOLD.

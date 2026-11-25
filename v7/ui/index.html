@@ -1,0 +1,264 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>SUTRADHAR v7 — Central</title>
+<link rel="stylesheet" href="/app.css"></head>
+<body><div class="shell"><header><div><div class="eyebrow">SUTRADHAR / CENTRAL</div>
+<h1>Cluster control <span class="v">v7.0</span></h1><p>MySQL-authoritative control plane · No simulated nodes</p></div>
+<div id="connection" class="chip">Not connected</div></header>
+<section class="credential"><label for="key">Owner API key (held in this tab only; never saved)</label>
+<div class="flex"><input id="key" type="password" placeholder="Enter the 32+ character owner key" autocomplete="off">
+<button id="connect">Connect</button><button id="disconnect" class="outline">Disconnect</button></div>
+<p id="message" class="message" role="status"></p></section>
+<section id="dashboard" hidden><div class="summary">
+<article><div class="eyebrow">Current master</div><strong id="master">—</strong><small id="tenure">—</small></article>
+<article><div class="eyebrow">Epoch & phase</div><strong id="epoch">—</strong><small id="phase">—</small></article>
+<article><div class="eyebrow">Backup order</div><strong id="backup1">—</strong><small id="backup2">—</small></article>
+<article><div class="eyebrow">Control</div><strong id="paused">—</strong><small id="lease">—</small></article></div>
+<section class="panel" aria-labelledby="leadership-safety-title">
+<div class="panelhead"><h2 id="leadership-safety-title">Leadership safety — read-only Owner diagnosis</h2>
+<strong id="leadership-safety-status" role="status">Not inspected</strong></div>
+<p id="leadership-safety-details">No recovery approval is implied. This displays Central MySQL observations only; it never elects a Master or restarts a PC.</p>
+<small>Distinct enrolled node IDs are not proof of separate physical Windows machines. Verify actual PCs, active work and Git reconciliation independently.</small>
+</section>
+<section class="panel owner" aria-labelledby="worker-expiry-title">
+<div class="panelhead"><h2 id="worker-expiry-title">Expired worker — Owner recovery</h2><strong id="worker-expiry-status" role="status">Not inspected</strong></div>
+<p>Read-only Central MySQL observations. Worker expiry does not prove external Git stopped. Quarantine preserves checkpoints and reservations; it NEVER reassigns work or starts an installer.</p>
+<div class="scroll"><table><thead><tr><th>Ticket</th><th>Worker</th><th>State</th><th>Expired seconds</th><th>Review</th></tr></thead><tbody id="worker-expiry-rows"></tbody></table></div>
+<div class="formgrid"><div><label for="worker-expiry-ticket">Exact eligible ticket ID</label><input id="worker-expiry-ticket" autocomplete="off" spellcheck="false" maxlength="100"></div>
+<div><label for="worker-expiry-reason">Owner reason (20–500 characters)</label><textarea id="worker-expiry-reason" rows="3" maxlength="500" autocomplete="off" spellcheck="false"></textarea></div></div>
+<div class="flex"><button id="worker-expiry-quarantine" type="button" class="danger" disabled>Quarantine expired worker ONLY</button><button id="worker-expiry-clear" class="outline" type="button">Clear local retry after review</button></div>
+<p id="worker-expiry-action-status" role="status">No action attempted. Separate Owner Git reconciliation is required before any requeue.</p>
+</section>
+<section class="panel" aria-labelledby="node-recovery-title">
+<div class="panelhead"><h2 id="node-recovery-title">PC crash recovery — Owner MySQL observation only</h2>
+<strong>HOLD · no restart grant</strong></div>
+<p>For an original Windows PC with an orphaned child-session marker: enter its exact Central node ID. The snapshot reads accepted counters, public key fingerprint, Master epoch, active work, Git and maintenance records. It cannot decrypt the original PC or authorize marker deletion.</p>
+<div class="flex"><label for="node-recovery-input">Original PC node ID</label>
+<input id="node-recovery-input" placeholder="node_ + 32 lowercase hex digits" autocomplete="off" spellcheck="false" maxlength="37">
+<button id="node-recovery-inspect" class="outline" type="button">Inspect Central recovery snapshot (GET only)</button></div>
+<pre id="node-recovery-results" role="status" aria-live="polite">Not inspected. Keep original Windows evidence and session marker.</pre>
+<small>Central MySQL is authoritative for accepted counters. This un-signed Owner GET does not independently prove the local PC, physical shutdown, full QA/Git reconciliation, DPAPI key custody, or readiness to restart.</small>
+<div class="formgrid">
+<div><label for="node-recovery-pin">Independently verified original enrollment key fingerprint (SHA-256 hex)</label>
+<input id="node-recovery-pin" type="text" autocomplete="off" spellcheck="false" maxlength="64" placeholder="64 lowercase hex characters from separate Owner enrollment record">
+<p>Do NOT copy the pin from the Central response you are checking.</p></div>
+<div><label for="node-recovery-local-json">Original PC read-only crash diagnostic JSON (paste only the inspection result)</label>
+<textarea id="node-recovery-local-json" rows="6" maxlength="16000" autocomplete="off" spellcheck="false" placeholder="Paste the JSON object shown by Windows Desktop Inspect crash evidence; never paste keys or vault files"></textarea>
+<p>Local evidence stays in this browser tab. Crosscheck sends only the Node ID in two consecutive Owner GET requests; it never uploads pasted JSON or the fingerprint. Changes between snapshots, oversized sampling gaps or browser clock skew are flagged, never automatically reconciled.</p></div>
+</div>
+<button id="node-recovery-crosscheck" class="outline" type="button">Compare local report with fresh Central snapshot (GET only)</button>
+<pre id="node-recovery-crosscheck-results" role="status" aria-live="polite">Not compared. Independently verified enrollment key fingerprint and original PC diagnostic required. Every result remains HOLD.</pre>
+<button id="node-recovery-save-bundle" class="outline" type="button" disabled>Save exact read-only review input bundle (offline JSON)</button>
+<pre id="node-recovery-bundle-results" role="status" aria-live="polite">No export prepared. After a valid dual GET crosscheck, click to save the evidence input file locally. This is never a recovery grant.</pre>
+<small>The bundle contains selected local diagnostic hashes, original enrollment fingerprint and Central status. It does not contain your Owner API key, raw OS-vault contents or private keys. Store the downloaded JSON privately; there is no upload or automatic export.</small>
+</section>
+<div class="grid"><section class="panel"><div class="panelhead"><h2>Registered agents</h2><span id="agentCount"></span></div>
+<div class="scroll"><table><thead><tr><th>Agent</th><th>Machine</th><th>Approval</th><th>Heartbeat</th></tr></thead><tbody id="agents"></tbody></table></div></section>
+<section class="panel"><div class="panelhead"><h2>Projects</h2><span id="projectCount"></span></div>
+<div class="scroll"><table><thead><tr><th>Project</th><th>Repository</th><th>Status</th></tr></thead><tbody id="projects"></tbody></table></div></section>
+<section class="panel"><div class="panelhead"><h2>Task lifecycle</h2><span id="taskCount"></span></div>
+<div class="scroll"><table><thead><tr><th>Ticket</th><th>Worker</th><th>Status</th><th>Version</th></tr></thead><tbody id="tasks"></tbody></table></div></section>
+<section class="panel"><div class="panelhead"><h2>Audit events</h2><span id="auditCount"></span></div>
+<div class="scroll"><table><thead><tr><th>When (UTC)</th><th>Event</th><th>Actor</th></tr></thead><tbody id="audit"></tbody></table></div></section></div>
+<section class="panel owner" aria-labelledby="provider-registry-title">
+<div class="panelhead"><h2 id="provider-registry-title">Provider workspace registry</h2><strong id="provider-registry-version">Not loaded</strong></div>
+<p>Manage non-secret local aliases for approved project developers. This does not log into ChatGPT or Google AI Studio, verify provider permission, terminate sessions or authorize automation.</p>
+<button id="provider-registry-load" class="outline" type="button">Load current registry / discard local draft</button>
+<p id="provider-registry-status" role="status" aria-live="polite">Load current registry before editing. No automatic save.</p>
+<div class="scroll"><table><thead><tr><th>Project ID</th><th>Agent ID</th><th>Provider</th><th>Account alias</th><th>Workspace alias</th><th>Draft action</th></tr></thead><tbody id="provider-registry-rows"></tbody></table></div>
+<div class="formgrid">
+<div><label for="provider-project">Exact project ID</label><input id="provider-project" maxlength="100" autocomplete="off" spellcheck="false" placeholder="project_example">
+<label for="provider-agent">Exact developer agent ID</label><input id="provider-agent" maxlength="100" autocomplete="off" spellcheck="false" placeholder="agent_pc01">
+<label for="provider-kind">Provider</label><select id="provider-kind"><option value="CHATGPT_WEB">ChatGPT Web</option><option value="GOOGLE_AI_STUDIO">Google AI Studio</option></select></div>
+<div><label for="provider-account">Local account alias (not email)</label><input id="provider-account" maxlength="72" autocomplete="off" spellcheck="false" placeholder="account_operator01">
+<label for="provider-workspace">Local workspace alias (not URL)</label><input id="provider-workspace" maxlength="106" autocomplete="off" spellcheck="false" placeholder="workspace_project01">
+<button id="provider-registry-add" class="outline" type="button" disabled>Add to local draft</button></div>
+</div>
+<p>To change an existing binding, remove it from the local draft and add its replacement. Nothing changes in MySQL until you save the entire reviewed list. Removing all rows and saving revokes all local declarations.</p>
+<label class="inline" for="provider-registry-consent"><input id="provider-registry-consent" type="checkbox"> I reviewed the complete replacement list, including any removals. At version 0 this permanently supersedes ALL legacy environment declarations, which are not displayed here.</label>
+<div class="flex"><button id="provider-registry-save" type="button" disabled>Save exact reviewed registry</button></div>
+<small>Never enter credentials, emails, URLs, cookies or provider tokens. If a response is uncertain, reload current Central state before another edit; an accepted command is not necessarily the current revision. No automatic retry.</small>
+</section>
+<section class="panel owner" aria-labelledby="provider-recovery-title">
+<div class="panelhead"><h2 id="provider-recovery-title">Interrupted provider attempt — Owner review</h2><strong>HOLD · no automatic retry</strong></div>
+<p>Inspect the recorded attempt for an exact ticket. Only an unresolved attempt on a revoked original lease and a ticket already in RECONCILIATION_REQUIRED may be closed here. Closure is not provider logout, task requeue, lease renewal or proof of external effects.</p>
+<label for="provider-recovery-ticket">Exact ticket ID</label><input id="provider-recovery-ticket" maxlength="100" autocomplete="off" spellcheck="false" placeholder="ticket_example">
+<button id="provider-recovery-load" class="outline" type="button">Inspect current attempt</button>
+<pre id="provider-recovery-status" role="status" aria-live="polite">Not inspected. Preserve the original session and worktree evidence.</pre>
+<label for="provider-recovery-attempt">Retype the exact displayed attempt ID</label><input id="provider-recovery-attempt" maxlength="40" autocomplete="off" spellcheck="false" disabled>
+<label class="inline" for="provider-recovery-session"><input id="provider-recovery-session" type="checkbox" disabled> Independently reviewed the actual external provider session and uncertain effects.</label>
+<label class="inline" for="provider-recovery-worktree"><input id="provider-recovery-worktree" type="checkbox" disabled> Independently reviewed the original local worktree and checkpoint evidence.</label>
+<label class="inline" for="provider-recovery-no-retry"><input id="provider-recovery-no-retry" type="checkbox" disabled> I understand this records closure only; no automatic retry or reassignment.</label>
+<button id="provider-recovery-close" type="button" disabled>Record exact Owner review and close attempt ONLY</button>
+<small>On uncertain response, inspect current state again. Do not repeat an external operation. Separate normal task reconciliation and Git/QA gates remain mandatory.</small>
+</section>
+<section class="panel owner" aria-labelledby="batch-recovery-title">
+<div class="panelhead"><h2 id="batch-recovery-title">Interrupted Master admission — Owner reconciliation</h2><strong>HOLD · no automatic retry</strong></div>
+<p>Use the exact recovered Desktop journal identifiers and ordered tickets. No receipt is not proof of non-admission. Cancellation permanently reserves the original request key; it never deletes tasks or authorizes new work.</p>
+<label for="batch-recovery-agent">Original agent ID</label><input id="batch-recovery-agent" maxlength="100" autocomplete="off" spellcheck="false">
+<label for="batch-recovery-project">Exact project ID</label><input id="batch-recovery-project" maxlength="100" autocomplete="off" spellcheck="false">
+<label for="batch-recovery-request">Original batch request ID</label><input id="batch-recovery-request" maxlength="100" autocomplete="off" spellcheck="false">
+<label for="batch-recovery-digest">Original preview SHA-256</label><input id="batch-recovery-digest" maxlength="64" autocomplete="off" spellcheck="false">
+<label for="batch-recovery-order">Exact ordered ticket IDs from recovered journal (one per line)</label><textarea id="batch-recovery-order" rows="4" maxlength="1010" spellcheck="false"></textarea>
+<button id="batch-recovery-load" class="outline" type="button">Inspect historical admission</button>
+<pre id="batch-recovery-status" role="status" aria-live="polite">Not inspected. Preserve all original evidence.</pre>
+<label class="inline"><input id="batch-recovery-evidence" type="checkbox" disabled> I independently reviewed the original journal, exact ordered tickets, database history/restore and uncertain effects.</label>
+<label class="inline"><input id="batch-recovery-no-retry" type="checkbox" disabled> Permanently block this exact original request. No automatic retry, deletion, task creation or reassignment.</label>
+<button id="batch-recovery-cancel" type="button" disabled>Record permanent admission cancellation ONLY</button>
+</section>
+<section class="panel owner" aria-labelledby="provider-usage-title">
+<div class="panelhead"><h2 id="provider-usage-title">Provider usage — independently observed counts</h2><strong>Not provider API verified</strong></div>
+<p>Record actual displayed per-attempt input/output counts only if the provider exposes them and you independently matched them to the exact closed attempt. Do not guess from context bytes. Missing readings remain unknown. No quota or spending authorization.</p>
+<label for="usage-ticket">Exact ticket ID</label><input id="usage-ticket" maxlength="100" autocomplete="off" spellcheck="false">
+<button id="usage-load" class="outline" type="button">Inspect historical attempts and recorded totals</button>
+<pre id="usage-status" role="status" aria-live="polite">Not inspected.</pre>
+<label for="usage-attempt">Exact eligible closed attempt ID</label><select id="usage-attempt" disabled><option value="">Inspect ticket first</option></select>
+<label for="usage-input">Displayed input token count</label><input id="usage-input" inputmode="numeric" maxlength="10" autocomplete="off" disabled>
+<label for="usage-output">Displayed output token count</label><input id="usage-output" inputmode="numeric" maxlength="10" autocomplete="off" disabled>
+<label for="usage-cached">Displayed cached input count (blank = unknown; subset of input, never additional)</label><input id="usage-cached" inputmode="numeric" maxlength="10" autocomplete="off" disabled>
+<label class="inline"><input id="usage-reviewed" type="checkbox" disabled> I independently matched the actual provider display to this exact attempt and context digest. This is a permanent Owner-attested reading, not a provider-verified receipt.</label>
+<button id="usage-save" type="button" disabled>Record exact observed usage once</button>
+</section>
+<section class="panel owner"><h2>Owner operations</h2><p>Every mutation has an idempotent server receipt. Protected Git merges and deployments cannot be triggered here.</p>
+<div class="flex"><button data-command="PAUSE" class="danger">Pause cluster</button>
+<button data-command="RESUME" class="outline">Resume cluster</button><button id="refresh" class="outline">Refresh</button></div>
+<div class="formgrid">
+<div><label>Node ID</label><input id="node-id" placeholder="node_..."><div class="flex"><button data-command="APPROVE_NODE">Approve node</button><button data-command="REVOKE_NODE" class="danger">Revoke</button></div></div>
+<div><label>Agent ID</label><input id="agent-id" placeholder="agent_...">
+<label class="inline"><input id="eligible" type="checkbox"> Master eligible</label>
+<label class="inline"><input id="qa" type="checkbox"> Independent QA eligible</label>
+<div class="flex"><button data-command="APPROVE_AGENT">Approve agent</button><button data-command="REVOKE_AGENT" class="danger">Revoke</button></div></div>
+<div><label>New project ID</label><input id="project-id" placeholder="project_..."><label>Name</label><input id="project-name" placeholder="Project name">
+<label>GitHub repository</label><input id="repository" placeholder="owner/repo">
+<button data-command="CREATE_PROJECT">Create project record</button></div>
+<div><label>Project access: project ID</label><input id="access-project-id" placeholder="project_...">
+<label>Agent ID</label><input id="access-agent-id" placeholder="agent_...">
+<label class="inline"><input type="checkbox" id="can-develop"> Developer access</label>
+<label class="inline"><input type="checkbox" id="can-qa"> QA access</label>
+<div class="flex"><button data-command="GRANT_PROJECT_AGENT">Grant access</button>
+<button class="danger" data-command="REVOKE_PROJECT_AGENT">Revoke access</button></div></div>
+<div><label for="git-ticket-id">Git review: ticket ID</label>
+<input id="git-ticket-id" autocomplete="off" placeholder="ticket_...">
+<p>First inspect the exact Central-confirmed Git commit. No PR creation unless Owner explicitly enables GitHub PR credentials on Central.</p>
+<button id="pr-preflight" type="button" class="outline">Inspect Draft PR prerequisites (read-only)</button>
+<label for="pr-expected-head">Approved candidate commit SHA (read-only)</label>
+<input id="pr-expected-head" readonly aria-readonly="true" spellcheck="false">
+<label for="pr-confirm-head">Retype full 40-character candidate SHA</label>
+<input id="pr-confirm-head" maxlength="40" spellcheck="false" autocomplete="off">
+<label for="pr-owner-note">Owner review reason (20–500 characters)</label>
+<input id="pr-owner-note" maxlength="500" autocomplete="off">
+<label class="inline" for="pr-consent"><input type="checkbox" id="pr-consent">
+I authorize ONE real GitHub Draft PR creation ONLY, not merge or main push.</label>
+<div class="flex"><button id="draft-pr" type="button" disabled>Create exact Draft PR ONCE</button>
+<button id="pr-review-inspect" type="button" class="outline">Inspect human review + GitHub CI (read-only)</button></div>
+<p id="pr-review-summary" role="status">Review status not inspected; no merge authorization is implied.</p>
+<label class="inline" for="merge-verify-consent">
+<input id="merge-verify-consent" type="checkbox">
+I independently confirmed GitHub merged the exact PR; verify remotely and mark ticket DONE only if every gate passes. This action does NOT merge GitHub.</label>
+<button id="verify-merge" type="button" class="outline" disabled>Verify external merge (read-only proof)</button>
+<p id="pr-status" role="status">No PR attempt authorized. First inspect the ticket and exact commit.</p></div>
+<div><label>Proposal ID</label><input id="proposal-id" placeholder="proposal_...">
+<div class="flex"><button data-command="APPROVE_PROPOSAL">Approve proposal</button><button data-command="DENY_PROPOSAL" class="danger">Deny</button></div></div>
+</div></section>
+<section class="panel owner" aria-labelledby="qa-owner-title">
+<div class="panelhead"><h2 id="qa-owner-title">Independent QA evidence — Owner manual review &amp; frozen candidate recovery</h2><strong id="qa-owner-status" role="status">Not inspected</strong></div>
+<p>Device signature acceptance is NOT evidence that the Docker image, actual independent PC, original report and test output were verified by you. Obtain original QA result, attestation, runner digest and independently pinned device key outside this page. Nothing is approved or restored by refreshing these tables.</p>
+<div class="scroll"><table><thead><tr><th>Pending review ID</th><th>Ticket</th><th>QA PC</th><th>Candidate HEAD</th><th>Evidence SHA-256</th><th>Test result</th></tr></thead><tbody id="qa-owner-pending"></tbody></table></div>
+<div class="formgrid"><div>
+<label for="qa-review-id">Exact pending qaev_ review ID</label><input id="qa-review-id" maxlength="69" spellcheck="false" autocomplete="off">
+<label for="qa-review-note">External Owner review rationale (20–500 characters)</label><textarea id="qa-review-note" rows="3" maxlength="500" spellcheck="false" autocomplete="off"></textarea>
+</div><div>
+<label class="inline" for="qa-checked-device"><input type="checkbox" id="qa-checked-device"> Independently verified enrolled physical PC and device key</label>
+<label class="inline" for="qa-checked-runner"><input type="checkbox" id="qa-checked-runner"> Independently verified pinned offline Docker runner provenance</label>
+<label class="inline" for="qa-checked-evidence"><input type="checkbox" id="qa-checked-evidence"> Independently inspected original QA report and test evidence</label>
+<label class="inline" for="qa-checked-independent"><input type="checkbox" id="qa-checked-independent"> Verified QA and developer ran on separate physical machines</label>
+</div></div>
+<div class="flex"><button id="qa-owner-approve" type="button" disabled>Approve EXACT verified evidence (not a receipt)</button><button id="qa-owner-deny" class="danger" type="button" disabled>Deny exact QA evidence</button></div>
+<p>Approval is a separate manual attestation; it does not submit the QA receipt or unfreeze the candidate. Denial also requires your reason.</p>
+<h3>Approved but frozen — separate Owner restoration</h3>
+<div class="scroll"><table><thead><tr><th>Review ID</th><th>Ticket</th><th>Original candidate HEAD</th><th>Original tree</th><th>State</th></tr></thead><tbody id="qa-owner-frozen"></tbody></table></div>
+<div class="formgrid"><div>
+<label for="qa-restore-id">Exact approved frozen qaev_ review ID</label><input id="qa-restore-id" maxlength="69" spellcheck="false" autocomplete="off">
+<label for="qa-restore-ticket">Exact ticket ID</label><input id="qa-restore-ticket" maxlength="100" spellcheck="false" autocomplete="off">
+<label for="qa-restore-head">Retype complete original 40-character candidate HEAD</label><input id="qa-restore-head" maxlength="40" spellcheck="false" autocomplete="off">
+</div><div>
+<label for="qa-restore-reason">Separate Owner recovery rationale (20–500 characters)</label><textarea id="qa-restore-reason" rows="3" maxlength="500" spellcheck="false" autocomplete="off"></textarea>
+<label class="inline" for="qa-restore-consent"><input type="checkbox" id="qa-restore-consent"> I independently reviewed the exact original candidate and attest that Central must separately recheck Git jobs, checkpoint, QA evidence, lease and epoch. This restores ONLY SUBMITTED_FOR_REVIEW.</label>
+</div></div>
+<div class="flex"><button id="qa-owner-restore" type="button" disabled>Request EXACT frozen candidate restoration ONLY</button>
+<button id="qa-owner-clear" class="outline" type="button">Clear this-tab uncertain retry after review</button></div>
+<p id="qa-owner-action-status" role="status">No action attempted. Pending and frozen state remain HOLD until separately Owner reviewed.</p>
+<small>An uncertain Owner POST may already be committed. Retry unchanged inputs with the SAME in-tab request ID; do not invent a second command. Clearing local retry does not undo Central. No automatic QA receipt, Git publication, protected merge, installer or deployment is performed here.</small>
+</section>
+<section class="panel owner" aria-labelledby="pr-recovery-title">
+<div class="panelhead"><h2 id="pr-recovery-title">Uncertain Draft PR creation — Owner read-only recovery</h2>
+<span id="pr-recovery-count" role="status">Not loaded</span></div>
+<p>A timed-out GitHub PR creation can have succeeded remotely. NEVER click Create again to retry. This queue lets the Owner verify an already-existing exact open draft via GitHub READ-ONLY requests. No second PR POST, Git push, merge or release.</p>
+<div class="scroll"><table><thead><tr><th>Ticket</th><th>Repository</th><th>Branch</th><th>Expected commit</th><th>Review</th></tr></thead>
+<tbody id="pr-recovery-jobs"></tbody></table></div>
+<div class="formgrid">
+<div><label for="pr-recovery-ticket">Selected ticket (read-only)</label>
+<input id="pr-recovery-ticket" readonly aria-readonly="true">
+<label for="pr-recovery-expected-head">Central-pinned commit (read-only)</label>
+<input id="pr-recovery-expected-head" readonly aria-readonly="true"></div>
+<div><label for="pr-recovery-confirm-head">Type exact commit SHA</label>
+<input id="pr-recovery-confirm-head" maxlength="40" autocomplete="off" spellcheck="false">
+<label for="pr-recovery-reason">Owner reason (20–500 characters)</label>
+<input id="pr-recovery-reason" maxlength="500" autocomplete="off">
+<label class="inline" for="pr-recovery-consent"><input type="checkbox" id="pr-recovery-consent">
+Perform existing Draft PR verification only; no PR create, push or merge.</label>
+<div class="flex"><button type="button" id="pr-recovery-verify" disabled>Verify existing remote Draft PR</button>
+<button type="button" id="pr-recovery-clear" class="outline">Clear local selection</button></div></div>
+</div><p id="pr-recovery-status" role="status">Select a pending intent after reviewing the GitHub repository externally.</p>
+</section>
+<section class="panel owner" aria-labelledby="git-recovery-title">
+<div class="panelhead"><h2 id="git-recovery-title">Uncertain Git publication — Owner recovery review</h2>
+<span id="git-recovery-count" role="status">Not loaded</span></div>
+<p>This queue is read-only until you explicitly authorize exact remote GitHub evidence verification. It cannot push, republish, merge, retry a failed task or change production. Missing remote evidence is never permission to push again. A live RECOVERING Master and matching independent QA receipt are required.</p>
+<div class="scroll"><table><thead><tr><th>Ticket</th><th>Remote job</th><th>Task status</th><th>Original epoch</th><th>Exact candidate HEAD</th><th>Preflight</th><th>Review</th></tr></thead>
+<tbody id="git-recovery-jobs"></tbody></table></div>
+<p id="git-recovery-status" role="status">Choose an eligible job to review its exact commit.</p>
+<div class="formgrid">
+<div><label for="git-recovery-ticket">Selected ticket (read-only)</label>
+<input id="git-recovery-ticket" readonly aria-readonly="true" placeholder="Select an eligible job above">
+<label for="git-recovery-expected-head">Central-approved commit SHA (read-only)</label>
+<input id="git-recovery-expected-head" readonly aria-readonly="true" placeholder="Exact 40-character SHA">
+<label for="git-recovery-epoch">Current Master epoch (read-only)</label>
+<input id="git-recovery-epoch" readonly aria-readonly="true" placeholder="RECOVERING epoch"></div>
+<div><label for="git-recovery-confirm-sha">Type the full 40-character SHA to confirm</label>
+<input id="git-recovery-confirm-sha" spellcheck="false" autocomplete="off" maxlength="40" placeholder="Paste exact candidate commit SHA">
+<label for="git-recovery-reason">Owner incident reason (12–500 characters)</label>
+<input id="git-recovery-reason" autocomplete="off" maxlength="500" placeholder="Reason for verifying the remote effect">
+<label class="inline" for="git-recovery-consent"><input type="checkbox" id="git-recovery-consent">
+I authorize read-only GitHub proof for this exact commit; no push, PR or merge.</label>
+<div class="flex"><button id="git-recovery-verify" disabled>Verify exact remote evidence</button>
+<button id="git-recovery-clear" type="button" class="outline">Clear review / retry</button></div>
+<p>After a lost response, retry with unchanged fields to reuse the same request ID. Clearing a review discards this browser-only retry ID; it does not undo a server receipt.</p></div>
+</div></section>
+<section class="panel owner" aria-labelledby="maintenance-title">
+<div class="panelhead"><h2 id="maintenance-title">PC maintenance intents — NOT installer approval</h2><span id="maintenanceCount">—</span></div>
+<p>Owner may record a five-minute advisory intent for an already approved, idle PC. Central checks live Master/Backup 1/2, server-clock heartbeat, active tasks and Master epoch. This does not drain work, stop any agent, reserve a maintenance lease, install software or authorize a rollback.</p>
+<div class="formgrid">
+<div><label for="maintenance-node-id">Exact enrolled PC node ID</label><input id="maintenance-node-id" autocomplete="off" placeholder="node_...">
+<label for="maintenance-wave">Owner-approved rollout wave</label><input id="maintenance-wave" autocomplete="off" placeholder="wave_pilot01">
+<label for="maintenance-version">Target stable version</label><input id="maintenance-version" autocomplete="off" placeholder="7.1.0"></div>
+<div><label for="maintenance-offer-sha">SHA-256 of Owner-signed offer JSON</label>
+<input id="maintenance-offer-sha" autocomplete="off" maxlength="64" placeholder="64 lowercase hex characters">
+<label for="maintenance-epoch">Current Master epoch (auto-filled)</label>
+<input id="maintenance-epoch" readonly aria-readonly="true">
+<button id="plan-maintenance" type="button">Record 5-minute intent only</button></div>
+<div><label for="maintenance-drain-id">Drain plan ID (Owner-operated)</label>
+<input id="maintenance-drain-id" autocomplete="off" placeholder="plan_...">
+<button id="start-pc-drain" type="button" class="outline">Start durable fence — block new claims</button>
+<button id="finalize-pc-drain" type="button" class="outline">Verify drained (no outstanding work)</button>
+<p>A started fence never expires automatically. Existing work is not stopped or revoked. Finalize only after Central finds no active work.</p></div>
+<div><label for="maintenance-cancel-id">Cancel existing plan ID</label>
+<input id="maintenance-cancel-id" autocomplete="off" placeholder="plan_...">
+<button id="cancel-maintenance" type="button" class="danger">Cancel intent / RELEASE active fence</button>
+<p>Caution: releasing a fence allows new claims and leadership candidacy to resume. Never release while a physical update is underway.</p></div>
+</div>
+<p>Always recheck the live cluster before physical maintenance. A five-minute intent may expire, but an active drain fence persists until Owner release. Fenced status never authorizes software installation.</p>
+<div class="scroll"><table><thead><tr><th>Plan ID</th><th>PC node</th><th>Wave</th><th>State</th><th>Epoch</th><th>Expires (UTC)</th></tr></thead>
+<tbody id="maintenance-plans"></tbody></table></div>
+</section></section>
+<footer>Live state from Central MySQL. UI is read-only unless an owner command is explicitly submitted. No browser session, credential or agent private key is transferred here.</footer>
+</div><script src="/owner-crash-crosscheck.js"></script><script type="module" src="/dashboard.js"></script></body></html>

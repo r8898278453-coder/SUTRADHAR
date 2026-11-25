@@ -1,0 +1,17 @@
+# SUTRADHAR sensitive paths: Owner review routing.
+# This file only requests reviews; it does NOT enforce approvals by itself.
+# Enforce through GitHub Settings -> Rulesets / branch protection.
+# If the Owner authored the PR, use a second independent authorized reviewer.
+
+/.github/workflows/ @r8898278453-coder
+/.github/CODEOWNERS @r8898278453-coder
+/apps/central/ @r8898278453-coder
+/apps/desktop/ @r8898278453-coder
+/packages/shared/ @r8898278453-coder
+/scripts/ops/ @r8898278453-coder
+/scripts/release/ @r8898278453-coder
+/v7/schema.sql @r8898278453-coder
+/v7/central.ts @r8898278453-coder
+/v7/agent.ts @r8898278453-coder
+/docs/OWNER_PROVISIONING_RUNBOOK.md @r8898278453-coder
+/docs/RELEASE_OPERATIONS.md @r8898278453-coder

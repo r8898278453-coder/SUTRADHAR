@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>SUTRADHAR Desktop Setup</title>
+<link rel="stylesheet" href="./setup.css">
+</head>
+<body>
+<main>
+<div class="topline">SUTRADHAR / DESKTOP <span class="alpha">ALPHA · NOT FOR PRODUCTION</span></div>
+<h1>Connect this PC to Central</h1>
+<p class="sub">This computer runs the local agent. Hostinger Central is the only source of truth for Master, backups and tasks. Owner approval is required before any work.</p>
+<section class="panel" aria-labelledby="setupTitle">
+<h2 id="setupTitle">First-time connection</h2>
+<form id="setupForm">
+<label for="central">Central HTTPS website</label>
+<input id="central" type="url" autocomplete="url" placeholder="https://central.example.com" required>
+<p class="hint">Use the website address only, without /dashboard or API path.</p>
+<label for="pcName">This PC's name</label>
+<input id="pcName" type="text" maxlength="64" autocomplete="off" placeholder="Office PC 01" required>
+<label for="agentCount">How many agents on this PC?</label>
+<select id="agentCount"><option value="1">1 agent (start here)</option><option value="2">2 agents</option><option value="3">3 agents</option><option value="4">4 agents</option></select>
+<p class="hint">Each gets a unique identity. Master and QA eligibility are approved separately in Central.</p>
+<label for="code">Owner-issued enrollment code</label>
+<input id="code" type="password" minlength="32" autocomplete="off" spellcheck="false" placeholder="At least 32 characters" required>
+<p class="hint">The code is used only for this setup attempt and is not saved to PC settings.</p>
+<button type="submit" id="save">Connect and request approval</button>
+</form>
+<div id="feedback" role="status" aria-live="polite"></div>
+</section>
+<section class="panel">
+<h2>Current local status</h2>
+<div id="status">Loading device status…</div>
+<p class="hint">Agent process running does not mean this PC was approved or that the Master election succeeded.</p>
+<button id="inspectCrashEvidence" class="secondary" type="button" disabled>Inspect crash / restart evidence (read-only)</button>
+<p class="hint">Available only on a packaged Windows PC with an orphaned child-session hold. Hashes local evidence without decrypting credentials or contacting Central. Never removes the marker, restarts the agent, approves recovery or proves hardware reboot.</p>
+<pre id="crashEvidence" role="status" aria-live="polite">No crash diagnostic requested.</pre>
+<p class="hint">When a diagnostic is available, select/copy the complete JSON block above into Central's Owner crash crosscheck. Copy only that JSON, not vault files or private credentials. Report remains unsigned and does not authorize restart, marker removal or installer execution.</p>
+<label class="toggle"><input id="autostart" type="checkbox"> Start SUTRADHAR automatically when I sign in (packaged app only)</label>
+<div class="actions"><button id="dashboard" type="button" class="secondary">Open Central dashboard</button><button id="refresh" type="button" class="secondary">Refresh status</button><button id="reconcileEnrollment" type="button" class="secondary">Recheck uncertain enrollment</button></div>
+<p class="hint">If enrollment was interrupted, this only checks the original PC's signed identity with Central. It does not send another grant, create another identity or approve itself. The Owner must approve the PC first.</p>
+<button id="exportPilotNodeProof" class="secondary" type="button">Export signed BEFORE / AFTER node-key continuity evidence</button>
+<p class="hint">For Owner physical-PC acceptance only. Select the exact reviewed session JSON, choose BEFORE or AFTER and save a new private file. No keys leave the OS vault. A signature does not by itself prove a physical reboot, genuine hardware or healthy Central.</p>
+</section>
+<section class="panel" aria-labelledby="workerReadTitle">
+<h2 id="workerReadTitle">My development tasks (manual alpha)</h2>
+<p class="hint">After the Owner approves this PC and agent, inspect Central's available tasks and exact ticket details. The device key remains protected in Windows OS vault. Read-only inspection does not change Central. Separate confirmation is required to claim or save progress; this interface never runs AI, publishes Git or approves QA.</p>
+<label for="workerAgent">This PC's approved agent</label>
+<select id="workerAgent" aria-label="Select local agent"><option value="">Configure this PC first</option></select>
+<details>
+<summary>Master task batch planner (2–10 tasks, manual review)</summary>
+<p class="hint">Use the selected local agent only if it is the current Master. Enter a unique request ID; retain the exact project, request ID, task draft and reviewed digest until admission is reconciled. No automatic task generation or execution.</p>
+<button id="masterCatalog" class="secondary" type="button" disabled>Load active projects (current Master only)</button>
+<label for="masterProjectChoice">Choose a project by name, repository and base branch</label><select id="masterProjectChoice" disabled><option value="">Load active projects first</option></select>
+<label for="masterProject">Existing exact project ID</label><input id="masterProject" maxlength="100" autocomplete="off" spellcheck="false">
+<label for="masterRequest">Unique batch request ID</label><input id="masterRequest" maxlength="100" autocomplete="off" spellcheck="false">
+<label for="masterTicket">Task ID</label><input id="masterTicket" maxlength="100" autocomplete="off">
+<button id="masterBaselineInspect" class="secondary" type="button" disabled>Inspect trusted local Git checkout (no network)</button>
+<p id="masterBaselineStatus" class="hint" role="status" aria-live="polite">Local tracking ref not inspected. Remote freshness and upstream changes are not verified.</p>
+<details>
+<summary>Review a local bulk backlog (2–100 tasks)</summary>
+<p class="hint">Select the current project and inspect its local Git checkout first. Choose a trusted declarations JSON file. The review does not admit tasks, verify remote freshness, or authorize parallel work. Do not include credentials or provider secrets.</p>
+<button id="masterBulkInspect" class="secondary" type="button" disabled>Inspect bulk declarations file</button>
+<p id="masterBulkStatus" class="hint" role="status" aria-live="polite">No bulk manifest reviewed.</p>
+<label for="masterBulkReport">Full advisory review (identifiers and conflicts)</label><textarea id="masterBulkReport" rows="7" readonly spellcheck="false"></textarea>
+<label for="masterBulkGroup">Choose a review group</label><select id="masterBulkGroup" disabled><option value="">Inspect a manifest first</option></select>
+<pre id="masterBulkGroupStatus" role="status" aria-live="polite">No group selected.</pre>
+<button id="masterBulkImport" class="secondary" type="button" disabled>Load eligible group into local draft only</button>
+<p class="hint">Groups with unresolved conflicts, external dependencies, upstream baseline requirements, protected risk or a size outside 2–10 require separate review. Loading a group replaces the current local draft only after confirmation and clears the request ID, preview and consent. Reinspect the file for another group.</p>
+</details>
+<label for="masterBaseline">Inspected local baseline SHA (40 lowercase hex)</label><input id="masterBaseline" maxlength="40" autocomplete="off" spellcheck="false">
+<label for="masterBranch">Task branch (ai/…)</label><input id="masterBranch" maxlength="120" autocomplete="off" spellcheck="false">
+<label for="masterTitle">Task title</label><input id="masterTitle" maxlength="220">
+<label for="masterDescription">Scoped task description</label><textarea id="masterDescription" maxlength="10000" rows="3"></textarea>
+<label for="masterRisk">Declared risk (server may require approval)</label><select id="masterRisk"><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>CORE</option></select>
+<label for="masterScopes">Write paths, one per line</label><textarea id="masterScopes" rows="3"></textarea>
+<label for="masterCriteria">Acceptance criteria, one per line</label><textarea id="masterCriteria" rows="3"></textarea>
+<label for="masterDependencies">Exact dependency ticket IDs, one per line (empty = none)</label><textarea id="masterDependencies" rows="2"></textarea>
+<label for="masterContracts">Declared shared contract keys, one per line (empty = none)</label><textarea id="masterContracts" rows="2"></textarea>
+<div class="actions"><button id="masterAdd" class="secondary" type="button">Add task to local draft</button><button id="masterUndo" class="secondary" type="button">Remove last draft task</button></div>
+<label for="masterDraft">Review all task fields (local draft, not yet admitted)</label><textarea id="masterDraft" rows="8" readonly spellcheck="false"></textarea>
+<div class="actions"><button id="masterDraftSave" class="secondary" type="button" disabled>Save unconfirmed local draft</button><button id="masterDraftLoad" class="secondary" type="button" disabled>Load saved unconfirmed draft</button></div>
+<p id="masterDraftStatus" class="hint" role="status">Explicit local encrypted save only. Restoring a draft never restores baseline inspection, preview or admission permission.</p>
+<button id="masterSourceHints" class="secondary" type="button" disabled>Inspect local AST import hints (no AI or network Git)</button>
+<pre id="masterSourceStatus" role="status" aria-live="polite">No source hint inspection. This is bounded AST syntax evidence, not semantic verification.</pre>
+<button id="masterRecover" class="secondary" type="button" disabled>Recover pending reviewed batch after restart</button>
+<p class="hint">A confirmed admission is encrypted locally before sending. If interrupted, recover its exact draft and inspect its receipt. Unresolved admission blocks new batches on this PC. Unconfirmed drafts are not saved.</p>
+<p class="hint">All tasks in this Desktop batch must use the inspected local tracking ref SHA. If downstream work needs upstream code not yet merged, plan that downstream work later. Refresh/reinspect if the local ref changes.</p>
+<button id="masterPlanningContext" class="secondary" type="button" disabled>Prepare compact planning context (local preview only)</button>
+<p id="masterPlanningContextStatus" class="hint" role="status">No context prepared. Review for secrets before manually sharing. Byte reduction is not a token measurement.</p>
+<textarea id="masterPlanningContextText" rows="5" readonly spellcheck="false" aria-label="Exact compact planning context"></textarea>
+<button id="masterPreview" class="secondary" type="button" disabled>Validate and preview exact batch</button>
+<label for="masterDigest">Reviewed preview digest (retain for receipt lookup)</label><input id="masterDigest" maxlength="64" autocomplete="off" spellcheck="false">
+<label><input id="masterReviewed" type="checkbox"> I independently reviewed every task, baseline, dependency, scope, contract and criterion; no provider or Git work is authorized by admission.</label>
+<div class="actions"><button id="masterCommit" class="secondary" type="button" disabled>Confirm exact reviewed batch</button><button id="masterReceipt" class="secondary" type="button" disabled>Inspect historical admission receipt (no mutation)</button></div>
+<pre id="masterResult" role="status" aria-live="polite">Local draft only.</pre>
+</details>
+<div class="actions"><button id="workerList" class="secondary" type="button" disabled>List available tasks</button></div>
+<label for="workerTicket">Task ID to inspect</label>
+<input id="workerTicket" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="ticket_example_001">
+<button id="workerDetail" class="secondary" type="button" disabled>View task details (no claim)</button>
+<button id="workerContext" class="secondary" type="button" disabled>Preview compact provider context (manual only)</button>
+<p class="muted">Review context for secrets and authorized scope before manually using an approved provider workspace. Preview does not verify the provider account or grant a lease.</p>
+<label for="workerProviderPreview">Compact context only (copy only after independent review)</label>
+<textarea id="workerProviderPreview" rows="5" readonly spellcheck="false"></textarea>
+<label for="workerProviderKind">Provider for manual attempt</label>
+<select id="workerProviderKind"><option value="CHATGPT_WEB">ChatGPT Web</option><option value="GOOGLE_AI_STUDIO">Google AI Studio</option></select>
+<label for="workerProviderDigest">Exact reviewed context SHA-256 from preview</label>
+<input id="workerProviderDigest" maxlength="64" autocomplete="off" spellcheck="false">
+<button id="workerProviderBegin" class="secondary" type="button" disabled>Record reviewed attempt BEGIN (no provider send)</button>
+<label for="workerProviderAttempt">Exact attempt ID from signed task detail</label>
+<input id="workerProviderAttempt" maxlength="40" autocomplete="off" spellcheck="false">
+<div class="actions"><button id="workerProviderInterrupt" class="secondary" type="button" disabled>Record interruption</button>
+<button id="workerProviderClose" class="secondary" type="button" disabled>Close after independent review and fresh checkpoint</button></div>
+<p class="hint">If a response is uncertain, inspect current signed detail before further action. A recorded attempt never verifies provider permission or transmitted bytes. No automatic retry.</p>
+<div class="actions">
+<button id="workerClaim" class="secondary" type="button" disabled>Choose trusted Git checkout and claim</button>
+<button id="workerResume" class="secondary" type="button" disabled>Verify my existing work lease</button>
+</div>
+<label for="workerSummary">Manual checkpoint summary</label>
+<textarea id="workerSummary" maxlength="8000" rows="4" spellcheck="true" placeholder="Describe completed work and verifiable evidence; avoid credentials or secrets."></textarea>
+<label for="workerNextAction">Next action (up to 500 characters)</label>
+<input id="workerNextAction" type="text" maxlength="500" autocomplete="off" placeholder="Next authorized step for this task">
+<button id="workerCheckpoint" class="secondary" type="button" disabled>Save signed checkpoint (manual)</button>
+<label for="workerRenewReason">Reason to renew (12–300 characters)</label>
+<input id="workerRenewReason" type="text" maxlength="300" autocomplete="off" placeholder="Progress since last check and why another lease period is needed">
+<button id="workerRenew" class="secondary" type="button" disabled>Request bounded lease renewal</button>
+<div class="actions">
+<button id="workerSubmit" class="secondary" type="button" disabled>Submit committed candidate for review</button>
+<button id="workerExport" class="secondary" type="button" disabled>Export exact candidate bundle for QA PC (offline)</button>
+<button id="workerQAInspect" class="secondary" type="button" disabled>On QA PC: inspect copied bundle (NO TEST)</button>
+<button id="workerQARun" class="secondary" type="button" disabled>On QA PC: run pinned offline Docker pytest (Owner gated)</button>
+<button id="workerQARecover" class="secondary" type="button" disabled>On QA PC: review FROZEN failover candidate with one Docker run</button>
+<button id="workerQAAttest" class="secondary" type="button" disabled>On QA PC: sign local test evidence for Owner (NO QA APPROVAL)</button>
+<button id="workerQAUpload" class="secondary" type="button" disabled>On QA PC: submit signed evidence to Central for Owner review</button>
+<button id="workerQAReceipt" class="secondary" type="button" disabled>On QA PC: request QA receipt ONLY after Owner approval</button>
+<button id="workerGitPublish" class="secondary" type="button" disabled>On QA PC: create exact remote Git branch ONCE (Owner gated, NO MERGE)</button>
+</div>
+<p class="hint">Offline handoff: Developer first submits an exact committed candidate to Central, then exports a .bundle and .bundle.json. The independent QA PC copies BOTH files, chooses an already-trusted local Git checkout at the approved baseline, and uses a different authorized QA agent to inspect. This checks exact Central SHA/tree, isolated Git object ancestry, file scope and bundle digest without checking out or running untrusted code. It is INSPECTION ONLY: QA execution and approval are still separate.</p>
+<p class="hint">Git publication is disabled by default and requires a specially Owner-configured signed build and preconfigured Git Credential Manager. Real branch creation is one-shot; only the exact approved candidate can be pushed to a new ai/* branch, never main. An uncertain result requires Owner recovery, not retry.</p>
+<p class="hint">If the Master changed after a developer submitted a candidate, Central may mark it RECONCILIATION_REQUIRED. Use the explicit FROZEN QA button only if the original offline bundle was already securely transferred. The QA PC must independently verify that exact bundle, run one pinned offline Docker test, sign and upload the exact report for separate Owner review. A signed QA receipt is BLOCKED until the Owner separately restores the original candidate. No new developer lease or Git publication is authorized.</p>
+<p class="hint">Central independently verifies the signed report against the approved device key. An Owner must separately inspect the original report and runner before approving that exact QA evidence review. Only then can an explicit QA receipt advance a ticket; no Git push or deployment is automatic.</p>
+<p class="hint">After a completed local QA test, explicitly sign the exact report and execution journal with this PC's OS-vault key, then send the report plus signed attestation to the Owner. Owner must verify against the independently approved device public key and exact ticket/commit/tree; this does not advance Central QA status.</p>
+<p class="hint">Isolated QA testing is disabled by default until a protected, Owner-pinned Docker image and absolute Docker executable are configured. Only a fixed pytest tests/ profile runs, with network disabled and no host source checkout. An irreversible one-attempt local journal and unapproved evidence file are created. Tests are NOT submitted as a QA pass. Do not use the button if you do not trust the QA image and Docker engine.</p>
+<p class="hint">Submission requires a verified checkpoint, clean committed Git worktree, unexpired Central lease, valid authorized changed paths and explicit confirmation. The app records exact local Git commit/tree hashes with Central, but never pushes a branch, runs tests, merges code or approves QA. A remote QA PC must independently obtain the exact commit before testing. Avoid submitting until your reviewed work is committed and ready.</p>
+<p class="hint">Checkpoint and renewal require an existing live lease, a current approved Master, the exact local Git worktree and explicit confirmation. A checkpoint is a progress summary, not proof that QA passed. Renewal is only allowed near expiry and never after four hours from the original claim. An ambiguous response keeps the pending operation journal for exact-ID recovery. No automatic work or Git push starts.</p>
+<p class="hint">Claiming requires Owner-granted project access, a READY task, Git for Windows, a local checkout containing the exact approved baseline, and manual confirmation. This creates an isolated local worktree and starts a time-limited Central lease. It does not run AI or publish Git. If a claim response is lost, repeat the same action with the same Git folder; the pending journal preserves the request ID. Do not delete pending files.</p>
+<pre id="workerTasks" role="status" aria-live="polite">Central approval and recent signed heartbeat required.</pre>
+<p class="hint">Tasks depend on Central project grants. If access is denied, ask the Owner to check your agent's project permissions. Only explicit, confirmed claim/checkpoint/renew buttons can change task state; no action submits or publishes code.</p>
+</section>
+<section class="panel">
+<h2>AI provider tools (manual)</h2>
+<p class="hint">Opens your normal browser. You remain responsible for account authorization and provider usage terms.</p>
+<div class="actions"><button id="chatgpt" class="secondary" type="button">Open ChatGPT Web</button><button id="studio" class="secondary" type="button">Open Google AI Studio</button></div>
+</section>
+<section class="panel"><h2>Check signed update / rollback (inspection only)</h2>
+<p class="hint">Select an Owner-signed offer JSON next to its downloaded Windows installer. The app checks the pinned release key, SHA-256, release version and Windows publisher without executing the installer. This is locked until the first approved production-signed release.</p>
+<button id="verifyUpdate" class="secondary" type="button">Verify a signed update file</button>
+<button id="prepareInstaller" class="secondary" type="button">Stage Owner-signed update / rollback (NO INSTALL)</button>
+<button id="launchStagedInstaller" class="secondary" type="button">Owner-authorized Windows installer launch (one time)</button>
+<button id="inspectDirectInstallerExit" class="secondary" type="button">Inspect direct installer process exit (read-only)</button>
+<button id="inspectPersistentInstallerObserver" class="secondary" type="button">Inspect persistent Windows process observer (unsigned)</button>
+<p class="hint">An independent nonprivileged watcher may continue after Desktop exits. Its unsigned process-liveness report is UNTRUSTED; even disappearance or status zero does not prove successful Windows setup.</p>
+<p class="hint">An optional device-signed exit code can be captured only before Desktop quits. Exit code 0 is NOT proof of NSIS/UAC completion. A missing exit record means UNKNOWN, not failure or success.</p>
+<p class="hint">Real Windows software changes are possible only with a separate Owner-signed one-time execution grant and protected trust configuration. Windows installer prompts will appear; process launch is NOT proof of a successful install, and automatic retry is blocked.</p>
+<button id="inspectPostUpdateIdentity" class="secondary" type="button">Check identity after Owner installation (read-only)</button>
+<button id="observePostInstall" class="secondary" type="button">Verify installed Desktop and Central before hold release</button>
+<button id="reviewFailedInstall" class="secondary" type="button">Record canceled / uncertain installer (NO RECOVERY)</button>
+<button id="approveFailedInstallReview" class="secondary" type="button">Owner-signed failed-install investigation (NO RELEASE)</button>
+<p class="hint">Requires an independent Owner-signed review grant and a freshly cancelled Central plan. It records the incident for Owner review only; Windows installer completion remains unknown and the PC stays isolated.</p>
+<p class="hint">If the old installed version still runs after a Windows setup attempt, record read-only diagnostic evidence. This never authorizes a hold release, retry or rollback, and does not prove NSIS exit status.</p>
+<p class="hint">After Windows setup, checks signed launch evidence, current installed-app Authenticode publisher, target version, preserved OS-vault identity and the unchanged Central DRAINED fence. Does not prove NSIS completion or automatically release this PC. A failed/canceled installation remains Owner-review blocked.</p>
+<p class="hint">Only after the exact PC is DRAINED in Central, its agent has stopped, and a local maintenance hold is active. The signed EXE is copied into an exclusive local escrow and identity fingerprints recorded. This never executes an installer or applies rollback.</p>
+<button id="updateReadiness" class="secondary" type="button">Check whether this PC is Master or backup</button>
+<button id="isolatePc" class="secondary" type="button">Owner maintenance: isolate this drained PC</button>
+<button id="checkRecovery" class="secondary" type="button">Verify Owner cancellation (no restart)</button>
+<button id="releaseHold" class="secondary" type="button">Owner-signed hold release (no restart)</button>
+<button id="restartAfterMaintenance" class="secondary" type="button">Owner-approved manual recovery restart</button>
+<p class="hint">After Owner-signed hold archival, a SECOND independently signed one-time grant is required. New Central acknowledgment must be observed; one attempt only. The auto-restart barrier stays in place.</p>
+<p class="hint">Release needs a separate Owner-signed grant and two fresh Central cancellation checks. It archives the hold, but a durable reconciliation barrier keeps automatic agent restart blocked.</p>
+<p class="hint">Use only after Owner marked this exact PC DRAINED in Central. A separate confirmation verifies signed Central state, then saves a persistent local hold before requesting agent stop. No installer runs. An Owner must assist recovery.</p>
+<p class="hint">Uses signed Central requests. An unapproved, active Master, Backup 1 or Backup 2, or offline PC cannot be cleared for maintenance. This point-in-time check never authorizes installation or stops agents.</p>
+<div id="updateFeedback" role="status" aria-live="polite"></div>
+</section>
+<footer>Packaged Desktop uses Windows DPAPI/macOS Keychain-backed encrypted device identity when available. Production signing, installation and physical key-vault acceptance are still required.</footer>
+</main>
+<script src="./setup.js"></script>
+</body></html>

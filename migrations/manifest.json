@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "baseline_version": 7,
+  "baseline_schema_sha256": "ee73e8104f8e7096370dc7f480ddbe408f3f00b383013b57e4d48360aea41396",
+  "migrations": [
+    {
+      "from_version": 7,
+      "to_version": 8,
+      "file": "v8__nonce_received_at.sql",
+      "sha256": "0d9d85f54d9781cf84e42eaa46dd26274cfce990786984c05e73a2f6dd1c596f"
+    }
+  ]
+}

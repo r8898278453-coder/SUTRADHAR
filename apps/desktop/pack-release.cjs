@@ -1,0 +1,160 @@
+/**
+ * PRODUCTION SIGNING GATE — build a signed Windows installer only with a
+ * real owner-controlled certificate, exact approved commit and stable version.
+ * NEVER uploads, publishes, deploys or changes Git refs.
+ * Requires Windows signtool/Authenticode verification; refuses CI alpha.
+ */
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const cp=require('node:child_process');
+const cwd=__dirname,root=path.resolve(__dirname,'../..');
+const pkg=JSON.parse(fs.readFileSync(path.join(cwd,'package.json'),'utf8'));
+const {verifyRuntime}=require('./runtime-policy.cjs');
+const {verifyPackageClosure}=require('./package-closure.cjs');
+const {verifyPackagedRuntime}=require('./verify-packaged-runtime.cjs');
+const {psLiteral,trustedWindowsPowerShell}=require('./windows-authenticode.cjs');
+const {validateOwnerPublicRoots}=require('./release-key-policy.cjs');
+const version=pkg.version;
+const sha=/^[a-f0-9]{40}$/;
+function fail(reason){throw Error('RELEASE_BLOCKED: '+reason);}
+function git(args){
+  return cp.execFileSync('git',args,{cwd:root,encoding:'utf8',timeout:15000}).trim();
+}
+function required(name){
+  const v=process.env[name];
+  if(!v||!v.trim())fail(name+' must be provided through protected release environment');
+  return v.trim();
+}
+function main(){
+  if(process.platform!=='win32')fail('Windows-signed release requires a trusted Windows runner');
+  if(process.env.SUTRADHAR_OWNER_RELEASE_APPROVED!=='true')fail('explicit Owner release approval required');
+  if(!/^\d+\.\d+\.\d+$/.test(version))fail('stable semver is required; alpha is not a production release');
+  const runtime=verifyRuntime({
+    electronVersion:pkg.devDependencies?.electron,
+    builderVersion:pkg.devDependencies?.['electron-builder']
+  });
+  if(!runtime.accepted)fail(runtime.error_code);
+  const expected=required('SUTRADHAR_EXPECTED_COMMIT_SHA');
+  if(!sha.test(expected)||git(['rev-parse','HEAD'])!==expected)fail('release commit SHA mismatch');
+  if(git(['status','--porcelain'])!=='')fail('dirty source checkout');
+  if(required('SUTRADHAR_RELEASE_TAG')!=='desktop-v'+version)fail('wrong immutable desktop release tag');
+  let tagCommit;
+  try{tagCommit=git(['rev-list','-n','1','refs/tags/desktop-v'+version]);}
+  catch{fail('approved immutable desktop version tag does not exist');}
+  if(tagCommit!==expected)fail('tag does not point to the approved release SHA');
+  const signed=required('SUTRADHAR_WINDOWS_PUBLISHER_NAME');
+  if(!/^CN=.+/.test(signed)||signed.length>250)fail('publisher must equal certificate Distinguished Name');
+  // Strict PUBLIC PEM decoding and four distinct Ed25519 trust roots.
+  // Private keys never enter the release bundle or renderer.
+  const publicRoots=validateOwnerPublicRoots({
+    SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64:
+      required('SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64'),
+    SUTRADHAR_INSTALL_EXECUTION_PUBLIC_KEY_PEM_B64:
+      required('SUTRADHAR_INSTALL_EXECUTION_PUBLIC_KEY_PEM_B64'),
+    SUTRADHAR_MAINTENANCE_RELEASE_PUBLIC_KEY_PEM_B64:
+      required('SUTRADHAR_MAINTENANCE_RELEASE_PUBLIC_KEY_PEM_B64'),
+    SUTRADHAR_FAILURE_REVIEW_PUBLIC_KEY_PEM_B64:
+      required('SUTRADHAR_FAILURE_REVIEW_PUBLIC_KEY_PEM_B64')
+  });
+  const trustPem=publicRoots.SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64.pem,
+    installerExecutionPem=publicRoots.SUTRADHAR_INSTALL_EXECUTION_PUBLIC_KEY_PEM_B64.pem,
+    maintenanceReleasePem=publicRoots.SUTRADHAR_MAINTENANCE_RELEASE_PUBLIC_KEY_PEM_B64.pem,
+    failureReviewPem=publicRoots.SUTRADHAR_FAILURE_REVIEW_PUBLIC_KEY_PEM_B64.pem;
+  const cert=process.env.WIN_CSC_LINK||process.env.CSC_LINK;
+  const password=process.env.WIN_CSC_KEY_PASSWORD||process.env.CSC_KEY_PASSWORD;
+  if(!cert||!password)fail('approved Authenticode certificate and private signing secret required');
+  const agent=path.join(cwd,'dist','secure-agent.cjs');
+  if(!fs.existsSync(agent)||!fs.existsSync(path.join(cwd,'contract.json')))
+    fail('run the reviewed Desktop build first');
+  verifyPackageClosure({checkAssets:true});
+  const manifest=JSON.parse(fs.readFileSync(path.join(cwd,'dist','release-manifest.json'),'utf8'));
+  if(manifest.source_sha!==expected||manifest.api_protocol!==7||
+     manifest.secure_agent_sha256!==crypto.createHash('sha256').update(fs.readFileSync(agent)).digest('hex'))
+    fail('Desktop build provenance mismatch');
+  const astAssets=['master-typescript.cjs','master-typescript-LICENSE.txt','master-typescript-NOTICE.txt'];
+  const locked=JSON.parse(fs.readFileSync(path.join(root,'package-lock.json'),'utf8')).packages['node_modules/typescript'];
+  if(manifest.ast_runtime_version!==locked?.version||
+     JSON.stringify(Object.keys(manifest.ast_resource_sha256||{}).sort())!==JSON.stringify([...astAssets].sort()))
+    fail('Desktop AST runtime provenance missing');
+  for(const name of astAssets){
+    const file=path.join(cwd,'dist',name),st=fs.lstatSync(file);
+    if(!st.isFile()||st.isSymbolicLink()||st.size<1||st.size>16*1024*1024||
+       crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==manifest.ast_resource_sha256[name])
+      fail('Desktop AST resource provenance mismatch');
+  }
+  const builder=path.join(cwd,'node_modules','electron-builder','cli.js');
+  if(!fs.existsSync(builder))fail('packager dependencies not installed');
+  const signingConfig=JSON.parse(JSON.stringify(pkg.build));
+  signingConfig.win.publisherName=signed;
+  signingConfig.win.verifyUpdateCodeSignature=true;
+  signingConfig.publish=null;
+  const cfg=path.join(cwd,'.protected-signing-config-'+process.pid+'.json');
+  const trustFile=path.join(cwd,'update-trust.json');
+  const executionTrustFile=path.join(cwd,'installer-execution-trust.json');
+  const maintenanceTrustFile=path.join(cwd,'maintenance-release-trust.json');
+  const failureReviewTrustFile=path.join(cwd,'failure-review-trust.json');
+  const originalTrust=fs.readFileSync(trustFile,'utf8');
+  const originalExecutionTrust=fs.readFileSync(executionTrustFile,'utf8');
+  const originalMaintenanceTrust=fs.readFileSync(maintenanceTrustFile,'utf8');
+  const originalFailureReviewTrust=fs.readFileSync(failureReviewTrustFile,'utf8');
+  fs.writeFileSync(cfg,JSON.stringify(signingConfig),{mode:0o600,flag:'wx'});
+  try{
+    fs.writeFileSync(trustFile,JSON.stringify({
+      schema:1,channel:'stable',public_key_pem:trustPem,
+      publisher_subject:signed,status:'OWNER_PROTECTED_RELEASE'
+    },null,2)+'\n',{mode:0o600});
+    fs.writeFileSync(executionTrustFile,JSON.stringify({
+      schema:1,status:'OWNER_PROTECTED_RELEASE',
+      public_key_pem:installerExecutionPem
+    },null,2)+'\n',{mode:0o600});
+    fs.writeFileSync(maintenanceTrustFile,JSON.stringify({
+      schema:1,status:'OWNER_PROTECTED_RELEASE',
+      public_key_pem:maintenanceReleasePem
+    },null,2)+'\n',{mode:0o600});
+    fs.writeFileSync(failureReviewTrustFile,JSON.stringify({
+      schema:1,status:'OWNER_PROTECTED_RELEASE',
+      public_key_pem:failureReviewPem
+    },null,2)+'\n',{mode:0o600});
+    const r=cp.spawnSync(process.execPath,[builder,'--win','nsis','--x64','--publish','never',
+      '--config',cfg],{cwd,env:process.env,stdio:'inherit',timeout:1200000});
+    if(r.error||r.status!==0)fail('Windows signed packager failed');
+    const out=path.join(cwd,'out');
+    // Verify actual app.asar modules and external child agent, not just source closure.
+    verifyPackagedRuntime({resourceDir:path.join(out,'win-unpacked','resources')});
+    const installers=fs.readdirSync(out).filter(x=>x.endsWith('.exe')).map(x=>path.join(out,x));
+    if(!installers.length)fail('no installer artifact');
+    const receipts=[];
+    const trustedShell=trustedWindowsPowerShell({platform:process.platform});
+    for(const file of installers){
+      // The release verifier must never use PATH resolution or PowerShell
+      // interpolated double-quoted file paths from a source checkout.
+      const command="$ErrorActionPreference='Stop';"+
+        '$s=Get-AuthenticodeSignature -LiteralPath '+psLiteral(file)+';'+
+        "if($s.Status -ne 'Valid' -or $null -eq $s.SignerCertificate){exit 42};"+
+        '$subject='+psLiteral(signed)+';'+
+        'if($s.SignerCertificate.Subject -cne $subject){exit 43};exit 0';
+      const encoded=Buffer.from(command,'utf16le').toString('base64');
+      const verify=cp.spawnSync(trustedShell.program,
+        ['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',encoded],
+        trustedShell.options);
+      if(verify.error||verify.status!==0)fail('Windows Authenticode signer/signature verification failed');
+      receipts.push({filename:path.basename(file),
+        sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
+        signer:signed,verified:true});
+    }
+    fs.writeFileSync(path.join(out,'signed-release-evidence.json'),JSON.stringify({
+      application:'desktop',version,source_sha:expected,tag:'desktop-v'+version,
+      verified_by:'Windows Get-AuthenticodeSignature',
+      local_signing_verified:true,remote_release_approved:false,
+      installers:receipts
+    },null,2)+'\n',{mode:0o600});
+    console.log('SIGNED_INSTALLERS_VERIFIED_LOCALLY; NOT PUBLISHED. Owner must review evidence.');
+  }finally{
+    try{fs.writeFileSync(trustFile,originalTrust);}catch{}
+    try{fs.writeFileSync(executionTrustFile,originalExecutionTrust);}catch{}
+    try{fs.writeFileSync(maintenanceTrustFile,originalMaintenanceTrust);}catch{}
+    try{fs.writeFileSync(failureReviewTrustFile,originalFailureReviewTrust);}catch{}
+    try{fs.unlinkSync(cfg);}catch{}
+  }
+}
+main();

@@ -1,7 +1,33 @@
 # Codebase Map
 
+## 24 November 2026 — current v7 source map (alpha; unmerged)
+
+The historical architecture below documents the **legacy root
+SQLite/Python developer surface**. It is no longer the only implemented
+source: `v7/central.ts` + `v7/schema.sql` implement the new MySQL
+Central API, `apps/central/build.cjs` packages a Central-only staging
+bundle, and `apps/desktop/main.cjs` + `apps/desktop/package.json`
+package an Electron Windows agent with OS vault, worker/QA and
+installer safety components. Both are built from this **one monorepo**
+with a shared `packages/shared/contract.json`.
+
+This newer source is **alpha only**: no protected main promotion, live
+Hostinger staging acceptance, trusted Windows signing or physical
+multi-PC acceptance has occurred. Read the
+[24 November targeted deep audit](docs/REPOSITORY_DEEP_AUDIT_2026-11-24.md)
+and [current gap register](GAP_REGISTER.md) for correct release state.
+The remainder of this map is a *historical legacy subsystem description*
+and must not be treated as the authoritative production topology.
+
 ## Architecture Overview
-Sutradhar Multi-Agent Swarm Orchestrator (Blueprint v5.4 & v6.0 Production)
+Sutradhar Multi-Agent Swarm Orchestrator — **current code reflects legacy v5.4/v6.0, NOT a production-ready v7.0 cluster**.
+
+**Target documents (SPECIFIED, not implemented):**
+- [Architecture v7.0](docs/SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md)
+- [Agent / Task / QA / Recovery Contract v7.0](docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md)
+- [V7 Requirements / Acceptance Matrix](docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md)
+
+The target architecture uses Hostinger Business + MySQL and Electron worker agents, while the code below still uses SQLite and partial simulator/in-memory state. Use [Implementation Tracker](docs/IMPLEMENTATION_TRACKER.md) for actual verification status.
 
 ### Entry Points
 - `server.ts`: Express control plane + Vite dev middleware + REST API endpoints on port 3000.

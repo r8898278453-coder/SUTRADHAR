@@ -10,6 +10,7 @@ import {
   createAdminSession, 
   isTelegramAuthorized,
   generateEd25519Token,
+  verifyEd25519Token,
   isDockerAvailable,
   clusterState
 } from '../server.ts';
@@ -36,7 +37,7 @@ async function runSecurityTestSuite() {
       body: body ? JSON.stringify(body) : undefined
     });
     const json = await res.json().catch(() => ({}));
-    return { status: res.status, body: json };
+    return { status: res.status, body: json, headers: res.headers };
   }
 
   let passed = 0;
@@ -98,19 +99,22 @@ async function runSecurityTestSuite() {
       assert.strictEqual(res.body.success, true);
     });
 
-    await test('Admin session login -> issues verified session token', async () => {
+    await test('Admin login issues a HttpOnly cookie and protects state reads', async () => {
+      const anon = await apiRequest('GET', '/api/cluster/state');
+      assert.strictEqual(anon.status, 401);
       const loginRes = await apiRequest('POST', '/api/auth/login', {}, { adminKey: SUTRADHAR_ADMIN_KEY });
       assert.strictEqual(loginRes.status, 200);
-      assert.ok(loginRes.body.token?.startsWith('adm_sess_'));
-
-      // Use session token
-      const res = await apiRequest(
-        'POST', 
-        '/api/cluster/kill-switch', 
-        { 'x-sutradhar-session': loginRes.body.token }, 
-        { action: 'RESUME' }
-      );
-      assert.strictEqual(res.status, 200);
+      assert.strictEqual(loginRes.body.token, undefined, 'Session token must not be exposed in JSON');
+      const cookie = loginRes.headers.get('set-cookie') || '';
+      assert.ok(cookie.includes('sutradhar_session='));
+      assert.ok(cookie.includes('HttpOnly') && cookie.includes('SameSite=Strict'));
+      const cookieValue = cookie.split(';')[0];
+      const allowed = await apiRequest('POST', '/api/cluster/kill-switch', { Cookie: cookieValue, Origin: BASE_URL }, { action: 'RESUME' });
+      assert.strictEqual(allowed.status, 200);
+      const csrf = await apiRequest('POST', '/api/cluster/kill-switch', { Cookie: cookieValue, Origin: 'https://untrusted.example' }, { action: 'PAUSE' });
+      assert.strictEqual(csrf.status, 401, 'Cross-origin cookie request must be blocked');
+      const state = await apiRequest('GET', '/api/cluster/state', { Cookie: cookieValue });
+      assert.strictEqual(state.status, 200);
     });
 
     await test('Worker calling admin-only route -> DENIED (403_ADMIN_ONLY)', async () => {
@@ -184,34 +188,43 @@ async function runSecurityTestSuite() {
     // -------------------------------------------------------------
     console.log('\n--- TASK 4 & 5: Docker Sandbox & LLM Truth Verification ---');
 
-    await test('Missing Docker in production mode -> returns SANDBOX_UNAVAILABLE', async () => {
-      if (!isDockerAvailable()) {
-        const oldEnv = process.env.NODE_ENV;
-        process.env.NODE_ENV = 'production';
+    await test('Production test API blocks simulated success with or without Docker', async () => {
+      const oldEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
         const res = await apiRequest(
-          'POST',
-          '/api/cluster/ticket/test',
-          { 'Authorization': `Bearer ${SUTRADHAR_ADMIN_KEY}` },
-          { ticketId: 'TKT-104', isDemoMode: false }
+          'POST', '/api/cluster/ticket/test',
+          { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}` },
+          { ticketId: 'TKT-104', simulateFailure: false }
         );
+        assert.ok([501, 503].includes(res.status), `Expected blocked, got ${res.status}`);
+        assert.strictEqual(res.body.success, false);
+      } finally {
         process.env.NODE_ENV = oldEnv;
-        assert.strictEqual(res.status, 503);
-        assert.strictEqual(res.body.error, 'SANDBOX_UNAVAILABLE');
-      } else {
-        console.log('     (Docker is present on host, skipping unavailable assert)');
       }
     });
 
-    await test('Passing test moves ticket to READY_FOR_REVIEW, never directly to COMMITTED_PUSHED', async () => {
-      const res = await apiRequest(
-        'POST',
-        '/api/cluster/ticket/test',
-        { 'Authorization': `Bearer ${SUTRADHAR_ADMIN_KEY}` },
-        { ticketId: 'TKT-104', simulateFailure: false, isDemoMode: true }
-      );
-      assert.strictEqual(res.status, 200);
-      assert.strictEqual(res.body.ticket.status, 'READY_FOR_REVIEW', 'Expected status READY_FOR_REVIEW');
-      assert.notStrictEqual(res.body.ticket.status, 'COMMITTED_PUSHED');
+    await test('Caller-provided demo flags never create a synthetic passing Docker result', async () => {
+      const oldRepo = process.env.SUTRADHAR_TARGET_REPO_ROOT;
+      const oldCommand = process.env.SUTRADHAR_SANDBOX_TEST_COMMAND;
+      delete process.env.SUTRADHAR_TARGET_REPO_ROOT;
+      delete process.env.SUTRADHAR_SANDBOX_TEST_COMMAND;
+      try {
+        const ticket = clusterState.tickets.find(t => t.id === 'TKT-104');
+        assert.ok(ticket);
+        const beforeStatus = ticket.status;
+        const res = await apiRequest(
+          'POST', '/api/cluster/ticket/test',
+          { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}`, 'x-sutradhar-demo-mode': 'true' },
+          { ticketId: 'TKT-104', simulateFailure: false, isDemoMode: true }
+        );
+        assert.strictEqual(res.status, 503);
+        assert.strictEqual(res.body.error, 'SANDBOX_NOT_CONFIGURED');
+        assert.strictEqual(ticket.status, beforeStatus);
+      } finally {
+        if (oldRepo !== undefined) process.env.SUTRADHAR_TARGET_REPO_ROOT = oldRepo;
+        if (oldCommand !== undefined) process.env.SUTRADHAR_SANDBOX_TEST_COMMAND = oldCommand;
+      }
     });
 
     await test('Unconfigured LLM in production mode -> returns MODEL_UNAVAILABLE', async () => {
@@ -262,45 +275,92 @@ async function runSecurityTestSuite() {
     // -------------------------------------------------------------
     console.log('\n--- TASK 6, 8, 9, 12: Gatekeeper & Rollback Verification ---');
 
-    await test('Revoked token push attempt -> DENIED (403_REVOKED_TOKEN)', async () => {
-      const { tokenHeader, tokenId } = generateEd25519Token('TKT-104', 'NODE-A8F24C09', clusterState.epochId, ['modules/matrimony/ProfileController.php']);
-      // Revoke token in SQLite
+    await test('Valid lease without remote Git merge evidence cannot mark success', async () => {
+      const ticket = clusterState.tickets.find(t => t.id === 'TKT-104');
+      assert.ok(ticket);
+      ticket.status = 'READY_FOR_REVIEW';
+      const { tokenHeader } = generateEd25519Token(ticket.id, 'NODE-A8F24C09', clusterState.epochId, ticket.allowedFiles);
+      const res = await apiRequest('POST', '/api/cluster/ticket/verify-push',
+        { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}` },
+        { ticketId: ticket.id, tokenHeader, branch: `ai/${ticket.id}` });
+      assert.strictEqual(res.status, 503);
+      assert.strictEqual(res.body.error, 'GITHUB_VERIFICATION_NOT_CONFIGURED');
+      assert.notStrictEqual(ticket.status, 'COMMITTED_PUSHED');
+    });
+
+    await test('Revoked worker token is rejected cryptographically, not usable as a merge grant', async () => {
+      const files = ['modules/matrimony/ProfileController.php'];
+      const { tokenHeader, tokenId } = generateEd25519Token(
+        'TKT-104', 'NODE-A8F24C09', clusterState.epochId, files
+      );
       clusterDb.revokeToken(tokenId, 'Security test revocation');
-
-      const res = await apiRequest(
-        'POST',
-        '/api/cluster/ticket/verify-push',
-        { 'Authorization': `Bearer ${SUTRADHAR_ADMIN_KEY}` },
-        { ticketId: 'TKT-104', tokenHeader, branch: 'ai/TKT-104' }
-      );
-      assert.strictEqual(res.status, 403);
-      assert.ok(res.body.error?.includes('403_REVOKED_TOKEN'));
+      const verified = verifyEd25519Token(tokenHeader, 'TKT-104', clusterState.epochId, files);
+      assert.strictEqual(verified.verified, false);
+      assert.ok(verified.error?.includes('403_REVOKED_TOKEN'));
+      // Merge authorization is deliberately a separate admin-only workflow;
+      // sending a revoked worker token cannot make a merge claim succeed.
+      const res = await apiRequest('POST', '/api/cluster/ticket/verify-push',
+        { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}` },
+        { ticketId: 'TKT-104', tokenHeader, branch: 'ai/TKT-104' });
+      assert.notStrictEqual(res.body.status, 'COMMITTED_PUSHED');
     });
 
-    await test('Wrong worker heartbeat -> REJECTED (403_WRONG_WORKER)', async () => {
+    await test('Wrong-worker heartbeat is denied and SQLite rejects wrong lease owner', async () => {
+      const ticketId = `TKT-HB-${Date.now()}`;
+      const ticket: any = {
+        id: ticketId, title: 'Heartbeat ownership test', description: 'Test',
+        priority: 'P2_NORMAL', domain: 'Core', status: 'PENDING',
+        parentTicketIds: [], allowedFiles: ['modules/core/HbTest.php'],
+        readOnlyContracts: [], retryCount: 0, maxRetries: 3,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), logs: []
+      };
+      clusterDb.createTicket(ticket);
+      clusterState.tickets.push(ticket);
+      const claim = clusterDb.tryClaimTicket('NODE-A8F24C09', ticketId, `tok-hb-${Date.now()}`);
+      assert.strictEqual(claim.success, true);
+      assert.strictEqual(clusterDb.recordLeaseHeartbeat(ticketId, 'NODE-IMPOSTER-999', 50, 'forged'), false);
+      if (claim.lease) clusterState.watchdogLeases.push(claim.lease);
+
       const res = await apiRequest(
-        'POST',
-        '/api/cluster/watchdog/heartbeat',
-        { 'Authorization': `Bearer ${SUTRADHAR_WORKER_KEY}` },
-        { ticketId: 'TKT-104', workerId: 'NODE-IMPOSTER-999', progressPct: 50 }
+        'POST', '/api/cluster/watchdog/heartbeat',
+        { Authorization: `Bearer ${SUTRADHAR_WORKER_KEY}` },
+        { ticketId, workerId: 'NODE-IMPOSTER-999', progressPct: 50 }
       );
       assert.strictEqual(res.status, 403);
-      assert.ok(res.body.error?.includes('403_WRONG_WORKER'));
+      assert.ok(res.body.error?.includes('403_WORKER_ID_MISMATCH') ||
+                res.body.error?.includes('403_WRONG_WORKER'));
     });
 
-    await test('Rollback transitions ticket to ROLLBACK_COMPLETED and spawns hotfix', async () => {
+
+    await test('Rollback endpoint only records REQUESTED, not completed', async () => {
       const ticket106 = clusterState.tickets.find(t => t.id === 'TKT-106');
-      if (ticket106) ticket106.rollbackCommit = 'd8471e9a';
-
+      assert.ok(ticket106, 'Seed test ticket must exist');
+      ticket106.status = 'COMMITTED_PUSHED';
       const res = await apiRequest(
-        'POST',
-        '/api/master/rollback',
-        { 'Authorization': `Bearer ${SUTRADHAR_ADMIN_KEY}` },
-        { ticketId: 'TKT-106', reason: 'Regression test failure', actor: 'Lead Admin' }
+        'POST', '/api/master/rollback',
+        { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}` },
+        { ticketId: 'TKT-106', reason: 'Regression test failure' }
       );
-      assert.strictEqual(res.status, 200);
-      assert.ok(res.body.hotfixTicket?.id?.startsWith('TKT-HOTFIX-'));
-      assert.strictEqual(ticket106?.status, 'ROLLBACK_COMPLETED');
+      assert.strictEqual(res.status, 202);
+      assert.strictEqual(res.body.status, 'ROLLBACK_REQUESTED');
+      assert.strictEqual(ticket106.status, 'ROLLBACK_REQUESTED');
+      assert.strictEqual(res.body.hotfixTicket, undefined);
+    });
+
+    await test('Caller-provided demo flags cannot fabricate production test success', async () => {
+      const oldMode = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        const res = await apiRequest(
+          'POST', '/api/cluster/ticket/test',
+          { Authorization: `Bearer ${SUTRADHAR_ADMIN_KEY}`, 'x-sutradhar-demo-mode': 'true' },
+          { ticketId: 'TKT-104', simulateFailure: false, isDemoMode: true }
+        );
+        assert.ok([501, 503].includes(res.status), `Expected blocked test, got ${res.status}`);
+        assert.notStrictEqual(res.body.ticket?.status, 'COMMITTED_PUSHED');
+      } finally {
+        process.env.NODE_ENV = oldMode;
+      }
     });
 
   } finally {

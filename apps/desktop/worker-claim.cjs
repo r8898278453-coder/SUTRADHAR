@@ -1,0 +1,1181 @@
+/**
+ * Electron MAIN-only: explicit-operator, OS-vault signed task claim.
+ * No plaintext identity, browser credentials, Git push, provider automation,
+ * checkpoint/QA, or execution from untrusted task descriptions.
+ * The Git checkout MUST have been manually selected by the PC operator.
+ */
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const {spawnSync}=require('node:child_process');
+const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
+const {evidenceEntryPresent}=require('./local-evidence-file.cjs');
+const {readEvidenceBytes}=require('./local-evidence-file.cjs');
+const {readStableLocalFile,atomicWrite}=require('./os-vault.cjs');
+const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
+const SHA=/^[a-f0-9]{40}$/;
+const LEASE=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+const ORIGIN=/^https:\/\/[a-z0-9.-]+(?::443)?$/i;
+const fail=code=>{throw Error(code);};
+const digest=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
+const {safeScopedPath:safeScope}=require('./worker-scoped-path.cjs');
+const astParser=require('./master-ast-parser.cjs');
+function assertDirectory(dir){
+  if(typeof dir!=='string'||!path.isAbsolute(dir))fail('WORKER_LOCAL_PATH_INVALID');
+  const st=fs.lstatSync(dir);
+  if(!st.isDirectory()||st.isSymbolicLink())fail('WORKER_LOCAL_PATH_UNTRUSTED');
+  return fs.realpathSync(dir);
+}
+// Windows Git reports canonical paths with different separators and casing.
+// Both values MUST resolve to the same real on-disk directory; never compare
+// merely normalized user input or accept paths that do not exist.
+function sameRealDirectory(a,b){
+  try{
+    const x=fs.realpathSync.native(a),y=fs.realpathSync.native(b);
+    const norm=p=>process.platform==='win32'?
+      path.normalize(p).toLocaleLowerCase('en-US'):path.normalize(p);
+    return norm(x)===norm(y);
+  }catch{return false;}
+}
+function atomic(file,data,{exclusive=false}={}){
+  const target=path.dirname(file);
+  assertDirectory(target);
+  if(exclusive){
+    const fd=fs.openSync(file,'wx',0o600);
+    try{fs.writeSync(fd,data);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  }else{
+    const tmp=file+'.tmp-'+process.pid+'-'+crypto.randomUUID();
+    const fd=fs.openSync(tmp,'wx',0o600);
+    try{fs.writeSync(fd,data);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+    fs.renameSync(tmp,file);
+  }
+}
+function recordFile(dir,ticketId,kind){
+  if(!ID.test(ticketId)||!['claim','receipt'].includes(kind))fail('WORKER_LOCAL_RECORD_INVALID');
+  return path.join(dir,kind+'_'+ticketId+'.json');
+}
+function readRecord(file){
+  let raw;
+  try{raw=readEvidenceBytes(file,{minBytes:1,maxBytes:8192});}
+  catch{fail('WORKER_LOCAL_RECORD_UNTRUSTED');}
+  let obj;
+  try{obj=JSON.parse(raw.toString('utf8'));}
+  catch{fail('WORKER_LOCAL_RECORD_CORRUPT');}
+  if(!obj||obj.schema!==1||!obj.context||!obj.body||
+     !/^[a-f0-9]{64}$/.test(obj.sha256||'')||
+     digest({schema:1,context:obj.context,body:obj.body})!==obj.sha256)
+    fail('WORKER_LOCAL_RECORD_DIGEST_INVALID');
+  return obj;
+}
+function validateTask(t,agentId,ticketId){
+  if(!t||t.ticket_id!==ticketId||!ID.test(t.project_id||'')||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(t.repository||'')||
+    !/^ai\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(t.branch_name||'')||
+    t.branch_name.includes('..')||t.branch_name.endsWith('.lock')||
+    !SHA.test(t.baseline_sha||'')||
+    !['LOW','MEDIUM','HIGH','CORE'].includes(t.risk)||
+    !Number.isSafeInteger(t.version)||t.version<1||
+    !['READY','CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(t.status)||
+    (t.status!=='READY'&&t.worker_agent_id!==agentId)||
+    !Array.isArray(t.write_scopes)||t.write_scopes.length===0||
+    t.write_scopes.length>30||t.write_scopes.some(s=>!safeScope(s))||
+    new Set(t.write_scopes).size!==t.write_scopes.length)
+    fail('WORKER_TASK_NOT_CLAIMABLE_OR_INVALID');
+  return t;
+}
+// An existing nonempty hooksPath is not a disabled hooks directory.
+// Refuse it without deleting evidence or running any contained hook.
+function assertDisabledHooks(dir){
+  assertDirectory(dir);
+  if(fs.readdirSync(dir).length!==0)fail('WORKER_DISABLED_GIT_HOOKS_NOT_EMPTY');
+}
+function git(root,hooks,...args){
+  assertDisabledHooks(hooks);
+  const p=spawnSync('git',['-c','core.hooksPath='+hooks,'-c','core.fsmonitor=false','-C',root,...args],
+    {encoding:'utf8',timeout:20000,maxBuffer:1024*1024,windowsHide:true});
+  if(p.error||p.status!==0)fail('WORKER_TRUSTED_GIT_PREFLIGHT_FAILED');
+  return p.stdout.trim();
+}
+function localWorktree({repoDir,t,workerDir,requireExisting=false}){
+  const repo=assertDirectory(repoDir),workRoot=path.join(workerDir,'worktrees');
+  const hookRoot=path.join(workerDir,'disabled-git-hooks');
+  // A dangling worktree/hook directory alias is historical filesystem
+  // evidence, not an empty directory. Never follow/create through it.
+  if(!evidenceEntryPresent(workRoot))
+    fs.mkdirSync(workRoot,{recursive:true,mode:0o700});
+  if(!evidenceEntryPresent(hookRoot))
+    fs.mkdirSync(hookRoot,{recursive:true,mode:0o700});
+  assertDirectory(workRoot);assertDisabledHooks(hookRoot);
+  if(!sameRealDirectory(git(repo,hookRoot,'rev-parse','--show-toplevel'),repo))
+    fail('WORKER_REPOSITORY_ROOT_MISMATCH');
+  let remote=git(repo,hookRoot,'remote','get-url','origin');
+  // No embedded credentials, HTTP, non-GitHub remotes or URL redirects.
+  remote=remote.replace(/\.git$/,'').replace(/^git@github\.com:/,'https://github.com/');
+  if(remote!=='https://github.com/'+t.repository)
+    fail('WORKER_REPOSITORY_ORIGIN_MISMATCH');
+  if(git(repo,hookRoot,'cat-file','-t',t.baseline_sha)!=='commit')
+    fail('WORKER_BASELINE_NOT_LOCAL_COMMIT');
+  // Git LFS commonly installs global filter definitions even when no file
+  // uses them; blanket rejection breaks every stock Git for Windows install.
+  // Instead inspect effective attributes for *every tracked file* at the
+  // exact immutable approved baseline, including nested .gitattributes and
+  // local/global attributes. Git check-attr does not run smudge programs.
+  assertDisabledHooks(hookRoot);
+  const tree=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-c','core.fsmonitor=false','-C',repo,
+    'ls-tree','-r','--name-only','-z',t.baseline_sha],
+    {encoding:null,timeout:15000,maxBuffer:2*1024*1024,windowsHide:true});
+  if(tree.error||tree.status!==0||!Buffer.isBuffer(tree.stdout)||
+     tree.stdout.length===0||tree.stdout.length>2*1024*1024)
+    fail('WORKER_GIT_FILE_INVENTORY_UNTRUSTED');
+  const paths=tree.stdout;
+  assertDisabledHooks(hookRoot);
+  const attr=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-c','core.fsmonitor=false','-C',repo,
+    'check-attr','--source='+t.baseline_sha,'--all','-z','--stdin'],
+    {input:paths,encoding:null,timeout:20000,maxBuffer:4*1024*1024,windowsHide:true});
+  if(attr.error||attr.status!==0||!Buffer.isBuffer(attr.stdout)||
+     attr.stdout.length>4*1024*1024)
+    fail('WORKER_GIT_ATTRIBUTES_UNREADABLE');
+  const fields=attr.stdout.toString('utf8').split('\0');
+  if(fields[fields.length-1]!=='')fail('WORKER_GIT_ATTRIBUTES_UNREADABLE');
+  for(let n=0;n<fields.length-1;n+=3){
+    if(n+2>=fields.length-1)fail('WORKER_GIT_ATTRIBUTES_UNREADABLE');
+    const name=fields[n+1],value=fields[n+2];
+    if((name==='filter'||name==='working-tree-encoding')&&
+      value!=='unset'&&value!=='unspecified')
+      fail('WORKER_ACTIVE_GIT_FILTER_REQUIRES_OWNER_REVIEW');
+  }
+  const target=path.join(workRoot,t.ticket_id);
+  if(evidenceEntryPresent(target)){
+    const actual=assertDirectory(target);
+    if(!sameRealDirectory(actual,target)||
+      !sameRealDirectory(git(target,hookRoot,'rev-parse','--show-toplevel'),actual)||
+      git(target,hookRoot,'branch','--show-current')!==t.branch_name||
+      git(target,hookRoot,'merge-base','HEAD',t.baseline_sha)!==t.baseline_sha)
+      fail('WORKER_EXISTING_WORKTREE_MISMATCH');
+  }else{
+    if(requireExisting)fail('WORKER_PROVIDER_WORKTREE_MISSING');
+    // No remote interaction. If the branch exists elsewhere, never overwrite.
+    assertDisabledHooks(hookRoot);
+    const branch=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-c','core.fsmonitor=false',
+      '-C',repo,'show-ref','--verify','--quiet','refs/heads/'+t.branch_name],
+      {timeout:10000,windowsHide:true});
+    if(branch.error||![0,1].includes(branch.status)||branch.status===0)
+      fail('WORKER_BRANCH_ALREADY_EXISTS_OR_UNCERTAIN');
+    assertDisabledHooks(hookRoot);
+    const added=spawnSync('git',['-c','core.hooksPath='+hookRoot,'-c','core.fsmonitor=false',
+      '-C',repo,'worktree','add','-b',t.branch_name,target,t.baseline_sha],
+      {encoding:'utf8',timeout:30000,maxBuffer:128*1024,windowsHide:true});
+    if(added.error||added.status!==0)
+      fail('WORKER_GIT_WORKTREE_CREATION_UNCERTAIN');
+    if(!sameRealDirectory(assertDirectory(target),target)||
+      git(target,hookRoot,'branch','--show-current')!==t.branch_name||
+      git(target,hookRoot,'rev-parse','HEAD')!==t.baseline_sha)
+      fail('WORKER_CREATED_WORKTREE_UNVERIFIED');
+  }
+  return {repository_dir:repo,worktree:target};
+}
+async function boundedJson(response,maxBytes=16384){
+  const rawLength=response.headers?.get('content-length');
+  if(rawLength&&Number(rawLength)>maxBytes)fail('WORKER_CENTRAL_RESPONSE_TOO_LARGE');
+  if(!response.body?.getReader)fail('WORKER_CENTRAL_RESPONSE_INVALID');
+  const reader=response.body.getReader(),chunks=[];
+  let total=0;
+  try{
+    while(true){
+      const v=await reader.read();
+      if(v.done)break;
+      total+=v.value.byteLength;
+      if(total>maxBytes)fail('WORKER_CENTRAL_RESPONSE_TOO_LARGE');
+      chunks.push(Buffer.from(v.value));
+    }
+  }finally{try{await reader.cancel();}catch{}reader.releaseLock();}
+  try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));}
+  catch{fail('WORKER_CENTRAL_RESPONSE_INVALID');}
+}
+async function signedRequest({origin,signer,method,uri,agentId,payload,fetcher}){
+  let headers,body;
+  if(method==='GET'&&uri==='/v7/cluster/state'){
+    headers=signer.sign({kind:'node_api',method:'GET',uri,body:''});body=undefined;
+  }else if(method==='POST'&&['claim','resume-check','renew-lease','checkpoint','submit','provider-attempt','plan-batch-preview','plan-batch','plan-batch-receipt','plan-batch-projects','plan-batch-project'].includes(uri)){
+    const prepared=signer.signWorkerAction({operation:uri,agent_id:agentId,payload});
+    headers=prepared.headers;body=prepared.body;uri=prepared.uri;
+  }else fail('WORKER_REQUEST_NOT_ALLOWLISTED');
+  const response=await fetcher(origin+uri,{
+    method,headers:{...headers,Accept:'application/json',
+      ...(method==='POST'?{'content-type':'application/json'}:{})},
+    body,cache:'no-store',credentials:'omit',redirect:'error',
+    signal:AbortSignal.timeout(15000)
+  });
+  const data=await boundedJson(response,uri.startsWith('/v7/tasks/plan-batch')?96*1024:16384);
+  if(!response.ok){
+    const code=typeof data?.error_code==='string'&&/^[A-Z][A-Z0-9_]{1,79}$/.test(data.error_code)
+      ?data.error_code:'CENTRAL_REQUEST_FAILED';
+    fail('WORKER_'+code);
+  }
+  return data;
+}
+function confirmResume(local,proof){
+  if(!proof||proof.resume_allowed!==true||
+    proof.automatic_execution_allowed!==false||
+    !['CLAIMED','RUNNING','CHECKPOINTED','TEST_FAILED'].includes(proof.status)||
+    proof.agent_id!==local.agent_id||proof.ticket_id!==local.ticket_id||
+    proof.epoch!==local.epoch||proof.project_id!==local.project_id||
+    proof.repository!==local.repository||proof.branch_name!==local.branch_name||
+    proof.baseline_sha!==local.baseline_sha||
+    JSON.stringify([...(Array.isArray(proof.write_scopes)?proof.write_scopes:[])].sort())!==
+      JSON.stringify([...local.scopes].sort()))
+    fail('WORKER_CENTRAL_RESUME_MISMATCH');
+}
+function context(t,agentId,epoch,work){
+  return {agent_id:agentId,ticket_id:t.ticket_id,project_id:t.project_id,
+    repository:t.repository,branch_name:t.branch_name,
+    baseline_sha:t.baseline_sha,scopes:[...t.write_scopes],
+    repository_dir:work.repository_dir,worktree:work.worktree,epoch};
+}
+async function claimApprovedTask({origin,agentId,ticketId,repoDir,dir,signer,fetcher=fetch}){
+  if(!ORIGIN.test(origin||'')||!ID.test(agentId||'')||!ID.test(ticketId||'')||
+    !dir||!path.isAbsolute(dir)||!signer||typeof signer.signWorkerAction!=='function')
+    fail('WORKER_CLAIM_INPUT_DENIED');
+  assertDirectory(dir);
+  const t=validateTask((await inspectWorkerTasks({
+    origin,agentId,ticketId,signer,fetcher
+  })).task,agentId,ticketId);
+  const cluster=await signedRequest({origin,signer,method:'GET',
+    uri:'/v7/cluster/state',agentId,fetcher});
+  if(cluster.phase!=='READY'||cluster.paused!==false||
+    !Number.isSafeInteger(cluster.epoch)||cluster.epoch<1||
+    !ID.test(cluster.master_agent_id||''))
+    fail('WORKER_CLAIM_MASTER_NOT_READY');
+  const work=localWorktree({repoDir,t,workerDir:dir});
+  const ctx=context(t,agentId,cluster.epoch,work);
+  const file=recordFile(dir,ticketId,'claim'),receiptFile=recordFile(dir,ticketId,'receipt');
+  if(evidenceEntryPresent(receiptFile))
+    fail('WORKER_EXISTING_RECEIPT_REQUIRES_RESUME');
+  let body;
+  if(evidenceEntryPresent(file)){
+    const previous=readRecord(file);
+    body=previous.body;
+    if(JSON.stringify(previous.context)!==JSON.stringify(ctx)||
+      body.agent_id!==agentId||body.ticket_id!==ticketId||
+      !ID.test(body.request_id||'')||!body.request_id.startsWith('claim_')||
+      !Number.isSafeInteger(body.expected_version)||body.expected_version<1||
+      body.expected_master_epoch!==ctx.epoch||
+      !['READY','CLAIMED'].includes(t.status)||
+      (t.status==='CLAIMED'&&t.worker_agent_id!==agentId))
+      fail('WORKER_PENDING_CLAIM_RECONCILIATION_REQUIRED');
+  }else{
+    if(t.status!=='READY')fail('WORKER_CLAIM_NOT_READY');
+    body={request_id:'claim_'+crypto.randomUUID().replace(/-/g,''),
+      agent_id:agentId,ticket_id:ticketId,expected_version:t.version,
+      expected_master_epoch:cluster.epoch};
+    const core={schema:1,context:ctx,body};
+    atomic(file,JSON.stringify({...core,sha256:digest(core)})+'\n',{exclusive:true});
+  }
+  // Ambiguous network response must retain local journal + worktree intact.
+  const result=await signedRequest({origin,signer,method:'POST',
+    uri:'claim',agentId,payload:body,fetcher});
+  if(result.accepted!==true||result.ticket_id!==ticketId||
+    !LEASE.test(result.lease_id||'')||result.epoch!==cluster.epoch||
+    result.lease_seconds!==600||
+    JSON.stringify([...(Array.isArray(result.write_scopes)?result.write_scopes:[])].sort())!==
+      JSON.stringify([...ctx.scopes].sort()))
+    fail('WORKER_CLAIM_RECEIPT_INVALID');
+  const local={...ctx,lease_id:result.lease_id,
+    claim_request_id:body.request_id};
+  const receiptCore={schema:1,context:ctx,body:local};
+  // A previously created/dangling receipt is irreversible recovery evidence.
+  // Never rename-overwrite it if a second process races this earlier preflight.
+  atomic(receiptFile,JSON.stringify({...receiptCore,sha256:digest(receiptCore)})+'\n',
+    {exclusive:true});
+  const proof=await signedRequest({origin,signer,method:'POST',uri:'resume-check',
+    agentId,payload:{agent_id:agentId,ticket_id:ticketId,
+      lease_id:local.lease_id,expected_master_epoch:ctx.epoch},fetcher});
+  confirmResume(ctx,proof);
+  fs.unlinkSync(file);
+  return {ticket_id:ticketId,agent_id:agentId,worktree:work.worktree,
+    epoch:ctx.epoch,lease_seconds:600,resume_allowed:true,
+    automatic_execution_allowed:false,git_push_allowed:false};
+}
+// Only Electron MAIN can use this internal contract. The local claim receipt
+// is sealed against accidental mutations; Central still independently decides
+// whether the original lease is live and authoritative.
+function loadWorkerReceipt(dir,agentId,ticketId){
+  if(typeof dir!=='string'||!path.isAbsolute(dir)||!ID.test(agentId||'')||
+     !ID.test(ticketId||''))fail('WORKER_LOCAL_RECEIPT_INPUT_INVALID');
+  assertDirectory(dir);
+  const record=readRecord(recordFile(dir,ticketId,'receipt'));
+  const local=record.body,c=record.context;
+  if(local.agent_id!==agentId||local.ticket_id!==ticketId||
+     local.epoch!==c.epoch||!Number.isSafeInteger(local.epoch)||local.epoch<1||
+     local.project_id!==c.project_id||local.repository!==c.repository||
+     local.branch_name!==c.branch_name||local.baseline_sha!==c.baseline_sha||
+     local.worktree!==c.worktree||local.repository_dir!==c.repository_dir||
+     JSON.stringify(local.scopes)!==JSON.stringify(c.scopes)||
+     !Array.isArray(local.scopes)||local.scopes.length===0||
+     !local.scopes.every(safeScope)||!LEASE.test(local.lease_id||'')||
+     !ID.test(local.claim_request_id||'')||
+     !local.claim_request_id.startsWith('claim_'))
+    fail('WORKER_LOCAL_RECEIPT_MISMATCH');
+  return local;
+}
+async function resumeApprovedTask({origin,agentId,ticketId,dir,signer,fetcher=fetch}){
+  if(!ORIGIN.test(origin||'')||!ID.test(agentId||'')||!ID.test(ticketId||'')||
+     !path.isAbsolute(dir||''))fail('WORKER_RESUME_INPUT_DENIED');
+  const local=loadWorkerReceipt(dir,agentId,ticketId);
+  const proof=await signedRequest({origin,signer,method:'POST',uri:'resume-check',
+    agentId,payload:{agent_id:agentId,ticket_id:ticketId,
+      lease_id:local.lease_id,expected_master_epoch:local.epoch},fetcher});
+  confirmResume(local,proof);
+  const work=localWorktree({repoDir:local.repository_dir,
+    t:{...local,write_scopes:local.scopes},workerDir:dir});
+  if(work.worktree!==local.worktree)fail('WORKER_RESUME_WORKTREE_MISMATCH');
+  return {ticket_id:ticketId,agent_id:agentId,worktree:work.worktree,
+    epoch:local.epoch,status:proof.status,resume_allowed:true,
+    automatic_execution_allowed:false,git_push_allowed:false};
+}
+// No renderer-supplied request body or signing oracle: construct the exact
+// command from a locally sealed receipt, fresh signed Central observations,
+// and a digest previously reviewed by the operator. Never send provider data.
+async function recordProviderAttempt({origin,agentId,ticketId,dir,signer,action,provider,
+  reviewedDigest,reviewedRegistryVersion,reviewedBindingDigest,attemptId,fetcher=fetch,beforeMutation=()=>{}}){
+  if(!ORIGIN.test(origin||'')||!['BEGIN','INTERRUPT','CLOSE'].includes(action))
+    fail('WORKER_PROVIDER_ATTEMPT_INPUT_DENIED');
+  const local=loadWorkerReceipt(dir,agentId,ticketId);
+  const detail=async()=>(await inspectWorkerTasks({origin,agentId,ticketId,signer,fetcher})).task;
+  const proof=await signedRequest({origin,signer,method:'POST',uri:'resume-check',agentId,
+    payload:{agent_id:agentId,ticket_id:ticketId,lease_id:local.lease_id,expected_master_epoch:local.epoch},fetcher});
+  confirmResume(local,proof);
+  if(proof.lease_id!==local.lease_id)fail('WORKER_PROVIDER_LEASE_MISMATCH');
+  // Unlike claim preparation, recovery must never recreate a missing worktree.
+  if(!evidenceEntryPresent(local.worktree))fail('WORKER_PROVIDER_WORKTREE_MISSING');
+  const work=localWorktree({repoDir:local.repository_dir,t:{...local,write_scopes:local.scopes},workerDir:dir,requireExisting:true});
+  if(work.worktree!==local.worktree)fail('WORKER_PROVIDER_WORKTREE_MISMATCH');
+  const task=await detail();
+  if(task.worker_agent_id!==agentId||task.project_id!==local.project_id||
+     task.repository!==local.repository||task.baseline_sha!==local.baseline_sha||
+     task.branch_name!==local.branch_name||
+     JSON.stringify([...task.write_scopes].sort())!==JSON.stringify([...local.scopes].sort()))
+    fail('WORKER_PROVIDER_TASK_MISMATCH');
+  const cp=task.latest_checkpoint,previous=task.provider_attempt;
+  const body={action,request_id:'provider_'+crypto.randomUUID().replace(/-/g,''),
+    agent_id:agentId,ticket_id:ticketId,lease_id:local.lease_id,expected_master_epoch:local.epoch};
+  if(action==='BEGIN'){
+    if(task.status!=='CHECKPOINTED'||task.provider_mapping_source!=='MYSQL_OWNER_REGISTRY'||!cp||
+       !proof.latest_checkpoint||Number(proof.latest_checkpoint.generation)!==cp.generation||
+       proof.latest_checkpoint.content_sha256!==cp.content_sha256)
+      fail('WORKER_PROVIDER_CHECKPOINT_REQUIRED');
+    const preview=compactWorkerContext(task,agentId);
+    const mapping=task.provider_mappings.find(m=>m.provider===provider);
+    if(!mapping||typeof reviewedDigest!=='string'||reviewedDigest!==preview.context_sha256)
+      fail('WORKER_PROVIDER_REVIEWED_CONTEXT_CHANGED');
+    if(reviewedRegistryVersion!==task.provider_registry_version||reviewedBindingDigest!==mapping.binding_sha256)
+      fail('WORKER_PROVIDER_REVIEWED_MAPPING_CHANGED');
+    Object.assign(body,{provider,registry_version:task.provider_registry_version,
+      binding_sha256:mapping.binding_sha256,expected_task_version:task.version,checkpoint_generation:cp.generation,
+      checkpoint_sha256:cp.content_sha256,context_sha256:preview.context_sha256});
+  }else{
+    if(!previous||previous.attempt_id!==attemptId||previous.state==='CLOSED'||
+       (action==='INTERRUPT'&&previous.state!=='OPEN'))fail('WORKER_PROVIDER_ATTEMPT_STATE_MISMATCH');
+    body.attempt_id=attemptId;
+    if(action==='CLOSE'){
+      if(task.status!=='CHECKPOINTED'||!cp||cp.generation<=previous.checkpoint_generation||
+         !proof.latest_checkpoint||Number(proof.latest_checkpoint.generation)!==cp.generation||
+         proof.latest_checkpoint.content_sha256!==cp.content_sha256||
+         crypto.createHash('sha256').update(cp.summary+'\n'+cp.next_action).digest('hex')!==cp.content_sha256)
+        fail('WORKER_PROVIDER_FRESH_CHECKPOINT_REQUIRED');
+      Object.assign(body,{external_session_reviewed:true,worktree_reviewed:true});
+    }
+  }
+  // Final local fence after all asynchronous observations.
+  beforeMutation();
+  try{
+    const result=await signedRequest({origin,signer,method:'POST',uri:'provider-attempt',agentId,payload:body,fetcher});
+    const expected=action==='BEGIN'?'OPEN':action==='INTERRUPT'?'INTERRUPTED':'CLOSED';
+    const x=result?.attempt;
+    if(result?.accepted!==true||result.provider_sent!==false||result.provider_mapping_verified!==false||
+       result.automatic_execution_allowed!==false||!x||x.ticket_id!==ticketId||x.agent_id!==agentId||
+       x.lease_id!==local.lease_id||x.epoch!==local.epoch||x.state!==expected||
+       typeof x.attempt_id!=='string'||!/^attempt_[a-f0-9]{32}$/.test(x.attempt_id)||
+       (action==='BEGIN'&&(x.context_sha256!==body.context_sha256||x.provider!==body.provider||
+         x.registry_version!==body.registry_version||x.binding_sha256!==body.binding_sha256||
+         x.checkpoint_generation!==body.checkpoint_generation||x.checkpoint_sha256!==body.checkpoint_sha256))||
+       (action!=='BEGIN'&&x.attempt_id!==attemptId))
+      fail('WORKER_PROVIDER_RECEIPT_INVALID');
+    const latest=await detail(),y=latest.provider_attempt;
+    if(!y||y.attempt_id!==x.attempt_id||y.state!==expected||y.provider!==x.provider||
+       y.registry_version!==x.registry_version||y.context_sha256!==x.context_sha256||
+       y.checkpoint_generation!==x.checkpoint_generation||y.resolution!==x.resolution||
+       (expected==='CLOSED'&&y.resolution!=='WORKER_CHECKPOINT'))
+      fail('WORKER_PROVIDER_READBACK_REQUIRED');
+    return {ticket_id:ticketId,agent_id:agentId,attempt:y,
+      provider_sent:false,automatic_execution_allowed:false,provider_mapping_verified:false};
+  }catch{fail('WORKER_PROVIDER_OUTCOME_UNCERTAIN_INSPECT_CURRENT_TASK_NO_RETRY');}
+}
+// Main-process planning review. The renderer cannot choose a signing URL,
+// provide an epoch for admission, or replace the reviewed payload at commit.
+function validateBatchReceipt(reply,body,{preview=false,historical=false}={}){
+  if(!reply||reply.project_id!==body.project_id||reply.request_id!==body.request_id||
+     !Number.isSafeInteger(reply.epoch)||reply.epoch<1||
+     (!historical&&reply.epoch!==body.expected_master_epoch)||
+     reply.automatic_execution_allowed!==false||reply.semantic_discovery_verified!==false||
+     reply.baseline_verified!==false||typeof reply.preview_sha256!=='string'||
+     !/^[a-f0-9]{64}$/.test(reply.preview_sha256)||
+     (!preview&&reply.preview_sha256!==body.preview_sha256)||
+     (preview?reply.read_only!==true:reply.accepted!==true)||
+     !Array.isArray(reply.plan_order)||reply.plan_order.length<2||reply.plan_order.length>10||
+     !Array.isArray(reply.tickets)||reply.tickets.length!==reply.plan_order.length||
+     new Set(reply.plan_order.map(x=>typeof x==='string'?x.toLowerCase():null)).size!==reply.plan_order.length)
+    fail('WORKER_BATCH_RECEIPT_INVALID');
+  const ids=body.tasks?.map(x=>x.ticket_id);
+  if(ids&&JSON.stringify([...ids].sort())!==JSON.stringify([...reply.plan_order].sort()))
+    fail('WORKER_BATCH_RECEIPT_INVALID');
+  for(let i=0;i<reply.tickets.length;i++){
+    const t=reply.tickets[i],id=reply.plan_order[i];
+    if(typeof id!=='string'||!ID.test(id)||!t||t.ticket_id!==id||
+       !['READY','WAITING_AUTHORIZATION'].includes(t.status)||t.version!==1||
+       t.owner_approval_required!==(t.status==='WAITING_AUTHORIZATION'))
+      fail('WORKER_BATCH_RECEIPT_INVALID');
+    if(preview){
+      const original=body.tasks.find(x=>x.ticket_id===id);
+      if(!original||JSON.stringify(t.dependencies)!==JSON.stringify(original.dependencies)||
+         JSON.stringify(t.write_scopes)!==JSON.stringify(original.write_scopes)||
+         JSON.stringify(t.contract_keys)!==JSON.stringify([...original.contract_keys].sort()))
+        fail('WORKER_BATCH_PREVIEW_DECLARATION_MISMATCH');
+    }
+  }
+  // Keep only the known display fields, never echo arbitrary server data.
+  return {project_id:reply.project_id,request_id:reply.request_id,epoch:reply.epoch,
+    preview_sha256:reply.preview_sha256,plan_order:[...reply.plan_order],
+    tickets:reply.tickets.map(t=>({ticket_id:t.ticket_id,status:t.status,version:1,
+      owner_approval_required:t.owner_approval_required})),
+    automatic_execution_allowed:false,semantic_discovery_verified:false,baseline_verified:false};
+}
+async function previewMasterBatch({origin,agentId,projectId,requestId,tasks,signer,fetcher=fetch,beforeMutation=()=>{}}){
+  if(!ORIGIN.test(origin||'')||!ID.test(agentId||'')||!ID.test(projectId||'')||!ID.test(requestId||'')||
+     !Array.isArray(tasks)||tasks.length<2||tasks.length>10||Buffer.byteLength(JSON.stringify(tasks),'utf8')>65536)
+    fail('WORKER_BATCH_INPUT_DENIED');
+  const cluster=await signedRequest({origin,signer,method:'GET',uri:'/v7/cluster/state',agentId,fetcher});
+  if(cluster?.phase!=='READY'||cluster.paused!==false||cluster.master_agent_id!==agentId||
+     !Number.isSafeInteger(cluster.epoch)||cluster.epoch<1)fail('WORKER_BATCH_MASTER_NOT_READY');
+  beforeMutation();
+  const body={agent_id:agentId,project_id:projectId,request_id:requestId,
+    expected_master_epoch:cluster.epoch,tasks:JSON.parse(JSON.stringify(tasks))};
+  const reply=await signedRequest({origin,signer,method:'POST',uri:'plan-batch-preview',agentId,payload:body,fetcher});
+  return {body,review:validateBatchReceipt(reply,body,{preview:true})};
+}
+async function commitMasterBatch({origin,agentId,prepared,signer,fetcher=fetch,beforeMutation=()=>{}}){
+  if(!prepared||prepared.body?.agent_id!==agentId)fail('WORKER_BATCH_REVIEW_REQUIRED');
+  const body={...prepared.body,preview_sha256:prepared.review.preview_sha256};
+  beforeMutation();
+  try{
+    const reply=await signedRequest({origin,signer,method:'POST',uri:'plan-batch',agentId,payload:body,fetcher});
+    const result=validateBatchReceipt(reply,body);
+    if(JSON.stringify(result.plan_order)!==JSON.stringify(prepared.review.plan_order)||
+       JSON.stringify(result.tickets)!==JSON.stringify(prepared.review.tickets))
+      fail('WORKER_BATCH_RECEIPT_INVALID');
+    return {...result,historical_receipt:true};
+  }catch{fail('WORKER_BATCH_OUTCOME_UNCERTAIN_INSPECT_RECEIPT_NO_RETRY');}
+}
+function validateBatchCancellation(x,body,order=null){
+  if(!x||Object.keys(x).sort().join('|')!=='agent_id|automatic_execution_allowed|epoch|owner_review_recorded|plan_order|preview_sha256|project_id|request_id|resolution_id|state'||
+     x.agent_id!==body.agent_id||x.project_id!==body.project_id||x.request_id!==body.request_id||
+     x.preview_sha256!==body.preview_sha256||x.state!=='ADMISSION_CANCELLED'||
+     x.owner_review_recorded!==true||x.automatic_execution_allowed!==false||
+     typeof x.resolution_id!=='string'||!/^batch_cancel_[a-f0-9]{32}$/.test(x.resolution_id)||
+     !Number.isSafeInteger(x.epoch)||x.epoch<1||
+     !Array.isArray(x.plan_order)||x.plan_order.length<2||x.plan_order.length>10||
+     x.plan_order.some(id=>typeof id!=='string'||!ID.test(id)||/[\r\n]/.test(id))||
+     new Set(x.plan_order.map(id=>id.toLowerCase())).size!==x.plan_order.length||
+     (order&&JSON.stringify(x.plan_order)!==JSON.stringify(order)))
+    fail('WORKER_BATCH_CANCELLATION_INVALID');
+  return {...x};
+}
+async function inspectMasterBatchReceipt({origin,agentId,projectId,requestId,reviewedDigest,signer,fetcher=fetch}){
+  if(!ORIGIN.test(origin||'')||typeof reviewedDigest!=='string'||reviewedDigest.length!==64||
+     !/^[a-f0-9]{64}$/.test(reviewedDigest))fail('WORKER_BATCH_RECEIPT_INPUT_DENIED');
+  const body={agent_id:agentId,project_id:projectId,request_id:requestId,preview_sha256:reviewedDigest};
+  const reply=await signedRequest({origin,signer,method:'POST',uri:'plan-batch-receipt',agentId,payload:body,fetcher});
+  if(reply?.read_only!==true||reply.historical_receipt!==true||reply.automatic_execution_allowed!==false)
+    fail('WORKER_BATCH_RECEIPT_INVALID');
+  if(reply.resolution){
+    if(reply.receipt)fail('WORKER_BATCH_RECEIPT_INVALID');
+    return {resolution:validateBatchCancellation(reply.resolution,body),historical_receipt:true,automatic_execution_allowed:false};
+  }
+  return {...validateBatchReceipt(reply.receipt,body,{historical:true}),historical_receipt:true};
+}
+async function listMasterProjects({origin,agentId,signer,fetcher=fetch,beforeMutation=()=>{}}){
+  if(!ORIGIN.test(origin||'')||typeof agentId!=='string'||!ID.test(agentId)||/[\r\n]/.test(agentId))
+    fail('WORKER_BATCH_INPUT_DENIED');
+  const cluster=await signedRequest({origin,signer,method:'GET',uri:'/v7/cluster/state',agentId,fetcher});
+  if(cluster?.phase!=='READY'||cluster.paused!==false||cluster.master_agent_id!==agentId||
+     !Number.isSafeInteger(cluster.epoch)||cluster.epoch<1)fail('WORKER_BATCH_MASTER_NOT_READY');
+  beforeMutation();
+  const r=await signedRequest({origin,signer,method:'POST',uri:'plan-batch-projects',agentId,
+    payload:{agent_id:agentId,expected_master_epoch:cluster.epoch},fetcher});
+  if(r?.read_only!==true||r.agent_id!==agentId||r.epoch!==cluster.epoch||
+     r.automatic_execution_allowed!==false||r.baseline_verified!==false||
+     typeof r.truncated!=='boolean'||!Array.isArray(r.projects)||r.projects.length>100)
+    fail('WORKER_BATCH_CATALOG_INVALID');
+  const seen=new Set();
+  const projects=r.projects.map(p=>{
+    if(!p||Object.keys(p).sort().join('|')!=='base_branch|display_name|project_id|repository'||
+       typeof p.project_id!=='string'||!ID.test(p.project_id)||/[\r\n]/.test(p.project_id)||
+       seen.has(p.project_id.toLowerCase())||
+       typeof p.display_name!=='string'||!p.display_name.trim()||p.display_name.length>170||
+       typeof p.repository!=='string'||p.repository.length>190||! /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(p.repository)||
+       typeof p.base_branch!=='string'||p.base_branch.length>80||! /^[A-Za-z0-9._/-]+$/.test(p.base_branch))
+      fail('WORKER_BATCH_CATALOG_INVALID');
+    seen.add(p.project_id.toLowerCase());
+    return {project_id:p.project_id,display_name:p.display_name,repository:p.repository,base_branch:p.base_branch};
+  });
+  return {projects,truncated:r.truncated,epoch:r.epoch,baseline_verified:false};
+}
+
+// Current signed project identity, independent of the capped catalog list.
+async function lookupMasterProject({origin,agentId,projectId,signer,fetcher=fetch,beforeMutation=()=>{}}){
+  const exactId=x=>typeof x==='string'&&ID.test(x)&&!/[\r\n]/.test(x);
+  if(typeof origin!=='string'||!ORIGIN.test(origin)||!exactId(agentId)||!exactId(projectId))
+    fail('MASTER_BASELINE_INPUT_DENIED');
+  const cluster=await signedRequest({origin,signer,method:'GET',uri:'/v7/cluster/state',agentId,fetcher});
+  if(cluster?.phase!=='READY'||cluster.paused!==false||cluster.master_agent_id!==agentId||
+     !Number.isSafeInteger(cluster.epoch)||cluster.epoch<1)fail('WORKER_BATCH_MASTER_NOT_READY');
+  beforeMutation();
+  const r=await signedRequest({origin,signer,method:'POST',uri:'plan-batch-project',agentId,fetcher,
+    payload:{agent_id:agentId,expected_master_epoch:cluster.epoch,project_id:projectId}});
+  const p=r?.project;
+  if(r?.read_only!==true||r.agent_id!==agentId||r.epoch!==cluster.epoch||
+     r.automatic_execution_allowed!==false||r.baseline_verified!==false||!p||
+     Object.keys(p).sort().join('|')!=='base_branch|display_name|project_id|repository'||
+     p.project_id!==projectId||typeof p.display_name!=='string'||!p.display_name.trim()||p.display_name.length>170||
+     typeof p.repository!=='string'||p.repository.length>190||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(p.repository)||
+     typeof p.base_branch!=='string'||p.base_branch.length>80||!/^[A-Za-z0-9._/-]+$/.test(p.base_branch))
+    fail('MASTER_BASELINE_PROJECT_INVALID');
+  return {project:{project_id:p.project_id,repository:p.repository,base_branch:p.base_branch},epoch:r.epoch};
+}
+// Local, read-only object/ref inspection. Never fetch, checkout, reset, run
+// project commands, expose file contents or assert the remote ref is current.
+function inspectMasterBaseline({repoDir,project}){
+  if(!project||typeof project.project_id!=='string'||!ID.test(project.project_id)||
+     typeof project.repository!=='string'||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(project.repository)||
+     typeof project.base_branch!=='string'||project.base_branch.length>80||
+     !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(project.base_branch)||
+     project.base_branch.includes('..')||project.base_branch.includes('//')||
+     project.base_branch.endsWith('/')||project.base_branch.split('/').some(p=>p.startsWith('.')||p.endsWith('.lock')))
+    fail('MASTER_BASELINE_PROJECT_INVALID');
+  const repo=assertDirectory(repoDir);
+  // Do not inherit Git overrides, injected configuration or replacement
+  // objects. Disable all Git transport protocols (including lazy fetching).
+  const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!/^GIT_/i.test(k)));
+  Object.assign(env,{GIT_NO_REPLACE_OBJECTS:'1',GIT_NO_LAZY_FETCH:'1',GIT_TERMINAL_PROMPT:'0',
+    GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_OPTIONAL_LOCKS:'0'});
+  const read=(...args)=>{
+    const p=spawnSync('git',['--no-optional-locks','-c','protocol.allow=never','-c','core.fsmonitor=false',
+      '-C',repo,...args],{env,encoding:'utf8',timeout:10000,maxBuffer:256*1024,windowsHide:true});
+    if(p.error||p.status!==0||typeof p.stdout!=='string')fail('MASTER_BASELINE_LOCAL_GIT_READ_FAILED');
+    return p.stdout.trim();
+  };
+  if(!sameRealDirectory(read('rev-parse','--show-toplevel'),repo))fail('MASTER_BASELINE_REPOSITORY_ROOT_MISMATCH');
+  const urls=read('config','--local','--no-includes','--get-all','remote.origin.url').split(/\r?\n/);
+  if(urls.length!==1||urls[0].replace(/\.git$/,'').replace(/^git@github\.com:/,'https://github.com/')!=='https://github.com/'+project.repository)
+    fail('MASTER_BASELINE_REPOSITORY_ORIGIN_MISMATCH');
+  const ref='refs/remotes/origin/'+project.base_branch;
+  read('check-ref-format',ref);
+  const sha=read('show-ref','--verify','--hash',ref);
+  if(sha.length!==40||!SHA.test(sha)||read('cat-file','-t',sha)!=='commit')
+    fail('MASTER_BASELINE_LOCAL_COMMIT_INVALID');
+  const tree=read('rev-parse','--verify',sha+'^{tree}');
+  if(tree.length!==40||!SHA.test(tree)||read('cat-file','-t',tree)!=='tree')
+    fail('MASTER_BASELINE_LOCAL_TREE_INVALID');
+  if(read('show-ref','--verify','--hash',ref)!==sha)fail('MASTER_BASELINE_REF_CHANGED');
+  return {project_id:project.project_id,repository:project.repository,base_branch:project.base_branch,
+    tracking_ref:ref,baseline_sha:sha,tree_sha:tree,local_tracking_ref_verified:true,
+    remote_freshness_verified:false,baseline_verified:false,automatic_execution_allowed:false};
+}
+function requireMasterBaseline({tasks,observed,current}){
+  if(!observed||!current||JSON.stringify(observed)!==JSON.stringify(current)||
+     observed.local_tracking_ref_verified!==true||observed.remote_freshness_verified!==false||
+     !Array.isArray(tasks)||tasks.length<2||tasks.length>10||
+     tasks.some(t=>!t||t.baseline_sha!==observed.baseline_sha))
+    fail('MASTER_BASELINE_CHANGED_OR_TASK_BASELINE_MISMATCH');
+  // Internal dependencies can be order-only. Their future code is NOT
+  // contained in the current immutable baseline; never claim otherwise.
+  const ids=new Set(tasks.map(t=>t.ticket_id));
+  return {local_tracking_ref_verified:true,remote_freshness_verified:false,
+    internal_dependencies:tasks.flatMap(t=>(Array.isArray(t.dependencies)?t.dependencies:[])
+      .filter(id=>ids.has(id)).map(id=>({ticket_id:t.ticket_id,depends_on:id}))),
+    upstream_changes_in_baseline_verified:false,automatic_execution_allowed:false};
+}
+
+// Unconfirmed editable draft is deliberately separate from admission evidence.
+// No saved preview, authority, consent, checkout path or execution permission.
+function createMasterDraftStore({dir,safeStorage,nodeId,origin,agentId}){
+  const exactId=x=>typeof x==='string'&&ID.test(x)&&!/[\r\n]/.test(x);
+  if(!path.isAbsolute(dir)||typeof nodeId!=='string'||!/^node_[a-f0-9]{32}$/.test(nodeId)||
+     typeof origin!=='string'||!ORIGIN.test(origin)||!exactId(agentId)||
+     safeStorage?.isEncryptionAvailable()!==true||
+     (typeof safeStorage.getSelectedStorageBackend==='function'&&safeStorage.getSelectedStorageBackend()==='basic_text'))
+    fail('MASTER_DRAFT_STORAGE_DENIED');
+  const privateDir=d=>{
+    if(!evidenceEntryPresent(d))fs.mkdirSync(d,{recursive:true,mode:0o700});
+    const st=fs.lstatSync(d);
+    if(!st.isDirectory()||st.isSymbolicLink()||(process.platform!=='win32'&&(st.mode&0o077)!==0))
+      fail('MASTER_DRAFT_DIRECTORY_UNSAFE');
+  };
+  privateDir(dir);
+  const folder=path.join(dir,digest([nodeId,origin,agentId]));
+  privateDir(folder);
+  const file=path.join(folder,'draft.bin');
+  const text=(x,n)=>typeof x==='string'&&x.length<=n&&!/[\uD800-\uDFFF]/u.test(x);
+  const list=(a,n,fn)=>Array.isArray(a)&&a.length<=n&&a.every(fn);
+  const limits={ticket:100,baseline:40,branch:120,title:220,description:10000,
+    scopes:13530,criteria:15030,dependencies:3030,contracts:1164};
+  function validate(d){
+    if(!d||Object.keys(d).sort().join('|')!=='editor|project_id|request_id|tasks'||
+       ![d.project_id,d.request_id].every(x=>x===''||exactId(x))||
+       !d.editor||Object.keys(d.editor).sort().join('|')!=='baseline|branch|contracts|criteria|dependencies|description|risk|scopes|ticket|title'||
+       !Object.entries(limits).every(([k,n])=>text(d.editor[k],n))||
+       !['LOW','MEDIUM','HIGH','CORE'].includes(d.editor.risk)||
+       !list(d.tasks,10,t=>t&&Object.keys(t).sort().join('|')==='acceptance_criteria|baseline_sha|branch_name|contract_keys|dependencies|description|risk|ticket_id|title|write_scopes'&&
+         exactId(t.ticket_id)&&typeof t.baseline_sha==='string'&&t.baseline_sha.length===40&&SHA.test(t.baseline_sha)&&
+         text(t.branch_name,120)&&text(t.title,220)&&text(t.description,10000)&&
+         ['LOW','MEDIUM','HIGH','CORE'].includes(t.risk)&&list(t.write_scopes,30,x=>text(x,450))&&
+         list(t.acceptance_criteria,30,x=>text(x,500))&&list(t.dependencies,30,exactId)&&
+         list(t.contract_keys,12,x=>text(x,96)))||
+       new Set(d.tasks.map(t=>t.ticket_id.toLowerCase())).size!==d.tasks.length||
+       Buffer.byteLength(JSON.stringify(d),'utf8')>60000)
+      fail('MASTER_DRAFT_SHAPE_OR_SIZE_INVALID');
+    return d;
+  }
+  function load(){
+    // Atomic writer's durable intent belongs only to this draft folder.
+    // Never silently restore an earlier snapshot after an ambiguous write.
+    const names=fs.readdirSync(folder);
+    if(names.some(n=>n!=='draft.bin'))fail('MASTER_DRAFT_WRITE_UNCERTAIN_OWNER_REVIEW');
+    if(!evidenceEntryPresent(file))return null;
+    try{
+      const x=JSON.parse(safeStorage.decryptString(readStableLocalFile(file,{maxBytes:65536})));
+      if(!x||Object.keys(x).sort().join('|')!=='agent_id|draft|node_id|origin|revision|schema|sha256'||
+         x.schema!==1||x.node_id!==nodeId||x.origin!==origin||x.agent_id!==agentId||
+         !Number.isSafeInteger(x.revision)||x.revision<1)fail('MASTER_DRAFT_BINDING_INVALID');
+      const {sha256,...payload}=x;
+      if(sha256!==digest(payload))fail('MASTER_DRAFT_DIGEST_INVALID');
+      validate(x.draft);
+      return {revision:x.revision,sha256,draft:x.draft,automatic_execution_allowed:false};
+    }catch{fail('MASTER_DRAFT_CORRUPT_OWNER_REVIEW');}
+  }
+  function save(d,expectedDigest){
+    const prior=load();
+    if(expectedDigest!==(prior?.sha256??null))fail('MASTER_DRAFT_REVISION_CONFLICT_LOAD_FIRST');
+    const payload={schema:1,node_id:nodeId,origin,agent_id:agentId,
+      revision:(prior?.revision??0)+1,draft:validate(d)};
+    if(!Number.isSafeInteger(payload.revision))fail('MASTER_DRAFT_REVISION_INVALID');
+    const sha256=digest(payload);
+    const bytes=safeStorage.encryptString(JSON.stringify({...payload,sha256}));
+    if(!Buffer.isBuffer(bytes)||bytes.length<1||bytes.length>65536)fail('MASTER_DRAFT_ENCRYPTED_SIZE_INVALID');
+    atomicWrite(file,bytes);
+    const after=load();
+    if(!after||after.sha256!==sha256)fail('MASTER_DRAFT_READBACK_REQUIRED');
+    return after;
+  }
+  return {load,save};
+}
+
+// Heuristic relative-import evidence from immutable local Git blobs only.
+// No source text is returned, no project module is loaded or executed, no
+// dependency edge is inferred as authoritative. Unsupported syntax is unknown.
+function inspectMasterSourceHints({repoDir,project,observed,tasks,typescriptRuntime=null}){
+  requireMasterBaseline({tasks,observed,current:inspectMasterBaseline({repoDir,project})});
+  const repo=assertDirectory(repoDir);
+  const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!/^GIT_/i.test(k)));
+  Object.assign(env,{GIT_NO_REPLACE_OBJECTS:'1',GIT_NO_LAZY_FETCH:'1',GIT_TERMINAL_PROMPT:'0',
+    GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_OPTIONAL_LOCKS:'0'});
+  const read=(max,...args)=>{
+    const p=spawnSync('git',['--no-optional-locks','-c','protocol.allow=never','-c','core.fsmonitor=false','-C',repo,...args],
+      {env,encoding:null,timeout:5000,maxBuffer:max,windowsHide:true});
+    if(p.error||p.status!==0||!Buffer.isBuffer(p.stdout)||p.stdout.length>max)
+      fail('MASTER_SOURCE_HINT_GIT_READ_FAILED');
+    return p.stdout;
+  };
+  const inventory=new TextDecoder('utf-8',{fatal:true}).decode(read(1024*1024,'ls-tree','-r','-z',observed.tree_sha));
+  const files=new Map(),aliases=new Set();
+  for(const line of inventory.split('\0')){
+    if(!line)continue;
+    const m=/^(100644|100755) blob ([a-f0-9]{40})\t(.+)$/.exec(line);
+    if(!m||!safeScope(m[3]))continue;
+    const lower=m[3].toLowerCase();
+    if(aliases.has(lower))fail('MASTER_SOURCE_HINT_PATH_ALIAS');
+    aliases.add(lower);files.set(m[3],m[2]);
+  }
+  const source=/\.(?:[cm]?[jt]s|tsx|jsx)$/i;
+  const own=(t,p)=>t.write_scopes.some(s=>p===s||p.startsWith(s+'/'));
+  if(tasks.some(t=>!t||typeof t.ticket_id!=='string'||!ID.test(t.ticket_id)||
+     !Array.isArray(t.write_scopes)||!t.write_scopes.length||t.write_scopes.length>30||
+     t.write_scopes.some(s=>!safeScope(s))))
+    fail('MASTER_SOURCE_HINT_SCOPE_INVALID');
+  const selected=[...files.keys()].filter(p=>source.test(p)&&tasks.some(t=>own(t,p))).sort();
+  // Round-robin per task avoids exhausting the entire file budget on the
+  // first alphabetic directory. Report exact per-task coverage below.
+  const queues=[...tasks].sort((a,b)=>a.ticket_id<b.ticket_id?-1:a.ticket_id>b.ticket_id?1:0)
+    .map(t=>selected.filter(p=>own(t,p)));
+  const chosen=new Set();
+  while(chosen.size<12&&queues.some(q=>q.length)){
+    for(const q of queues){
+      while(q.length&&chosen.has(q[0]))q.shift();
+      if(q.length&&chosen.size<12)chosen.add(q.shift());
+    }
+  }
+  const sample=[...chosen],refs=new Map(),skipped=[],ast_files=[];
+  const astEnabled=typescriptRuntime!==null;
+  if(astEnabled&&typeof typescriptRuntime?.createSourceFile!=='function')fail('MASTER_AST_RUNTIME_UNAVAILABLE');
+  for(const file of sample){
+    const sha=files.get(file);
+    const row={source_path:file,status:'NOT_PARSED',resolved:0,ambiguous:0,missing:0,unsupported:0};
+    if(astEnabled)ast_files.push(row);
+    const size=Number(read(128,'cat-file','-s',sha).toString('ascii').trim());
+    if(!Number.isSafeInteger(size)||size<0||size>16384){skipped.push(file);row.status='SIZE_LIMIT';continue;}
+    const raw=read(16384,'cat-file','blob',sha);
+    if(raw.length!==size){skipped.push(file);row.status='SIZE_MISMATCH';continue;}
+    if(astEnabled){
+      let parsed;
+      try{parsed=astParser.parseReferences(typescriptRuntime,file,raw);}
+      catch(e){
+        row.status=e?.message==='AST_SOURCE_ENCODING'?'ENCODING_ERROR':'PARSER_REFUSED';
+        skipped.push(file);continue;
+      }
+      row.status=parsed.status;row.unsupported=parsed.unknown;
+      if(parsed.status!=='PARSED'){skipped.push(file);continue;}
+      const targets=new Set();
+      for(const spec of parsed.references){
+        const result=astParser.resolveReference(file,spec,files);
+        if(result.status==='RESOLVED'&&safeScope(result.target)){
+          targets.add(result.target);row.resolved++;
+        }else if(result.status==='AMBIGUOUS')row.ambiguous++;
+        else if(result.status==='MISSING')row.missing++;
+        else row.unsupported++;
+      }
+      refs.set(file,[...targets].sort());
+      continue;
+    }
+    let code;try{code=new TextDecoder('utf-8',{fatal:true}).decode(raw);}catch{skipped.push(file);continue;}
+    // Deliberately a lexical hint, not an AST. Comments and strings can
+    // produce false positives; dynamic/package/alias imports are not resolved.
+    const re=/(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)['"](\.{1,2}\/[A-Za-z0-9._/-]+)['"]/g;
+    const targets=new Set();
+    for(const m of code.matchAll(re)){
+      const base=path.posix.normalize(path.posix.join(path.posix.dirname(file),m[1]));
+      if(!safeScope(base))continue;
+      const candidates=[base,...['.ts','.tsx','.js','.jsx','.mjs','.cjs'].map(e=>base+e),
+        ...['.ts','.tsx','.js','.jsx','.mjs','.cjs'].map(e=>base+'/index'+e)];
+      const found=[...new Set(candidates)].filter(x=>files.has(x)&&source.test(x));
+      if(found.length===1)targets.add(found[0]);
+    }
+    refs.set(file,[...targets].sort());
+  }
+  const hints=[];
+  for(const [file,targets] of refs)for(const target of targets){
+    for(const a of tasks.filter(t=>own(t,file)))for(const b of tasks.filter(t=>own(t,target)&&t.ticket_id!==a.ticket_id)){
+      if(hints.length>=40)break;
+      hints.push({kind:'CROSS_TASK_RELATIVE_IMPORT',from_ticket:a.ticket_id,to_ticket:b.ticket_id,source_path:file,target_path:target});
+    }
+  }
+  // Report shared imports even when the target is outside task write scopes.
+  for(const target of new Set([...refs.values()].flat())){
+    const users=tasks.filter(t=>[...refs].some(([file,targets])=>own(t,file)&&targets.includes(target))).map(t=>t.ticket_id);
+    if(users.length>1&&hints.length<40)hints.push({kind:'SHARED_RELATIVE_IMPORT',ticket_ids:users,target_path:target});
+  }
+  requireMasterBaseline({tasks,observed,current:inspectMasterBaseline({repoDir,project})});
+  return {baseline_sha:observed.baseline_sha,tree_sha:observed.tree_sha,scoped_source_file_count:selected.length,
+    scanned_file_count:refs.size,skipped_file_count:skipped.length,scan_limited:selected.length>12||skipped.length>0||hints.length>=40,
+    task_coverage:tasks.map(t=>({ticket_id:t.ticket_id,scoped_files:selected.filter(p=>own(t,p)).length,
+      scanned_files:[...refs.keys()].filter(p=>own(t,p)).length})),
+    hints,inspection_mode:astEnabled?'AST_SYNTAX':'LEXICAL_LEGACY',
+    ...(astEnabled?{ast_files,ast_unknown_reference_count:ast_files.reduce((n,f)=>n+f.ambiguous+f.missing+f.unsupported,0),
+      ast_parse_incomplete:ast_files.some(f=>f.status!=='PARSED')||selected.length>12,
+      type_resolution_verified:false,remote_freshness_verified:false}:{}),
+    semantic_discovery_verified:false,automatic_execution_allowed:false,provider_sent:false,
+    source_contents_returned:false};
+}
+
+// Advisory planning analysis, independent of Central admission/lease policy.
+// Conservative declared resource conflicts + explicit dependency DAG.
+function analyzeMasterPlanningDraft(tasks){
+  return analyzeDeclaredGraph(tasks,10,65536);
+}
+// Private generalized graph; callers choose a fixed bounded policy, never a
+// caller-controlled size. This does not alter Central/desktop admission caps.
+function analyzeDeclaredGraph(tasks,maxTasks,maxBytes){
+  const id=x=>typeof x==='string'&&ID.test(x)&&!/[\r\n]/.test(x);
+  const bounded=(x,n)=>typeof x==='string'&&x.length<=n&&!/[\uD800-\uDFFF]/u.test(x);
+  const list=(a,n,fn)=>Array.isArray(a)&&a.length<=n&&a.every(fn);
+  const contract=x=>bounded(x,96)&&/^(?:api|db|interface|event):[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*$/.test(x);
+  const overlap=(a,b,sep)=>a===b||a.startsWith(b+sep)||b.startsWith(a+sep);
+  if(!Array.isArray(tasks)||tasks.length<2||tasks.length>maxTasks||
+     Buffer.byteLength(JSON.stringify(tasks),'utf8')>maxBytes||
+     tasks.some(t=>!t||Object.keys(t).sort().join('|')!=='acceptance_criteria|baseline_sha|branch_name|contract_keys|dependencies|description|risk|ticket_id|title|write_scopes'||
+       !id(t.ticket_id)||typeof t.baseline_sha!=='string'||t.baseline_sha.length!==40||!SHA.test(t.baseline_sha)||
+       !bounded(t.branch_name,120)||!/^ai\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(t.branch_name)||
+       t.branch_name.includes('..')||t.branch_name.endsWith('.lock')||
+       !bounded(t.title,220)||!t.title.trim()||!bounded(t.description,10000)||!t.description.trim()||
+       !['LOW','MEDIUM','HIGH','CORE'].includes(t.risk)||
+       !list(t.write_scopes,30,safeScope)||!t.write_scopes.length||
+       !list(t.acceptance_criteria,30,c=>bounded(c,500)&&!!c.trim())||!t.acceptance_criteria.length||
+       !list(t.dependencies,30,id)||new Set(t.dependencies).size!==t.dependencies.length||
+       !list(t.contract_keys,12,contract)||
+       t.contract_keys.some((x,i)=>t.contract_keys.some((y,j)=>j>i&&overlap(x,y,'.')))))
+    fail('MASTER_PLANNING_DRAFT_INVALID');
+  const ordered=[...tasks].sort((a,b)=>a.ticket_id<b.ticket_id?-1:a.ticket_id>b.ticket_id?1:0);
+  const byId=new Map(ordered.map(t=>[t.ticket_id,t]));
+  const aliases=new Map(ordered.map(t=>[t.ticket_id.toLowerCase(),t.ticket_id]));
+  if(aliases.size!==tasks.length||new Set(tasks.map(t=>t.branch_name.toLowerCase())).size!==tasks.length)
+    fail('MASTER_PLANNING_DUPLICATE_ID_OR_BRANCH');
+  const ancestors=new Map(),waiting=new Set(byId.keys()),waves=[];
+  for(const t of ordered)for(const d of t.dependencies)
+    if(aliases.has(d.toLowerCase())&&aliases.get(d.toLowerCase())!==d)
+      fail('MASTER_PLANNING_DEPENDENCY_ALIAS');
+  while(waiting.size){
+    const wave=[...waiting].filter(k=>byId.get(k).dependencies.every(d=>!waiting.has(d)));
+    if(!wave.length)fail('MASTER_PLANNING_DEPENDENCY_CYCLE');
+    for(const k of wave){
+      const all=new Set();
+      for(const d of byId.get(k).dependencies)if(byId.has(d)){
+        all.add(d);for(const x of ancestors.get(d)||[])all.add(x);
+      }
+      ancestors.set(k,all);
+    }
+    for(const k of wave)waiting.delete(k);
+    waves.push(wave);
+  }
+  const conflicts=[],external=[];
+  for(const t of ordered){
+    const dependencies=t.dependencies.filter(d=>!byId.has(d));
+    if(dependencies.length)external.push({ticket_id:t.ticket_id,dependencies});
+  }
+  for(let i=0;i<ordered.length;i++)for(let j=i+1;j<ordered.length;j++){
+    const a=ordered[i],b=ordered[j];
+    const pathConflict=a.write_scopes.some(x=>b.write_scopes.some(y=>overlap(x.toLowerCase(),y.toLowerCase(),'/')));
+    const contractConflict=a.contract_keys.some(x=>b.contract_keys.some(y=>overlap(x,y,'.')));
+    if(pathConflict||contractConflict){
+      const direction=ancestors.get(b.ticket_id).has(a.ticket_id)?[a.ticket_id,b.ticket_id]:
+        ancestors.get(a.ticket_id).has(b.ticket_id)?[b.ticket_id,a.ticket_id]:null;
+      conflicts.push({ticket_ids:[a.ticket_id,b.ticket_id],path_conflict:pathConflict,
+        contract_conflict:contractConflict,declared_order:direction,requires_review:direction===null});
+    }
+  }
+  // Connected components are advisory review groups, never dispatch groups.
+  const neighbors=new Map(ordered.map(t=>[t.ticket_id,new Set()]));
+  const connect=(a,b)=>{neighbors.get(a).add(b);neighbors.get(b).add(a);};
+  for(const t of ordered)for(const d of t.dependencies)if(byId.has(d))connect(t.ticket_id,d);
+  for(const c of conflicts)connect(...c.ticket_ids);
+  const unseen=new Set(byId.keys()),groups=[];
+  while(unseen.size){
+    const todo=[[...unseen][0]],group=[];
+    while(todo.length){
+      const k=todo.pop();if(!unseen.delete(k))continue;
+      group.push(k);for(const n of neighbors.get(k))if(unseen.has(n))todo.push(n);
+    }
+    groups.push(group.sort());
+  }
+  return {task_count:tasks.length,declared_dependency_waves:waves,declared_review_groups:groups,
+    declared_conflicts:conflicts,external_dependencies_unverified:external,
+    unresolved_declared_conflict_count:conflicts.filter(c=>c.requires_review).length,
+    semantic_discovery_verified:false,worker_availability_verified:false,
+    upstream_changes_in_baseline_verified:false,automatic_execution_allowed:false};
+}
+// Developer advisory review of a larger declared backlog. This function
+// creates no tasks and grants no authority. One common baseline is required;
+// a later dependent task may need replanning after upstream merge.
+function analyzeBulkPlanningDraft(tasks){
+  const graph=analyzeDeclaredGraph(tasks,100,524288);
+  const order=(a,b)=>a<b?-1:a>b?1:0;
+  const ids=[...tasks].map(t=>t.ticket_id).sort(order);
+  const byId=new Map(tasks.map(t=>[t.ticket_id,t]));
+  const baseline=tasks[0].baseline_sha;
+  const externalAliases=new Map();
+  const canonical=[];
+  for(const id of ids){
+    const t=byId.get(id);
+    if(t.baseline_sha!==baseline)fail('BULK_PLAN_MIXED_BASELINE');
+    const unique=(list,key)=>new Set(list.map(key)).size===list.length;
+    if(!unique(t.write_scopes,x=>x.toLowerCase())||t.write_scopes.some(x=>/[\r\n]/.test(x))||
+       !unique(t.acceptance_criteria,x=>x.trim())||
+       !unique(t.dependencies,x=>x.toLowerCase())||
+       /[\r\n]/.test(t.branch_name)||t.branch_name.toLowerCase().endsWith('.lock'))
+      fail('BULK_PLAN_DUPLICATE_OR_ALIAS');
+    for(const dep of t.dependencies){
+      const key=dep.toLowerCase();
+      if(externalAliases.has(key)&&externalAliases.get(key)!==dep)fail('BULK_PLAN_DEPENDENCY_ALIAS');
+      externalAliases.set(key,dep);
+    }
+    canonical.push({ticket_id:t.ticket_id,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
+      title:t.title,description:t.description,risk:t.risk,write_scopes:t.write_scopes,
+      acceptance_criteria:t.acceptance_criteria,dependencies:t.dependencies,contract_keys:t.contract_keys});
+  }
+  const conflictPeers=new Map(ids.map(id=>[id,new Set()]));
+  for(const conflict of graph.declared_conflicts){
+    const [a,b]=conflict.ticket_ids;
+    conflictPeers.get(a).add(b);conflictPeers.get(b).add(a);
+  }
+  const external=new Map(graph.external_dependencies_unverified.map(x=>[x.ticket_id,x.dependencies]));
+  const groups=[],groupOf=new Map();
+  // Only partition each declared wave; never combine an upstream and downstream
+  // task in a review batch. High/core and external dependencies remain single
+  // review items. Unordered conflicts are not made safe by separation.
+  for(let w=0;w<graph.declared_dependency_waves.length;w++){
+    const wave=graph.declared_dependency_waves[w],bins=[];
+    for(const id of wave){
+      const t=byId.get(id);
+      const isolated=t.risk==='HIGH'||t.risk==='CORE'||external.has(id);
+      let bin=isolated?null:bins.find(b=>!b.isolated&&b.ids.length<10&&
+        b.ids.every(other=>!conflictPeers.get(id).has(other))&&
+        Buffer.byteLength(JSON.stringify([...b.ids,id].map(k=>byId.get(k))),'utf8')<=65536);
+      if(!bin){bin={ids:[],isolated};bins.push(bin);}
+      bin.ids.push(id);
+    }
+    for(const bin of bins){
+      const group_id='review_'+String(groups.length+1).padStart(3,'0');
+      for(const id of bin.ids)groupOf.set(id,group_id);
+      const manifest_bytes=Buffer.byteLength(JSON.stringify(bin.ids.map(k=>byId.get(k))),'utf8');
+      const unresolved_conflicts=graph.declared_conflicts.filter(c=>c.requires_review&&c.ticket_ids.some(id=>bin.ids.includes(id))).length;
+      groups.push({group_id,wave:w+1,ticket_ids:bin.ids,manifest_bytes,
+        isolated_review:bin.isolated,single_task_review:bin.ids.length===1,
+        isolation_reasons:bin.ids.flatMap(id=>{const t=byId.get(id);return [
+          ...(['HIGH','CORE'].includes(t.risk)?[{ticket_id:id,reason:'PROTECTED_RISK'}]:[]),
+          ...(external.has(id)?[{ticket_id:id,reason:'EXTERNAL_DEPENDENCY_UNVERIFIED'}]:[])];}),
+        within_existing_batch_limits:bin.ids.length>=2&&bin.ids.length<=10&&manifest_bytes<=65536,
+        unresolved_conflict_count:unresolved_conflicts,requires_fresh_central_preview:true,
+        automatic_admission_allowed:false});
+    }
+  }
+  const groupDependencies=new Map(groups.map(g=>[g.group_id,new Set()]));
+  for(const t of canonical)for(const d of t.dependencies)if(groupOf.has(d)){
+    const a=groupOf.get(t.ticket_id),b=groupOf.get(d);
+    if(a!==b)groupDependencies.get(a).add(b);
+  }
+  const review_groups=groups.map(g=>({...g,depends_on_review_groups:[...groupDependencies.get(g.group_id)].sort(order),
+    external_dependencies_unverified:g.ticket_ids.flatMap(id=>(external.get(id)||[]).map(dep=>({ticket_id:id,dependency:dep}))),
+    requires_upstream_baseline_review:groupDependencies.get(g.group_id).size>0}));
+  const cross_group_conflicts=graph.declared_conflicts.map(c=>({...c,
+    review_group_ids:c.ticket_ids.map(id=>groupOf.get(id))}));
+  const manifest_sha256=digest({schema:'SUTRADHAR_BULK_DECLARATIONS_V1',tasks:canonical});
+  return {schema:'SUTRADHAR_BULK_REVIEW_V1',task_count:ids.length,baseline_sha:baseline,
+    manifest_sha256,review_group_count:review_groups.length,declared_dependency_waves:graph.declared_dependency_waves,
+    connected_review_components:graph.declared_review_groups,review_groups,cross_group_conflicts,
+    unresolved_declared_conflict_count:graph.unresolved_declared_conflict_count,
+    remote_freshness_verified:false,semantic_discovery_verified:false,worker_availability_verified:false,
+    upstream_changes_in_baseline_verified:false,source_contents_returned:false,provider_sent:false,
+    automatic_admission_allowed:false,automatic_execution_allowed:false};
+}
+
+// Explicit local extraction for human review, not a Central admission
+// body or execution grant. Recompute whole backlog before choosing a group.
+function extractBulkReviewGroup(tasks,expectedDigest,groupId){
+  if(typeof expectedDigest!=='string'||expectedDigest.length!==64||!/^[a-f0-9]{64}$/.test(expectedDigest)||
+     typeof groupId!=='string'||groupId.length!==10||!/^review_[0-9]{3}$/.test(groupId))
+    fail('BULK_REVIEW_SELECTION_INVALID');
+  const report=analyzeBulkPlanningDraft(tasks);
+  if(report.manifest_sha256!==expectedDigest)fail('BULK_REVIEW_MANIFEST_CHANGED');
+  const group=report.review_groups.find(g=>g.group_id===groupId);
+  if(!group)fail('BULK_REVIEW_GROUP_NOT_FOUND');
+  const byId=new Map(tasks.map(t=>[t.ticket_id,t]));
+  // Return canonical exact task fields, including all external/internal
+  // dependencies, with no rewriting, summarization or inferred edges.
+  const selected=group.ticket_ids.map(id=>{
+    const t=byId.get(id);
+    return {ticket_id:t.ticket_id,baseline_sha:t.baseline_sha,branch_name:t.branch_name,
+      title:t.title,description:t.description,risk:t.risk,write_scopes:[...t.write_scopes],
+      acceptance_criteria:[...t.acceptance_criteria],dependencies:[...t.dependencies],contract_keys:[...t.contract_keys]};
+  });
+  const payload={schema:'SUTRADHAR_BULK_GROUP_REVIEW_V1',manifest_sha256:report.manifest_sha256,
+    baseline_sha:report.baseline_sha,group,related_conflicts:report.cross_group_conflicts.filter(c=>c.review_group_ids.includes(groupId)),
+    tasks:selected};
+  return {...payload,group_review_sha256:digest(payload),source_contents_returned:false,
+    task_description_contents_returned:true,secret_scan_verified:false,provider_sent:false,
+    remote_freshness_verified:false,automatic_admission_allowed:false,automatic_execution_allowed:false};
+}
+
+// Compare syntactic source evidence with the declared DAG. An import from
+// A into B can be a review question, not proof that B must execute first.
+// This never inserts edges, modifies declarations or asserts independence.
+function compareMasterAstHints(tasks,report){
+  const graph=analyzeMasterPlanningDraft(tasks);
+  if(!report||report.inspection_mode!=='AST_SYNTAX'||report.semantic_discovery_verified!==false||
+     report.type_resolution_verified!==false||report.automatic_execution_allowed!==false||
+     report.provider_sent!==false||report.source_contents_returned!==false||
+     !Array.isArray(report.hints)||report.hints.length>40||
+     tasks.some(t=>t.baseline_sha!==report.baseline_sha))
+    fail('MASTER_AST_REVIEW_INPUT_INVALID');
+  const byId=new Map(tasks.map(t=>[t.ticket_id,t]));
+  const ancestors=new Map();
+  for(const wave of graph.declared_dependency_waves)for(const id of wave){
+    const set=new Set();
+    for(const d of byId.get(id).dependencies)if(byId.has(d)){
+      set.add(d);for(const a of ancestors.get(d)||[])set.add(a);
+    }
+    ancestors.set(id,set);
+  }
+  const comparisons=[],shared=[];
+  for(const h of report.hints){
+    if(!h||!safeScope(h.target_path)||/[\r\n]/.test(h.target_path))
+      fail('MASTER_AST_REVIEW_HINT_INVALID');
+    if(h.kind==='CROSS_TASK_RELATIVE_IMPORT'){
+      const from=byId.get(h.from_ticket),to=byId.get(h.to_ticket);
+      const own=(t,p)=>t.write_scopes.some(s=>p===s||p.startsWith(s+'/'));
+      if(!from||!to||from===to||!safeScope(h.source_path)||/[\r\n]/.test(h.source_path)||
+         !own(from,h.source_path)||!own(to,h.target_path))fail('MASTER_AST_REVIEW_HINT_INVALID');
+      const status=ancestors.get(from.ticket_id).has(to.ticket_id)?'DECLARED_ORDER_PRESENT':
+        ancestors.get(to.ticket_id).has(from.ticket_id)?'REVERSE_DECLARED_ORDER_REVIEW':
+          'NO_DECLARED_ORDER_REVIEW';
+      comparisons.push({from_ticket:from.ticket_id,to_ticket:to.ticket_id,
+        source_path:h.source_path,target_path:h.target_path,status});
+    }else if(h.kind==='SHARED_RELATIVE_IMPORT'){
+      if(!Array.isArray(h.ticket_ids)||h.ticket_ids.length<2||h.ticket_ids.length>10||
+         new Set(h.ticket_ids).size!==h.ticket_ids.length||h.ticket_ids.some(id=>!byId.has(id)))
+        fail('MASTER_AST_REVIEW_HINT_INVALID');
+      shared.push({ticket_ids:[...h.ticket_ids],target_path:h.target_path,status:'SHARED_DEPENDENCY_REVIEW'});
+    }else fail('MASTER_AST_REVIEW_HINT_INVALID');
+  }
+  return {source_order_comparisons:comparisons,shared_dependency_reviews:shared,
+    source_order_review_count:comparisons.filter(c=>c.status!=='DECLARED_ORDER_PRESENT').length,
+    shared_dependency_review_count:shared.length,declared_edges_changed:false,
+    semantic_discovery_verified:false,automatic_admission_allowed:false,automatic_execution_allowed:false};
+}
+
+function buildMasterPlanningContext({observed,tasks}){
+  const graph=analyzeMasterPlanningDraft(tasks);
+  if(!observed||observed.local_tracking_ref_verified!==true||observed.remote_freshness_verified!==false||
+     typeof observed.project_id!=='string'||!ID.test(observed.project_id)||
+     typeof observed.repository!=='string'||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(observed.repository)||
+     typeof observed.base_branch!=='string'||!/^[A-Za-z0-9._/-]+$/.test(observed.base_branch)||
+     typeof observed.baseline_sha!=='string'||!SHA.test(observed.baseline_sha)||
+     tasks.some(t=>t.baseline_sha!==observed.baseline_sha))
+    fail('MASTER_PLANNING_CONTEXT_BASELINE_INVALID');
+  const context={schema:'SUTRADHAR_MASTER_PLANNING_CONTEXT_V1',
+    project_id:observed.project_id,repository:observed.repository,base_branch:observed.base_branch,
+    baseline_sha:observed.baseline_sha,local_tracking_ref_only:true,
+    instruction:'All tasks inherit the common baseline_sha. Review declarations; no execution or semantic independence is authorized.',
+    tasks:tasks.map(({baseline_sha,...task})=>task)};
+  // Keep exact task strings, order, risk and criteria. Only hoist the common
+  // baseline and serialize compactly; no lossy summaries or token guesses.
+  const expanded={...context,tasks};
+  const preview=JSON.stringify(context),utf8_bytes=Buffer.byteLength(preview,'utf8');
+  const expanded_utf8_bytes=Buffer.byteLength(JSON.stringify(expanded),'utf8');
+  if(utf8_bytes>16384)fail('MASTER_PLANNING_CONTEXT_BUDGET_EXCEEDED_SPLIT_BATCH');
+  return {preview,context_sha256:crypto.createHash('sha256').update(preview).digest('hex'),
+    utf8_bytes,expanded_utf8_bytes,bytes_saved:expanded_utf8_bytes-utf8_bytes,
+    byte_budget:16384,task_count:graph.task_count,provider_sent:false,secret_scan_verified:false,
+    token_usage_verified:false,automatic_execution_allowed:false};
+}
+
+// Append-only encrypted admission evidence, one unresolved intent per PC.
+// No private keys, arbitrary paths, automated replay or automatic deletion.
+// A Windows filesystem power-cut guarantee still requires physical acceptance.
+function createMasterBatchJournal({dir,safeStorage,nodeId}){
+  if(typeof dir!=='string'||!path.isAbsolute(dir)||typeof nodeId!=='string'||!/^node_[a-f0-9]{32}$/.test(nodeId)||
+     !safeStorage||safeStorage.isEncryptionAvailable()!==true||
+     (typeof safeStorage.getSelectedStorageBackend==='function'&&safeStorage.getSelectedStorageBackend()==='basic_text'))
+    fail('MASTER_BATCH_JOURNAL_ENCRYPTION_REQUIRED');
+  if(!evidenceEntryPresent(dir))fs.mkdirSync(dir,{recursive:true,mode:0o700});
+  const folder=fs.lstatSync(dir);
+  if(!folder.isDirectory()||folder.isSymbolicLink()||(process.platform!=='win32'&&(folder.mode&0o077)!==0))
+    fail('MASTER_BATCH_JOURNAL_DIRECTORY_UNSAFE');
+  const hash=x=>typeof x==='string'&&x.length===64&&/^[a-f0-9]{64}$/.test(x);
+  const exactId=x=>typeof x==='string'&&ID.test(x)&&!/[\r\n]/.test(x);
+  const keyFor=x=>digest([nodeId,x.origin,x.body.agent_id,x.body.project_id,x.body.request_id]);
+  function validateIntent(x,key){
+    if(!x||Object.keys(x).sort().join('|')!=='body|node_id|origin|review|schema'||
+       x.schema!==1||x.node_id!==nodeId||!ORIGIN.test(x.origin||'')||
+       !x.body||Object.keys(x.body).sort().join('|')!=='agent_id|expected_master_epoch|project_id|request_id|tasks'||
+       ![x.body.agent_id,x.body.project_id,x.body.request_id].every(exactId)||
+       !Number.isSafeInteger(x.body.expected_master_epoch)||x.body.expected_master_epoch<1||
+       !Array.isArray(x.body.tasks)||x.body.tasks.length<2||x.body.tasks.length>10||
+       Buffer.byteLength(JSON.stringify(x.body.tasks),'utf8')>65536||
+       !x.review||!hash(x.review.preview_sha256)||keyFor(x)!==key)
+      fail('MASTER_BATCH_JOURNAL_INTENT_INVALID');
+    // Reuse the exact receipt validation without treating it as a live grant.
+    const v=validateBatchReceipt({...x.review,accepted:true}, {...x.body,preview_sha256:x.review.preview_sha256});
+    if(JSON.stringify(v)!==JSON.stringify(x.review))fail('MASTER_BATCH_JOURNAL_REVIEW_INVALID');
+    return x;
+  }
+  function read(kind,key){
+    try{
+      const ciphertext=readStableLocalFile(path.join(dir,kind+'_'+key+'.bin'),{maxBytes:65536});
+      const envelope=JSON.parse(safeStorage.decryptString(ciphertext));
+      if(!envelope||Object.keys(envelope).sort().join('|')!=='kind|payload|sha256'||
+         envelope.kind!==kind||digest({kind,payload:envelope.payload})!==envelope.sha256)
+        fail('MASTER_BATCH_JOURNAL_DIGEST_INVALID');
+      return envelope.payload;
+    }catch{fail('MASTER_BATCH_JOURNAL_CORRUPT_OWNER_REVIEW');}
+  }
+  function write(kind,key,payload){
+    const sealed={kind,payload};
+    const bytes=safeStorage.encryptString(JSON.stringify({...sealed,sha256:digest(sealed)}));
+    if(!Buffer.isBuffer(bytes)||bytes.length<1||bytes.length>65536)
+      fail('MASTER_BATCH_JOURNAL_TOO_LARGE_USE_SMALLER_BATCH');
+    const file=path.join(dir,kind+'_'+key+'.bin');
+    // Exclusive write; even partial evidence remains a blocking incident.
+    const fd=fs.openSync(file,'wx',0o600);
+    try{
+      let offset=0;while(offset<bytes.length){
+        const n=fs.writeSync(fd,bytes,offset,bytes.length-offset,offset);
+        if(!Number.isSafeInteger(n)||n<1)fail('MASTER_BATCH_JOURNAL_SHORT_WRITE');
+        offset+=n;
+      }
+      fs.fsyncSync(fd);
+    }finally{fs.closeSync(fd);}
+    if(process.platform!=='win32'){
+      const dfd=fs.openSync(dir,fs.constants.O_RDONLY|(fs.constants.O_DIRECTORY||0)|(fs.constants.O_NOFOLLOW||0));
+      try{fs.fsyncSync(dfd);}finally{fs.closeSync(dfd);}
+    }
+  }
+  function validatedReceipt(intent,r){
+    if(r?.resolution){
+      if(Object.keys(r).sort().join('|')!=='automatic_execution_allowed|historical_receipt|resolution'||
+         r.historical_receipt!==true||r.automatic_execution_allowed!==false)
+        fail('MASTER_BATCH_JOURNAL_RECEIPT_MISMATCH');
+      return {resolution:validateBatchCancellation(r.resolution,
+        {...intent.body,preview_sha256:intent.review.preview_sha256},intent.review.plan_order),
+        historical_receipt:true,automatic_execution_allowed:false};
+    }
+    const v=validateBatchReceipt({...r,accepted:true}, {...intent.body,preview_sha256:intent.review.preview_sha256});
+    if(JSON.stringify(v)!==JSON.stringify(intent.review)||r.historical_receipt!==true)
+      fail('MASTER_BATCH_JOURNAL_RECEIPT_MISMATCH');
+    return {...v,historical_receipt:true};
+  }
+  function pending(){
+    const names=fs.readdirSync(dir);
+    if(names.length>256||names.some(n=>! /^(intent|receipt)_[a-f0-9]{64}\.bin$/.test(n)))
+      fail('MASTER_BATCH_JOURNAL_INVENTORY_OWNER_REVIEW');
+    const set=new Set(names),open=[];
+    for(const name of names){
+      if(!name.startsWith('intent_')){
+        if(!set.has(name.replace('receipt_','intent_')))fail('MASTER_BATCH_JOURNAL_ORPHAN_RECEIPT');
+        continue;
+      }
+      const key=name.slice(7,-4),intent=validateIntent(read('intent',key),key);
+      if(set.has('receipt_'+key+'.bin'))validatedReceipt(intent,read('receipt',key));
+      else open.push({key,intent});
+    }
+    if(open.length>1)fail('MASTER_BATCH_JOURNAL_MULTIPLE_PENDING_OWNER_REVIEW');
+    return open[0]||null;
+  }
+  function begin(origin,prepared){
+    if(pending())fail('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
+    const intent={schema:1,node_id:nodeId,origin,body:prepared.body,review:prepared.review};
+    const key=keyFor(intent);
+    validateIntent(intent,key);
+    write('intent',key,intent);
+    const saved=pending();
+    if(!saved||saved.key!==key||JSON.stringify(saved.intent)!==JSON.stringify(intent))
+      fail('MASTER_BATCH_JOURNAL_READBACK_REQUIRED');
+    return saved;
+  }
+  function close(key,receipt){
+    const saved=pending();
+    if(!saved||saved.key!==key)fail('MASTER_BATCH_JOURNAL_PENDING_MISMATCH');
+    const verified=validatedReceipt(saved.intent,receipt);
+    write('receipt',key,verified);
+    if(pending())fail('MASTER_BATCH_JOURNAL_CLOSE_UNCERTAIN');
+    return verified;
+  }
+  return {pending,begin,close};
+}
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,analyzeBulkPlanningDraft,extractBulkReviewGroup,compareMasterAstHints,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal};

@@ -1,0 +1,126 @@
+# SUTRADHAR v7 — Production-readiness implementation and Owner checklist
+
+**12 November 2026. Status: Alpha source, not approved for production.** The draft PR now contains deployment-safety building blocks. No actual Hostinger staging deployment, trusted signed Windows release, multi-PC trial, production database restore, protected distribution or merge has been performed.
+
+## Five priority deliverables
+
+| Goal | Code implemented on draft branch | Remaining evidence |
+| --- | --- | --- |
+| Production-signed Windows installer | apps/desktop/pack-release.cjs demands Owner approval, exact stable version/commit/tag, actual Authenticode certificate and Windows signer verification | Owner-controlled valid certificate and stable release not provided; no production installer signed |
+| Secure device identity | apps/desktop/os-vault.cjs and secure-agent.ts use Electron safeStorage (Windows DPAPI / macOS Keychain) through local IPC; no cleartext PEM on disk or in child environment; fail closed if provider missing | Test actual Windows installation, vault restoration, restart, key rotation and legacy key migration; worker signing bridge remains alpha |
+| Verified updates and rollback | apps/desktop/update-policy.cjs checks pinned Owner Ed25519 signed offer, exact installer SHA-256, publisher, expiry, protocol and version. Electron can inspect an offer without running it. scripts/release/sign-offline-offer.cjs signs an offer only with Owner release approval and verified Windows Authenticode evidence | Supply release verification public key and protected signing key; verified distribution, unattended updater/identity-preserving auto rollback not built |
+| Hostinger staging plus MySQL backup/restore | scripts/ops/hostinger-staging-preflight.cjs reads staging HTTPS health, exact build SHA and dashboard. scripts/ops/mysql-ops.cjs encrypts dumps with AES-256-GCM, authenticates before restore and only restores into an approved empty staging database | Real Hostinger staging URL/credentials and offsite restore evidence not available; no live deployment or backup performed |
+| Physical PC acceptance | scripts/ops/pilot-readonly.cjs verifies real distinct node IDs, last heartbeat, Master, Backup 1, and exact failover epoch using before/after snapshots; pure policy tests | Owner must run the 2-PC, 3-PC and 8–10-PC trials on real hardware; no physical acceptance claimed |
+
+## 1. How an Owner approves the first signed Desktop installer
+
+The first trusted installer needs a legitimate Windows Authenticode code-signing certificate, a stable Desktop version (not the present 7.0.0-alpha.1), a reviewed signed-off commit/tag, and a separate Ed25519 update signing key pair. The private signing keys must stay in Owner-controlled signing infrastructure, never in GitHub source, the application, PR logs or ordinary chats.
+
+On an approved Windows release runner, the engineer configures protected environment variables:
+
+- SUTRADHAR_OWNER_RELEASE_APPROVED=true
+- SUTRADHAR_EXPECTED_COMMIT_SHA = approved full 40-character Git SHA
+- SUTRADHAR_RELEASE_TAG = desktop-v followed by exact stable version
+- SUTRADHAR_WINDOWS_PUBLISHER_NAME = exact Windows certificate subject starting CN=
+- WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD = protected Windows Authenticode signing material (or supported CSC_* equivalent)
+- SUTRADHAR_RELEASE_UPDATE_PUBLIC_KEY_PEM_B64 = base64 encoding of Owner's Ed25519 **public** verification key
+
+After reviewed Desktop build and dependencies, run **npm --prefix apps/desktop run pack:release**. The script refuses alpha/dirty source/wrong tag/no certificate, checks Get-AuthenticodeSignature and produces a local signed-release-evidence.json. It does **not** upload, deploy or distribute an EXE.
+
+To generate an offline update or emergency rollback offer, the Owner separately approves scripts/release/sign-offline-offer.cjs on a trusted Windows signer with SUTRADHAR_OWNER_ROLLOUT_APPROVED=yes, SUTRADHAR_RELEASE_SIGNING_KEY_FILE (outside repo), SUTRADHAR_INSTALLER_PATH, SUTRADHAR_UPDATE_KIND, SUTRADHAR_EXPECTED_COMMIT_SHA, SUTRADHAR_RELEASE_VERSION and SUTRADHAR_WINDOWS_PUBLISHER_NAME. For rollback also set SUTRADHAR_OWNER_EMERGENCY_ROLLBACK_APPROVED=yes. The script verifies the local Authenticode evidence, then writes SUTRADHAR Desktop.offer.json, an Ed25519-signed offline manifest.
+
+Desktop has a **Verify a signed update file** control. It compares the downloaded local installer with pinned Owner signature, hash, version, protocol and Windows publisher. This control **never installs the file** and refuses on unsigned alpha. A separate Owner-approved installation/rollback process remains necessary. The automated update feed and safe staged deployment are **not implemented**.
+
+## 2. Hostinger staging: actions a non-developer can understand
+
+1. In existing Hostinger Business hPanel create a **separate staging subdomain/website** with HTTPS; never overwrite the production site.
+2. Create a **new empty dedicated staging MySQL** database and its own user/password. Enter secrets in hPanel's environment UI, not in code.
+3. Connect an approved staging source; never use the draft development branch as the production deploy source. Current Central staging build uses repository root ./, Node.js 22, build command **npm run build:central**, output directory **apps/central/dist**, entry **apps/central/dist/server.cjs**.
+4. A developer must review schema migration and apply it to staging only. Keep SUTRADHAR_ALLOW_MIGRATIONS=false except during explicitly approved schema setup. This alpha does not have versioned production migrations yet.
+5. Inspect the live deployment log, exact commit and **/v7/health**. From a trusted PC, set SUTRADHAR_STAGING_URL (must be HTTPS and clearly named stage/staging/test) and SUTRADHAR_EXPECTED_COMMIT_SHA, then run **npm run ops:hostinger-preflight**. This is read-only and checks source SHA, live MySQL health and UI.
+6. Execute an actual backup/restore rehearsal in disposable staging, then physical PC acceptance. Neither is inferred from a green preflight response.
+
+The conversation has no authenticated Hostinger hosting operation or staging domain details, so **no live staging deploy was attempted**.
+
+## 3. MySQL backup and empty staging restore
+
+Use Hostinger hPanel's database backup/export facility if external MySQL access is unavailable under shared hosting. The new CLI assumes a trusted **operator machine** with authorized MySQL connectivity, Node.js, MySQL client and mysqldump installed. Never run long jobs or Docker on Hostinger Business shared hosting.
+
+- Set DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME using secure environment settings; choose an absolute new SUTRADHAR_ENCRYPTED_BACKUP_PATH. Generate and protect a separate random 32-byte key in base64 as SUTRADHAR_BACKUP_KEY_BASE64. Do not share it in tickets or messages.
+- Run **npm run ops:backup**. The script creates a bounded logical dump in memory, encrypts with AES-256-GCM, writes no plaintext dump and outputs checksum/evidence. Maximum supported dump is 80 MiB; larger databases need a separately approved encrypted backup mechanism.
+- Run **npm run ops:verify-backup** against the encrypted file. It checks the authentication tag and plaintext checksum before any restore. This is only a cryptographic backup check, not a real recovery proof.
+- Create a **different empty** database with a staging/test/disposable/ci name. Set SUTRADHAR_RESTORE_STAGING_APPROVED=yes, SUTRADHAR_TARGET_DB_NAME to that name and SUTRADHAR_EXPECTED_TARGET_DB_NAME to the same exact value, leaving DB_NAME as original backup source. Run **npm run ops:restore-staging**. The tool refuses production/same-source/nonempty destinations.
+- Independently verify restored table counts, schema, transactions, active epochs and task/agent recovery, then record evidence and backup/restore timing. Only then may the Owner mark backup recovery accepted.
+
+Never assume reverting a Node bundle reverses MySQL changes. A live restore may lose newer tasks and must require explicit Owner data-loss approval and a reviewed recovery plan.
+
+## 4. Real physical PC acceptance
+
+**2-PC trial:** Enroll two separate physical PCs with distinct node IDs, approve agents, confirm 60-second signed heartbeats, initial 08:00 Asia/Kolkata election and sticky healthy incumbent. Set SUTRADHAR_CENTRAL_URL, SUTRADHAR_ADMIN_KEY, SUTRADHAR_PILOT_NODE_IDS containing the two actual IDs, and an absolute SUTRADHAR_PILOT_RECEIPT_PATH; run **npm run ops:pc-pilot -- snapshot**. Save a baseline.
+
+The Owner then powers down the Master **on staging only** and allows the ~180-second timeout. Use a new receipt path and SUTRADHAR_PILOT_INTENTIONALLY_OFFLINE_NODE_IDS equal to the former Master's physical node ID. Run another read-only snapshot. Set SUTRADHAR_PILOT_BASELINE_RECEIPT_PATH and SUTRADHAR_PILOT_AFTER_RECEIPT_PATH; run **npm run ops:pc-pilot -- compare** with a third new receipt output. The tool requires Backup 1 on a distinct PC to become Master and epoch to advance exactly once. It cannot replace real hardware observation, task fencing/recovery-ACK checks or Owner sign-off.
+
+**3-PC trial:** Prove Master, Backup 1 and Backup 2 on distinct PCs and two successive takeovers. **8–10 PC trial:** Prove reboots, sleep, network partition, Central restart, old-epoch rejection, checkpoint/task recovery, independent QA, no duplicate Git work, signed releases and truthful dashboard/Telegram status. Never mark all 71-case acceptance PASS merely because unit CI passes.
+
+## 5. Honest status / next gates
+
+**CODED / CI dependent:** signing gate, OS-vault runtime, read-only signed update checks, encrypted backup and staging-only restore, staging preflight and pilot evidence policy.  
+**NOT RUN:** actual Hostinger stage, live DB backup/restore, signed production Windows installer, real OS vault after installer/restart, owner-controlled update distribution, physical 2/3/8–10 PC trial and full v7 acceptance.  
+**NOT IMPLEMENTED:** complete signed auto-updater/rollback distribution, privileged production migration wizard, sealed-vault worker QA signing bridge and release-only deployment pipeline.
+
+Do not merge or deploy the draft PR without separate Owner approval. See [Owner setup](OWNER_SETUP_AND_DEPLOYMENT.md), [Release operations](RELEASE_OPERATIONS.md), [V7 acceptance matrix](V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md), and [Implementation tracker](IMPLEMENTATION_TRACKER.md).
+
+## 15 November 2026 — CI-only MySQL restore and dependency lock evidence
+
+**Source improvements on Draft PR #1, not live deployment:**
+
+- Both npm v3 lockfiles (root 348 packages; Desktop 283 packages) are now committed on the development branch. Main, branch protection and production signer have not changed. Linux, Windows and MySQL CI use committed locks and npm ci.
+- Real MySQL 8 disposable integration now exercises mysqldump, AES-256-GCM encrypted backup, verification, restore into a different empty staging-test database, row-level equivalence, target-approval rejection and non-empty restore refusal. This is **not a live Hostinger backup or disaster-recovery rehearsal**.
+- The dependency workflow reads committed lockfiles directly, rather than replacing them with CI-generated proposals. Independent advisory/license assessment, Owner-approved stable release, Windows signing certificate, protected staging setup, physical-PC failover and all 71 acceptance gates remain pending.
+
+**Independent review:** see [Dependency Lock Review](DEPENDENCY_LOCK_REVIEW_V7.md). Do not interpret the disposable test database as evidence of Hostinger account access.
+
+
+## 15 November 2026 — Extra physical Windows acceptance scenarios
+
+New Desktop implementation binds an encrypted node identity to a durable PREPARED/SUBMITTED enrollment receipt and holds a single-instance lock. An explicit **Recheck uncertain enrollment** button performs signed read-only proof of the original approved Central node, without resending an enrollment code.
+
+On real physical Windows PCs, acceptance must additionally cover: second app launch, reboot during enrollment, Central network timeout, wrong Central origin, changed/missing encrypted key, copied/altered receipt, wrong node ID, Owner approval before recheck, and old-instance shutdown. Ensure PREPARED never appears approved and never causes duplicated node registrations.
+
+These are coded/tested local safeguards, NOT completed physical Windows acceptance or a substitute for Owner-approved identity migration/rotation.
+
+## 15 November 2026 — Device-bound update/rollback acceptance cases
+
+Before authorizing real signed installer distribution, require a verified v2 Owner-signed offer scoped to one Pilot PC's exact OS-vault node ID, then a second separate wave. Check that a healthy other PC rejects the same signed offer. Reject schema v1, duplicate recipients, forged/expired authorization, incorrect publisher, tampered EXE, changed bytes during Authenticode verification, wrong version direction and automatic rollback without separate Owner emergency approval.
+
+The code currently provides **offline inspection only**. Actual Windows certificate, secure installation, signed delivery, staged pausing/rollback, Central roster approval, identity continuity and real physical test receipts remain outstanding. See [Signed Desktop Rollout Waves](SIGNED_DESKTOP_ROLLOUT_WAVES.md).
+
+
+## 15 November 2026 — Additional maintenance-intent production gates
+
+New draft source includes a Central-maintained, Owner-only, **five-minute advisory** PC update intent. It checks three live Master/backup roles, expected epoch, target approved node and all agents' server-clock heartbeat/idle/lease/Git state. An Owner web UI can record or cancel intent; Desktop reads it through signed requests. **No API grants installer execution or stops an agent.**
+
+Physical acceptance still needs: migration of `v7_pc_maintenance_plans` into disposable Hostinger staging, same node with role reassignment during intent, intent expiry/cancellation, active worker/uncertain Git operations, offline Central, consistent identity post-reboot, and repeated Owner review. A real maintenance *lease* and fenced task drain/install/health rollback are **not implemented**. [Owner maintenance guide](OWNER_PC_MAINTENANCE_INTENT_V7.md).
+
+
+## 15 November 2026 — Required task-drain physical acceptance
+
+New Draft PR code adds an Owner-only nonexpiring Central task-admission fence. Physical acceptance must prove that an active Master, Backup 1 or Backup 2 cannot be drained; a noncritical eligible PC cannot take new work or enter election during a fence; old worker leases can checkpoint and finish without forced cancellation; and unresolved Git/unfinished ticket keeps DRAINED blocked. Simulate race between task claim and Owner START, offline/reboot during DRAINING, expiry of five-minute advisory intent, failover/epoch change, and explicit Owner fence release. Real provider-side effects must be independently reconciled.
+
+Central status is necessary but not sufficient proof that external workers/providers have stopped. No OS-maintenance lock, actual installer/rollback or signed production distribution has been accepted. [Drain-fence Owner guide](PC_DRAIN_FENCE_V7.md).
+
+## 22 November 2026 — Protected Windows signing workflow key contract
+
+The manual `owner-desktop-sign.yml` workflow now forwards the four distinct Owner-controlled **public** Ed25519 trust keys required by `pack-release.cjs`: release/update, installer execution, maintenance release, and failed-install Owner review. All four must be configured as reviewed GitHub Actions *variables* in the protected `sutradhar-desktop-signing` environment; actual private signing material and the Authenticode certificate remain protected secrets outside Git. The signing packager refuses missing, non-Ed25519 or duplicate public trust keys before a certificate-backed build. CI only verifies the workflow-to-packer contract and alpha fail-closed behavior. No stable tag, legitimate signer credentials, protected environment reviewer approval or production-signed EXE exists in this session. Continue to hold G3/G6 until real Owner evidence is independently verified.
+ 
+## 23 November 2026 — bounded signed nonce retention (alpha source)
+ 
+Every signed request nonce is durably inserted before authentication success. On every fifth **accepted signed heartbeat** Central can delete at most 128 nonce rows older than 30 minutes only if the Node.js and MySQL clocks differ by at most 60 seconds; no Owner GET, agent GET or failed heartbeat prunes. The nonce retention window remains far longer than the accepted ±120-second signature timestamp window. The v7 baseline schema remains **byte-for-byte immutable** to preserve its pinned migration-manifest SHA. Consequently nonce cleanup currently relies on a bounded delete without a dedicated age index. Any index upgrade must be a separately reviewed, SHA-pinned **v8 additive migration** after off-host backup, isolated staging rehearsal, load review and Owner/DBA approval. Do not alter the baseline schema or use CREATE TABLE IF NOT EXISTS to pretend an existing database received an index. This CI-tested cleanup is not a real Hostinger performance/physical PC acceptance claim.
+
+### 23 November 2026 — post-commit nonce maintenance isolation
+
+Nonce cleanup is now strictly **after** the signed heartbeat's authoritative MySQL transaction has successfully committed. Cleanup uses a **separate best-effort transaction**; an unavailable database permission, transient lock, or cleanup SQL error cannot roll back an already accepted heartbeat, signed sequence, Master lease extension, or election. The bounded 30-minute/128-row/5th-heartbeat/60-second-clock-skew conditions remain. Cleanup is not guaranteed (failures are skipped safely), and an index still needs the separate Owner/DBA-approved v8 staging migration described above. This is code/CI hardening; live Hostinger latency and operational recovery remain acceptance requirements.
+
+## 23 November 2026 — Reviewed source-only v8 nonce index migration
+
+The pinned v7 baseline SQL (and `migrations/manifest.json` baseline SHA) is unchanged. A new **SHA-256-pinned additive** `migrations/v8__nonce_received_at.sql` contains only `CREATE INDEX idx_nonce_received_at ON v7_nonces (received_at);` to bound shared-hosting housekeeping cost. The manifest now advertises this **v7→v8 migration as pending**; the plan verifier remains read-only and states `migration_execution_allowed:false`. The existing v8 staging rehearsal executor requires an exact isolated staging DB, separate source database name, explicit Owner yes + exact target confirmation, backup-receipt SHA and a non-retryable pre-DDL audit claim; its MySQL DDL is nontransactional and incomplete/uncertain attempts require manual reconciliation, never an automatic repeat. Disposable MySQL CI rehearses **these committed SQL bytes** and checks the real new index and schema version; no live Hostinger MySQL was contacted or changed. Independent Owner/DBA review, off-host backup/recovery drill, staging acceptance, load check and actual deployment approval remain HOLD. Never apply the v7 bootstrap script over an existing DB to emulate migration.

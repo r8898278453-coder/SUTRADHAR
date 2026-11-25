@@ -1,0 +1,171 @@
+# SUTRADHAR v7.0 — implementation and operator guide
+
+> **Start here if you are the Owner:** [Non-developer setup guide](../docs/OWNER_SETUP_AND_DEPLOYMENT.md) · [Architecture/repository decision](../docs/ADR_001_MONOREPO_TWO_APPS.md) · [Release, update and recovery policy](../docs/RELEASE_OPERATIONS.md) · [Repository README](../README.md).
+>
+> **Important as of 24 November 2026:** This is an alpha engineering runbook, not approved production deployment. Independent `apps/central` and `apps/desktop` builds, an unsigned internal QA installer smoke build, and Owner/QA security controls exist in the Draft PR; **no Owner-approved production-signed installer, live Hostinger staging restore, physical-PC validation or protected production promotion has happened**. Never connect the development fix branch to any live Hostinger deployment. Use the repository README and Owner release-gate checklist as the current go/no-go authority.
+
+
+Status: **alpha code committed, not production accepted**. Existing v6 security/Git/Docker guards remain in the repository. Only v7 MySQL is authoritative for the new routes; legacy SQLite/demo service is available explicitly via the legacy development command and MUST NOT serve production.
+
+## New separated staging builds — 12 November 2026
+
+The repository now has **apps/central/** (separate Central bundle) and **apps/desktop/** (Electron first-run setup and supervised PC agent). The actual v7 core source still lives under v7/ and is compiled into each respective app; a full source/workspace migration has not been completed.
+
+- **Central-only staging build:** from repo root, npm run build:central → apps/central/dist/server.cjs, dashboard, dist/v7/schema.sql and an **ALPHA_UNAPPROVED** manifest. Recommended Hostinger staging settings: root ./, Node 22, command npm run build:central, output apps/central/dist, entry apps/central/dist/server.cjs.
+- **Desktop-only staging build:** from repo root, npm run build:desktop → apps/desktop/dist/edge-agent.cjs and edge-worker.cjs; generated apps/desktop/contract.json. Developer prototype: install Electron dev dependencies in apps/desktop and use npm --prefix apps/desktop run start.
+- **Safety tests:** npm run test:desktop checks first-run validation; npm run test:packages builds both and confirms independent boundaries, version protocol and artifact checksums. These are not proof of a live Hostinger deployment or trusted Windows installer.
+- **Internal Windows QA installer:** optional CI smoke builds an unsigned installer without publishing it; production code signing, auto-update and a physical Windows install trial remain blocked.
+- **Master recovery:** the PC agent's signed GET recovery path now includes its agent identity; an interrupted enrollment request can be reconciled only by proving possession of the existing approved node key.
+
+See [Central app README](../apps/central/README.md) and [Desktop app README](../apps/desktop/README.md). The manual steps below remain available for the legacy combined alpha build; do not confuse them with production-ready installation.
+
+## Central on Hostinger Business
+
+Hostinger Business Node.js supports Express and MySQL, but not inbound WebSockets, Docker or permanent background workers. Hostinger's managed web app should use Node 22, the approved branch, project root, npm build, output directory dist, and entry file dist/server.cjs. Keep the source v7/schema.sql available at runtime. This is a request-driven HTTP API.
+
+1. Back up existing data, provision a **new disposable MySQL database**, and review v7/schema.sql. Never silently overwrite the legacy SQLite database.
+2. Set DB_HOST=127.0.0.1 (on Hostinger), DB_PORT=3306, DB_USER, DB_PASSWORD, DB_NAME, SUTRADHAR_ADMIN_KEY (32+ characters), SUTRADHAR_ENROLLMENT_CODE (different 32+ characters) from the Hostinger environment UI. Alternatively use SUTRADHAR_MYSQL_URL. Do not commit keys.
+3. **ONLY for a new, dedicated EMPTY staging MySQL database:** temporarily set SUTRADHAR_ALLOW_MIGRATIONS=true, SUTRADHAR_BOOTSTRAP_EMPTY_DB_APPROVED=yes, and SUTRADHAR_BOOTSTRAP_TARGET_DB to the exact configured DB_NAME. Build and launch the API; invoke POST /v7/owner/migrate with Authorization: Bearer ADMIN_KEY. A missing approval, wrong target or existing table is rejected. Review output and independently inspect schema. Disable both approval flags and migration flag, restart, then GET /v7/health. This is initial bootstrap, NEVER an in-place production migration. Existing database schema changes require a separately reviewed versioned migration process and proven backup/restore.
+4. Set SUTRADHAR_GITHUB_TOKEN, SUTRADHAR_REQUIRED_CHECKS, SUTRADHAR_MIN_GITHUB_APPROVALS for optional read-only remote merge verification. Existing worker Git push/PR/rollback guards are still OFF by default. Never enable auto-merge.
+5. Serve the dashboard over HTTPS. The Owner key remains in browser tab memory and is never stored in localStorage or cookies. Telegram webhook requires Telegram secret, approved user/chat IDs and bot token, and uses the same Owner Command Service.
+
+## Edge on each PC
+
+Install Node 22 and the exact built project. Run npm run build once and set SUTRADHAR_CENTRAL_URL=https://...; SUTRADHAR_AGENT_IDS=agent_machine1_dev,agent_machine1_qa; SUTRADHAR_NODE_NAME=...; SUTRADHAR_ENROLLMENT_CODE=... (only for enrollment). Start npm run edge:start as a supervised process. A PC gets one persistent random node ID, its own Ed25519 key and independent agent IDs. NEVER duplicate identity.json across machines.
+
+The identity file resides in a user-restricted directory, default ~/.sutradhar/v7/identity.json (mode 0600 on POSIX). This fallback is not a Windows/macOS OS credential vault; a hardened platform vault integration remains required before production. Agents send one aggregated Ed25519-signed heartbeat every 60 seconds. Central uses its MySQL clock; ~180 seconds without accepted heartbeat makes an agent ineligible. No LLM calls are used for heartbeats.
+
+Owner approves each node then each agent from the web control dashboard (or POST /v7/owner/command) with explicit master_eligible/qa_eligible flags. Authorize each project-agent separately using GRANT_PROJECT_AGENT with can_develop and/or can_qa. Unapproved agents cannot act.
+
+Fresh Master election opens at 08:00 Asia/Kolkata, then Master is retained until its accepted lease expires or it is revoked. Backup 1 and 2 order is by first accepted eligible arrival and prefers distinct PCs. Failover increments epoch and fences old tickets; new Master verifies available checkpoints and recovery cursors, then sends explicit recovery ACK. If unfinished tickets need remote reconciliation, it stays in RECOVERING. Never elect locally while Central is unreachable.
+
+## Developer and independent QA
+
+Use the signed, project-ACL-scoped CLI. Configure SUTRADHAR_PROJECT_REPO (trusted absolute Git checkout with exact origin), SUTRADHAR_WORKTREES_ROOT (absolute), and SUTRADHAR_SUTRADHAR_ROOT (location of trusted sandbox scripts).
+
+- npm run edge:worker -- list agent_id
+- npm run edge:worker -- detail agent_id ticket_id
+- npm run edge:worker -- prepare agent_id ticket_id — preflight immutable baseline + exact repository; create isolated local Git worktree, claim one server lease, write compact handoff under the private node directory
+- Use authorized ChatGPT Web or Google AI Studio manually (Electron shell opens normal browser). Implement and commit only scoped source changes on the ticket branch.
+- npm run edge:worker -- checkpoint agent_id ticket_id /absolute/summary.txt 'next action'
+- npm run edge:worker -- submit agent_id ticket_id — verify clean Git worktree, exact branch/tree and file scope; submit signed candidate SHA (does not claim merge)
+- **Independent QA:** Do **not** use the old developer-only `npm run edge:worker -- qa qa_agent_id ticket_id` path: it intentionally fails closed with `QA_LEGACY_CLI_DISABLED_USE_PACKAGED_OWNER_REVIEW` because its old evidence is incompatible with the current Owner-reviewed, device-signed contract. Instead, use an independently enrolled Windows Desktop QA agent and the packaged OS-vault workflow: inspect the exact QA handoff, run pinned offline Docker QA, sign the report with the QA device key, upload evidence to Central, obtain separate human Owner review, then explicitly request a QA receipt. The signed receipt is not Git publication or merge approval. See `apps/desktop/README.md`. For a developer CLI **read-only** QA proposal status check only: `npm run edge:worker -- qa-review qa_agent_id ticket_id qaev_<64-lowercase-hex>`. This never submits or approves evidence.
+
+After independent QA has been accepted (task INTEGRATING), the **same QA agent** can use the v7 guarded Git bridge on a PC. Set SUTRADHAR_ENABLE_V7_GIT_PUSH=true and a limited SUTRADHAR_GITHUB_PUSH_TOKEN only on a trusted PC. Verify the trusted repository HEAD still equals the frozen baseline. Run `npm run edge:worker -- publish qa_agent_id ticket_id`. This invokes the existing Python `sandbox.push_tested_branch` publisher with an exact Docker-QA'd Git tree, creates a new branch only, and requests a separate server-side **read-only remote GitHub SHA/tree/parent/scope verification**. On network ambiguity, do **not** repeat publish; run `npm run edge:worker -- reconcile-push qa_agent_id ticket_id` for remote inspection. Pending/uncertain reservations are not automatically cleared.
+
+Owner may enable `SUTRADHAR_ENABLE_PR_CREATION=true` plus a **separate** limited `SUTRADHAR_GITHUB_PR_TOKEN` on Central, then create a **draft-only** PR using the web dashboard or POST /v7/git/pr-draft. The Owner dashboard has a separate **Verify external merge** control. A submitted candidate is never DONE until independent QA, verified remote branch, draft PR, external independent approval + CI + merge, and exact read-only GitHub merge verification (POST /v7/tasks/verify-merge). The control plane never pushes or auto-merges main. Existing v6 Git and rollback controls remain default-off.
+
+## Real acceptance and limitations
+
+Run npm run lint; npm test; npm run build; npm run test:v7-mysql against a **disposable** MySQL 8 instance; test all 71 V7 matrix scenarios and inspect GitHub Actions CI. Live Hostinger HTTPS, MySQL backup/restore, Ed25519 key rotation, real 2-PC failover, secure OS vault, provider browser compatibility and real GitHub PR review/merge/rollback still require user-controlled environments and independent evidence. These are NOT passed just because this code is committed.
+
+Review SUTRADHAR_ARCHITECTURE_BLUEPRINT_V7.md, AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md and V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md as the authoritative contracts. Never claim a simulated or mocked test as production acceptance.
+
+## v7 Git bridge caveats
+
+The Git bridge is an alpha integration of the existing hardened publisher. Local QA evidence is signed by the approved agent; live target GitHub auth, reviewer independence and actual merged PR proof are **not yet acceptance tested**. Publishing is a one-shot remote mutation with durable reservation; failed/ambiguous attempts require reconciliation instead of blind retry. The QA PC needs Python 3.11+, Git, Docker and a trusted project checkout pinned to the frozen baseline. The existing Docker runner image is Python-oriented; other stacks need separately reviewed test images.
+
+The 71 v7 acceptance cases are **not** completed simply because the workflow CI passed. Target Hostinger limits, physical 2-PC/10-PC network partition, provider web policies, OS key vault, backup/restore, full migration cutover and production rollbacks still require explicit Owner validation.
+
+
+## 24 November — Provider handoff and recovered worker operation
+
+Use [Owner provider declaration setup](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md) for optional non-secret aliases. The assigned developer can inspect their own declared binding in Desktop; the binding is explicitly unverified and separate from the compact context. Verify the actual account/workspace and lease independently and review secrets before any permitted manual use. No automatic provider transmission or actual token measurement exists.
+
+If project developer access is removed, Central revokes unfinished leases and holds the affected ticket for reconciliation, preserving evidence. Regrant does not restore the old lease. After Owner reconciliation and a new claim, inspect the old checkpoint as historical handoff and independently verify the worktree. The new source (`ee2e62f`, `8684dfe`; CI pending at this update) requires a fresh checkpoint under the current claim before submission, including after failed QA. It does not delete older generations. Never retry uncertain external Git effects blindly.
+
+Last verified source baseline `3465af4`: [application](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985550) and [dependency](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45441985559) CI passed. See [implementation tracker](../docs/IMPLEMENTATION_TRACKER.md), [acceptance matrix](../docs/V7_REQUIREMENTS_ACCEPTANCE_MATRIX.md) and [gap register](../GAP_REGISTER.md). No production signing/deployment or physical acceptance; G0–G7 HOLD.
+
+
+## Planning a task that touches a shared contract
+
+Verified previous baseline `93993a0`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700768) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45449700737) both SUCCESS, including the fresh-checkpoint change. The new shared-contract implementation and regressions are CODED / CI PENDING at this update.
+
+In the signed Master task-plan request, declare e.g. `"contract_keys":["api:orders","db:orders"]` if distinct files can affect the same shared interface/schema. Use only canonical lowercase keys in api/db/interface/event namespaces; dot descendants overlap parent keys. Nonempty declarations require explicit Owner proposal approval. A conflict remains blocked despite approval; never bypass it by dropping a key, renaming a contract or releasing a reservation before reconciliation. An omitted declaration is unclassified; explicit [] is a planner assertion, not independent verification. Use the signed detail and compact preview to review declarations. No contract key authorizes an extra filesystem path. See [contract](../docs/AGENT_TASK_QA_RECOVERY_CONTRACT_V7.md) and [tracker](../docs/IMPLEMENTATION_TRACKER.md). No automatic semantic discovery, live provider action or production acceptance.
+
+
+## Owner-managed provider declarations
+
+Last fully green source baseline `93993a0`; shared-contract HEAD `01ff1ce` dependency CI succeeded but application CI was cancelled. New provider-registry source is CODED / CI PENDING; verify the latest exact-head workflow results.
+
+See [registry setup](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md) for authenticated GET and expected-version full replacement. Use fictional/non-secret aliases only; verify actual account and workspace independently before manual assisted use. A stored empty snapshot revokes all declarations and never falls back to environment aliases. Do not mistake the previous command receipt for current registry state; read the current version. This does not terminate provider sessions, grant leases or authorize external activity. No dashboard editor yet; staging API only until reviewed. G0–G7 HOLD.
+
+
+## Owner dashboard registry management
+
+Verified previous source baseline `215e5ee`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116654) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45453116645) both SUCCESS. New Owner registry editor is CODED / CI PENDING at this update.
+
+The existing Central dashboard has a local draft editor with load, add/remove, review and exact versioned save. At version 0 independently inventory every intended legacy alias before replacing the registry. Do not type credentials or provider URLs into alias inputs. Save once, verify readback; on uncertain or competing revision reload rather than blindly retrying. Disconnect clears tab-local data but does not undo accepted MySQL mutations. The authenticated API workflow remains available for diagnostics. See [Owner guide](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). Real browser/provider/Hostinger acceptance pending; G0–G7 HOLD.
+
+
+## Manual provider attempt recovery
+
+Verified previous baseline `e935cef`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765773) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45455765743) both SUCCESS. New manual attempt source is CODED / CI PENDING at this update.
+
+See [provider interruption instructions](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md) for explicit trusted worker CLI provider-attempt begin/interrupt/close, fresh checkpoint review and Owner revoked-lease resolution. The record is a local audit/hold, not a remote provider request or permission grant. Never repeat an uncertain external operation; inspect signed detail and independently review first. Packaged Desktop read-only attempt metadata holds a new compact handoff, but mutation controls and Owner resolution UI are not yet implemented. No physical provider acceptance or production deployment. G0–G7 HOLD.
+
+
+## Owner interrupted attempt review
+
+Previous HEAD `82e2a8c` failed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188656) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45457188901) on TS18049 strict-null diagnostics; disposable MySQL integration and unsigned Windows smoke passed. Explicit return guards (`4d05bde`) correct the reported paths; combined CI verification of the fix and new UI remains pending. Last fully green baseline `e935cef`.
+
+Use the dashboard's interrupted provider attempt panel to inspect current ticket, retype exact attempt ID, independently review external session and worktree, and record closure ONLY when Central reports eligible. Current readback must confirm exact CLOSED / OWNER_REVIEW; uncertainty requires another inspection, no automatic retry. Ordinary task reconciliation remains a separate gate. See [operator guide](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). Packaged Desktop mutation and real provider/browser/physical acceptance pending. G0–G7 HOLD.
+
+
+## Consolidated packaged Desktop attempt controls
+
+Verified exact baseline `1193b3b`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45459215514) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45459215696) both SUCCESS. New consolidated Desktop/provider admission batch is CODED / EXACT-HEAD CI PENDING.
+
+Use the original approved Windows PC, live receipt/lease and original trusted worktree. Preview compact context, independently review provider permission and mappings, record BEGIN with exact reviewed digest, record interruption if needed, and close only after independent review and a newer checkpoint. Main-only signing and current readback are required; no blind retry or remote provider operation. BEGIN now requires expected_task_version, so Central/CLI/Desktop must be rebuilt together. See [step-by-step guide](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). Actual transmitted bytes, provider tokens, physical interruption and live acceptance remain pending. G0–G7 HOLD.
+
+
+## Master task batch preview and admission
+
+Previous exact HEAD `8145c64`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45461963696) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45461963719) were cancelled. Before cancellation the real MySQL and Python/shell/state jobs passed, while the TypeScript/unit/build job failed at Desktop security validation: obsolete static regex expected a ternary that had been replaced by the reviewed-context guard. Test correction `b4ec4ae` preserves the security assertions. Last fully green combined baseline `1193b3b`. New planner and correction are CODED / EXACT-HEAD CI PENDING.
+
+See [Master task batch guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). Trusted CLI: npm run edge:worker -- plan-batch-preview AGENT_ID MANIFEST_FILE; after independent review, plan-batch-commit AGENT_ID MANIFEST_FILE PREVIEW_SHA256 CONFIRM_PLAN. Current Master only; entire batch transaction and idempotent receipt, explicit dependencies and conflict ordering, no automatic provider/work execution. Preserve exact request/file on uncertainty. Baseline and semantic completeness remain unverified; separate Owner approvals, claims and independent QA required. G0–G7 HOLD.
+
+
+## Desktop Master planning form and historical admission lookup
+
+Exact baseline `804726e` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45463312420) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45463312581), including previous Desktop correction and Master batch admission. New Desktop Master planner and receipt lookup are CODED / EXACT-HEAD CI PENDING.
+
+Use the existing approved Master PC, exact project ID and unique request ID. Add 2–10 tasks locally, preview, review every field and digest, then confirm natively. Preserve draft and identifiers. On uncertainty use signed historical receipt inspection, not a replacement batch. Original approved actor only; historical admission is not current execution permission. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). No automatic provider action, new schema or production release. G0–G7 HOLD.
+
+
+## Master project catalog and reviewed admission restart recovery
+
+Exact baseline `0fc7c7a` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325287) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45478325508), including the previous Desktop Master planner and historical receipt lookup. New project catalog and admission journal changes are CODED / EXACT-HEAD CI PENDING.
+
+Desktop Master may load signed active project identities (up to 100, explicit truncation). Exact native-confirmed reviewed batch is encrypted and journaled before POST; one unresolved local intent blocks further admission. Restore pending original draft after restart and inspect historical receipt; do not resubmit or infer non-admission from a missing receipt. Unconfirmed drafts remain in memory. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). Actual baseline/source analysis, Owner reconciliation, journal retention and physical acceptance remain open. G0–G7 HOLD.
+
+
+## Interrupted Master admission Owner reconciliation
+
+Exact baseline `85ae5a8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45480705079) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45480705150), including encrypted Master admission journal and signed project catalog. New Owner reconciliation batch is CODED / EXACT-HEAD CI PENDING.
+
+Use exact recovered agent/project/request/digest/order in Owner dashboard. Existing admission or listed ticket conflict blocks cancellation. After independently reviewing journal and DB history, Owner may permanently block the original request key; no new work is authorized. Original approved Desktop reads exact cancellation resolution and closes the encrypted hold. Missing receipt is not non-admission proof. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). No new schema/release. G0–G7 HOLD.
+
+## Master local Git baseline preflight
+
+Exact baseline `a77d3a8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45483558734) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45483558666), including previous Owner admission reconciliation. New local baseline and exact project lookup changes are CODED / EXACT-HEAD CI PENDING.
+
+Desktop Master selects trusted local checkout, inspects signed project origin/base tracking ref and commit/tree, and uses that SHA for every task. Preview and native-confirmed commit recheck local evidence before admission. No remote freshness or upstream merge verification; plan dependent work later if it needs upstream changes. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). G0–G7 HOLD.
+
+## Master unconfirmed draft restore and local source hints
+
+Exact baseline `6c996cb` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45485717874) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45485717690), including the Desktop Git baseline preflight. New encrypted unconfirmed draft and bounded source-hint changes are CODED / EXACT-HEAD CI PENDING.
+
+Explicitly save editable task/editor data locally; reload under the same agent/Central and reinspect the baseline before fresh preview. Pending confirmed admission recovery takes priority. Relative-import hints are bounded local lexical evidence, not verified semantic dependencies or token measurements. No source upload, Git mutation or new schema. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). G0–G7 HOLD.
+
+## Master advisory dependency review and compact context
+
+Exact baseline `babd15b` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45489449293) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45489449341). Encrypted unconfirmed draft storage and lexical source hints are source-CI verified. New advisory graph, fair sampling and compact context changes are CODED / EXACT-HEAD CI PENDING.
+
+Declared internal waves and conflict review groups supplement bounded lexical source hints; external dependencies and execution eligibility remain unverified. Local compact context preserves exact task fields, reports UTF-8 bytes and digest, and never sends provider requests. See [operator guide](../docs/MASTER_TASK_BATCH_PLANNING_V7.md). G0–G7 HOLD.
+
+## Owner-attested provider usage
+
+Exact baseline `8e897c8` passed [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45492514727) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45492514610). Advisory planning graph, fair source sampling and compact context are source-CI verified. New Owner-attested provider usage history is CODED / EXACT-HEAD CI PENDING.
+
+Owner web usage panel inspects exact ticket history and records independently observed counts for a closed attempt, with exact context digest and one-shot readback. Unknown attempts are not zero; cached input is a subset. No provider API, quota, cost or new execution authorization. See [provider guide](../docs/PROVIDER_WORKSPACE_DECLARATIONS_V7.md). G0–G7 HOLD.

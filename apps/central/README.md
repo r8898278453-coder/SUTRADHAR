@@ -1,0 +1,64 @@
+# SUTRADHAR Central (Hostinger app) — alpha
+
+**Current source:** v7/central.ts in the repo root. This folder is the new independent **build and deploy output** boundary; source has **not** yet moved into this folder. The source migration will follow a contract-test-backed refactor.
+
+## Hostinger staging build settings
+
+Use the **GitHub monorepo/root workspace** flow, NOT the app-folder Root directory flow yet:
+
+| Hostinger setting | Current staging value |
+| --- | --- |
+| Root directory | **./** (repository root) |
+| Node.js version | **22.x** |
+| Build command | **npm run build:central** |
+| Output directory | **apps/central/dist** |
+| Entry file | **apps/central/dist/server.cjs** |
+| Health | **https://STAGING-DOMAIN/v7/health** |
+
+This build only outputs Central server and static UI, version manifest, and v7 schema. It intentionally does not bundle Electron, PC agent, QA tools or Python/Docker. Root/Desktop npm v3 lockfiles are now committed and checked by clean npm ci on Linux and Windows. The Central build still shares the monorepo's legacy dependencies; standalone Central dependency isolation and independent vulnerability approval remain pending.
+
+**Never attach a production Hostinger website to the draft fix branch or ordinary main.** Hostinger's GitHub integration can automatically deploy whenever the selected branch receives a push. The approved release-only production branch/workflow is not configured yet. This is a staged build target, not permission to deploy.
+
+## Engineer preflight
+
+From repository root, with Node.js 22 and a controlled test environment:
+
+~~~sh
+npm ci --no-audit --no-fund
+npm run lint
+npm test
+npm run build:central
+npm run check:packages
+# Local staging start only after creating an isolated disposable MySQL database.
+NODE_ENV=production node apps/central/dist/server.cjs
+~~~
+
+Never run migrations against a live database from development. The built release contains **dist/v7/schema.sql** and the server resolves it relative to its own bundle. Migration is still manual and Owner-authorized, behind SUTRADHAR_ALLOW_MIGRATIONS=true.
+
+Environment variable names remain in [v7/.env.example](../../v7/.env.example) and the [Owner guide](../../docs/OWNER_SETUP_AND_DEPLOYMENT.md). No secrets in Git.
+
+## Staging verification and backup safety — 12 November 2026
+
+An Owner-approved staging environment can be checked **without changing it** using npm run ops:hostinger-preflight from a trusted PC. Required variables are SUTRADHAR_STAGING_URL (a staging/test HTTPS hostname) and SUTRADHAR_EXPECTED_COMMIT_SHA (full exact deployed SHA). The verifier checks /v7/health, MySQL authority, release manifest SHA/protocol and the dashboard, and reports production_accepted:false deliberately.
+
+Encrypted logical MySQL backup code exists at scripts/ops/mysql-ops.cjs with AES-256-GCM verification before a **different empty staging/test database** restore. It requires permitted MySQL client connectivity on a separate operator machine, not a long-running worker on Hostinger shared hosting. If Hostinger doesn't allow external MySQL for the account, use the hPanel database backup/export workflow and a controlled separate restore rehearsal instead. The current code has **not performed an actual Hostinger deploy, MySQL backup or live restore**.
+
+See the [Owner-ready production checklist](../../docs/PRODUCTION_READINESS_V7_2026-11-12.md) for all safety checks and environment-dependent gates. The protected Central production promotion pipeline remains unimplemented.
+
+## Status
+
+- Central-only bundle: **implemented, CI acceptance pending**.
+- App-specific clean install/root independent of monorepo: **NOT IMPLEMENTED**.
+- Hostinger actual deploy/DB backup restore: **NOT RUN**.
+- Safe versioned migrations: **NOT IMPLEMENTED**.
+- Protected Owner-approved production promotion: **NOT CONFIGURED**.
+
+See [ADR](../../docs/ADR_001_MONOREPO_TWO_APPS.md) and [Release operations](../../docs/RELEASE_OPERATIONS.md).
+
+The staging preflight also retrieves the four fixed dashboard assets over the pinned HTTPS transport and compares their bytes to `ui_sha256` in the deployed manifest. This catches missing/fallback HTML and mixed-version UI files, but is not independent attestation of server or deployment authenticity. Older manifests without UI digests must be rebuilt before this check passes.
+
+Central Express now serves only `/`, `/index.html`, `/app.css`, `/dashboard.js`, `/owner-crash-crosscheck.js` and `/release-manifest.json` after the API routes. Missing assets fail closed, unknown routes are JSON 404, and internal server bundles, SQL schemas, credentials and other build files are not public routes. Hostinger reverse-proxy/static serving configuration must independently enforce the same boundary in staging; the application allowlist cannot certify an external web-server configuration.
+
+### Telegram Owner control (optional, staging only)
+
+Private chat `/status`, `/pause`, and `/resume` share the web Owner command transaction and MySQL command receipt. Configure `TELEGRAM_WEBHOOK_SECRET` (32–256 URL-safe characters), `TELEGRAM_ADMIN_USER_ID` and `TELEGRAM_ALLOWED_CHAT_ID` (same positive numeric private-chat Owner ID), optional `TELEGRAM_BOT_USERNAME` (without @), and optional `TELEGRAM_BOT_TOKEN` in protected hosting variables. Commands older than five minutes or more than thirty seconds ahead are ignored; forwarded/group/other-user commands are refused. All protected approvals remain web-only. Redelivery within the accepted window returns the original command receipt without repeating notification; notification is best effort, not a delivery guarantee. No actual webhook registration or bot message was performed by development CI.

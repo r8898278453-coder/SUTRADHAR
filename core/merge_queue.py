@@ -93,73 +93,18 @@ class MergeQueueEngine:
                 sent_to_dlq=True,
             )
 
-        # 2. Automated Rebase on latest origin/main
-        try:
-            subprocess.run(["git", "fetch", "origin", "main"], cwd=self.repo_root, check=True, capture_output=True)
-            
-            # Checkout ticket branch
-            subprocess.run(["git", "checkout", item.branch_name], cwd=self.repo_root, check=True, capture_output=True)
-            
-            # Rebase onto main
-            rebase_proc = subprocess.run(
-                ["git", "rebase", "origin/main"],
-                cwd=self.repo_root,
-                capture_output=True,
-                text=True,
-            )
-
-            if rebase_proc.returncode != 0:
-                logger.warning(f"[MERGE-QUEUE] Rebase conflict for {item.ticket_id}. Aborting rebase...")
-                subprocess.run(["git", "rebase", "--abort"], cwd=self.repo_root, capture_output=True)
-                return MergeResult(
-                    success=False,
-                    ticket_id=item.ticket_id,
-                    error_message=f"Rebase Conflict against latest main: {rebase_proc.stderr}",
-                    sent_to_dlq=True,
-                )
-
-            # 3. Post-Rebase Hermetic Sandbox Verification
-            logger.info(f"[MERGE-QUEUE] Re-verifying {item.ticket_id} inside Sandbox after Rebase...")
-            sb_proc = subprocess.run(
-                ["bash", str(self.sandbox_script), str(self.repo_root)],
-                capture_output=True,
-                text=True,
-            )
-
-            if sb_proc.returncode != 0:
-                logger.warning(f"[MERGE-QUEUE] Post-rebase sandbox test failed: {sb_proc.stderr}")
-                return MergeResult(
-                    success=False,
-                    ticket_id=item.ticket_id,
-                    error_message=f"Post-rebase test failure: {sb_proc.stderr or sb_proc.stdout}",
-                    sent_to_dlq=True,
-                )
-
-            # 4. Fast-Forward Merge into main
-            subprocess.run(["git", "checkout", "main"], cwd=self.repo_root, check=True, capture_output=True)
-            subprocess.run(["git", "merge", "--ff-only", item.branch_name], cwd=self.repo_root, check=True, capture_output=True)
-            subprocess.run(["git", "push", "origin", "main"], cwd=self.repo_root, check=True, capture_output=True)
-
-            rev_proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo_root, capture_output=True, text=True, check=True)
-            rebased_sha = rev_proc.stdout.strip()
-
-            logger.info(f"[MERGE-QUEUE] Fast-forward merge complete for {item.ticket_id} (SHA: {rebased_sha[:8]})")
-            return MergeResult(
-                success=True,
-                ticket_id=item.ticket_id,
-                rebased_commit=rebased_sha,
-            )
-
-        except Exception as ex:
-            logger.error(f"[MERGE-QUEUE] Exception during merge queue processing: {ex}")
-            try:
-                subprocess.run(["git", "rebase", "--abort"], cwd=self.repo_root, capture_output=True)
-                subprocess.run(["git", "checkout", "main"], cwd=self.repo_root, capture_output=True)
-            except Exception:
-                pass
-            return MergeResult(
-                success=False,
-                ticket_id=item.ticket_id,
-                error_message=str(ex),
-                sent_to_dlq=True,
-            )
+        # Production protection: the legacy local queue is not authorized to
+        # merge/push main. Merge must happen through a reviewed GitHub PR with
+        # required CI and exact tested-tree attestation, verified independently
+        # by /api/cluster/ticket/verify-push after GitHub reports it merged.
+        logger.warning(
+            "[MERGE-QUEUE] Denied unsafe direct-main merge for %s. "
+            "Create a reviewed PR; no git mutation performed.",
+            item.ticket_id,
+        )
+        return MergeResult(
+            success=False,
+            ticket_id=item.ticket_id,
+            error_message="GITHUB_REVIEWED_PR_REQUIRED: Direct local main merges are disabled",
+            sent_to_dlq=False,
+        )
