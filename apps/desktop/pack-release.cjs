@@ -71,6 +71,17 @@ function main(){
   if(manifest.source_sha!==expected||manifest.api_protocol!==7||
      manifest.secure_agent_sha256!==crypto.createHash('sha256').update(fs.readFileSync(agent)).digest('hex'))
     fail('Desktop build provenance mismatch');
+  const astAssets=['master-typescript.cjs','master-typescript-LICENSE.txt','master-typescript-NOTICE.txt'];
+  const locked=JSON.parse(fs.readFileSync(path.join(root,'package-lock.json'),'utf8')).packages['node_modules/typescript'];
+  if(manifest.ast_runtime_version!==locked?.version||
+     JSON.stringify(Object.keys(manifest.ast_resource_sha256||{}).sort())!==JSON.stringify([...astAssets].sort()))
+    fail('Desktop AST runtime provenance missing');
+  for(const name of astAssets){
+    const file=path.join(cwd,'dist',name),st=fs.lstatSync(file);
+    if(!st.isFile()||st.isSymbolicLink()||st.size<1||st.size>16*1024*1024||
+       crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==manifest.ast_resource_sha256[name])
+      fail('Desktop AST resource provenance mismatch');
+  }
   const builder=path.join(cwd,'node_modules','electron-builder','cli.js');
   if(!fs.existsSync(builder))fail('packager dependencies not installed');
   const signingConfig=JSON.parse(JSON.stringify(pkg.build));
