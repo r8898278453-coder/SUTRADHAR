@@ -48,7 +48,7 @@ const {createProof:createPilotNodeProof,writeExclusive:writePilotNodeProof}=
   require('./pilot-node-continuity.cjs');
 const {createSignerBridge}=require('./vault-bridge.cjs');
 const {inspectWorkerTasks,compactWorkerContext}=require('./worker-inspection.cjs');
-const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal}=require('./worker-claim.cjs');
+const {claimApprovedTask,resumeApprovedTask,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,compareMasterAstHints,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal}=require('./worker-claim.cjs');
 const {readBulkManifest,reviewBulkManifest,selectBulkDraft}=require('./master-bulk-desktop.cjs');
 const {progressWorkerTask}=require('./worker-progress.cjs');
 const {submitWorkerCandidate}=require('./worker-submit.cjs');
@@ -744,12 +744,18 @@ app.whenReady().then(()=>{
       if(!Array.isArray(tasks)||tasks.length<2||tasks.length>10||
          Buffer.byteLength(JSON.stringify(tasks),'utf8')>65536)
         throw Error('MASTER_SOURCE_HINT_SCOPE_INVALID');
+      const declared_planning_review=analyzeMasterPlanningDraft(tasks);
       await recheckMasterBaseline(baseline,{origin,agentId,projectId,tasks,beforeMutation});
+      let typescriptRuntime;
+      try{
+        typescriptRuntime=require(path.join(process.resourcesPath,'master-typescript.cjs'));
+        if(!typescriptRuntime||typeof typescriptRuntime.createSourceFile!=='function')throw Error('invalid');
+      }catch{throw Error('MASTER_AST_PACKAGED_RUNTIME_UNAVAILABLE');}
       const report=inspectMasterSourceHints({repoDir:baseline.repoDir,project:baseline.project,
         observed:baseline.observed,tasks,
-        typescriptRuntime:require(path.join(process.resourcesPath,'master-typescript.cjs'))});
+        typescriptRuntime});
       beforeMutation();
-      return {...report,declared_planning_review:analyzeMasterPlanningDraft(tasks)};
+      return {...report,declared_planning_review,source_order_review:compareMasterAstHints(tasks,report)};
     }finally{workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:buildMasterPlanningContext',async(event,agentId,projectId,tasks)=>{
