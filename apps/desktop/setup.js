@@ -734,9 +734,13 @@ get('masterSourceHints').addEventListener('click',async()=>{
     const r=await api.inspectMasterSourceHints(id.agent,id.project,masterDraft);
     if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
     if(r.inspection_mode!=='AST_SYNTAX'||r.type_resolution_verified!==false||r.semantic_discovery_verified!==false||r.automatic_execution_allowed!==false||
-       r.provider_sent!==false||r.source_contents_returned!==false||!Array.isArray(r.hints)||!Array.isArray(r.ast_files))
+       r.provider_sent!==false||r.source_contents_returned!==false||!Array.isArray(r.hints)||!Array.isArray(r.ast_files)||
+       r.source_order_review?.declared_edges_changed!==false||r.source_order_review?.automatic_admission_allowed!==false||
+       r.source_order_review?.automatic_execution_allowed!==false||r.source_order_review?.semantic_discovery_verified!==false||
+       !Array.isArray(r.source_order_review?.source_order_comparisons)||!Array.isArray(r.source_order_review?.shared_dependency_reviews))
       throw Error('Invalid source hint report');
-    output.textContent='ADVISORY REVIEW ONLY — declared dependency waves, review groups and bounded AST syntax hints are not execution permission. External dependencies, worker availability and semantic independence are unverified.\n'+JSON.stringify(r,null,2);
+    output.textContent='ADVISORY REVIEW ONLY — declared dependency waves, review groups and bounded AST syntax hints are not execution permission. External dependencies, worker availability and semantic independence are unverified.\n'+
+      'Source-order review questions: '+r.source_order_review.source_order_review_count+'; shared dependency reviews: '+r.source_order_review.shared_dependency_review_count+'; unresolved references: '+r.ast_unknown_reference_count+'. No declared edges changed.\n'+JSON.stringify(r,null,2);
   }catch(error){output.textContent='Source hint inspection blocked: '+String(error?.message||error);}
   finally{masterBusy=false;updateMasterControls();await loadStatus();}
 });
