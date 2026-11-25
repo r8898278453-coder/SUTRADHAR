@@ -153,7 +153,7 @@ test('short descriptor read fails and closes descriptor',()=>fixture(dir=>{
 test('descriptor identity changes are refused and descriptor closed',()=>fixture(dir=>{
   const file=path.join(dir,'input.json');fs.writeFileSync(file,wrap(tasks(2)));
   let closed=0,reads=0;
-  const io={...fs,fstatSync:fd=>{const st=fs.fstatSync(fd);if(++reads===2)st.ino++;return st;},
+  const io={...fs,fstatSync:fd=>{const st=fs.fstatSync(fd);if(++reads===2){st.ino=st.ino===0?1:0;}return st;},
     closeSync:fd=>{closed++;fs.closeSync(fd);}};
   assert.throws(()=>readBulkManifest(file,{io}),/FILE_CHANGED/);assert.equal(closed,1);
 }));
