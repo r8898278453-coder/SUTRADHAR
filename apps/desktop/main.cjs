@@ -746,7 +746,8 @@ app.whenReady().then(()=>{
         throw Error('MASTER_SOURCE_HINT_SCOPE_INVALID');
       await recheckMasterBaseline(baseline,{origin,agentId,projectId,tasks,beforeMutation});
       const report=inspectMasterSourceHints({repoDir:baseline.repoDir,project:baseline.project,
-        observed:baseline.observed,tasks});
+        observed:baseline.observed,tasks,
+        typescriptRuntime:require(path.join(process.resourcesPath,'master-typescript.cjs'))});
       beforeMutation();
       return {...report,declared_planning_review:analyzeMasterPlanningDraft(tasks)};
     }finally{workerClaimBusy=false;}
