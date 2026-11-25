@@ -4,7 +4,7 @@
 const fs=require('node:fs'),path=require('node:path');
 const inventories=Object.freeze({
   central:Object.freeze(['server.cjs','index.html','dashboard.js','app.css','owner-crash-crosscheck.js','v7/schema.sql','release-manifest.json']),
-  desktop:Object.freeze(['edge-agent.cjs','secure-agent.cjs','edge-worker.cjs','release-manifest.json'])
+  desktop:Object.freeze(['edge-agent.cjs','secure-agent.cjs','edge-worker.cjs','master-typescript.cjs','master-typescript-LICENSE.txt','master-typescript-NOTICE.txt','release-manifest.json'])
 });
 function inspectBuildOutput(dir,app,{complete=false}={}){
   const files=inventories[app];
