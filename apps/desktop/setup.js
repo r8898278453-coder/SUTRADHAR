@@ -59,6 +59,11 @@ async function loadStatus(){
       s.centralReport?.acknowledgedNow&&s.maintenanceHold==='NONE'&&
       s.enrollmentState==='SUBMITTED');
     select.disabled=!approvedReadOnly;
+    if(before!==select.value){
+      masterDraftVersion=null;clearMasterBaseline();invalidateMasterReview();
+    }else if(!approvedReadOnly&&masterBulkReview){
+      clearMasterBulkReview('Local agent unavailable. Inspect again after recovery.');
+    }
     masterAvailable=approvedReadOnly;updateMasterControls();
     get('workerList').disabled=!approvedReadOnly;
     get('workerDetail').disabled=!approvedReadOnly;
