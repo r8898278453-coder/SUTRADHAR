@@ -448,7 +448,7 @@ for(const [buttonId,action] of [['workerProviderBegin','BEGIN'],['workerProvider
 // Local form draft only; Central and Electron main independently validate.
 let masterDraft=[],masterReview=null,masterBusy=false,masterAvailable=false,masterRevision=0;
 let masterCatalogAgent=null,masterCatalogItems=[],masterRecovered=false,masterLocalBaseline=null;
-let masterDraftVersion=null;
+let masterDraftVersion=null,masterBulkReview=null;
 const masterEditorIds={ticket:'masterTicket',baseline:'masterBaseline',branch:'masterBranch',title:'masterTitle',description:'masterDescription',risk:'masterRisk',scopes:'masterScopes',criteria:'masterCriteria',dependencies:'masterDependencies',contracts:'masterContracts'};
 const masterTaskFields=['masterTicket','masterBaseline','masterBranch','masterTitle','masterDescription','masterScopes','masterCriteria','masterDependencies','masterContracts'];
 function masterIdentity(){return {agent:get('workerAgent').value,project:get('masterProject').value,request:get('masterRequest').value};}
@@ -465,6 +465,14 @@ function updateMasterControls(){
   get('masterRecover').disabled=masterBusy||!masterAvailable||!masterId(id.agent);
   get('masterAdd').disabled=masterBusy||masterRecovered||masterDraft.length>=10;
   get('masterUndo').disabled=masterBusy||masterRecovered||!masterDraft.length;
+  const bulkBaselineMatches=masterLocalBaseline&&masterLocalBaseline.agent===id.agent&&masterLocalBaseline.project===id.project;
+  const bulkEligible=masterAvailable&&!masterBusy&&!masterRecovered&&masterId(id.agent)&&masterId(id.project)&&bulkBaselineMatches;
+  const bulkMatches=masterBulkReview&&masterBulkReview.revision===masterRevision&&
+    masterBulkReview.agent===id.agent&&masterBulkReview.project===id.project&&masterBulkReview.sha===masterLocalBaseline?.sha;
+  const bulkGroup=bulkMatches&&masterBulkReview.groups.find(g=>g.group_id===get('masterBulkGroup').value);
+  get('masterBulkInspect').disabled=!bulkEligible;
+  get('masterBulkGroup').disabled=!bulkEligible||!bulkMatches;
+  get('masterBulkImport').disabled=!bulkEligible||!bulkMatches||bulkGroup?.local_draft_import_allowed!==true;
   const baselineMatches=masterLocalBaseline&&masterLocalBaseline.agent===id.agent&&masterLocalBaseline.project===id.project&&masterDraft.every(t=>t.baseline_sha===masterLocalBaseline.sha);
   get('masterBaselineInspect').disabled=!masterAvailable||masterBusy||masterRecovered||!masterId(id.agent)||!masterId(id.project);
   get('masterDraftSave').disabled=masterBusy||masterRecovered||!masterAvailable||!masterId(id.agent);
@@ -480,8 +488,16 @@ function updateMasterControls(){
   for(const k of [...masterTaskFields,'masterRisk','masterProject','masterRequest','masterDigest','masterReviewed'])
     get(k).disabled=masterBusy||masterRecovered;
 }
+function clearMasterBulkReview(message='Draft or selection changed. Inspect the bulk manifest again.'){
+  masterBulkReview=null;
+  get('masterBulkReport').value='';
+  const select=get('masterBulkGroup');select.replaceChildren();
+  const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Inspect a manifest first';select.append(placeholder);
+  get('masterBulkStatus').textContent=message;
+}
 function invalidateMasterReview({clearDigest=true}={}){
   masterRevision++;masterReview=null;get('masterReviewed').checked=false;
+  clearMasterBulkReview();
   get('masterSourceStatus').textContent='Draft or review changed. Inspect source hints again if needed.';
   get('masterPlanningContextText').value='';
   get('masterPlanningContextStatus').textContent='Draft or review changed. Prepare fresh compact context if needed.';
@@ -578,6 +594,81 @@ get('masterBaselineInspect').addEventListener('click',async()=>{
       '\nTree: '+r.tree_sha+'. LOCAL ONLY; remote freshness and upstream changes are unverified. Use this exact SHA in each task.';
     // Do not overwrite an existing task field or a previously reviewed draft.
   }catch(error){status.textContent='Baseline inspection blocked: '+String(error?.message||error);}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterBulkGroup').addEventListener('change',updateMasterControls);
+get('masterBulkInspect').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterBulkInspect').disabled)return;
+  const id=masterIdentity(),baseline=masterLocalBaseline;
+  invalidateMasterReview();
+  const revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  const status=get('masterBulkStatus');
+  status.textContent='Choose the trusted local JSON declarations file. Nothing will be admitted.';
+  try{
+    const r=await api.inspectMasterBulkManifest(id.agent,id.project);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity())||baseline!==masterLocalBaseline||!masterAvailable)return;
+    if(r?.canceled===true){clearMasterBulkReview('Canceled. No manifest reviewed.');return;}
+    if(r?.schema!=='SUTRADHAR_BULK_REVIEW_V1'||r.baseline_sha!==baseline.sha||
+       !masterHash(r.file_sha256)||!masterHash(r.manifest_sha256)||
+       !Number.isSafeInteger(r.task_count)||r.task_count<2||r.task_count>100||
+       r.local_tracking_ref_verified!==true||r.local_draft_only!==true||
+       r.remote_freshness_verified!==false||r.semantic_discovery_verified!==false||
+       r.provider_sent!==false||r.automatic_admission_allowed!==false||r.automatic_execution_allowed!==false||
+       !Array.isArray(r.review_groups)||r.review_groups.length<1||r.review_groups.length>100||
+       r.review_group_count!==r.review_groups.length||
+       new Set(r.review_groups.map(g=>g.group_id)).size!==r.review_groups.length||
+       r.review_groups.some(g=>!/^review_[0-9]{3}$/.test(g.group_id)||g.group_id.length!==10||
+         !Array.isArray(g.ticket_ids)||g.ticket_ids.length<1||g.ticket_ids.length>10||!g.ticket_ids.every(masterId)||
+         typeof g.local_draft_import_allowed!=='boolean'||!Array.isArray(g.local_draft_import_blockers))||
+       new Set(r.review_groups.flatMap(g=>g.ticket_ids)).size!==r.task_count||
+       r.review_groups.reduce((n,g)=>n+g.ticket_ids.length,0)!==r.task_count)
+      throw Error('Invalid bulk review report');
+    masterBulkReview={agent:id.agent,project:id.project,revision,sha:baseline.sha,
+      fileDigest:r.file_sha256,manifestDigest:r.manifest_sha256,groups:r.review_groups};
+    get('masterBulkReport').value=JSON.stringify(r,null,2);
+    const select=get('masterBulkGroup');select.replaceChildren();
+    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Choose one reviewed group';select.append(placeholder);
+    for(const g of r.review_groups){
+      const option=document.createElement('option');option.value=g.group_id;
+      option.textContent=g.group_id+' — wave '+g.wave+' — '+g.ticket_ids.length+' task(s) — '+
+        (g.local_draft_import_allowed?'local draft eligible':'separate review required');
+      select.append(option);
+    }
+    status.textContent=r.task_count+' declared tasks, '+r.review_group_count+' review groups, '+
+      r.unresolved_declared_conflict_count+' unresolved declared conflict pairs. Advisory only. Review the full report before selection.';
+  }catch{clearMasterBulkReview('Bulk inspection blocked. Check current Master, trusted local file, exact baseline and declarations.');}
+  finally{masterBusy=false;updateMasterControls();await loadStatus();}
+});
+get('masterBulkImport').addEventListener('click',async()=>{
+  updateMasterControls();if(get('masterBulkImport').disabled)return;
+  const id=masterIdentity(),saved=masterBulkReview,group=saved.groups.find(g=>g.group_id===get('masterBulkGroup').value);
+  if(!group||!group.local_draft_import_allowed)return;
+  if(!confirm('Load '+group.group_id+' into the local draft only? This replaces current unsaved draft/editor fields and clears the request ID, preview and consent. No Central admission.'))return;
+  const revision=masterRevision;
+  masterBusy=true;updateMasterControls();
+  try{
+    const r=await api.selectMasterBulkDraft(id.agent,id.project,saved.fileDigest,saved.manifestDigest,group.group_id);
+    if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity())||
+       saved!==masterBulkReview||!masterAvailable)return;
+    if(r?.schema!=='SUTRADHAR_BULK_GROUP_REVIEW_V1'||r.baseline_sha!==saved.sha||
+       r.file_sha256!==saved.fileDigest||r.manifest_sha256!==saved.manifestDigest||
+       r.group?.group_id!==group.group_id||!masterHash(r.group_review_sha256)||
+       r.local_draft_only!==true||r.central_admission_performed!==false||r.requires_fresh_central_preview!==true||
+       r.automatic_admission_allowed!==false||r.automatic_execution_allowed!==false||r.provider_sent!==false||
+       !Array.isArray(r.tasks)||r.tasks.length<2||r.tasks.length>10||
+       JSON.stringify(r.tasks.map(t=>t.ticket_id))!==JSON.stringify(group.ticket_ids)||
+       r.tasks.some(t=>t.baseline_sha!==saved.sha)||
+       new TextEncoder().encode(JSON.stringify(r.tasks)).length>65536)
+      throw Error('Invalid selected group');
+    masterDraft=r.tasks;
+    for(const k of masterTaskFields)get(k).value='';
+    get('masterRisk').value='LOW';
+    get('masterRequest').value='';
+    renderMasterDraft();
+    get('masterBulkStatus').textContent='Group loaded into local draft only. Enter a new request ID, review every field and obtain a fresh Central preview. Inspect the manifest again to select another group.';
+    get('masterResult').textContent='Local draft imported. No admission, provider or Git operation performed.';
+  }catch{clearMasterBulkReview('Group import blocked. The file, baseline, Master or selected group may have changed. Inspect again.');}
   finally{masterBusy=false;updateMasterControls();await loadStatus();}
 });
 function collectMasterDraft(){
