@@ -174,3 +174,103 @@ test('Desktop IPC is fixed, signed-project fenced, native-only and included in p
   assert.match(setup,/get\('masterBulkImport'\).addEventListener[\s\S]*?confirm\([\s\S]*?api.selectMasterBulkDraft[\s\S]*?get\('masterRequest'\).value=''/);
   assert.match(setup,/function invalidateMasterReview[\s\S]*?clearMasterBulkReview\(\)/);
 });
+
+// Exercise actual renderer event handlers with a minimal DOM model. This
+// does not constitute physical Electron or live Central acceptance.
+function rendererModel(){
+  const vm=require('node:vm');
+  const source=fs.readFileSync(path.resolve(__dirname,'../apps/desktop/setup.js'),'utf8');
+  const start=source.indexOf('// Local form draft only;');
+  const end=source.indexOf('function collectMasterDraft(){',start);
+  assert.ok(start>=0&&end>start);
+  const nodes=new Map();
+  const element=()=>({value:'',textContent:'',disabled:false,checked:false,children:[],
+    listeners:{},addEventListener(type,fn){this.listeners[type]=fn;},
+    replaceChildren(){this.children=[];this.value='';},
+    append(node){this.children.push(node);}});
+  const get=id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);};
+  const callCount={inspect:0,select:0,confirm:0};
+  let accept=true,inspectReply=null,selectReply=null;
+  const ctx=vm.createContext({get,TextEncoder,JSON,loadStatus:async()=>{},
+    document:{createElement:element},confirm:()=>{callCount.confirm++;return accept;},
+    api:{inspectMasterBulkManifest:async()=>{callCount.inspect++;return typeof inspectReply==='function'?inspectReply():inspectReply;},
+      selectMasterBulkDraft:async()=>{callCount.select++;return typeof selectReply==='function'?selectReply():selectReply;}}});
+  vm.runInContext(source.slice(start,end),ctx);
+  get('workerAgent').value='agent_alpha';get('masterProject').value='project_alpha';get('masterRequest').value='request_original';
+  vm.runInContext("masterAvailable=true;masterLocalBaseline={agent:'agent_alpha',project:'project_alpha',sha:'"+baseline+"'};updateMasterControls();",ctx);
+  return {get,callCount,eval:code=>vm.runInContext(code,ctx),
+    setInspect:r=>{inspectReply=r;},setSelect:r=>{selectReply=r;},setConfirm:v=>{accept=v;},
+    fire:async(id,event='click')=>{await get(id).listeners[event]();}};
+}
+test('renderer displays report and imports exact group without admission, then clears consent',async()=>{
+  const m=rendererModel(),raw=wrap(tasks(12)),r=review(raw);
+  m.setInspect(r);m.setSelect(select(raw,r,'review_002'));
+  await m.fire('masterBulkInspect');
+  assert.equal(m.get('masterBulkReport').value.includes('Synthetic private description'),false);
+  assert.equal(m.get('masterBulkImport').disabled,true);
+  m.get('masterBulkGroup').value='review_002';await m.fire('masterBulkGroup','change');
+  assert.equal(m.get('masterBulkImport').disabled,false);
+  m.get('masterReviewed').checked=true;m.get('masterDigest').value='d'.repeat(64);
+  await m.fire('masterBulkImport');
+  assert.deepEqual(JSON.parse(m.get('masterDraft').value),tasks(12).slice(10));
+  assert.equal(m.get('masterRequest').value,'');
+  assert.equal(m.get('masterDigest').value,'');
+  assert.equal(m.get('masterReviewed').checked,false);
+  assert.equal(m.get('masterPreview').disabled,true);
+  assert.equal(m.get('masterBulkImport').disabled,true);
+  assert.equal(m.callCount.select,1);
+});
+test('renderer shows blockers and refuses dependent group before IPC',async()=>{
+  const m=rendererModel(),raw=wrap([task(1),task(2),task(3,{dependencies:['ticket_001']}),task(4,{dependencies:['ticket_002']})]),r=review(raw);
+  m.setInspect(r);await m.fire('masterBulkInspect');
+  m.get('masterBulkGroup').value='review_002';await m.fire('masterBulkGroup','change');
+  assert.match(m.get('masterBulkGroupStatus').textContent,/UPSTREAM_BASELINE_REVIEW_REQUIRED/);
+  assert.equal(m.get('masterBulkImport').disabled,true);
+  await m.fire('masterBulkImport');assert.equal(m.callCount.select,0);
+});
+test('renderer cancellation never replaces local draft',async()=>{
+  const m=rendererModel(),raw=wrap(tasks(2)),r=review(raw);
+  m.setInspect(r);m.setSelect(select(raw,r));m.setConfirm(false);
+  await m.fire('masterBulkInspect');m.get('masterBulkGroup').value='review_001';
+  await m.fire('masterBulkImport');
+  assert.equal(m.callCount.confirm,1);assert.equal(m.callCount.select,0);
+  assert.equal(m.get('masterRequest').value,'request_original');
+});
+test('renderer rejects delayed review after selection or revision changes',async()=>{
+  const m=rendererModel();let resolve;
+  m.setInspect(()=>new Promise(r=>{resolve=r;}));
+  const pending=m.fire('masterBulkInspect');
+  m.get('masterProject').value='project_other';await m.fire('masterProject','input');
+  resolve(review(wrap(tasks(2))));await pending;
+  assert.equal(m.get('masterBulkReport').value,'');assert.equal(m.get('masterBulkImport').disabled,true);
+});
+test('renderer refuses delayed group response after local draft edit',async()=>{
+  const m=rendererModel(),raw=wrap(tasks(2)),r=review(raw);let resolve;
+  m.setInspect(r);await m.fire('masterBulkInspect');
+  m.get('masterBulkGroup').value='review_001';
+  m.setSelect(()=>new Promise(r=>{resolve=r;}));
+  const pending=m.fire('masterBulkImport');
+  m.get('masterTitle').value='local edit';await m.fire('masterTitle','input');
+  resolve(select(raw,r));await pending;
+  assert.equal(m.get('masterDraft').value,'');
+  assert.equal(m.get('masterRequest').value,'request_original');
+});
+test('renderer rejects malformed response claiming admission permission',async()=>{
+  const m=rendererModel(),raw=wrap(tasks(2));
+  m.setInspect({...review(raw),automatic_admission_allowed:true});
+  await m.fire('masterBulkInspect');
+  assert.equal(m.get('masterBulkReport').value,'');assert.equal(m.get('masterBulkImport').disabled,true);
+});
+test('renderer native chooser cancel leaves no reviewed state',async()=>{
+  const m=rendererModel();m.setInspect({canceled:true});
+  await m.fire('masterBulkInspect');
+  assert.match(m.get('masterBulkStatus').textContent,/Canceled/);
+  assert.equal(m.get('masterBulkGroup').disabled,true);
+});
+test('renderer denies wrong group response and retains prior request',async()=>{
+  const m=rendererModel(),raw=wrap(tasks(12)),r=review(raw);
+  m.setInspect(r);await m.fire('masterBulkInspect');
+  m.get('masterBulkGroup').value='review_002';m.setSelect(select(raw,r,'review_001'));
+  await m.fire('masterBulkImport');
+  assert.equal(m.get('masterDraft').value,'');assert.equal(m.get('masterRequest').value,'request_original');
+});
