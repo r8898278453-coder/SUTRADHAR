@@ -66,6 +66,7 @@
 <p id="masterBulkStatus" class="hint" role="status" aria-live="polite">No bulk manifest reviewed.</p>
 <label for="masterBulkReport">Full advisory review (identifiers and conflicts)</label><textarea id="masterBulkReport" rows="7" readonly spellcheck="false"></textarea>
 <label for="masterBulkGroup">Choose a review group</label><select id="masterBulkGroup" disabled><option value="">Inspect a manifest first</option></select>
+<pre id="masterBulkGroupStatus" role="status" aria-live="polite">No group selected.</pre>
 <button id="masterBulkImport" class="secondary" type="button" disabled>Load eligible group into local draft only</button>
 <p class="hint">Groups with unresolved conflicts, external dependencies, upstream baseline requirements, protected risk or a size outside 2–10 require separate review. Loading a group replaces the current local draft only after confirmation and clears the request ID, preview and consent. Reinspect the file for another group.</p>
 </details>
