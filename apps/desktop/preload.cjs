@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('sutradharDesktop',Object.freeze({
   openDashboard:()=>ipcRenderer.invoke('sutradhar:openDashboard'),
   inspectWorkerTasks:(agentId,ticketId=null)=>ipcRenderer.invoke('sutradhar:inspectWorkerTasks',agentId,ticketId),
   previewWorkerContext:(agentId,ticketId)=>ipcRenderer.invoke('sutradhar:inspectWorkerTasks',agentId,ticketId,'context'),
+  inspectProjectCapacity:(agentId,projectId)=>ipcRenderer.invoke('sutradhar:inspectProjectCapacity',agentId,projectId),
   listMasterProjects:agentId=>ipcRenderer.invoke('sutradhar:listMasterProjects',agentId),
   recoverMasterBatchDraft:agentId=>ipcRenderer.invoke('sutradhar:recoverMasterBatchDraft',agentId),
   loadMasterUnconfirmedDraft:agentId=>ipcRenderer.invoke('sutradhar:loadMasterUnconfirmedDraft',agentId),
