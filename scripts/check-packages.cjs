@@ -84,6 +84,12 @@ for(const match of dashboard.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)="\/
 }
 assert.equal(dm.agent_bundle_sha256,sha('apps/desktop/dist/edge-agent.cjs'));
 assert.equal(dm.secure_agent_sha256,sha('apps/desktop/dist/secure-agent.cjs'));
+const astAssets=['master-typescript.cjs','master-typescript-LICENSE.txt','master-typescript-NOTICE.txt'];
+assert.equal(dm.ast_runtime_version,json('package-lock.json').packages['node_modules/typescript'].version);
+assert.deepEqual(Object.keys(dm.ast_resource_sha256).sort(),[...astAssets].sort());
+for(const name of astAssets)assert.equal(dm.ast_resource_sha256[name],sha('apps/desktop/dist/'+name));
+assert.equal(require(get('apps/desktop/dist/master-typescript.cjs')).version,dm.ast_runtime_version);
+assert.equal(typeof require(get('apps/desktop/dist/master-typescript.cjs')).createSourceFile,'function');
 const secureAgentText=fs.readFileSync(get('apps/desktop/dist/secure-agent.cjs'),'utf8');
 assert(!secureAgentText.includes('private_key_pem'),'Packaged child contains private identity path');
 assert(!secureAgentText.includes('SUTRADHAR_ENROLLMENT_CODE'),'Packaged child could use grant from env');
