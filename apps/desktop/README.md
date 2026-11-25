@@ -477,3 +477,22 @@ Desktop now accepts a native-selected trusted local JSON file of 2–100 declare
 V7-GAP-05/07/08 remain PARTIAL/OPEN for actual task decomposition, AST integration in Desktop, semantic/type/contract inference, independent remote baseline and combined QA. V7-GAP-06/09/11 remain open for provider permissions, recovery, retention and measured token/quota accounting. Hostinger staging, branch protection, owner signing and physical 8–10-PC acceptance remain separate gates. G0–G7 HOLD.
 
 Operator guide: [Desktop and CLI bulk backlog review](../../docs/MASTER_BULK_REVIEW_V7.md).
+
+
+## 25 November 2026 — Desktop bounded AST source inspection and dependency-order review
+
+Prior Desktop bulk integration HEAD `4024ed872bbc19095354edae242b97359ae9a02a`: [application CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45579140265) and [dependency CI](https://github.com/r8898278453-coder/SUTRADHAR/actions/runs/45579140289) were observed CANCELLED after the branch advanced. Do not infer a pass or failure. Last verified successful baseline remains `370672751cc3ae57623fab3bf8345bd28f397c27` (both workflows). New exact-head CI must cover the accumulated changes.
+
+| Workstream | Evidence commits | Status |
+|---|---|---|
+| Shared bounded AST parser, unchanged developer CLI interface, immutable Desktop scoped blob inspection and explicit unknown counts | 2feb45f, d2e0899, 97dbfc6 | CODED / CI PENDING |
+| Locked TypeScript runtime and upstream license/notice staging, fixed package resources, closed build inventory, package verification and protected signing preflight | a2b85d1, e3cee8e, b56e1b1, e116ce0, cda264b, 65f5b96 | CODED / CI PENDING |
+| Signed-project/epoch-gated existing IPC, fixed installed parser, no silent lexical fallback, updated Desktop controls | 0cb6a19, 7b9338e, 8d3a0f6, 318a64e, fef9489 | CODED / CI PENDING |
+| Advisory comparison of syntactic cross-task references with declared dependency DAG, direct/transitive/reverse/missing order and shared dependency review | 3cffc9d, 318a64e | CODED / CI PENDING |
+| 49 new Desktop AST regression scenarios and three packaged-resource regressions, CI registration | bf71f40, 9d9ebae, 618a8f0 | CODED / CI PENDING |
+
+The existing 2–10-task Desktop draft is inspected using the same bounded syntax parser as the developer CLI. Scope-based round-robin samples at most 12 files, 16 KiB per blob, 1 MiB tree listing, 128 reference occurrences per file, 40 output hints. Syntax errors and reference overflow discard partial per-file evidence; unknown resolution remains explicit. The application returns hints and review questions, not source text or unresolved import strings. No declared edges changed, no automatic task creation/admission/dispatch, no provider request, no remote Git operation, no semantic/type resolution or verified upstream freshness. The existing lexical helper is retained only for source callers and legacy tests, marked LEXICAL_LEGACY; packaged UI requires AST_SYNTAX. Existing locked TypeScript 5.9.3 resource is shipped with license/notice and build/packaging digests; full parser increases package size. Package-byte verification is not runtime tamper resistance or physical installation acceptance. No new npm dependency, schema or release gate promotion. The 52 new tests are not 52 completed development tasks; the requested 50–100 feature-task target is not achieved in this slice.
+
+V7-GAP-05/07/08 remain PARTIAL/OPEN for actual automatic task decomposition, full semantic/type/contract discovery, remote baseline proof, worker availability, and combined integration QA. V7-GAP-06/09/11 remain open for provider permissions, durable recovery/retention and measured token/quota accounting. Hostinger staging, owner signing, branch protection and physical 8–10-PC acceptance remain independent gates. G0–G7 HOLD.
+
+Operator guide: [Bounded AST source inspection](../../docs/MASTER_AST_HINTS_V7.md).
