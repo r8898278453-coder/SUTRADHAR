@@ -478,6 +478,11 @@ function updateMasterControls(){
   get('masterBulkInspect').disabled=!bulkEligible;
   get('masterBulkGroup').disabled=!bulkEligible||!bulkMatches;
   get('masterBulkImport').disabled=!bulkEligible||!bulkMatches||bulkGroup?.local_draft_import_allowed!==true;
+  get('masterBulkGroupStatus').textContent=bulkGroup?
+    bulkGroup.group_id+' — '+bulkGroup.ticket_ids.length+' task(s)\n'+bulkGroup.ticket_ids.join(', ')+
+    '\n'+(bulkGroup.local_draft_import_allowed?'Eligible for local draft only; independent review still required.':
+      'Separate review required: '+bulkGroup.local_draft_import_blockers.join(', ')):
+    'No current reviewed group selected.';
   const baselineMatches=masterLocalBaseline&&masterLocalBaseline.agent===id.agent&&masterLocalBaseline.project===id.project&&masterDraft.every(t=>t.baseline_sha===masterLocalBaseline.sha);
   get('masterBaselineInspect').disabled=!masterAvailable||masterBusy||masterRecovered||!masterId(id.agent)||!masterId(id.project);
   get('masterDraftSave').disabled=masterBusy||masterRecovered||!masterAvailable||!masterId(id.agent);
@@ -496,6 +501,7 @@ function updateMasterControls(){
 function clearMasterBulkReview(message='Draft or selection changed. Inspect the bulk manifest again.'){
   masterBulkReview=null;
   get('masterBulkReport').value='';
+  get('masterBulkGroupStatus').textContent='No group selected.';
   const select=get('masterBulkGroup');select.replaceChildren();
   const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Inspect a manifest first';select.append(placeholder);
   get('masterBulkStatus').textContent=message;
@@ -641,7 +647,7 @@ get('masterBulkInspect').addEventListener('click',async()=>{
       select.append(option);
     }
     status.textContent=r.task_count+' declared tasks, '+r.review_group_count+' review groups, '+
-      r.unresolved_declared_conflict_count+' unresolved declared conflict pairs. Advisory only. Review the full report before selection.';
+      r.unresolved_declared_conflict_count+' unresolved declared conflict pairs; '+r.review_groups.filter(g=>g.local_draft_import_allowed).length+' groups eligible for local draft only. Advisory only. Review the full report before selection.';
   }catch{clearMasterBulkReview('Bulk inspection blocked. Check current Master, trusted local file, exact baseline and declarations.');}
   finally{masterBusy=false;updateMasterControls();await loadStatus();}
 });
