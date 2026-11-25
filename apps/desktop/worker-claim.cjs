@@ -18,6 +18,7 @@ const ORIGIN=/^https:\/\/[a-z0-9.-]+(?::443)?$/i;
 const fail=code=>{throw Error(code);};
 const digest=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const {safeScopedPath:safeScope}=require('./worker-scoped-path.cjs');
+const astParser=require('./master-ast-parser.cjs');
 function assertDirectory(dir){
   if(typeof dir!=='string'||!path.isAbsolute(dir))fail('WORKER_LOCAL_PATH_INVALID');
   const st=fs.lstatSync(dir);
@@ -681,7 +682,7 @@ function createMasterDraftStore({dir,safeStorage,nodeId,origin,agentId}){
 // Heuristic relative-import evidence from immutable local Git blobs only.
 // No source text is returned, no project module is loaded or executed, no
 // dependency edge is inferred as authoritative. Unsupported syntax is unknown.
-function inspectMasterSourceHints({repoDir,project,observed,tasks}){
+function inspectMasterSourceHints({repoDir,project,observed,tasks,typescriptRuntime=null}){
   requireMasterBaseline({tasks,observed,current:inspectMasterBaseline({repoDir,project})});
   const repo=assertDirectory(repoDir);
   const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!/^GIT_/i.test(k)));
@@ -722,13 +723,38 @@ function inspectMasterSourceHints({repoDir,project,observed,tasks}){
       if(q.length&&chosen.size<12)chosen.add(q.shift());
     }
   }
-  const sample=[...chosen],refs=new Map(),skipped=[];
+  const sample=[...chosen],refs=new Map(),skipped=[],ast_files=[];
+  const astEnabled=typescriptRuntime!==null;
+  if(astEnabled&&typeof typescriptRuntime?.createSourceFile!=='function')fail('MASTER_AST_RUNTIME_UNAVAILABLE');
   for(const file of sample){
     const sha=files.get(file);
+    const row={source_path:file,status:'NOT_PARSED',resolved:0,ambiguous:0,missing:0,unsupported:0};
+    if(astEnabled)ast_files.push(row);
     const size=Number(read(128,'cat-file','-s',sha).toString('ascii').trim());
-    if(!Number.isSafeInteger(size)||size<0||size>16384){skipped.push(file);continue;}
+    if(!Number.isSafeInteger(size)||size<0||size>16384){skipped.push(file);row.status='SIZE_LIMIT';continue;}
     const raw=read(16384,'cat-file','blob',sha);
-    if(raw.length!==size){skipped.push(file);continue;}
+    if(raw.length!==size){skipped.push(file);row.status='SIZE_MISMATCH';continue;}
+    if(astEnabled){
+      let parsed;
+      try{parsed=astParser.parseReferences(typescriptRuntime,file,raw);}
+      catch(e){
+        row.status=e?.message==='AST_SOURCE_ENCODING'?'ENCODING_ERROR':'PARSER_REFUSED';
+        skipped.push(file);continue;
+      }
+      row.status=parsed.status;row.unsupported=parsed.unknown;
+      if(parsed.status!=='PARSED'){skipped.push(file);continue;}
+      const targets=new Set();
+      for(const spec of parsed.references){
+        const result=astParser.resolveReference(file,spec,files);
+        if(result.status==='RESOLVED'&&safeScope(result.target)){
+          targets.add(result.target);row.resolved++;
+        }else if(result.status==='AMBIGUOUS')row.ambiguous++;
+        else if(result.status==='MISSING')row.missing++;
+        else row.unsupported++;
+      }
+      refs.set(file,[...targets].sort());
+      continue;
+    }
     let code;try{code=new TextDecoder('utf-8',{fatal:true}).decode(raw);}catch{skipped.push(file);continue;}
     // Deliberately a lexical hint, not an AST. Comments and strings can
     // produce false positives; dynamic/package/alias imports are not resolved.
@@ -761,7 +787,11 @@ function inspectMasterSourceHints({repoDir,project,observed,tasks}){
     scanned_file_count:refs.size,skipped_file_count:skipped.length,scan_limited:selected.length>12||skipped.length>0||hints.length>=40,
     task_coverage:tasks.map(t=>({ticket_id:t.ticket_id,scoped_files:selected.filter(p=>own(t,p)).length,
       scanned_files:[...refs.keys()].filter(p=>own(t,p)).length})),
-    hints,semantic_discovery_verified:false,automatic_execution_allowed:false,provider_sent:false,
+    hints,inspection_mode:astEnabled?'AST_SYNTAX':'LEXICAL_LEGACY',
+    ...(astEnabled?{ast_files,ast_unknown_reference_count:ast_files.reduce((n,f)=>n+f.ambiguous+f.missing+f.unsupported,0),
+      ast_parse_incomplete:ast_files.some(f=>f.status!=='PARSED')||selected.length>12,
+      type_resolution_verified:false,remote_freshness_verified:false}:{}),
+    semantic_discovery_verified:false,automatic_execution_allowed:false,provider_sent:false,
     source_contents_returned:false};
 }
 
