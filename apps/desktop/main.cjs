@@ -600,7 +600,7 @@ app.whenReady().then(()=>{
   ipcMain.handle('sutradhar:saveMasterUnconfirmedDraft',async(event,agentId,draft,expectedDigest)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,'project_draft');
-    workerClaimBusy=true;masterBatchReview=null;
+    workerClaimBusy=true;masterBatchReview=null;masterBulkReview=null;
     try{
       if(masterJournal().pending())throw Error('MASTER_BATCH_JOURNAL_PENDING_INSPECT_RECEIPT');
       if(expectedDigest!==null&&(typeof expectedDigest!=='string'||expectedDigest.length!==64||!/^[a-f0-9]{64}$/.test(expectedDigest)))
@@ -623,7 +623,7 @@ app.whenReady().then(()=>{
   ipcMain.handle('sutradhar:recoverMasterBatchDraft',async(event,agentId)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,'project_recovery');
-    workerClaimBusy=true;masterBatchReview=null;
+    workerClaimBusy=true;masterBatchReview=null;masterBulkReview=null;
     try{
       const saved=masterJournal().pending();
       if(!saved)return {pending:false};
@@ -774,7 +774,7 @@ app.whenReady().then(()=>{
     if(typeof requestId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(requestId)||
        !Array.isArray(tasks)||tasks.length<2||tasks.length>10)
       throw Error('WORKER_BATCH_INPUT_DENIED');
-    workerClaimBusy=true;masterBatchReview=null;
+    workerClaimBusy=true;masterBatchReview=null;masterBulkReview=null;
     try{
       const beforeMutation=()=>{
         if(approvedWorkerOperator(agentId,projectId,true)!==origin)throw Error('WORKER_BATCH_CENTRAL_CHANGED');
@@ -824,14 +824,14 @@ app.whenReady().then(()=>{
       const result=await commitMasterBatch({origin,agentId,prepared:saved.prepared,signer,beforeMutation});
       beforeMutation();
       return journal.close(pending.key,result);
-    }finally{masterBatchReview=null;workerClaimBusy=false;}
+    }finally{masterBatchReview=null;masterBulkReview=null;workerClaimBusy=false;}
   });
   ipcMain.handle('sutradhar:inspectMasterBatchReceipt',async(event,agentId,projectId,requestId,reviewedDigest)=>{
     verifySender(event);
     const origin=approvedWorkerOperator(agentId,projectId);
     if(typeof requestId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/.test(requestId))
       throw Error('WORKER_BATCH_INPUT_DENIED');
-    workerClaimBusy=true;masterBatchReview=null;
+    workerClaimBusy=true;masterBatchReview=null;masterBulkReview=null;
     try{
       const journal=masterJournal(),pending=journal.pending();
       if(pending&&(pending.intent.origin!==origin||pending.intent.body.agent_id!==agentId||
