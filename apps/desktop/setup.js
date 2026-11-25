@@ -733,10 +733,10 @@ get('masterSourceHints').addEventListener('click',async()=>{
   try{
     const r=await api.inspectMasterSourceHints(id.agent,id.project,masterDraft);
     if(revision!==masterRevision||JSON.stringify(id)!==JSON.stringify(masterIdentity()))return;
-    if(r.semantic_discovery_verified!==false||r.automatic_execution_allowed!==false||
-       r.provider_sent!==false||r.source_contents_returned!==false||!Array.isArray(r.hints))
+    if(r.inspection_mode!=='AST_SYNTAX'||r.type_resolution_verified!==false||r.semantic_discovery_verified!==false||r.automatic_execution_allowed!==false||
+       r.provider_sent!==false||r.source_contents_returned!==false||!Array.isArray(r.hints)||!Array.isArray(r.ast_files))
       throw Error('Invalid source hint report');
-    output.textContent='ADVISORY REVIEW ONLY — declared dependency waves, review groups and bounded lexical hints are not execution permission. External dependencies, worker availability and semantic independence are unverified.\n'+JSON.stringify(r,null,2);
+    output.textContent='ADVISORY REVIEW ONLY — declared dependency waves, review groups and bounded AST syntax hints are not execution permission. External dependencies, worker availability and semantic independence are unverified.\n'+JSON.stringify(r,null,2);
   }catch(error){output.textContent='Source hint inspection blocked: '+String(error?.message||error);}
   finally{masterBusy=false;updateMasterControls();await loadStatus();}
 });
