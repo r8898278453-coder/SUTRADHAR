@@ -189,10 +189,10 @@ function createSignerBridge(vault){
     const epoch=Number.isSafeInteger(payload.expected_master_epoch)&&
       payload.expected_master_epoch>0;
     let uri,expected;
-    if(operation==='plan-batch-projects'||operation==='plan-batch-project'){
-      uri='/v7/tasks/plan-batch/'+(operation==='plan-batch-project'?'project':'projects');
-      expected=operation==='plan-batch-project'?['agent_id','expected_master_epoch','project_id']:['agent_id','expected_master_epoch'];
-      if(!epoch||(operation==='plan-batch-project'&&(!id(payload.project_id)||/[\r\n]/.test(payload.project_id))))
+    if(operation==='plan-batch-projects'||operation==='plan-batch-project'||operation==='plan-batch-capacity'){
+      uri='/v7/tasks/plan-batch/'+(operation==='plan-batch-capacity'?'capacity':operation==='plan-batch-project'?'project':'projects');
+      expected=operation!=='plan-batch-projects'?['agent_id','expected_master_epoch','project_id']:['agent_id','expected_master_epoch'];
+      if(!epoch||(operation!=='plan-batch-projects'&&(!id(payload.project_id)||/[\r\n]/.test(payload.project_id))))
         fail('VAULT_WORKER_ACTION_DENIED');
     }else if(['plan-batch-preview','plan-batch','plan-batch-receipt'].includes(operation)){
       uri='/v7/tasks/plan-batch'+(operation==='plan-batch-preview'?'/preview':operation==='plan-batch-receipt'?'/receipt':'');
