@@ -26,9 +26,8 @@ function verifyPackagedRuntime({desktopDir=__dirname,resourceDir,
   verifyPackageClosure({dir:desktopDir,manifest:pkg,checkAssets:true});
   if(pkg.build.asar!==true||pkg.main!=='main.cjs'||
      !Array.isArray(pkg.build.extraResources)||
-     pkg.build.extraResources.length!==1||
-     pkg.build.extraResources[0].from!=='dist/secure-agent.cjs'||
-     pkg.build.extraResources[0].to!=='secure-agent.cjs')
+     JSON.stringify(pkg.build.extraResources)!==JSON.stringify(['secure-agent.cjs','master-typescript.cjs',
+       'master-typescript-LICENSE.txt','master-typescript-NOTICE.txt'].map(name=>({from:'dist/'+name,to:name}))))
     fail('PACKAGED_RUNTIME_MANIFEST_INVALID');
   const archive=path.join(resourceDir,'app.asar');
   regularFile(archive);
@@ -86,7 +85,16 @@ function verifyPackagedRuntime({desktopDir=__dirname,resourceDir,
   if(digest(fs.readFileSync(expectedAgent))!==
      digest(fs.readFileSync(actualAgent)))
     fail('PACKAGED_RUNTIME_SECURE_AGENT_CHANGED');
-  return Object.freeze({accepted:true,verified_asar_files:checked,
+  const ast_resource_sha256={};
+  for(const [name,max] of [['master-typescript.cjs',16*1024*1024],
+    ['master-typescript-LICENSE.txt',256*1024],['master-typescript-NOTICE.txt',512*1024]]){
+    const expected=path.join(desktopDir,'dist',name),actual=path.join(resourceDir,name);
+    regularFile(expected,max);regularFile(actual,max);
+    const hash=digest(fs.readFileSync(actual));
+    if(hash!==digest(fs.readFileSync(expected)))fail('PACKAGED_RUNTIME_AST_RESOURCE_CHANGED:'+name);
+    ast_resource_sha256[name]=hash;
+  }
+  return Object.freeze({accepted:true,verified_asar_files:checked,ast_resource_sha256,
     secure_agent_sha256:digest(fs.readFileSync(actualAgent)),
     actual_packaged_bytes_verified:true,windows_install_executed:false,
     authenticode_verified:false,production_approved:false});
