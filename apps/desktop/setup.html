@@ -83,8 +83,8 @@
 <label for="masterDraft">Review all task fields (local draft, not yet admitted)</label><textarea id="masterDraft" rows="8" readonly spellcheck="false"></textarea>
 <div class="actions"><button id="masterDraftSave" class="secondary" type="button" disabled>Save unconfirmed local draft</button><button id="masterDraftLoad" class="secondary" type="button" disabled>Load saved unconfirmed draft</button></div>
 <p id="masterDraftStatus" class="hint" role="status">Explicit local encrypted save only. Restoring a draft never restores baseline inspection, preview or admission permission.</p>
-<button id="masterSourceHints" class="secondary" type="button" disabled>Inspect local relative-import hints (no AI or network Git)</button>
-<pre id="masterSourceStatus" role="status" aria-live="polite">No source hint inspection. This is limited lexical evidence, not semantic verification.</pre>
+<button id="masterSourceHints" class="secondary" type="button" disabled>Inspect local AST import hints (no AI or network Git)</button>
+<pre id="masterSourceStatus" role="status" aria-live="polite">No source hint inspection. This is bounded AST syntax evidence, not semantic verification.</pre>
 <button id="masterRecover" class="secondary" type="button" disabled>Recover pending reviewed batch after restart</button>
 <p class="hint">A confirmed admission is encrypted locally before sending. If interrupted, recover its exact draft and inspect its receipt. Unresolved admission blocks new batches on this PC. Unconfirmed drafts are not saved.</p>
 <p class="hint">All tasks in this Desktop batch must use the inspected local tracking ref SHA. If downstream work needs upstream code not yet merged, plan that downstream work later. Refresh/reinspect if the local ref changes.</p>
