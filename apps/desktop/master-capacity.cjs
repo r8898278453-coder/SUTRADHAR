@@ -31,4 +31,32 @@ function validateCapacity(r,{agentId,projectId,epoch}){
      r.observed_candidate_node_count!==new Set(candidates.map(w=>w.node_id.toLowerCase())).size)fail();
   return r;
 }
-module.exports={validateCapacity};
+
+const {boundedCentralJson}=require('./bounded-central-json.cjs');
+async function inspectProjectCapacity({origin,agentId,projectId,signer,fetcher=fetch,guard=()=>{}}){
+  if(typeof origin!=='string'||!/^https:\/\/[a-z0-9.-]+(?::443)?$/i.test(origin)||!id(agentId)||!id(projectId))
+    throw Error('WORKER_CAPACITY_INPUT_DENIED');
+  const request=async(method,uri,headers,body)=>{
+    guard();
+    const response=await fetcher(origin+uri,{method,headers:{...headers,Accept:'application/json',
+      ...(method==='POST'?{'content-type':'application/json'}:{})},body,
+      cache:'no-store',credentials:'omit',redirect:'error',signal:AbortSignal.timeout(15000)});
+    const data=await boundedCentralJson(response);
+    if(!response.ok)throw Error('WORKER_CAPACITY_CENTRAL_REFUSED');
+    guard();return data;
+  };
+  guard();
+  const stateUri='/v7/cluster/state';
+  const cluster=await request('GET',stateUri,signer.sign({kind:'node_api',method:'GET',uri:stateUri,body:''}));
+  if(cluster.phase!=='READY'||cluster.paused!==false||cluster.master_agent_id!==agentId||
+     !Number.isSafeInteger(cluster.epoch)||cluster.epoch<1)throw Error('WORKER_CAPACITY_MASTER_NOT_READY');
+  guard();
+  const payload={agent_id:agentId,project_id:projectId,expected_master_epoch:cluster.epoch};
+  const packet=signer.signWorkerAction({operation:'plan-batch-capacity',agent_id:agentId,payload});
+  if(packet.uri!=='/v7/tasks/plan-batch/capacity'||packet.body!==JSON.stringify(payload))
+    throw Error('WORKER_CAPACITY_SIGNED_PACKET_INVALID');
+  const report=await request('POST',packet.uri,packet.headers,packet.body);
+  return validateCapacity(report,{agentId,projectId,epoch:cluster.epoch});
+}
+module.exports={validateCapacity,inspectProjectCapacity};
+
