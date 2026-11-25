@@ -59,6 +59,16 @@
 <label for="masterTicket">Task ID</label><input id="masterTicket" maxlength="100" autocomplete="off">
 <button id="masterBaselineInspect" class="secondary" type="button" disabled>Inspect trusted local Git checkout (no network)</button>
 <p id="masterBaselineStatus" class="hint" role="status" aria-live="polite">Local tracking ref not inspected. Remote freshness and upstream changes are not verified.</p>
+<details>
+<summary>Review a local bulk backlog (2–100 tasks)</summary>
+<p class="hint">Select the current project and inspect its local Git checkout first. Choose a trusted declarations JSON file. The review does not admit tasks, verify remote freshness, or authorize parallel work. Do not include credentials or provider secrets.</p>
+<button id="masterBulkInspect" class="secondary" type="button" disabled>Inspect bulk declarations file</button>
+<p id="masterBulkStatus" class="hint" role="status" aria-live="polite">No bulk manifest reviewed.</p>
+<label for="masterBulkReport">Full advisory review (identifiers and conflicts)</label><textarea id="masterBulkReport" rows="7" readonly spellcheck="false"></textarea>
+<label for="masterBulkGroup">Choose a review group</label><select id="masterBulkGroup" disabled><option value="">Inspect a manifest first</option></select>
+<button id="masterBulkImport" class="secondary" type="button" disabled>Load eligible group into local draft only</button>
+<p class="hint">Groups with unresolved conflicts, external dependencies, upstream baseline requirements, protected risk or a size outside 2–10 require separate review. Loading a group replaces the current local draft only after confirmation and clears the request ID, preview and consent. Reinspect the file for another group.</p>
+</details>
 <label for="masterBaseline">Inspected local baseline SHA (40 lowercase hex)</label><input id="masterBaseline" maxlength="40" autocomplete="off" spellcheck="false">
 <label for="masterBranch">Task branch (ai/…)</label><input id="masterBranch" maxlength="120" autocomplete="off" spellcheck="false">
 <label for="masterTitle">Task title</label><input id="masterTitle" maxlength="220">
