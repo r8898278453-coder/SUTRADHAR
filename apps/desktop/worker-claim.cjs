@@ -992,6 +992,53 @@ function extractBulkReviewGroup(tasks,expectedDigest,groupId){
     remote_freshness_verified:false,automatic_admission_allowed:false,automatic_execution_allowed:false};
 }
 
+// Compare syntactic source evidence with the declared DAG. An import from
+// A into B can be a review question, not proof that B must execute first.
+// This never inserts edges, modifies declarations or asserts independence.
+function compareMasterAstHints(tasks,report){
+  const graph=analyzeMasterPlanningDraft(tasks);
+  if(!report||report.inspection_mode!=='AST_SYNTAX'||report.semantic_discovery_verified!==false||
+     report.type_resolution_verified!==false||report.automatic_execution_allowed!==false||
+     report.provider_sent!==false||report.source_contents_returned!==false||
+     !Array.isArray(report.hints)||report.hints.length>40||
+     tasks.some(t=>t.baseline_sha!==report.baseline_sha))
+    fail('MASTER_AST_REVIEW_INPUT_INVALID');
+  const byId=new Map(tasks.map(t=>[t.ticket_id,t]));
+  const ancestors=new Map();
+  for(const wave of graph.declared_dependency_waves)for(const id of wave){
+    const set=new Set();
+    for(const d of byId.get(id).dependencies)if(byId.has(d)){
+      set.add(d);for(const a of ancestors.get(d)||[])set.add(a);
+    }
+    ancestors.set(id,set);
+  }
+  const comparisons=[],shared=[];
+  for(const h of report.hints){
+    if(!h||!safeScope(h.target_path)||/[\r\n]/.test(h.target_path))
+      fail('MASTER_AST_REVIEW_HINT_INVALID');
+    if(h.kind==='CROSS_TASK_RELATIVE_IMPORT'){
+      const from=byId.get(h.from_ticket),to=byId.get(h.to_ticket);
+      const own=(t,p)=>t.write_scopes.some(s=>p===s||p.startsWith(s+'/'));
+      if(!from||!to||from===to||!safeScope(h.source_path)||/[\r\n]/.test(h.source_path)||
+         !own(from,h.source_path)||!own(to,h.target_path))fail('MASTER_AST_REVIEW_HINT_INVALID');
+      const status=ancestors.get(from.ticket_id).has(to.ticket_id)?'DECLARED_ORDER_PRESENT':
+        ancestors.get(to.ticket_id).has(from.ticket_id)?'REVERSE_DECLARED_ORDER_REVIEW':
+          'NO_DECLARED_ORDER_REVIEW';
+      comparisons.push({from_ticket:from.ticket_id,to_ticket:to.ticket_id,
+        source_path:h.source_path,target_path:h.target_path,status});
+    }else if(h.kind==='SHARED_RELATIVE_IMPORT'){
+      if(!Array.isArray(h.ticket_ids)||h.ticket_ids.length<2||h.ticket_ids.length>10||
+         new Set(h.ticket_ids).size!==h.ticket_ids.length||h.ticket_ids.some(id=>!byId.has(id)))
+        fail('MASTER_AST_REVIEW_HINT_INVALID');
+      shared.push({ticket_ids:[...h.ticket_ids],target_path:h.target_path,status:'SHARED_DEPENDENCY_REVIEW'});
+    }else fail('MASTER_AST_REVIEW_HINT_INVALID');
+  }
+  return {source_order_comparisons:comparisons,shared_dependency_reviews:shared,
+    source_order_review_count:comparisons.filter(c=>c.status!=='DECLARED_ORDER_PRESENT').length,
+    shared_dependency_review_count:shared.length,declared_edges_changed:false,
+    semantic_discovery_verified:false,automatic_admission_allowed:false,automatic_execution_allowed:false};
+}
+
 function buildMasterPlanningContext({observed,tasks}){
   const graph=analyzeMasterPlanningDraft(tasks);
   if(!observed||observed.local_tracking_ref_verified!==true||observed.remote_freshness_verified!==false||
@@ -1131,4 +1178,4 @@ function createMasterBatchJournal({dir,safeStorage,nodeId}){
   }
   return {pending,begin,close};
 }
-module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,analyzeBulkPlanningDraft,extractBulkReviewGroup,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal};
+module.exports={assertDisabledHooks,claimApprovedTask,resumeApprovedTask,localWorktree,loadWorkerReceipt,signedRequest,confirmResume,recordProviderAttempt,previewMasterBatch,commitMasterBatch,inspectMasterBatchReceipt,listMasterProjects,lookupMasterProject,inspectMasterBaseline,requireMasterBaseline,inspectMasterSourceHints,analyzeMasterPlanningDraft,analyzeBulkPlanningDraft,extractBulkReviewGroup,compareMasterAstHints,buildMasterPlanningContext,createMasterDraftStore,createMasterBatchJournal};
