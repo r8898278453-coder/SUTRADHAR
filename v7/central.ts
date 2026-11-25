@@ -29,6 +29,7 @@ import {publicCentralFiles} from './public_files.ts';
 import {parseOwnerTelegram,telegramReceiptText} from './telegram_owner.ts';
 import {declaredProviderMappings,providerRegistrySnapshot,verifyProviderRegistrySnapshot,validateProviderAttempt,validateProviderUsageReading,providerUsageRecord,summarizeProviderUsage} from './provider_mappings.ts';
 import {verifyRecoverySnapshot} from './recovery_validation.ts';
+import {assessProjectCapacity} from './worker_capacity.ts';
 
 const app=express();
 const MAX_BODY='128kb';
@@ -1809,6 +1810,39 @@ app.post('/v7/tasks/plan-batch/project',jsonRoute(async req=>{
     await readyMaster(c,node.node_id,agentId,d.expected_master_epoch);
     return {read_only:true,agent_id:agentId,epoch:d.expected_master_epoch,
       project,automatic_execution_allowed:false,baseline_verified:false};
+  });
+}));
+// Project-scoped, bounded advisory capacity snapshot. No task mutations,
+// assignments, provider calls or election. Authentication still records nonce.
+app.post('/v7/tasks/plan-batch/capacity',jsonRoute(async req=>{
+  const node=await nodeAuth(req),d=req.body;
+  if(!d||typeof d!=='object'||Array.isArray(d)||
+     Object.keys(d).sort().join('|')!=='agent_id|expected_master_epoch|project_id'||
+     !Number.isSafeInteger(d.expected_master_epoch)||d.expected_master_epoch<1)
+    return fault('CAPACITY_INPUT_INVALID',400);
+  const agentId=requireId(d.agent_id),projectId=requireId(d.project_id);
+  return transaction(async c=>{
+    const ld=await readyMaster(c,node.node_id,agentId,d.expected_master_epoch);
+    const project=await one(c,'SELECT project_id FROM v7_projects WHERE project_id=? AND status="ACTIVE"',[projectId]);
+    if(!project||project.project_id!==projectId)return fault('PROJECT_NOT_FOUND',404);
+    const records=await rows(c,
+      'SELECT a.agent_id,a.node_id,a.state AS agent_state,n.state AS node_state,a.status,pa.can_develop,'+
+      'TIMESTAMPDIFF(MICROSECOND,a.last_seen,UTC_TIMESTAMP(3)) DIV 1000 AS agent_age_ms,'+
+      'TIMESTAMPDIFF(MICROSECOND,n.last_seen,UTC_TIMESTAMP(3)) DIV 1000 AS node_age_ms,'+
+      'EXISTS(SELECT 1 FROM v7_pc_maintenance_fences f WHERE f.node_id=a.node_id) AS maintenance_fenced,'+
+      'EXISTS(SELECT 1 FROM v7_leases l WHERE l.agent_id=a.agent_id AND l.revoked=0 AND l.expires_at>UTC_TIMESTAMP(3)) AS has_live_work_lease,'+
+      'EXISTS(SELECT 1 FROM v7_tickets t WHERE t.worker_agent_id=a.agent_id AND t.status IN '+
+      '("CLAIMED","RUNNING","CHECKPOINTED","TEST_FAILED","SUBMITTED_FOR_REVIEW","INTEGRATING","RECONCILIATION_REQUIRED")) AS has_active_task,'+
+      'EXISTS(SELECT 1 FROM v7_git_jobs g WHERE g.agent_id=a.agent_id AND g.state IN ("RUNNING","NEEDS_RECONCILIATION")) AS has_unreconciled_git_job '+
+      'FROM v7_project_agents pa JOIN v7_agents a ON a.agent_id=pa.agent_id JOIN v7_nodes n ON n.node_id=a.node_id '+
+      'WHERE pa.project_id=? ORDER BY a.agent_id LIMIT 101',[projectId]);
+    let capacity:ReturnType<typeof assessProjectCapacity>;
+    try{capacity=assessProjectCapacity({rows:records,master:ld.master_agent_id,backups:[ld.backup1,ld.backup2]});}
+    catch{return fault('CAPACITY_LEDGER_INVALID',423);}
+    const observed_at_ms=await dbNow(c);
+    await readyMaster(c,node.node_id,agentId,d.expected_master_epoch);
+    return {schema:'SUTRADHAR_PROJECT_CAPACITY_V1',read_only:true,agent_id:agentId,project_id:projectId,
+      epoch:d.expected_master_epoch,observed_at_ms,...capacity};
   });
 }));
 app.post('/v7/tasks/plan-batch/preview',jsonRoute(async req=>{
